@@ -1,0 +1,84 @@
+{
+    "sources": {
+        "js": [
+            "./*.js",
+            "./demos/**/*.js",
+            "./examples/**/*.js",
+            "./src/**/*.js",
+            "./tests/**/*.js"
+        ],
+        "json": [
+            "./*.json",
+            "./demos/**/*.json",
+            "./examples/**/*.json",
+            "./src/**/*.json",
+            "./tests/**/*.json"
+        ],
+        "md": [
+            "./*.md",
+            "./examples/**/*.md",
+            "./src/**/*.md",
+            "./tests/**/*.md"
+        ],
+        "css": [
+            "./demos/**/*.css",
+            "./examples/**/*.css",
+            "./src/framework/**/*.css",
+            "./tests/**/*.css"
+        ],
+        "scss": [
+            "./src/framework/**/*.scss"
+        ]
+    },
+    "eslint": {
+        "js": {
+            "excludes": [
+                "./src/**/lib/**/*.js",
+                "./demos/**/lib/**/*.js",
+                "./tests/**/lib/**/*.js"
+            ]
+        },
+        "md": {
+            "excludes": [
+                "./src/**/lib/**/*.md",
+                "./demos/**/lib/**/*.md",
+                "./tests/**/lib/**/*.md"
+            ]
+        }
+    },
+    "json5lint": {
+        "enabled": false
+    },
+    "lintspaces": {
+        "newlines": {
+            "excludes": [
+                "./src/**/*.woff",
+                "./src/**/lib/**/*",
+                "./demos/**/lib/**/*",
+                "./tests/**/lib/**/*"
+            ]
+        }
+    },
+    "markdownlint": {
+        "excludes": [
+            "./src/**/lib/**/*.md",
+            "./demos/**/lib/**/*.md",
+            "./tests/**/lib/**/*.md"
+        ]
+    },
+    "mdjsonlint": {
+        "excludes": [
+            "./src/**/lib/**/*.md",
+            "./demos/**/lib/**/*.md",
+            "./tests/**/lib/**/*.md"
+        ]
+    },
+    "stylelint": {
+        "excludes": [
+            "./build/**/*.css",
+            "./dist/**/*.css",
+            "./src/lib/**/*.css",
+            "./tests/**/lib/**/*.css"
+        ]
+    }
+}

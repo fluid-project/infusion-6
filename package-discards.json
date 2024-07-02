@@ -1,0 +1,11 @@
+{
+    "scripts": {
+        "clean:deps": "run-p clean:deps:*",
+        "clean:deps:tests": "rimraf \"tests/lib/@(qunit)\"",
+        "deps": "run-p deps:*",
+        "predeps:tests": "npm run clean:deps:tests",
+        "deps:tests": "run-p deps:tests:*",
+        "deps:tests:qunitjs": "cpy node_modules/qunit/qunit/qunit.js tests/lib/qunit/js/",
+        "deps:tests:qunitcss": "cpy node_modules/qunit/qunit/qunit.css tests/lib/qunit/css/"
+    }
+}

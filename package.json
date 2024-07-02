@@ -1,0 +1,54 @@
+{
+    "name": "infusion",
+    "description": "Infusion is an application framework for developing flexible stuff with JavaScript",
+    "version": "6.0.0-pre",
+    "author": "Fluid Project",
+    "bugs": "http://issues.fluidproject.org/browse/FLUID",
+    "homepage": "http://www.fluidproject.org/",
+    "license": "(BSD-3-Clause OR ECL-2.0)",
+    "keywords": [
+        "infusion",
+        "framework",
+        "application",
+        "fluid",
+        "IL",
+        "Integration Language",
+        "FRP",
+        "signals"
+    ],
+    "repository": "git://github.com/fluid-project/infusion.git",
+    "main": "./src/module/fluid.js",
+    "scripts": {
+        "clean": "run-p clean:*",
+        "clean:build": "rimraf build products",
+        "prepare": "run-s deps",
+        "lint": "fluid-lint-all",
+        "start": "serve"
+    },
+    "engines": {
+        "node": ">=14"
+    },
+    "browserslist": [
+        "extends browserslist-config-fluid"
+    ],
+    "dependencies": {
+        "fluid-resolve": "1.3.0"
+    },
+    "devDependencies": {
+        "browserslist-config-fluid": "0.1.0",
+        "cpy-cli": "3.1.1",
+        "eslint-config-fluid": "2.1.2",
+        "eslint-plugin-jsdoc": "39.6.2",
+        "fast-glob": "3.2.11",
+        "fluid-lint-all": "1.2.11",
+        "minimist": "1.2.6",
+        "mkdirp": "1.0.4",
+        "npm-run-all2": "6.2.0",
+        "rimraf": "3.0.2",
+        "serve": "13.0.2",
+        "sinon": "12.0.1",
+        "terser": "5.9.0",
+        "qunit": "2.21.0",
+        "xhr-mock": "2.5.1"
+    }
+}

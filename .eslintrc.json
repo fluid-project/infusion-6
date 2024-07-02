@@ -1,0 +1,23 @@
+{
+    "extends": "eslint-config-fluid",
+    "globals": {
+        "$": true
+    },
+    "rules": {
+        "strict": ["error", "global"]
+    },
+    "settings": {
+        "jsdoc": {
+            "preferredTypes": {
+                "*": "any",
+                "any": "any"
+            }
+        }
+    },
+    "parserOptions": {
+        "ecmaVersion": 2018
+    },
+    "env": {
+        "es6": true
+    }
+}
