@@ -22,7 +22,12 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 
 */
 
+/* global preactSignalsCore */
+
 "use strict";
+
+// noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
+var {signal, effect, computed} = preactSignalsCore;
 
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
 var fluid = fluid || {}; // eslint-disable-line no-redeclare
@@ -751,8 +756,8 @@ fluid.registerNamespace = function (path) {
 };
 
 // stubs for two functions in FluidDebugging.js
-fluid.dumpEl = fluid.identity;
-fluid.renderTimestamp = fluid.identity;
+fluid.dumpEl = x => x;
+fluid.renderTimestamp = x => x;
 
 /*** The Fluid instance id ***/
 
@@ -1175,7 +1180,7 @@ fluid.fireEvent = function (component, eventName, args) {
 
 // unsupported, NON-API function
 fluid.event.addListenerToFirer = function (firer, value, namespace, wrapper) {
-    wrapper = wrapper || fluid.identity;
+    wrapper = wrapper || (x => x);
     if (fluid.isArrayable(value)) {
         for (let i = 0; i < value.length; ++i) {
             fluid.event.addListenerToFirer(firer, value[i], namespace, wrapper);
@@ -1301,7 +1306,7 @@ fluid.addTimestampArg = function (args) {
 fluid.loggingEvent.addListener(fluid.doBrowserLog, "log");
 // Not intended to be overridden - just a positional placeholder so that the priority of
 // actions filtering the log arguments before dispatching may be referred to it
-fluid.loggingEvent.addListener(fluid.identity, "filterArgs", "before:log");
+fluid.loggingEvent.addListener(x => x, "filterArgs", "before:log");
 fluid.loggingEvent.addListener(fluid.addTimestampArg, "addTimestampArg", "after:filterArgs");
 
 /*** FLUID ERROR SYSTEM ***/
@@ -1337,15 +1342,54 @@ Object.defineProperty(fluid.componentConstructor, "name", {
 
 fluid.layerStore = {};
 
-fluid.rawLayer = function (layerName) {
-    return fluid.layerStore[layerName];
+fluid.rawLayer = function (layerName, layer) {
+    let layerSig = fluid.layerStore[layerName];
+    if (layerSig) {
+        // TODO: immutable update - what else will we store in layer store?
+        // TODO: if layer is undefined, we might want to lazily create the signal and instead return a thunk
+        if (layer !== undefined) {
+            layerSig.value = {raw: layer};
+        }
+    } else { // It might be a read of something never written, we still need a signal
+        layerSig = fluid.layerStore[layerName] = signal({
+            raw: layer
+        });
+    }
+    return layerSig;
 };
 
-fluid.registerRawLayer = function (layerName, layer) {
-    fluid.layerStore[layerName] = layer;
+fluid.readerExpandLayer = function (layer) {
+    // TODO: Create links between old and new data
+    return {...layer, parents: fluid.makeArray(layer.parents)};
 };
 
-fluid.getMergedMat = fluid.rawLayer;
+fluid.getMergedMat = function (layerName) {
+    return computed( () => {
+        const layer = fluid.rawLayer(layerName).value.raw;
+        if (layer) {
+            const withDef = layer => fluid.readerExpandLayer(layer);
+            const defLayer = withDef(layer);
+            const flatDefs = {};
+            const storeParents = function (layer) {
+                const parentDefs = Object.fromEntries(layer.parents.map(parent => [parent, withDef(fluid.rawLayer(parent).value.raw)]));
+                fluid.each(parentDefs, storeLayer);
+            };
+            const storeLayer = function (layer, layerName) {
+                if (!flatDefs[layerName]) {
+                    flatDefs[layerName] = layer;
+                    storeParents(layer);
+                }
+            };
+            storeLayer(defLayer, layerName);
+
+            const order = fluid.C3_precedence(layerName, flatDefs);
+            const records = order.map(layerName => flatDefs[layerName]);
+            return Object.assign.apply(null, [{}].concat(records));
+        } else {
+            return layer;
+        }
+    });
+};
 
 fluid.hasLayer = function (/*mat, layerName*/) {
     return false;
@@ -1364,9 +1408,9 @@ fluid.def = function (layerName, layer) {
         return fluid.getMergedMat(layerName);
     }
     else {
-        fluid.registerRawLayer(layerName, layer);
+        fluid.rawLayer(layerName, layer);
         const mergedMat = fluid.getMergedMat(layerName);
-        if (!fluid.hasLayer(mergedMat, "fluid.function")) {
+        if (fluid.hasLayer(mergedMat.value, "fluid.component")) {
             fluid.makeComponentCreator(layerName);
         }
     }
@@ -1445,8 +1489,7 @@ fluid.C3_merge = function (seqs) {
 
 /**
  * Computes C3 precedence of the parent layers of the supplied layer
- * @param {String} C - The layer whose parent precedence is required
- * this function.
+ * @param {String} C - The name of the layer whose parent precedence is required
  * @param {Object<String, Object>} defs - A layer definition registry
  * @param {Set<String>} [visited=new Set()] - A set to keep track of visited classes to detect circular hierarchy.
  * @return {String[]} - The parent precedence list
@@ -1479,7 +1522,7 @@ fluid.makeComponentCreator = function (componentName) {
     };
     const existing = fluid.getGlobalValue(componentName);
     if (existing) {
-        $.extend(creator, existing);
+        Object.assign(creator, existing);
     }
     fluid.setGlobalValue(componentName, creator);
 };
@@ -1516,7 +1559,7 @@ fluid.def("fluid.function", {});
  * @return {any} The return value from the function
  */
 fluid.invokeGradedFunction = function (name, spec) {
-    const defaults = fluid.def(name);
+    const defaults = fluid.def(name).value;
     if (!defaults || !defaults.argumentMap || !fluid.hasGrade(defaults, "fluid.function")) {
         fluid.fail("Cannot look up name " + name +
             " to a function with registered argumentMap - got defaults ", defaults);

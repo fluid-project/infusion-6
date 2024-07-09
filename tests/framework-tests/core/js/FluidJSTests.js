@@ -699,3 +699,19 @@ fluid.tests.c3tests.forEach(fixture => {
         }
     });
 });
+
+QUnit.test("Basic live merging", function (assert) {
+    fluid.def("fluid.tests.testComponent", {
+        parents: "fluid.component",
+        testValue: 0
+    });
+    const testDef = fluid.def("fluid.tests.testComponent");
+    assert.strictEqual(testDef.value.testValue, 0, "Retrieve basic value");
+    assert.strictEqual(testDef.value.events.onCreate, 0, "Retrieve merged value");
+    fluid.def("fluid.tests.testComponent", {
+        parents: "fluid.component",
+        testValue: 1
+    });
+    assert.strictEqual(testDef.value.testValue, 1, "Updated basic value");
+    assert.strictEqual(testDef.value.events.onCreate, 0, "Merged value unchanged");
+});
