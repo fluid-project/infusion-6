@@ -715,3 +715,13 @@ QUnit.test("Basic live merging", function (assert) {
     assert.strictEqual(testDef.value.testValue, 1, "Updated basic value");
     assert.strictEqual(testDef.value.events.onCreate, 0, "Merged value unchanged");
 });
+
+QUnit.test("Basic construction", function (assert) {
+    fluid.def("fluid.tests.testComponent", {
+        parents: "fluid.component",
+        testValue: 0
+    });
+    const that = fluid.tests.testComponent();
+    assert.assertNotUndefined(that, "Got a value as component instance");
+    assert.ok(fluid.isComponent(that), "Got a component as component instance");
+});

@@ -83,7 +83,7 @@ fluid.renderOneActivity = function (activity, nowhile) {
     while (true) {
         const match = activityParser.exec(message);
         if (match) {
-            var key = match[1].substring(1);
+            const key = match[1].substring(1);
             togo.push(message.substring(index, match.index));
             togo.push(fluid.renderActivityArgument(activity.args[key]));
             index = activityParser.lastIndex;
@@ -625,16 +625,21 @@ fluid.freezeRecursive = function (tofreeze, segs) {
  */
 fluid.marker = function () {};
 
-fluid.makeMarker = function (value, extra) {
+fluid.makeMarker = function (value, extra, mutable) {
     const togo = Object.create(fluid.marker.prototype);
     Object.assign(togo, {...extra || {}, ...{value}});
-    return Object.freeze(togo);
+    return mutable ? togo : Object.freeze(togo);
 };
+
+fluid.makeUnavailable = (waitset = []) => fluid.makeMarker("UNAVAILABLE", {waitset}, true);
+
+fluid.isUnavailable = totest => fluid.isMarker(totest, "UNAVAILABLE");
 
 /* A special "marker object" representing that no value is present (where
  * signalling using the value "undefined" is not possible - e.g. the return value from a "strategy"). This
  * is intended for "ephemeral use", i.e. returned directly from strategies and transforms and should not be
  * stored in data structures */
+// TODO: No longer currently consumed by fluid.transform but maybe we want it back
 fluid.NO_VALUE = fluid.makeMarker("NO_VALUE");
 
 /* Determine whether an object is any marker, or a particular marker - omit the 2nd argument to detect any marker
@@ -686,6 +691,13 @@ fluid.get = function (root, path, i) {
         root = root ? root[segs[j]] : undefined;
     }
     return root;
+};
+
+fluid.derefSignal = function (signal, path) {
+    return computed( () => {
+        const value = signal.value;
+        return fluid.get(value, path);
+    });
 };
 
 fluid.set = function (root, path, newValue) {
@@ -1340,6 +1352,8 @@ Object.defineProperty(fluid.componentConstructor, "name", {
     value: "fluid.componentConstructor"
 });
 
+fluid.domain = {};
+
 fluid.layerStore = {};
 
 fluid.rawLayer = function (layerName, layer) {
@@ -1350,7 +1364,9 @@ fluid.rawLayer = function (layerName, layer) {
         if (layer !== undefined) {
             layerSig.value = {raw: layer};
         }
-    } else { // It might be a read of something never written, we still need a signal
+    } else {
+        // It might be a read of something never written, we still need a signal - although we would like these to be GCable somehow -
+        // Turn layerStore into WeakMap?
         layerSig = fluid.layerStore[layerName] = signal({
             raw: layer
         });
@@ -1358,41 +1374,99 @@ fluid.rawLayer = function (layerName, layer) {
     return layerSig;
 };
 
+// Like a "reader macro"
 fluid.readerExpandLayer = function (layer) {
     // TODO: Create links between old and new data
     return {...layer, parents: fluid.makeArray(layer.parents)};
 };
 
-fluid.getMergedMat = function (layerName) {
-    return computed( () => {
-        const layer = fluid.rawLayer(layerName).value.raw;
-        if (layer) {
-            const withDef = layer => fluid.readerExpandLayer(layer);
-            const defLayer = withDef(layer);
-            const flatDefs = {};
-            const storeParents = function (layer) {
-                const parentDefs = Object.fromEntries(layer.parents.map(parent => [parent, withDef(fluid.rawLayer(parent).value.raw)]));
-                fluid.each(parentDefs, storeLayer);
-            };
-            const storeLayer = function (layer, layerName) {
-                if (!flatDefs[layerName]) {
-                    flatDefs[layerName] = layer;
-                    storeParents(layer);
-                }
-            };
-            storeLayer(defLayer, layerName);
+// The types of merge record the system supports, with the weakest records first
+fluid.mergeRecordTypes = {
+    def:                1000, // and above
+    defParents:         900,
+    subcomponent:       700, // and above - wrt. nesting depth
+    user:               600, // supplied as constructor arguments
+    distribution:       100, // and above
+    live:               0
+};
 
-            const order = fluid.C3_precedence(layerName, flatDefs);
-            const records = order.map(layerName => flatDefs[layerName]);
-            return Object.assign.apply(null, [{}].concat(records));
-        } else {
-            return layer;
+fluid.mergeLayers = function (layers, root = {}) {
+    // Big stuff coming here with deferencing of inner signal values etc.
+    Object.assign.apply(null, [root].concat(layers.map(layer => layer.layer)));
+    return root;
+};
+
+fluid.hierarchyResolver = function () {
+    const flatDefs = {};
+    const readerExpand = layer => fluid.readerExpandLayer(layer);
+    const that = {
+        flatDefs,
+        storeParents: layer => {
+            // TODO: If the raw layer def is unavailable we need to makeUnavailable return
+            layer.parents.forEach(parent => that.storeLayer(parent));
+        },
+        storeLayer: (layerName) => {
+            if (!flatDefs[layerName]) {
+                const layer = fluid.rawLayer(layerName).value?.raw;
+                if (layer) {
+                    const readerExpanded = readerExpand(layer);
+                    flatDefs[layerName] = readerExpanded;
+                    that.storeParents(readerExpanded);
+                }
+            }
+        },
+        resolve: (layerName) => {
+            const layer = flatDefs[layerName];
+            if (layer) {
+                const order = fluid.C3_precedence(layerName, flatDefs);
+                const layers = order.map((layerName, i) => ({
+                    layerType: "def",
+                    priority: fluid.mergeRecordTypes.def + i,
+                    layer: flatDefs[layerName]
+                })).concat({
+                    layerType: "defParents",
+                    priority: fluid.mergeRecordTypes.defParents,
+                    layer: {parents: order}
+                });
+                return {
+                    layers, merged: fluid.mergeLayers(layers)
+                };
+            } else { // TODO: How deeply nested should this be? Does it occur within a layer or does it replace the layer structure?
+                return fluid.makeUnavailable(["rawLayer", layerName]);
+            }
         }
+    };
+    return that;
+};
+
+
+fluid.getMergedHierarchy = function (layerName) {
+    return computed( () => {
+        const resolver = fluid.hierarchyResolver();
+        resolver.storeLayer(layerName);
+        return resolver.resolve(layerName);
     });
 };
 
-fluid.hasLayer = function (/*mat, layerName*/) {
-    return false;
+fluid.hasParent = function (layer, parent) {
+    return layer.parents && layer.parents.includes(parent);
+};
+
+/**
+ * Retrieves and stores a layer's configuration centrally.
+ * @param {String} layerName - The name of the grade whose options are to be read or written
+ * @return {Object} - Signal for layers and merged
+ */
+fluid.fullDef = function (layerName) {
+    return fluid.getMergedHierarchy(layerName);
+};
+
+fluid.writeDef = function (layerName, layer) {
+    fluid.rawLayer(layerName, layer);
+    const resolved = fluid.getMergedHierarchy(layerName);
+    if (fluid.hasParent(resolved.value.merged, "fluid.component")) {
+        fluid.makeComponentCreator(layerName);
+    }
 };
 
 /**
@@ -1405,38 +1479,83 @@ fluid.hasLayer = function (/*mat, layerName*/) {
  */
 fluid.def = function (layerName, layer) {
     if (layer === undefined) {
-        return fluid.getMergedMat(layerName);
+        return fluid.derefSignal(fluid.fullDef(layerName), ["merged"]);
     }
     else {
-        fluid.rawLayer(layerName, layer);
-        const mergedMat = fluid.getMergedMat(layerName);
-        if (fluid.hasLayer(mergedMat.value, "fluid.component")) {
-            fluid.makeComponentCreator(layerName);
-        }
+        fluid.writeDef(layerName, layer);
     }
 };
 
-fluid.validateCreatorGrade = function (message, componentName) {
-    const mergedMat = fluid.getMergedMat(componentName);
-    if (!mergedMat || !mergedMat.gradeNames || mergedMat.gradeNames.length === 0) {
-        fluid.fail(message + " type " + componentName + " which does not have any gradeNames defined");
-    } else if (!mergedMat.argumentMap) {
-        const blankGrades = [];
-        for (let i = 0; i < mergedMat.gradeNames.length; ++i) {
-            const gradeName = mergedMat.gradeNames[i];
-            const rawDefaults = fluid.rawLayer(gradeName);
-            if (!rawDefaults) {
-                blankGrades.push(gradeName);
-            }
-        }
-        if (blankGrades.length === 0) {
-            fluid.fail(message + " type " + componentName + " which is not derived from fluid.component");
-        } else {
-            fluid.fail("The grade hierarchy of component with type " + componentName + " is incomplete - it inherits from the following grade(s): " +
-             blankGrades.join(", ") + " for which the grade definitions are corrupt or missing. Please check the files which might include these " +
-             "grades and ensure they are readable and have been loaded by this instance of Infusion");
-        }
+fluid.validateCreator = function (componentName) {
+    const resolved = fluid.getMergedHierarchy(componentName).value;
+    if (fluid.isUnavailable(resolved)) {
+        const blankGrades = resolved.waitset.map(oneWait => oneWait[1]);
+        fluid.fail("The hierarchy of component with type " + componentName + " is incomplete - it inherits from the following layer(s): " +
+            blankGrades.join(", ") + " for which the definitions are not available");
     }
+};
+
+
+// unsupported, NON-API function
+// After some error checking, this *is* the component creator function
+fluid.initFreeComponent = function (layerName, initArgs) {
+    const id = fluid.allocateGuid();
+    // TODO: Perhaps one day we will support a directive which allows the user to select a current component
+    // root for free components other than the global root
+    const instanceName = fluid.computeGlobalMemberName(layerName, id);
+
+    // General pattern needs to become utility for subcomponent
+    const instance = Object.create(fluid.componentConstructor.prototype);
+    instance.id = id;
+    const path = ["fluid", "domain", "instances", instanceName];
+    // TODO: Actually the signal rather than the instance
+    fluid.setGlobalValue(path, instance);
+
+    const resolver = fluid.hierarchyResolver();
+    // If we support other signatures we might want to do an early resolution, as we used to with "upDefaults"
+    const argLayer = initArgs[0] || {};
+    let instanceLayer;
+    if (argLayer.parents) {
+        // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
+        fluid.rawLayer(instanceName, {...argLayer, parents: [layerName].concat(argLayer.parents)});
+        instanceLayer = instanceName;
+    } else {
+        instanceLayer = layerName;
+    }
+    resolver.storeLayer(instanceLayer);
+    const resolved = resolver.resolve(instanceLayer);
+    const userLayer = {
+        layerType: "user",
+        layer: {
+            ...argLayer
+        }
+    };
+
+    // layers themselves need to be stored somewhere - recall the return should be a signal not a component
+    // the merged result is actual a signal with respect to the supplied layers - fresh layers can arise or old ones can be removed
+    // OK - so how will we REMOVE properties in the case we need to unmerge? This is what implies that the entire top level
+    // of properties needs to be signalised? Or does the "instance" become a factory and we just construct a completely fresh
+    // component instance if there is a change in top-level properties?
+    // If we signalise the whole top layer then at least we don't need to ever discard the root reference.
+    // And also - if anyone wants a "flattened" component, this naturally can't agree with the old root reference.
+    // Does this commit us to "public zebras"?
+    const layers = resolved.layers.concat([userLayer]);
+
+    fluid.mergeLayers(layers, instance);
+
+    return instance;
+};
+
+fluid.makeComponentCreator = function (componentName) {
+    const creator = function () {
+        fluid.validateCreator(componentName);
+        return fluid.initFreeComponent(componentName, arguments);
+    };
+    const existing = fluid.getGlobalValue(componentName);
+    if (existing) {
+        Object.assign(creator, existing);
+    }
+    fluid.setGlobalValue(componentName, creator);
 };
 
 // Algorithm taken from Python 2.3's implementation from manual: https://www.python.org/download/releases/2.3/mro/#the-end
@@ -1515,31 +1634,11 @@ fluid.C3_precedence = function (C, defs, visited = new Set()) {
 };
 
 
-fluid.makeComponentCreator = function (componentName) {
-    const creator = function () {
-        fluid.validateCreatorGrade("Cannot make component creator for", componentName);
-        return fluid.initFreeComponent(componentName, arguments);
-    };
-    const existing = fluid.getGlobalValue(componentName);
-    if (existing) {
-        Object.assign(creator, existing);
-    }
-    fluid.setGlobalValue(componentName, creator);
-};
+
 
 // A special marker object which will be placed at a current evaluation point in the tree in order
 // to protect against circular evaluation
 fluid.inEvaluationMarker = Object.freeze({"__CURRENTLY_IN_EVALUATION__": true});
-
-// The types of merge record the system supports, with the weakest records first
-fluid.mergeRecordTypes = {
-    defaults:           1000,
-    defaultValueMerge:  900,
-    lensedComponents:   800,
-    subcomponentRecord: 700,
-    user:               600,
-    distribution:       100 // and above
-};
 
 // The Fluid Component System proper
 
@@ -1583,7 +1682,7 @@ fluid.def("fluid.component", {
  * segment.
  */
 fluid.computeNickName = function (typeName) {
-    const segs = fluid.model.parseEL(typeName);
+    const segs = fluid.parsePath(typeName);
     return fluid.peek(segs);
 };
 
@@ -1600,27 +1699,6 @@ fluid.isDestroyed = function (that, strict) {
 fluid.computeGlobalMemberName = function (type, id) {
     const nickName = fluid.computeNickName(type);
     return nickName + "-" + id;
-};
-
-// unsupported, NON-API function
-// After some error checking, this *is* the component creator function
-fluid.initFreeComponent = function (type, initArgs) {
-    const id = fluid.allocateGuid();
-    // TODO: Perhaps one day we will support a directive which allows the user to select a current component
-    // root for free components other than the global root
-    const path = ["fluid", "components", fluid.computeGlobalMemberName(type, id)];
-    // TODO: "type" needs to go into "layerNames"
-    const upDefaults = fluid.def(type);
-    const userLayer = {
-        layerType: "user",
-        layer: {
-            ...initArgs[0],
-            id
-        }
-    };
-    const instance = fluid.mergeMat(upDefaults, userLayer);
-    fluid.setGlobalValue(path, instance);
-    return instance;
 };
 
 // ******* SELECTOR ENGINE *********
