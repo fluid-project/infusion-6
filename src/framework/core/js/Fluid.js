@@ -1354,6 +1354,8 @@ Object.defineProperty(fluid.componentConstructor, "name", {
 
 fluid.domain = {};
 
+// Lookup of layer names to signal<{raw: layer}>
+// where "raw" has not yet been readerExpanded
 fluid.layerStore = {};
 
 fluid.rawLayer = function (layerName, layer) {
@@ -1374,9 +1376,9 @@ fluid.rawLayer = function (layerName, layer) {
     return layerSig;
 };
 
-// Like a "reader macro"
+// Like a "reader macro" - ensure that "parents" is an array
 fluid.readerExpandLayer = function (layer) {
-    // TODO: Create links between old and new data
+    // TODO: Create links between old and new data so that we can route errors back
     return {...layer, parents: fluid.makeArray(layer.parents)};
 };
 
@@ -1390,13 +1392,15 @@ fluid.mergeRecordTypes = {
     live:               0
 };
 
-fluid.mergeLayers = function (layers, root = {}) {
+fluid.mergeLayers = function (mergeRecords, root = {}) {
     // Big stuff coming here with deferencing of inner signal values etc.
-    Object.assign.apply(null, [root].concat(layers.map(layer => layer.layer)));
+    Object.assign.apply(null, [root].concat(mergeRecords.map(layer => layer.layer)));
     return root;
 };
 
+// Consumes rawLayer values as signals, produces mergeRecords and merged as plain outputs
 fluid.hierarchyResolver = function () {
+    // A local store, so that we can use C3_precedence with direct lookups
     const flatDefs = {};
     const readerExpand = layer => fluid.readerExpandLayer(layer);
     const that = {
@@ -1415,11 +1419,12 @@ fluid.hierarchyResolver = function () {
                 }
             }
         },
+        // Given a layerName, resolves a {mergeRecords, merged} structure - merged should really be a signal
         resolve: (layerName) => {
             const layer = flatDefs[layerName];
             if (layer) {
                 const order = fluid.C3_precedence(layerName, flatDefs);
-                const layers = order.map((layerName, i) => ({
+                const mergeRecords = order.map((layerName, i) => ({
                     layerType: "def",
                     priority: fluid.mergeRecordTypes.def + i,
                     layer: flatDefs[layerName]
@@ -1429,7 +1434,7 @@ fluid.hierarchyResolver = function () {
                     layer: {parents: order}
                 });
                 return {
-                    layers, merged: fluid.mergeLayers(layers)
+                    mergeRecords, merged: fluid.mergeLayers(mergeRecords)
                 };
             } else { // TODO: How deeply nested should this be? Does it occur within a layer or does it replace the layer structure?
                 return fluid.makeUnavailable(["rawLayer", layerName]);
@@ -1439,7 +1444,7 @@ fluid.hierarchyResolver = function () {
     return that;
 };
 
-
+// Returns signal<{mergeRecords: [mergeRecords], merged}> - this is a computed of entire layer values as signals
 fluid.getMergedHierarchy = function (layerName) {
     return computed( () => {
         const resolver = fluid.hierarchyResolver();
@@ -1455,7 +1460,7 @@ fluid.hasParent = function (layer, parent) {
 /**
  * Retrieves and stores a layer's configuration centrally.
  * @param {String} layerName - The name of the grade whose options are to be read or written
- * @return {Object} - Signal for layers and merged
+ * @return {Object} - Signal for layers (which is mergeRecords) and merged
  */
 fluid.fullDef = function (layerName) {
     return fluid.getMergedHierarchy(layerName);
@@ -1560,6 +1565,7 @@ fluid.makeComponentCreator = function (componentName) {
 
 // Algorithm taken from Python 2.3's implementation from manual: https://www.python.org/download/releases/2.3/mro/#the-end
 // Deals with FLUID-5800
+// eslint-disable-next-line jsdoc/require-returns-check -- return is at head of loop body
 /**
  * Merges multiple sequences of layer names into a single sequence using the C3 linearization method.
  * @param {String[][]} seqs - An array of sequences to be merged. **NOTE** The nested sequences will be modified by
