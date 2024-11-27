@@ -5,21 +5,7 @@
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
 var {signal, computed} = preactSignalsCore;
 
-const testSelfPeek = function () {
-    const source = signal(0);
-    const derived = computed(() => {
-        const oldValue = derived.v;
-        console.log("Old value of derived was ", oldValue);
-        return source.value + 1;
-    });
-    console.log("Derived value is ", derived.value);
-    source.value = 1;
-    console.log("Derived value is ", derived.value);
-};
-
-testSelfPeek();
-
-const taxa = signal([
+const taxaSignal = signal([
     {id: 48460, name: "Life"},
     {id: 47126, name: "Plants", parentId: 48460},
     {id: 47567, name: "Willow family", parentId: 47126}
@@ -27,24 +13,28 @@ const taxa = signal([
 
 const acceptTaxon = taxon => taxon.name.includes("Willow");
 
-const taxaById = computed( () => {
+const indexTaxa = function (taxa) {
     const togo = {};
-    taxa.value.forEach(row => togo[row.id] = row);
+    taxa.forEach(row => togo[row.id] = row);
     return togo;
-});
+};
 
-const acceptedTree = computed( () => {
+const taxaByIdSignal = fluid.computed(indexTaxa, taxaSignal);
+
+const filterAccepted = function (taxa, taxaById) {
     const togo = {};
     const storeParents = function (id) {
-        const row = taxaById.value[id];
+        const row = taxaById[id];
         togo[id] = true;
         const parentId = row.parentId;
         if (parentId) {
             storeParents(parentId);
         }
     };
-    taxa.value.filter(acceptTaxon).forEach(row => storeParents(row.id));
+    taxa.filter(acceptTaxon).forEach(row => storeParents(row.id));
     return togo;
-});
+};
+
+const acceptedTree = fluid.computed(filterAccepted, taxaSignal, taxaByIdSignal);
 
 console.log(acceptedTree.value);

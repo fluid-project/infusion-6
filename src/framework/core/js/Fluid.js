@@ -1340,6 +1340,49 @@ fluid.failureEvent = fluid.makeEventFirer({name: "failure event"});
 fluid.failureEvent.addListener(fluid.builtinFail, "fail");
 fluid.failureEvent.addListener(fluid.logFailure, "log", "before:fail");
 
+/*** SIGNAL PROCESSING ***/
+
+// Monkey-patch core framework to support wide range of primitives and JSON initial values
+fluid.coerceToPrimitive = function (string) {
+    return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{\w/.test(string) ? JSON.parse(string) : string;
+};
+
+fluid.processSignalArgs = function (args) {
+    let undefinedSignals = false;
+    const designalArgs = [];
+    for (const arg of args) {
+        if (arg instanceof preactSignalsCore.Signal) {
+            const value = arg.value;
+            designalArgs.push(arg.value);
+            if (value === undefined) {
+                undefinedSignals = true;
+            }
+        } else {
+            designalArgs.push(arg);
+        }
+    }
+    return {designalArgs, undefinedSignals};
+};
+
+fluid.computed = function (func, ...args) {
+    return computed( () => {
+        const {designalArgs, undefinedSignals} = fluid.processSignalArgs(args);
+        return undefinedSignals ? undefined :
+            typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
+    });
+};
+
+// TODO: Return needs to be wrapped in a special marker so that component destruction can dispose it
+fluid.effect = function (func, ...args) {
+    return effect( () => {
+        const {designalArgs, undefinedSignals} = fluid.processSignalArgs(args);
+        if (!undefinedSignals) {
+            return typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
+        }
+    });
+};
+
+
 /*** DEFAULTS AND OPTIONS MERGING SYSTEM ***/
 
 // A function to tag the types of all Fluid components
