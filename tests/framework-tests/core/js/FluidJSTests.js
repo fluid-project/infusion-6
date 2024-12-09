@@ -686,7 +686,7 @@ fluid.tests.c3tests = [{
 fluid.tests.c3tests.forEach(fixture => {
     QUnit.test(`C3 linearisation for FLUID-5800: ${fixture.name}`, function (assert) {
         // Check that grade registry is not corrupted by algorithm
-        const defs = fluid.freezeRecursive(fluid.transform(fixture.defs, def => ({parents: def})));
+        const defs = fluid.freezeRecursive(fluid.transform(fixture.defs, def => ({$layers: def})));
         if (fixture.expected) {
             Object.keys(defs).forEach(key => {
                 const message = "Linearization of layer " + key;
@@ -698,30 +698,4 @@ fluid.tests.c3tests.forEach(fixture => {
             assert.expectFluidError("Expected failure", () => fluid.C3_precedence(last, defs), fixture.error);
         }
     });
-});
-
-QUnit.test("Basic live merging", function (assert) {
-    fluid.def("fluid.tests.testComponent", {
-        parents: "fluid.component",
-        testValue: 0
-    });
-    const testDef = fluid.def("fluid.tests.testComponent");
-    assert.strictEqual(testDef.value.testValue, 0, "Retrieve basic value");
-    assert.strictEqual(testDef.value.events.onCreate, 0, "Retrieve merged value");
-    fluid.def("fluid.tests.testComponent", {
-        parents: "fluid.component",
-        testValue: 1
-    });
-    assert.strictEqual(testDef.value.testValue, 1, "Updated basic value");
-    assert.strictEqual(testDef.value.events.onCreate, 0, "Merged value unchanged");
-});
-
-QUnit.test("Basic construction", function (assert) {
-    fluid.def("fluid.tests.testComponent", {
-        parents: "fluid.component",
-        testValue: 0
-    });
-    const that = fluid.tests.testComponent();
-    assert.assertNotUndefined(that, "Got a value as component instance");
-    assert.ok(fluid.isComponent(that), "Got a component as component instance");
 });

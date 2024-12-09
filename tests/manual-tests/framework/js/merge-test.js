@@ -81,7 +81,7 @@ function runTests() {
         results.push(its + " iterations concluded in " + delay + " ms: " + time + " us/it");
         times.push(time);
     }
-    results.push("Median time: " + medianWithoutExtremes(results));
+    results.push("Median time: " + medianWithoutExtremes(times));
 
     results.push("Accumulated: " + acc.length);
 

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Parse Tests</title>
+
+    <script src="../../../../src/lib/preact-signals/signals-core.min.js"></script>
+    <script src="../../../../src/framework/core/js/Fluid.js"></script>
+
+    <script src="../js/parse-test.js"></script>
+</head>
+<body>
+<main>
+    <button id="run-tests">Run Tests</button>
+    <h1>Performance Tests: Parse segments</h1>
+    <h2>Results</h2>
+    <ul class="results"></ul>
+</main>
+<script>
+    document.querySelector("#run-tests").addEventListener("click", runTests);
+</script>
+</body>
+</html>

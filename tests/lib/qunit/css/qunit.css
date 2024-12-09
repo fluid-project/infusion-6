@@ -44,12 +44,14 @@
 @supports (display: flex) or (display: -webkit-box) {
 	@media (min-height: 500px) {
 		#qunit {
+/** AMB REMOVE
 			position: fixed;
+            padding: 8px;
+**/
 			left: 0;
 			right: 0;
 			top: 0;
 			bottom: 0;
-			padding: 8px;
 			display: -webkit-box;
 			display: flex;
 			flex-direction: column;
