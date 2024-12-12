@@ -7,8 +7,6 @@ const fluidILScope = function (fluid) {
     // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
     var {signal} = preactSignalsCore;
 
-    // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
-    fluid.metadataSymbol = Symbol("fluid.metadata");
     const $m = fluid.metadataSymbol;
 
     // A function to tag the types of all Fluid components
@@ -292,15 +290,19 @@ const fluidILScope = function (fluid) {
             recordComponent(null, component, "", "", true);
         };
         that.recordKnownComponent = function (parent, component, name, created) {
-            parent[name] = component;
-            if (fluid.isComponent(component)) {
-                const parentShadow = parent[$m];
+            const parentShadow = parent[$m];
+            const path = fluid.composePath(parentShadow.path, name);
+            // Will get multiple notifications from initFreeComponent if hierarchy changes
+            const existing = parent[name];
+            if (existing) {
+                if (existing !== component) {
+                    fluid.fail("Attempt to register component at path ", path, " which has already been used for component ", existing);
+                }
+            } else {
+                parent[name] = component;
                 parentShadow.childComponents[name] = component;
-                const path = fluid.composePath(parentShadow.path, name);
                 recordComponent(parent, component, path, name, created);
                 that.events.onComponentAttach.fire(component, path, that, created);
-            } else {
-                fluid.fail("Cannot record non-component with value ", component, " at path \"" + name + "\" of parent ", parent);
             }
         };
 
@@ -333,9 +335,9 @@ const fluidILScope = function (fluid) {
             // recurse path, it must have been injected
             if (created) {
                 if (fluid.isDestroyed(child)) {
-                    fluid.fail("Cannot destroy component which is already in status \"" + child.lifecycleStatus + "\"");
+                    fluid.fail("Cannot destroy component which is already in status \"" + child.$lifecycleStatus + "\"");
                 }
-                child.lifecycleStatus = "destroying";
+                child.$lifecycleStatus = "destroying";
                 fluid.visitComponentChildren(child, function (gchild, gchildname, segs, i) {
                     const parentPath = fluid.composeSegments.apply(null, segs.slice(0, i));
                     that.clearComponent(child, gchildname, null, options, true, parentPath);
@@ -382,16 +384,6 @@ const fluidILScope = function (fluid) {
         resolveRootShadow.childrenScope.instantiator = instantiator; // needs to be mounted since it never passes through cacheShadowGrades
     };
 
-    fluid.validateCreator = function (componentName) {
-        const resolved = fluid.getMergedHierarchy(componentName).value;
-        if (fluid.isUnavailable(resolved)) {
-            const blankGrades = resolved.waitset.map(oneWait => oneWait[1]);
-            fluid.fail("The hierarchy of component with name " + componentName + " is incomplete - it inherits from the following layer(s): " +
-                blankGrades.join(", ") + " for which the definitions are not available");
-        }
-    };
-
-
     /* Compute a "nickname" given a fully qualified layer name, by returning the last path
      * segment.
      */
@@ -406,7 +398,7 @@ const fluidILScope = function (fluid) {
      * @return {Boolean} `true` if the reference is to a component which has been destroyed
      **/
     fluid.isDestroyed = function (that, strict) {
-        return that.lifecycleStatus === "destroyed" || (!strict && that.lifecycleStatus === "destroying");
+        return that.$lifecycleStatus === "destroyed" || (!strict && that.$lifecycleStatus === "destroying");
     };
 
     // Computes a name for a component appearing at the global root which is globally unique, from its nickName and id
@@ -581,8 +573,7 @@ const fluidILScope = function (fluid) {
         });
     };
 
-    // After some error checking, this *is* the component creator function
-    fluid.initFreeComponent = function (componentName, initArgs) {
+    fluid.initFreeComponent = function (componentName, resolverIn, initArgs) {
         const instantiator = fluid.globalInstantiator;
         // TODO: Perhaps one day we will support a directive which allows the user to select a current component
         // root for free components other than the global root
@@ -590,59 +581,52 @@ const fluidILScope = function (fluid) {
         const instance = fluid.freshComponent();
         const instanceName = fluid.computeGlobalMemberName(componentName, instance.id);
 
-        instantiator.recordKnownComponent(fluid.rootComponent, instance, instanceName, true);
-
-        const resolver = fluid.hierarchyResolver();
         // If we support other signatures we might want to do an early resolution, as we used to with "upDefaults"
         const argLayer = initArgs[0] || {};
-        let instanceLayer;
-        if (argLayer.parents) {
+        let instanceLayer, resolver;
+        if (argLayer.$layers) {
             // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
             fluid.rawLayer(instanceName, {...argLayer, $layers: [componentName].concat(argLayer.$layers)});
+            resolver = fluid.hierarchyResolver(resolverIn.flatDefs);
+            resolver.storeLayer(instanceLayer);
             instanceLayer = instanceName;
         } else {
             instanceLayer = componentName;
+            resolver = resolverIn;
         }
-        resolver.storeLayer(instanceLayer);
+
         const resolved = resolver.resolve(instanceLayer);
-        const userLayer = {
-            layerType: "user",
-            layer: {
-                ...argLayer
-            }
+
+        const computeInstance = function (resolved) {
+            const userLayer = {
+                layerType: "user",
+                layer: {
+                    ...argLayer
+                }
+            };
+
+            // layers themselves need to be stored somewhere - recall the return should be a signal not a component
+            // the merged result is actual a signal with respect to the supplied layers - fresh layers can arise or old ones can be removed
+            // OK - so how will we REMOVE properties in the case we need to unmerge? This is what implies that the entire top level
+            // of properties needs to be signalised? Or does the "instance" become a factory and we just construct a completely fresh
+            // component instance if there is a change in top-level properties?
+            // If we signalise the whole top layer then at least we don't need to ever discard the root reference.
+            // And also - if anyone wants a "flattened" component, this naturally can't agree with the old root reference.
+            // Does this commit us to "public zebras"?
+            const layers = resolved.mergeRecords.concat([userLayer]);
+
+            const merged = {};
+            fluid.mergeLayers(layers, merged);
+            instantiator.recordKnownComponent(fluid.rootComponent, instance, instanceName, true);
+
+            fluid.expandLayer(merged, instance);
+
+            // TODO: Incrementalise this
+            fluid.cacheLayerScopes(instance, instance[$m]);
+
+            return instance;
         };
-
-        // layers themselves need to be stored somewhere - recall the return should be a signal not a component
-        // the merged result is actual a signal with respect to the supplied layers - fresh layers can arise or old ones can be removed
-        // OK - so how will we REMOVE properties in the case we need to unmerge? This is what implies that the entire top level
-        // of properties needs to be signalised? Or does the "instance" become a factory and we just construct a completely fresh
-        // component instance if there is a change in top-level properties?
-        // If we signalise the whole top layer then at least we don't need to ever discard the root reference.
-        // And also - if anyone wants a "flattened" component, this naturally can't agree with the old root reference.
-        // Does this commit us to "public zebras"?
-        const layers = resolved.mergeRecords.concat([userLayer]);
-
-        const merged = {};
-        fluid.mergeLayers(layers, merged);
-        fluid.expandLayer(merged, instance);
-
-        // TODO: Incrementalise this
-        fluid.cacheLayerScopes(instance, instance[$m]);
-
-        return instance;
-    };
-
-    // Must be defined before we construct any components
-    fluid.makeComponentCreator = function (componentName) {
-        const creator = function () {
-            fluid.validateCreator(componentName);
-            return fluid.initFreeComponent(componentName, arguments);
-        };
-        const existing = fluid.getGlobalValue(componentName);
-        if (existing) {
-            Object.assign(creator, existing);
-        }
-        fluid.setGlobalValue(componentName, creator);
+        return fluid.computed(computeInstance, resolved);
     };
 
     /** Destroys a component held at the specified path. The parent path must represent a component, although the component itself may be nonexistent

@@ -44,7 +44,7 @@ fluid.def("fluid.tests.basicTestComponent", {
 
 QUnit.test("Basic construction and destruction", function (assert) {
 
-    const that = fluid.tests.basicTestComponent();
+    const that = fluid.tests.basicTestComponent().value;
     assert.assertNotUndefined(that, "Got a value as component instance");
     assert.ok(fluid.isComponent(that), "Got a component as component instance");
 
@@ -77,9 +77,29 @@ fluid.def("fluid.tests.URLDataSource", {
 });
 
 QUnit.test("FLUID-4914: resolve grade as context name", function (assert) {
-    const dataSource = fluid.tests.URLDataSource();
+    const dataSource = fluid.tests.URLDataSource().value;
     const url = dataSource.resolve();
     assert.equal(url, dataSource.url, "Resolved grade context name via invoker");
     const data = dataSource.get();
     assert.deepEqual(data, {value: 4}, "Resolved grade context name as demands context");
+});
+
+/** Taken from FLUID-5288: Improved diagnostic for incomplete grade hierarchy **/
+
+fluid.def("fluid.tests.missingGradeComponent", {
+    $layers: ["fluid.tests.nonexistentGrade"]
+});
+
+QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", function (assert) {
+    const incompleteSignal = fluid.tests.missingGradeComponent();
+    const incomplete = incompleteSignal.value;
+    assert.ok(fluid.isUnavailable(incomplete), "component with missing parent is unavailable");
+    assert.ok(incomplete.causes[0].message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
+    // Now define the grade
+    fluid.def("fluid.tests.nonexistentGrade", {$layers: "fluid.component"});
+    // Evaluate the signal again and it should now be defined
+    const complete = incompleteSignal.value;
+    assert.ok(fluid.isComponent(complete), "Component has sprung into life after missing grade defined");
+    // Clean up layer registry
+    fluid.deleteLayer("fluid.tests.nonexistentGrade");
 });
