@@ -19,7 +19,7 @@ const indexTaxa = function (taxa) {
     return togo;
 };
 
-const taxaByIdSignal = fluid.computed(indexTaxa, taxaSignal);
+const taxaByIdSignal = fluid.computed(indexTaxa, [taxaSignal]);
 
 const filterAccepted = function (taxa, taxaById) {
     const togo = {};
@@ -35,6 +35,7 @@ const filterAccepted = function (taxa, taxaById) {
     return togo;
 };
 
-const acceptedTree = fluid.computed(filterAccepted, taxaSignal, taxaByIdSignal);
+const acceptedTree = fluid.computed(filterAccepted, [taxaSignal, taxaByIdSignal]);
 
+// eslint-disable-next-line no-console
 console.log(acceptedTree.value);

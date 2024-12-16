@@ -280,6 +280,11 @@ const fluidJSScope = function (fluid) {
 
     // Functional programming utilities.
 
+    fluid.proxySymbol = Symbol("fluid.proxyTarget");
+    const $t = fluid.proxySymbol;
+
+    fluid.unProxy = target => target?.[$t] ? target[$t] : target;
+
     // Type checking functions
 
     /**
@@ -706,7 +711,9 @@ const fluidJSScope = function (fluid) {
      * @param {Object} totest - The object to test.
      * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
      */
-    fluid.isUnavailable = totest => totest instanceof fluid.marker && totest.type === "Unavailable";
+    fluid.isUnavailable = totest => {
+        return totest instanceof fluid.marker && totest.type === "Unavailable";
+    };
 
     /**
      * Merge two "unavailable" markers into a single marker, combining their causes.
@@ -727,23 +734,30 @@ const fluidJSScope = function (fluid) {
         return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{\w/.test(string) ? JSON.parse(string) : string;
     };
 
+    fluid.isSignal = function (value) {
+        return value instanceof preactSignalsCore.Signal;
+    };
+
     /**
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects
      * and identifying and coalescing "unavailable" values if present.
      *
      * @param {Array} args - The array of arguments to process.
      *     Arguments may include `preactSignalsCore.Signal` instances or plain values.
+     * @param {Array} argSpecs - An array parallel to args which may hold noDesignal property indicating that a signal
+     *     as this position should not be unwrapped
      * @return {Object} An object with the following properties:
      *     - `designalArgs` (Array): The array of arguments with `Signal` values replaced by their unwrapped values.
      *     - `unavailable` (Object|undefined): The most "unavailable" value (if any) based on priority,
      *       or `undefined` if no unavailable values are found.
      */
-    fluid.processSignalArgs = function (args) {
+    fluid.processSignalArgs = function (args, argSpecs) {
         let unavailable;
         const designalArgs = [];
-        for (const arg of args) {
+        for (let i = 0; i < args.length; ++i) {
+            const arg = args[i], argSpec = argSpecs?.[i];
             if (arg instanceof preactSignalsCore.Signal) {
-                const value = arg.value;
+                const value = argSpec?.noDesignal ? arg : arg.value;
                 designalArgs.push(value);
                 if (fluid.isUnavailable(value)) {
                     unavailable = fluid.mergeUnavailable(unavailable, value);
@@ -755,18 +769,18 @@ const fluidJSScope = function (fluid) {
         return {designalArgs, unavailable};
     };
 
-    fluid.computed = function (func, ...args) {
+    fluid.computed = function (func, args, argSpecs) {
         return computed(() => {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(args);
+            const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
             return unavailable ? unavailable :
                 typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
         });
     };
 
     // TODO: Return needs to be wrapped in a special marker so that component destruction can dispose it
-    fluid.effect = function (func, ...args) {
+    fluid.effect = function (func, args, argSpecs) {
         return effect(() => {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(args);
+            const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
             if (!unavailable) {
                 return typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
             }
@@ -900,6 +914,32 @@ const fluidJSScope = function (fluid) {
             root = root ? root[segs[j]] : undefined;
         }
         return root;
+    };
+
+    /**
+     * Traverse a nested object structure, resolving `Signal` values as encountered,
+     * and returning a computed or plain value representing the resolved path.
+     *
+     * @param {any} root - The root object to begin traversal from.
+     * @param {String[]} segs - An array of segment names representing the path to traverse.
+     * @return {any} A computed value that resolves the path through any `Signal` encountered, a plain value if
+     * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
+     */
+    fluid.getThroughSignals = function (root, segs) {
+        const togo = computed(() => {
+            for (let j = 0; j < segs.length; ++j) {
+                const seg = segs[j];
+                const member = root?.[seg];
+                if (fluid.isSignal(member)) {
+                    root = member.value;
+                } else {
+                    root = member;
+                }
+            }
+            return root;
+        });
+        togo.$variety = "$ref";
+        return togo;
     };
 
     fluid.derefSignal = function (signal, path) {
@@ -1696,7 +1736,7 @@ const fluidJSScope = function (fluid) {
 
     // Root reference supplied which is a bit asymmetric - is empty for defaults, and is component instance for instantiating.
 
-    fluid.mergeLayers = function (mergeRecords, root = {}) {
+    fluid.mergeLayers = function (root, mergeRecords) {
         const allLayers = [root].concat(mergeRecords.map(layer => layer.layer));
         // Big stuff coming here with deferencing of inner signal values etc.
         Object.assign.apply(null, allLayers);
@@ -1735,7 +1775,7 @@ const fluidJSScope = function (fluid) {
             },
             // Given a layerName, resolves a signal of {mergeRecords, merged} structure or unavailable if parents are not defined
             resolve: (layerName) => {
-                const mergeLayers = function () {
+                const resolveLayers = function () {
                     // First prime the cache by evalauting all signals at tip
                     fluid.each(flatDefs, def => def.value);
                     // Second check if any layers are unavailable
@@ -1743,7 +1783,7 @@ const fluidJSScope = function (fluid) {
                     if (unavailable) {
                         return unavailable;
                     } else {
-                        // Finally flatten cache into pure values ready for esolution
+                        // Finally flatten cache into pure values ready for resolution
                         const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
                         const order = fluid.C3_precedence(layerName, veryFlatDefs);
                         const mergeRecords = order.map((layerName, i) => ({
@@ -1757,11 +1797,11 @@ const fluidJSScope = function (fluid) {
                         });
                         return {
                             // Note merged is currently only read by fluid.readDef
-                            mergeRecords, merged: fluid.mergeLayers(mergeRecords)
+                            mergeRecords, merged: fluid.mergeLayers({}, mergeRecords)
                         };
                     }
                 };
-                return computed(() => mergeLayers());
+                return computed(() => resolveLayers());
             }
         };
         return that;

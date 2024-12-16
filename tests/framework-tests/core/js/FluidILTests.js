@@ -19,6 +19,16 @@ fluid.setLogging(true);
 
 fluid.registerNamespace("fluid.tests");
 
+fluid.tests.flattenSignals = function (root) {
+    if (fluid.isPrimitive(root)) {
+        return root;
+    } else {
+        const value = fluid.isSignal(root) ? root.value : fluid.unProxy(root);
+        return fluid.isPrimitive(value) ? value :
+            fluid.isArrayable(value) ? value.map(fluid.tests.flattenSignals) : fluid.transform(value, fluid.tests.flattenSignals);
+    };
+};
+
 QUnit.module("Fluid IL Tests");
 
 QUnit.test("Basic live merging", function (assert) {
@@ -44,7 +54,7 @@ fluid.def("fluid.tests.basicTestComponent", {
 
 QUnit.test("Basic construction and destruction", function (assert) {
 
-    const that = fluid.tests.basicTestComponent().value;
+    const that = fluid.tests.basicTestComponent();
     assert.assertNotUndefined(that, "Got a value as component instance");
     assert.ok(fluid.isComponent(that), "Got a component as component instance");
 
@@ -77,7 +87,7 @@ fluid.def("fluid.tests.URLDataSource", {
 });
 
 QUnit.test("FLUID-4914: resolve grade as context name", function (assert) {
-    const dataSource = fluid.tests.URLDataSource().value;
+    const dataSource = fluid.tests.URLDataSource();
     const url = dataSource.resolve();
     assert.equal(url, dataSource.url, "Resolved grade context name via invoker");
     const data = dataSource.get();
@@ -91,15 +101,52 @@ fluid.def("fluid.tests.missingGradeComponent", {
 });
 
 QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", function (assert) {
-    const incompleteSignal = fluid.tests.missingGradeComponent();
-    const incomplete = incompleteSignal.value;
-    assert.ok(fluid.isUnavailable(incomplete), "component with missing parent is unavailable");
-    assert.ok(incomplete.causes[0].message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
+    const that = fluid.tests.missingGradeComponent();
+    assert.ok(fluid.isUnavailable(that), "component with missing parent is unavailable");
+    assert.ok(that.causes[0].message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
     // Now define the grade
     fluid.def("fluid.tests.nonexistentGrade", {$layers: "fluid.component"});
     // Evaluate the signal again and it should now be defined
-    const complete = incompleteSignal.value;
-    assert.ok(fluid.isComponent(complete), "Component has sprung into life after missing grade defined");
+    assert.ok(fluid.isComponent(that), "Component has sprung into life after missing grade defined");
     // Clean up layer registry
     fluid.deleteLayer("fluid.tests.nonexistentGrade");
+});
+
+/** FLUID-4930 retrunking test taken from fluid-authoring arrow rendering **/
+
+fluid.tests.vectorToPolar = function (start, end) {
+    const dx = end[0] - start[0], dy = end[1] - start[1];
+    return {
+        length: Math.sqrt(dx * dx + dy * dy),
+        angle: Math.atan2(dy, dx)
+    };
+};
+
+fluid.def("fluid.tests.retrunking", {
+    $layers: "fluid.component",
+    arrowGeometry: {
+        length: "{self}.polar.length",
+        width: 10,
+        headWidth: 20,
+        headHeight: 20,
+        angle: "{self}.polar.angle",
+        start: [100, 100],
+        end: [100, 200]
+    },
+    polar: "$compute:fluid.tests.vectorToPolar({self}.arrowGeometry.start, {self}.arrowGeometry.end)"
+});
+
+QUnit.test("FLUID-4930: Options retrunking test", function (assert) {
+    const thatSignal = fluid.tests.retrunking();
+    const that = fluid.tests.flattenSignals(thatSignal);
+    const expected = {
+        length: 100,
+        width: 10,
+        headWidth: 20,
+        headHeight: 20,
+        angle: Math.PI / 2,
+        start: [100, 100],
+        end: [100, 200]
+    };
+    assert.deepEqual(that.arrowGeometry, expected, "Successfully evaluated all options");
 });
