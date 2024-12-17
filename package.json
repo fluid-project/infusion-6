@@ -1,5 +1,5 @@
 {
-    "name": "infusion",
+    "name": "infusion-6",
     "description": "Infusion is an application framework for developing flexible stuff with JavaScript",
     "version": "6.0.0-pre",
     "author": "Fluid Project",
@@ -14,9 +14,10 @@
         "IL",
         "Integration Language",
         "FRP",
+        "reactive programming",
         "signals"
     ],
-    "repository": "git://github.com/fluid-project/infusion.git",
+    "repository": "git://github.com/fluid-project/infusion-6.git",
     "main": "./src/module/fluid.js",
     "scripts": {
         "clean": "run-p clean:*",

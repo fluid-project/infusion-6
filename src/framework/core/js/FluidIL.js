@@ -526,11 +526,7 @@ const fluidILScope = function (fluid) {
 
     fluid.getForComponent = function (component, path) {
         const segs = fluid.parsePath(path);
-        if (segs.length === 0) {
-            return component;
-        } else {
-            return fluid.getThroughSignals(component, segs);
-        }
+        return Object.assign(fluid.getThroughSignals(component, segs), {component, segs, $variety: "$ref"});
     };
 
     fluid.fetchContextReference = function (ref, that) {
@@ -543,44 +539,54 @@ const fluidILScope = function (fluid) {
             }));
     };
 
-    fluid.proxyComponentHandler = function (componentSignal, prop) {
-        // Use "Symbol.toStringTag" to make sure that tricks like fluid.isArrayable work on the target
-        const target = componentSignal.value;
-        if (prop === Symbol.toStringTag) {
-            return Object.prototype.toString.call(target);
-        } else if (prop === $t) {
-            return target;
+    fluid.proxyMat = function (target, shadow, segs) {
+        const rec = fluid.getRecInsist(shadow, ["proxyMap", ...segs, $m]);
+        const existing = rec.proxy;
+        if (existing) {
+            return existing;
         } else {
-            const member = target[prop];
-            // TODO: See if we need to walk along using metadata map
-            return fluid.isSignal(member) ? member.value : member;
-        }
-    };
+            const getHandler = function (target, prop) {
+                // Use "Symbol.toStringTag" to make sure that tricks like fluid.isArrayable work on the target
+                const deTarget = fluid.deSignal(target);
+                if (prop === Symbol.toStringTag) {
+                    return Object.prototype.toString.call(deTarget);
+                } else if (prop === $t) {
+                    return target;
+                } else {
+                    const next = deTarget[prop];
+                    if (fluid.isSignal(next) && next.$variety) {
+                        const upcoming = fluid.deSignal(next);
+                        // Problem here if material goes away or changes - proxies bound to old material will still be out there,
+                        // although we do reevaluate our signal target
+                        // We need to arrange that any signal at a particular path stays there, which implies we need
+                        // rebindable computables
+                        return fluid.isPrimitive(upcoming) ? upcoming : fluid.proxyMat(next, shadow, [...segs, prop]);
+                    } else {
+                        return next;
+                    }
+                }
+            };
 
-    fluid.proxyComponent = function (componentSignal, instance) {
-        // Supply instance since signal may not resolve onto component if it is unavailable
-        const shadow = instance[$m];
-        if (!shadow.proxy) {
-            shadow.proxy = new Proxy(componentSignal, {
-                get: fluid.proxyComponentHandler,
+            const proxy = new Proxy(target, {
+                get: getHandler,
                 // Pattern described at https://stackoverflow.com/a/50139861/1381443
                 ownKeys: () => {
-                    return Reflect.ownKeys(componentSignal.value);
+                    return Reflect.ownKeys(fluid.deSignal(target));
                 },
                 getOwnPropertyDescriptor: function (target, key) {
-                    return { value: this.get(target, key), enumerable: true, configurable: true };
+                    return {value: this.get(target, key), enumerable: true, configurable: true};
                 },
-                getPrototypeOf: () => Object.getPrototypeOf(componentSignal.value)
+                getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignal(target))
             });
+            return rec.proxy = proxy;
         }
-        return shadow.proxy;
     };
 
     fluid.possiblyProxyComponent = function (value) {
         return fluid.isComponent(value) && value.lifecycleStatus !== "treeConstructed" ? fluid.proxyComponent(value) : value;
     };
 
-    // TODO: patch this into the "resolveXxxxArgs" methods
+    // TODO: patch this into the "resolveMethodArgs" methods
     fluid.proxyComponentArgs = function (args) {
         args.forEach(function (arg, i) {
             args[i] = fluid.possiblyProxyComponent(arg);
@@ -601,24 +607,26 @@ const fluidILScope = function (fluid) {
         // Old fluid.makeInvoker used to have:
         // func = func || (invokerec.funcName ? fluid.getGlobalValueNonComponent(invokerec.funcName, "an invoker") : fluid.expandImmediate(invokerec.func, that));
         const func = record.funcName ? fluid.getGlobalValue(record.funcName) : record.func;
+        let togo;
         if (record.args) {
             const argRecs = fluid.makeArray(record.args);
-            return function (...args) {
+            togo = function applyMethod(...args) {
                 const resolved = fluid.resolveMethodArgs(argRecs, args, that);
                 return func.apply(that, resolved);
             };
         } else { // Fast path just directly dispatches args
-            return function (...args) {
+            togo = function applyDirectMethod(...args) {
                 return func.apply(that, [that, ...args]);
             };
         }
+        return togo;
     };
 
     fluid.expandComputeRecord = function (that, record) {
         const func = record.funcName ? fluid.getGlobalValue(record.funcName) : record.func;
         const args = fluid.makeArray(record.args);
         const resolvedArgs = fluid.resolveComputeArgs(args, that);
-        const togo = fluid.computed(func, resolvedArgs);
+        const togo = fluid.computed(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
         togo.$variety = "$compute";
         return togo;
     };
@@ -643,20 +651,23 @@ const fluidILScope = function (fluid) {
         }
     };
 
-    fluid.expandLayer = function (target, flatMerged, that) {
+    fluid.expandLayer = function (target, flatMerged, that, shadow, segs) {
         fluid.each(flatMerged, function (value, key) {
+            segs.push(key);
             const uncompact = fluid.expandCompactElement(value);
             const expanded = fluid.expandElement(that, uncompact || value);
             if (fluid.isPlainObject(expanded, true)) {
                 const expandedInner = {}; // TODO: Make this lazy and only construct a fresh object if there is an expansion
-                fluid.expandLayer(expandedInner, value, that);
+                fluid.expandLayer(expandedInner, value, that, shadow, segs);
                 target[key] = expandedInner;
             } else {
                 target[key] = expanded;
             }
+            segs.pop();
         });
     };
 
+    // Assign any signals from source into target, or create fresh ones if they are not signalised
     fluid.applyLayerSignals = function (target, source) {
         fluid.each(source, (value, key) => {
             if (fluid.isSignal(value)) {
@@ -695,6 +706,8 @@ const fluidILScope = function (fluid) {
         // This will be a signal that at the least we can derive our key set from
         shadow.flatMerged = signal();
         shadow.expanded = signal();
+        // TODO: How can we have shrinkage in this map? It should really be signalised itself
+        shadow.proxyMap = Object.create(null);
 
         const resolvedSignal = resolver.resolve(instanceLayerName);
 
@@ -726,6 +739,7 @@ const fluidILScope = function (fluid) {
 
             const expanded = {};
             shadow.expanded.value = expanded;
+            shadow.signalMap = Object.create(null);
             fluid.expandLayer(expanded, flatMerged, instance, shadow, []);
             fluid.applyLayerSignals(instance, expanded);
 
@@ -733,8 +747,8 @@ const fluidILScope = function (fluid) {
         };
 
         const computer = fluid.computed(computeInstance, [resolvedSignal]);
-        const proxy = fluid.proxyComponent(computer, instance);
         computer.$variety = "$component";
+        const proxy = fluid.proxyMat(computer, shadow, []);
         return proxy;
     };
 

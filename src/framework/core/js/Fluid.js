@@ -306,7 +306,6 @@ const fluidJSScope = function (fluid) {
      * @param {any} totest - The value to be tested
      * @return {Boolean} `true` if the supplied value is an array
      */
-    // Note: The primary place jQuery->Array conversion is used in the framework is in dynamic components with a jQuery source.
     fluid.isArrayable = function (totest) {
         return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
     };
@@ -374,6 +373,11 @@ const fluidJSScope = function (fluid) {
     /** A function which raises a failure if executed */
     fluid.notImplemented = function () {
         fluid.fail("This operation is not implemented");
+    };
+
+    /* A basic utility that returns its argument unchanged */
+    fluid.identity = function (arg) {
+        return arg;
     };
 
     /** Return an empty container as the same type as the argument (either an array or hash)
@@ -523,7 +527,6 @@ const fluidJSScope = function (fluid) {
      * @param {Number} count - Size of the filled array to be returned
      * @param {Number} [first] - (optional, defaults to 0) First element to appear in the array
      */
-
     fluid.iota = function (count, first) {
         first = first || 0;
         const togo = [];
@@ -711,9 +714,7 @@ const fluidJSScope = function (fluid) {
      * @param {Object} totest - The object to test.
      * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
      */
-    fluid.isUnavailable = totest => {
-        return totest instanceof fluid.marker && totest.type === "Unavailable";
-    };
+    fluid.isUnavailable = totest => totest instanceof fluid.marker && totest.type === "Unavailable";
 
     /**
      * Merge two "unavailable" markers into a single marker, combining their causes.
@@ -734,8 +735,32 @@ const fluidJSScope = function (fluid) {
         return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{\w/.test(string) ? JSON.parse(string) : string;
     };
 
-    fluid.isSignal = function (value) {
-        return value instanceof preactSignalsCore.Signal;
+    /**
+     * Check whether a given value is an instance of a `preactSignalsCore.Signal`.
+     * @param {*} value - The value to test.
+     * @return {Boolean} `true` if the value is a `Signal`, otherwise `false`.
+     */
+    fluid.isSignal = value => value instanceof preactSignalsCore.Signal;
+
+    /**
+     * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
+     *
+     * @param {*} ref - The value to resolve. May be a `Signal` or a plain value.
+     * @return {*} The resolved value if `ref` is a `Signal`, or the original value if it is not.
+     */
+    fluid.deSignal = ref => fluid.isSignal(ref) ? ref.value : ref;
+
+    // eslint-disable-next-line jsdoc/require-returns-check
+    /**
+     * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
+     * @param {*} root - The root data structure to process.
+     * @return {*} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
+     */
+    fluid.flattenSignals = function (root) {
+        const isSignal = fluid.isSignal(root);
+        const value = isSignal ? root.value : root;
+        return !isSignal || fluid.isPrimitive(value) || !fluid.isPlainObject(value) ? value :
+            fluid.isArrayable(value) ? value.map(fluid.flattenSignals) : fluid.transform(value, fluid.flattenSignals);
     };
 
     /**
@@ -744,20 +769,20 @@ const fluidJSScope = function (fluid) {
      *
      * @param {Array} args - The array of arguments to process.
      *     Arguments may include `preactSignalsCore.Signal` instances or plain values.
-     * @param {Array} argSpecs - An array parallel to args which may hold noDesignal property indicating that a signal
-     *     as this position should not be unwrapped
+     * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @return {Object} An object with the following properties:
      *     - `designalArgs` (Array): The array of arguments with `Signal` values replaced by their unwrapped values.
      *     - `unavailable` (Object|undefined): The most "unavailable" value (if any) based on priority,
      *       or `undefined` if no unavailable values are found.
      */
-    fluid.processSignalArgs = function (args, argSpecs) {
+    fluid.processSignalArgs = function (args, options) {
         let unavailable;
         const designalArgs = [];
+        const flattenArg = options?.flattenArg;
         for (let i = 0; i < args.length; ++i) {
-            const arg = args[i], argSpec = argSpecs?.[i];
+            const arg = args[i];
             if (arg instanceof preactSignalsCore.Signal) {
-                const value = argSpec?.noDesignal ? arg : arg.value;
+                const value = flattenArg ? flattenArg(arg, i) : arg.value;
                 designalArgs.push(value);
                 if (fluid.isUnavailable(value)) {
                     unavailable = fluid.mergeUnavailable(unavailable, value);
@@ -769,15 +794,31 @@ const fluidJSScope = function (fluid) {
         return {designalArgs, unavailable};
     };
 
-    fluid.computed = function (func, args, argSpecs) {
+    /**
+     * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
+     *
+     * @param {Function|String} func - The function to compute the value, or the name of a globally-invoked function.
+     * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
+     * @param {Object} [options] - Additional specifications for processing arguments (optional).
+     * @return {Object} A computed value that resolves the function's result, or an "unavailable" marker if any argument is unavailable.
+     */
+    fluid.computed = function (func, args, options) {
         return computed(() => {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
+            const {designalArgs, unavailable} = fluid.processSignalArgs(args, options);
             return unavailable ? unavailable :
                 typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
         });
     };
 
     // TODO: Return needs to be wrapped in a special marker so that component destruction can dispose it
+    /**
+     * Create an effect that executes a function with resolved arguments, resolving any signals and handling unavailability.
+     *
+     * @param {Function|String} func - The function to execute, or the name of a globally-invoked function.
+     * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
+     * @param {Array} [argSpecs] - Additional specifications for processing arguments (optional).
+     * @return {Object} An effect that executes the function if all arguments are available, or does nothing if any argument is unavailable.
+     */
     fluid.effect = function (func, args, argSpecs) {
         return effect(() => {
             const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
@@ -907,9 +948,17 @@ const fluidJSScope = function (fluid) {
         return path;
     };
 
-    fluid.get = function (root, path, i) {
+    /**
+     * Retrieve the value at a specified path within a nested object structure.
+     * Traverses the object hierarchy based on the path segments.
+     *
+     * @param {Object} root - The root object to begin traversal from.
+     * @param {String|String[]} path - The path to the desired value, specified as a string or an array of path segments.
+     * @return {*} The value at the specified path, or `undefined` if the path traverses beyond defined objects.
+     */
+    fluid.get = function (root, path) {
         const segs = fluid.pathToSegs(path);
-        const limit = (i === undefined ? segs.length : i + 1);
+        const limit = segs.length;
         for (let j = 0; j < limit; ++j) {
             root = root ? root[segs[j]] : undefined;
         }
@@ -922,66 +971,76 @@ const fluidJSScope = function (fluid) {
      *
      * @param {any} root - The root object to begin traversal from.
      * @param {String[]} segs - An array of segment names representing the path to traverse.
-     * @return {any} A computed value that resolves the path through any `Signal` encountered, a plain value if
+     * @return {Computed<any>} A computed value that resolves the path through any `Signal` encountered, a plain value if
      * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
      */
     fluid.getThroughSignals = function (root, segs) {
         const togo = computed(() => {
+            let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
                 const seg = segs[j];
-                const member = root?.[seg];
-                if (fluid.isSignal(member)) {
-                    root = member.value;
-                } else {
-                    root = member;
-                }
+                move = fluid.deSignal(move?.[seg]);
             }
-            return root;
+            return move;
         });
         togo.$variety = "$ref";
         return togo;
     };
 
-    fluid.derefSignal = function (signal, path) {
-        return computed(() => {
-            const value = signal.value;
-            return fluid.get(value, path);
-        });
-    };
-
+    /**
+     * Set a value at a specified path within a nested object structure.
+     * Creates intermediate objects as needed to ensure the path exists.
+     *
+     * @param {Object} root - The root object to begin traversal from.
+     * @param {String|String[]} path - The path to the location where the value should be set, specified as a string or an array of path segments.
+     * @param {*} newValue - The value to set at the specified path.
+     */
     fluid.set = function (root, path, newValue) {
         const segs = fluid.pathToSegs(path);
         for (let i = 0; i < segs.length - 1; ++i) {
-            if (!root[segs[i]]) {
-                root[segs[i]] = {};
+            const seg = segs[i];
+            if (!root[seg]) {
+                root[seg] = Object.create(null);
             }
-            root = root[segs[i]];
+            root = root[seg];
         }
         root[segs[segs.length - 1]] = newValue;
     };
 
+    /**
+     * Traverse a nested object structure and ensure that all segments of the given path exist.
+     * If a segment does not exist, it is created as an empty object.
+     * Returns a stack of objects traversed or created, starting with the deepest object.
+     *
+     * @param {Object} root - The root object to begin traversal from.
+     * @param {String[]} segs - An array of path segments to traverse.
+     * @return {Object[]} A stack of objects traversed or created, with the deepest object at the start of the array.
+     */
+    fluid.getRecInsist = function (root, segs) {
+        const stack = [];
+        segs.forEach(seg => {
+            if (!root[seg]) {
+                root[seg] = Object.create(null);
+            }
+            root = root[seg];
+            stack.unshift(root);
+        });
+        return stack;
+    };
 
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
      * @param {String|String[]} path - The global path from which the value is to be fetched
-     * @param {Object} [env] - [optional] An environmental overlay object which will be consulted before any lookups in the global namespace.
      * @return {any} The value that was stored at the path, or undefined if there is none.
      */
+    fluid.getGlobalValue = path => fluid.get(fluid.global, path);
 
-    fluid.getGlobalValue = function (path) {
-        if (path) {
-            const segs = fluid.pathToSegs(path);
-            return fluid.get(fluid.global, segs);
-        }
-    };
-
-    /* eslint-disable jsdoc/require-returns-check */
+    // eslint-disable-next-line jsdoc/require-returns-check
     /**
      * Allows for the calling of a function from an EL expression "functionPath", with the arguments "args"
      * @param {Object} functionPath - An EL expression
      * @param {Object} args - An array of arguments to be applied to the function, specified in functionPath
      * @return {any} - The return value from the invoked function.
      */
-    /* eslint-enable jsdoc/require-returns-check */
     fluid.invokeGlobalFunction = function (functionPath, args) {
         const func = fluid.getGlobalValue(functionPath);
         if (!func) {
@@ -992,14 +1051,15 @@ const fluidJSScope = function (fluid) {
         }
     };
 
-    /* Registers a new global function at a given path */
-
-    fluid.registerGlobalFunction = function (functionPath, func) {
-        fluid.set(fluid.global, functionPath, func);
+    /**
+     * Set a value in the global namespace at a specified path.
+     * This uses `fluid.set` to traverse and create the necessary structure within `fluid.global`.
+     * @param {String|String[]} path - The path in the global namespace where the value should be set, specified as a string or an array of path segments.
+     * @param {*} value - The value to set at the specified global path.
+     */
+    fluid.setGlobalValue = (path, value) => {
+        fluid.set(fluid.global, path, value);
     };
-
-    fluid.setGlobalValue = fluid.registerGlobalFunction;
-
 
     /** Ensures that the supplied path has an object allocated in the global Infusion namespace, and retrieves the current value.
      * If no value is stored, a fresh {} will be assigned at the path, and to all currently empty paths leading to the global namespace root.
@@ -1042,9 +1102,7 @@ const fluidJSScope = function (fluid) {
         return fluid_prefix + (fluid_guid++);
     };
 
-    /*** The Fluid Event system. ***/
-
-    fluid.registerNamespace("fluid.event");
+    /*** The Fluid Priority system. ***/
 
     // Fluid priority system for encoding relative positions of, e.g. listeners, transforms, options, in lists
 
@@ -1194,6 +1252,10 @@ const fluidJSScope = function (fluid) {
         fluid.sortByPriority(array);
         return array;
     };
+
+    /*** The Fluid Event system. ***/
+
+    fluid.registerNamespace("fluid.event");
 
     fluid.event.identifyListener = function (listener, soft) {
         if (typeof(listener) !== "string" && !listener.$$fluid_guid && !soft) {
@@ -1853,7 +1915,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.def = function (layerName, layer) {
         if (layer === undefined) {
-            return fluid.derefSignal(fluid.readMergedDef(layerName), ["merged"]);
+            return fluid.getThroughSignals(fluid.readMergedDef(layerName), ["merged"]);
         } else {
             fluid.writeDef(layerName, layer);
         }

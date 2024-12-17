@@ -19,15 +19,6 @@ fluid.setLogging(true);
 
 fluid.registerNamespace("fluid.tests");
 
-fluid.tests.flattenSignals = function (root) {
-    if (fluid.isPrimitive(root)) {
-        return root;
-    } else {
-        const value = fluid.isSignal(root) ? root.value : fluid.unProxy(root);
-        return fluid.isPrimitive(value) ? value :
-            fluid.isArrayable(value) ? value.map(fluid.tests.flattenSignals) : fluid.transform(value, fluid.tests.flattenSignals);
-    };
-};
 
 QUnit.module("Fluid IL Tests");
 
@@ -133,20 +124,56 @@ fluid.def("fluid.tests.retrunking", {
         start: [100, 100],
         end: [100, 200]
     },
-    polar: "$compute:fluid.tests.vectorToPolar({self}.arrowGeometry.start, {self}.arrowGeometry.end)"
+    polar: "$compute:fluid.tests.vectorToPolar({self}.arrowGeometry.start, {self}.arrowGeometry.end)",
+    renderPoints: "$compute:fluid.tests.retrunking.verify({self}.assert, {self}.arrowGeometry)"
 });
 
+fluid.tests.retrunking.expected = {
+    length: 100,
+    width: 10,
+    headWidth: 20,
+    headHeight: 20,
+    angle: Math.PI / 2,
+    start: [100, 100],
+    end: [100, 200]
+};
+
+fluid.tests.retrunking.verify = function (assert, arrowGeometry) {
+    assert.deepEqual(arrowGeometry, fluid.tests.retrunking.expected, "FLUID-5981: Fully evaluated expander arguments");
+    return true;
+};
+
+// FLUID-5981 test rescued from prehistory at https://github.com/amb26/infusion/commit/9c35b6bdb0876aed579b2c964606877523f4fb10
+
 QUnit.test("FLUID-4930: Options retrunking test", function (assert) {
-    const thatSignal = fluid.tests.retrunking();
-    const that = fluid.tests.flattenSignals(thatSignal);
-    const expected = {
-        length: 100,
-        width: 10,
-        headWidth: 20,
-        headHeight: 20,
-        angle: Math.PI / 2,
-        start: [100, 100],
-        end: [100, 200]
-    };
-    assert.deepEqual(that.arrowGeometry, expected, "Successfully evaluated all options");
+    assert.expect(3);
+    const that = fluid.tests.retrunking({assert});
+    assert.ok(that.renderPoints);
+    assert.deepEqual(that.arrowGeometry, fluid.tests.retrunking.expected, "Successfully evaluated all options");
+});
+
+/** FLUID-4930 test II - taken from bagatelle renderer **/
+
+fluid.def("fluid.tests.retrunkingII", {
+    $layers: "fluid.component",
+    dom: "$compute:fluid.identity({self}.selectors)",
+    selectors: {
+        svg: ".flc-bagatelle-svg",
+        taxonDisplay: ".fld-bagatelle-taxonDisplay",
+        autocomplete: ".fld-bagatelle-autocomplete",
+        segment: ".fld-bagatelle-segment",
+        phyloPic: ".fld-bagatelle-phyloPic",
+        mousable: {
+            "$compute": {
+                args: ["{self}.selectors.segment", "{self}.selectors.phyloPic"],
+                func: (...selectors) => selectors.join(", ")
+            }
+        }
+    }
+});
+
+QUnit.test("FLUID-4930: Retrunking with expanders", function (assert) {
+    const that = fluid.tests.retrunkingII();
+    assert.equal(that.selectors.mousable, ".fld-bagatelle-segment, .fld-bagatelle-phyloPic",
+        "Expander should have consumed sibling values");
 });
