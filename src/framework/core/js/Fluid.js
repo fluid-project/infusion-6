@@ -446,7 +446,7 @@ const fluidJSScope = function (fluid) {
      * not already allocated.
      * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
      * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
-     * @param {Array|Any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
+     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
      * If a non-array, it will be pushed to the end of the array using Array.push.
      */
     fluid.pushArray = function (holder, member, topush) {
@@ -480,7 +480,7 @@ const fluidJSScope = function (fluid) {
 
     /**
      * Return the last element of an array. If the array is of length 0, returns `undefined`.
-     * @param {Arrayable} array - The array to be peeked into
+     * @param {Array} array - The array to be peeked into - any "Arrayable" with a valid `length` property is supported
      * @return {any} start - The last element of the array
      */
     fluid.peek = function (array) {
@@ -526,6 +526,7 @@ const fluidJSScope = function (fluid) {
     /** Returns an array of size count, filled with increasing integers, starting at 0 or at the index specified by first.
      * @param {Number} count - Size of the filled array to be returned
      * @param {Number} [first] - (optional, defaults to 0) First element to appear in the array
+     * @return {Array<Number>} A filled array of size `count`
      */
     fluid.iota = function (count, first) {
         first = first || 0;
@@ -605,7 +606,7 @@ const fluidJSScope = function (fluid) {
         } else {
             // The following is derived from https://github.com/sindresorhus/round-to/blob/v2.0.0/index.js#L17
             const sign = Math.sign(num);
-            return Number(sign * (Math.round(Math.abs(num) + "e" + scale) + "e-" + scale));
+            return Number(sign * (Math.round(Number(Math.abs(num) + "e" + scale)) + "e-" + scale));
         }
     };
 
@@ -737,29 +738,33 @@ const fluidJSScope = function (fluid) {
 
     /**
      * Check whether a given value is an instance of a `preactSignalsCore.Signal`.
-     * @param {*} value - The value to test.
+     * @param {any} value - The value to test.
      * @return {Boolean} `true` if the value is a `Signal`, otherwise `false`.
      */
     fluid.isSignal = value => value instanceof preactSignalsCore.Signal;
 
     /**
-     * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
+     * Resolve a value from a `Signal` (possibly recursively), or return the value as-is if it is not a `Signal`.
      *
-     * @param {*} ref - The value to resolve. May be a `Signal` or a plain value.
-     * @return {*} The resolved value if `ref` is a `Signal`, or the original value if it is not.
+     * @param {any} ref - The value to resolve. May be a `Signal` or a plain value.
+     * @return {any} The resolved value if `ref` is a `Signal`, or the original value if it is not.
      */
-    fluid.deSignal = ref => fluid.isSignal(ref) ? ref.value : ref;
+    fluid.deSignal = ref => {
+        while (fluid.isSignal(ref)) {
+            ref = ref.value;
+        }
+        return ref;
+    };
 
     // eslint-disable-next-line jsdoc/require-returns-check
     /**
      * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
-     * @param {*} root - The root data structure to process.
-     * @return {*} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
+     * @param {any} root - The root data structure to process.
+     * @return {any} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
      */
     fluid.flattenSignals = function (root) {
-        const isSignal = fluid.isSignal(root);
-        const value = isSignal ? root.value : root;
-        return !isSignal || fluid.isPrimitive(value) || !fluid.isPlainObject(value) ? value :
+        const value = fluid.deSignal(root);
+        return fluid.isPrimitive(value) || !fluid.isPlainObject(value) ? value :
             fluid.isArrayable(value) ? value.map(fluid.flattenSignals) : fluid.transform(value, fluid.flattenSignals);
     };
 
@@ -776,7 +781,7 @@ const fluidJSScope = function (fluid) {
      *       or `undefined` if no unavailable values are found.
      */
     fluid.processSignalArgs = function (args, options) {
-        let unavailable;
+        let unavailable = undefined;
         const designalArgs = [];
         const flattenArg = options?.flattenArg;
         for (let i = 0; i < args.length; ++i) {
@@ -797,7 +802,7 @@ const fluidJSScope = function (fluid) {
     /**
      * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
      *
-     * @param {Function|String} func - The function to compute the value, or the name of a globally-invoked function.
+     * @param {Function|Signal<Function>} func - The function to compute the value
      * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
      * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @return {Object} A computed value that resolves the function's result, or an "unavailable" marker if any argument is unavailable.
@@ -805,8 +810,7 @@ const fluidJSScope = function (fluid) {
     fluid.computed = function (func, args, options) {
         return computed(() => {
             const {designalArgs, unavailable} = fluid.processSignalArgs(args, options);
-            return unavailable ? unavailable :
-                typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
+            return unavailable ? unavailable : fluid.deSignal(func).apply(null, designalArgs);
         });
     };
 
@@ -814,7 +818,7 @@ const fluidJSScope = function (fluid) {
     /**
      * Create an effect that executes a function with resolved arguments, resolving any signals and handling unavailability.
      *
-     * @param {Function|String} func - The function to execute, or the name of a globally-invoked function.
+     * @param {Function} func - The function to execute
      * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
      * @param {Array} [argSpecs] - Additional specifications for processing arguments (optional).
      * @return {Object} An effect that executes the function if all arguments are available, or does nothing if any argument is unavailable.
@@ -823,7 +827,7 @@ const fluidJSScope = function (fluid) {
         return effect(() => {
             const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
             if (!unavailable) {
-                return typeof(func) === "string" ? fluid.invokeGlobalFunction(func, designalArgs) : func.apply(null, designalArgs);
+                func.apply(null, designalArgs);
             }
         });
     };
@@ -954,7 +958,7 @@ const fluidJSScope = function (fluid) {
      *
      * @param {Object} root - The root object to begin traversal from.
      * @param {String|String[]} path - The path to the desired value, specified as a string or an array of path segments.
-     * @return {*} The value at the specified path, or `undefined` if the path traverses beyond defined objects.
+     * @return {any} The value at the specified path, or `undefined` if the path traverses beyond defined objects.
      */
     fluid.get = function (root, path) {
         const segs = fluid.pathToSegs(path);
@@ -993,7 +997,7 @@ const fluidJSScope = function (fluid) {
      *
      * @param {Object} root - The root object to begin traversal from.
      * @param {String|String[]} path - The path to the location where the value should be set, specified as a string or an array of path segments.
-     * @param {*} newValue - The value to set at the specified path.
+     * @param {any} newValue - The value to set at the specified path.
      */
     fluid.set = function (root, path, newValue) {
         const segs = fluid.pathToSegs(path);
@@ -1030,21 +1034,24 @@ const fluidJSScope = function (fluid) {
 
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
      * @param {String|String[]} path - The global path from which the value is to be fetched
-     * @return {any} The value that was stored at the path, or undefined if there is none.
+     * @return {any} The value that was stored at the path, or a fluid.unavailable value if there is none.
      */
-    fluid.getGlobalValue = path => fluid.get(fluid.global, path);
+    fluid.getGlobalValue = path => {
+        const value = fluid.get(fluid.global, path);
+        return value === undefined ? fluid.unavailable({message: "Global value " + path + " is not defined", path}) : value;
+    };
 
     // eslint-disable-next-line jsdoc/require-returns-check
     /**
      * Allows for the calling of a function from an EL expression "functionPath", with the arguments "args"
-     * @param {Object} functionPath - An EL expression
+     * @param {String} functionPath - An global path
      * @param {Object} args - An array of arguments to be applied to the function, specified in functionPath
      * @return {any} - The return value from the invoked function.
      */
     fluid.invokeGlobalFunction = function (functionPath, args) {
         const func = fluid.getGlobalValue(functionPath);
-        if (!func) {
-            fluid.fail("Error invoking global function: " + functionPath + " could not be located");
+        if (fluid.isUnavailable(func)) {
+            return fluid.mergeUnavailable(fluid.unavailable({message: "Error invoking global function: " + functionPath + " could not be located"}), func);
         } else {
             const argsArray = fluid.isArrayable(args) ? args : fluid.makeArray(args);
             return func.apply(null, argsArray);
@@ -1055,7 +1062,7 @@ const fluidJSScope = function (fluid) {
      * Set a value in the global namespace at a specified path.
      * This uses `fluid.set` to traverse and create the necessary structure within `fluid.global`.
      * @param {String|String[]} path - The path in the global namespace where the value should be set, specified as a string or an array of path segments.
-     * @param {*} value - The value to set at the specified global path.
+     * @param {any} value - The value to set at the specified global path.
      */
     fluid.setGlobalValue = (path, value) => {
         fluid.set(fluid.global, path, value);
@@ -1069,7 +1076,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.registerNamespace = function (path) {
         let existing = fluid.getGlobalValue(path);
-        if (!existing) {
+        if (fluid.isUnavailable(existing)) {
             existing = {};
             fluid.setGlobalValue(path, existing);
         }

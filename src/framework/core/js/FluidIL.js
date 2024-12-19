@@ -500,7 +500,7 @@ const fluidILScope = function (fluid) {
      * @param {String} reference - The reference to be parsed.
      * @param {Number} [index] - Optional, index within the string to start parsing
      * @return {ParsedContext} A structure holding the parsed structure, with members
-     *    context {String|ParsedContext} The context portion of the reference. This will be a `string` for a flat reference, or a further `ParsedContext` for a recursive reference
+     *    context {String} The context portion of the reference. This will be a `string` for a flat reference, or a further `ParsedContext` for a recursive reference
      *    path {String} The string portion of the reference
      */
     fluid.parseContextReference = function (reference, index) {
@@ -595,6 +595,11 @@ const fluidILScope = function (fluid) {
         });
     };
 
+    fluid.resolveFuncRecord = function (rec, that) {
+        return rec.funcName ? fluid.getGlobalValue(rec.funcName) :
+            fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, that) : rec.func;
+    };
+
     fluid.resolveMethodArgs = function (argRecs, args, that) {
         // TODO: Resolve 0: onto args
         return argRecs.map(argRec => fluid.isILReference(argRec) ? fluid.fetchContextReference(argRec, that).value : argRec);
@@ -605,29 +610,33 @@ const fluidILScope = function (fluid) {
         return argRecs.map(argRec => fluid.isILReference(argRec) ? fluid.fetchContextReference(argRec, that) : argRec);
     };
 
-    fluid.expandMethodRecord = function (that, record) {
+    fluid.expandMethodRecord = function (record, that) {
         // Old fluid.makeInvoker used to have:
         // func = func || (invokerec.funcName ? fluid.getGlobalValueNonComponent(invokerec.funcName, "an invoker") : fluid.expandImmediate(invokerec.func, that));
-        const func = record.funcName ? fluid.getGlobalValue(record.funcName) : record.func;
+        const func = fluid.resolveFuncRecord(record, that);
         let togo;
         if (record.args) {
             const argRecs = fluid.makeArray(record.args);
             togo = function applyMethod(...args) {
-                const resolved = fluid.resolveMethodArgs(argRecs, args, that);
-                return func.apply(that, resolved);
+                // TODO: Only flatten knowably signalised things
+                const resolvedArgs = fluid.resolveMethodArgs(argRecs, args, that).map(fluid.flattenSignals);
+                const resolvedFunc = fluid.deSignal(func);
+                return resolvedFunc.apply(that, resolvedArgs);
             };
         } else { // Fast path just directly dispatches args
             togo = function applyDirectMethod(...args) {
-                return func.apply(that, [that, ...args]);
+                const resolvedFunc = fluid.deSignal(func);
+                return resolvedFunc.apply(that, [that, ...args]);
             };
         }
         return togo;
     };
 
-    fluid.expandComputeRecord = function (that, record) {
-        const func = record.funcName ? fluid.getGlobalValue(record.funcName) : record.func;
+    fluid.expandComputeRecord = function (record, that) {
+        const func = fluid.resolveFuncRecord(record, that);
         const args = fluid.makeArray(record.args);
         const resolvedArgs = fluid.resolveComputeArgs(args, that);
+        // TODO: Only flatten knowably signalised things - this implies using the "signalMap" in the shadow
         const togo = fluid.computed(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
         togo.$variety = "$compute";
         return togo;
@@ -642,7 +651,7 @@ const fluidILScope = function (fluid) {
         if (fluid.isPlainObject(element, true)) {
             const record = fluid.recordTypes.find(record => element[record.key]);
             if (record) {
-                return record.handler(that, element[record.key]);
+                return record.handler(element[record.key], that);
             } else {
                 return element;
             }

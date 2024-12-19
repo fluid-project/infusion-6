@@ -48,7 +48,7 @@ fluid.def("fluid.tests.basicTestComponent", {
 QUnit.test("Basic construction and destruction", function (assert) {
 
     const that = fluid.tests.basicTestComponent();
-    assert.assertNotUndefined(that, "Got a value as component instance");
+    assert.notUndefined(that, "Got a value as component instance");
     assert.ok(fluid.isComponent(that), "Got a component as component instance");
 
     assert.ok(that.destroy, "Component has a destroy method");
@@ -233,12 +233,61 @@ fluid.def("fluid.tests.FLUID4930.signup", {
     }
 });
 
+fluid.tests.FLUID4930.signupExpected = {
+    "definitions": {
+        "email": {
+            "errors": {
+                "": "gpii.express.user.email"
+            },
+            "format": "email",
+            "required": true,
+            "type": "string"
+        },
+        "username": {
+            "errors": {
+                "": "gpii.express.user.username"
+            },
+            "minLength": 1,
+            "required": true,
+            "type": "string"
+        }
+    },
+    "description": "This schema defines the format accepted when creating a new user.",
+    "properties": {
+        "confirm": undefined,
+        "email": {
+            "errors": {
+                "": "gpii.express.user.email"
+            },
+            "format": "email",
+            "required": true,
+            "type": "string"
+        },
+        "password": undefined,
+        "profile": undefined,
+        "username": {
+            "errors": {
+                "": "gpii.express.user.username"
+            },
+            "minLength": 1,
+            "required": true,
+            "type": "string"
+        }
+    },
+    "title": "gpii-express-user user signup schema",
+    "type": "object"
+};
+
 fluid.tests.FLUID4930.generateSchema = function (schema) {
     return signal(schema);
 };
 
 QUnit.test("FLUID-4930: Retrunking III", function (assert) {
     const that = fluid.tests.FLUID4930.signup();
-    assert.equal(that.schema.properties.email.type, "string", "Successfully evaluated email option", );
+    assert.equal(that.schema.properties.email.type, "string", "Successfully evaluated email option");
     assert.equal(that.schema.properties.username.type, "string", "Successfully evaluated username option");
+    assert.undefined(that.schema.properties.password?.type, "Peacefully evaluate undefined reference");
+    const schema = fluid.def("fluid.tests.FLUID4930.schemaHolder").value.schema;
+    assert.ok(Object.keys(schema.definitions).length, 2, "Resolved 2 keys in deep structure");
+    assert.deepEqual(that.model.inputSchema, fluid.tests.FLUID4930.signupExpected, "Resolved schema through method and computation");
 });

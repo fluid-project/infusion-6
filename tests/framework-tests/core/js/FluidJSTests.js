@@ -370,20 +370,20 @@ QUnit.test("FLUID-6330 test - interception of fluid.log", assert => {
     fluid.loggingEvent.removeListener(fluid.tests.doMemoryLog);
     fluid.loggingEvent.removeListener("42");
     const listeners = fluid.loggingEvent.sortedListeners.map(rec => rec.listener);
-    assert.assertFalse(listeners.includes(fluid.tests.insert42), "Intercepting listener removed");
-    assert.assertFalse(listeners.includes(fluid.tests.doMemoryLog), "Memory log listener removed");
-    assert.assertTrue(listeners.includes(fluid.doBrowserLog), "Browser log listener restored");
+    assert.false(listeners.includes(fluid.tests.insert42), "Intercepting listener removed");
+    assert.false(listeners.includes(fluid.tests.doMemoryLog), "Memory log listener removed");
+    assert.true(listeners.includes(fluid.doBrowserLog), "Browser log listener restored");
 });
 
 QUnit.test("fluid.get and fluid.set", assert => {
     const model = { "path3": "thing" };
     assert.equal(fluid.get(model, "path3"), "thing", "Get simple value");
     assert.deepEqual(fluid.get(model, ""), model, "Get root value");
-    assert.assertUndefined(fluid.get(model, "path3.nonexistent"), "Get blank value");
-    assert.assertUndefined(fluid.get(model, "path3.nonexistent.non3"), "Get blank value");
-    assert.assertUndefined(fluid.get(model, "path1.nonexistent"), "Get blank value");
-    assert.assertUndefined(fluid.get(model, "path1.nonexistent.non3"), "Get blank value");
-    assert.assertUndefined(fluid.get(model, "path1"), "Get blank value");
+    assert.undefined(fluid.get(model, "path3.nonexistent"), "Get blank value");
+    assert.undefined(fluid.get(model, "path3.nonexistent.non3"), "Get blank value");
+    assert.undefined(fluid.get(model, "path1.nonexistent"), "Get blank value");
+    assert.undefined(fluid.get(model, "path1.nonexistent.non3"), "Get blank value");
+    assert.undefined(fluid.get(model, "path1"), "Get blank value");
 
     fluid.set(model, "path2.past", "attach");
     assert.deepEqual(model, { path2: { past: "attach" }, path3: "thing" }, "Set blank value");
@@ -395,10 +395,10 @@ QUnit.test("fluid.get and fluid.set", assert => {
 });
 
 QUnit.test("fluid.get for FLUID-6217 - get ending at falsy value", assert => {
-    assert.assertUndefined(fluid.get([0, 1, 2], "0.value"), "Simple 0-based fetch");
-    assert.assertUndefined(fluid.get([0, 1, 2], "0.any.path.at.all"), "Nested 0-based fetch");
-    assert.assertUndefined(fluid.get([0, false, 2], "1.foo.bar.baz"), "Nested false-based fetch");
-    assert.assertUndefined(fluid.get({ foo: false }, "foo.bar.baz"), "Fetch from hash");
+    assert.undefined(fluid.get([0, 1, 2], "0.value"), "Simple 0-based fetch");
+    assert.undefined(fluid.get([0, 1, 2], "0.any.path.at.all"), "Nested 0-based fetch");
+    assert.undefined(fluid.get([0, false, 2], "1.foo.bar.baz"), "Nested false-based fetch");
+    assert.undefined(fluid.get({ foo: false }, "foo.bar.baz"), "Fetch from hash");
 });
 
 QUnit.test("Globals", assert => {
@@ -409,16 +409,16 @@ QUnit.test("Globals", assert => {
     assert.equal(fluid.engage.mccord.func(), 2, "Call function in namespace");
 
     const fluidd = fluid.getGlobalValue("nothing.fluid");
-    assert.assertUndefined(fluidd, "No environment slippage");
+    assert.undefined(fluidd, "No environment slippage");
 
     const fluidd2 = fluid.getGlobalValue("fluid.fluid");
-    assert.assertUndefined(fluidd2, "No environment slippage");
+    assert.undefined(fluidd2, "No environment slippage");
 
     fluid.registerNamespace("cspace.autocomplete");
     const fluidd3 = fluid.getGlobalValue("cspace.fluid");
-    assert.assertUndefined(fluidd3, "No environment slippage");
+    assert.undefined(fluidd3, "No environment slippage");
     const fluidd4 = fluid.getGlobalValue("cspace.fluid.get");
-    assert.assertUndefined(fluidd4, "No environment slippage");
+    assert.undefined(fluidd4, "No environment slippage");
 });
 
 QUnit.test("Sorting listeners", assert => {

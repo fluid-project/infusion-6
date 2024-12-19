@@ -38,9 +38,9 @@ QUnit.assert.expectFluidError = function (message, toInvoke, errorTexts) {
         if (errorTexts.length > 0) {
             const fullText = e.message + capturedActivity;
             const missingText = errorTexts.find(errorText => !fullText.includes(errorText));
-            assert.assertUndefined(missingText, message + " - message text must contain each of " + errorTexts.join(", "));
+            assert.undefined(missingText, message + " - message text must contain each of " + errorTexts.join(", "));
         } else {
-            assert.assertTrue(true, message);
+            assert.true(true, message);
         }
     } finally {
         if (!gotFailure) {
@@ -67,18 +67,10 @@ QUnit.assert.fail = function (message) {
     this.ok(false, message);
 };
 
-QUnit.assert.assertTrue = function (value, message) {
-    this.ok(value, message);
-};
-
-QUnit.assert.assertFalse = function (value, message) {
-    this.ok(!value, message);
-};
-
-QUnit.assert.assertUndefined = function (value, message) {
+QUnit.assert.undefined = function (value, message) {
     this.ok(value === undefined, message);
 };
 
-QUnit.assert.assertNotUndefined = function (value, message) {
+QUnit.assert.notUndefined = function (value, message) {
     this.ok(value !== undefined, message);
 };
