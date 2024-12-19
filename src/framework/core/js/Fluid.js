@@ -1796,14 +1796,77 @@ const fluidJSScope = function (fluid) {
         live: 0
     };
 
-    // Root reference supplied which is a bit asymmetric - is empty for defaults, and is component instance for instantiating.
+    /**
+     * Recursively merge multiple layers into a target object, resolving conflicts and maintaining a mapping of values to their originating layers.
+     *
+     * @param {Object} target - The target object where merged results will be stored.
+     * @param {String[]} segs - The current path segments being traversed during the merge.
+     * @param {Object} layerMap - A map of paths to the names of the layers contributing values at those paths.
+     * @param {Object[]} layers - An array of layer objects to be merged.
+     * @param {MergeRecord[]} mergeRecords - An array of `MergeRecord` objects providing metadata for the layers.
+     */
+    fluid.mergeLayers = function (target, segs, layerMap, layers, mergeRecords) {
+        const clayers = layers.length;
 
-    fluid.mergeLayers = function (root, mergeRecords) {
-        const allLayers = [root].concat(mergeRecords.map(layer => layer.layer));
-        // Big stuff coming here with deferencing of inner signal values etc.
-        Object.assign.apply(null, allLayers);
-        return root;
+        const allKeysRec = {};
+        layers.forEach(layer => {
+            if (fluid.isPlainObject(layer, true)) {
+                Object.keys(layer).forEach(key => allKeysRec[key] = true);
+            }
+        });
+        const allKeys = Object.keys(allKeysRec);
+
+        allKeys.forEach(key => {
+            let count = 0;
+            let last, newTarget;
+            let lastIndex = -1;
+            for (let i = 0; i < clayers; ++i) {
+                const value = layers?.[i]?.[key];
+                if (value !== undefined) {
+                    ++count;
+                    last = value;
+                    lastIndex = i;
+                }
+            }
+            if (count > 1 && fluid.isPlainObject(last, true)) {
+                newTarget = {};
+                const newLayers = layers.map(layer => layer?.[key]);
+                segs.push(key);
+                fluid.mergeLayers(newTarget, segs, layerMap, newLayers, mergeRecords);
+                segs.pop();
+            } else {
+                newTarget = last;
+            }
+            target[key] = newTarget;
+            fluid.set(layerMap, [...segs, key, $m], mergeRecords[lastIndex].layerName);
+        });
     };
+
+    /**
+     * Merge a set of layer records into a root object, producing a merged result and a mapping of values to their originating layers.
+     *
+     * @param {Object} root - The root object to which layers will be merged.
+     * @param {MergeRecord[]} mergeRecords - An array of `MergeRecord` objects describing the layers to be merged.
+     * @return {Object} An object containing:
+     *   - `root` (Object): The merged root object.
+     *   - `layerMap` (Object): A mapping of paths to the names of the layers contributing values at those paths.
+     */
+    fluid.mergeLayerRecords = function (root, mergeRecords) {
+        const layerMap = {}, segs = [];
+        const layers = mergeRecords.map(mergeRecord => mergeRecord.layer);
+
+        fluid.mergeLayers(root, segs, layerMap, layers, mergeRecords);
+
+        return {root, layerMap};
+    };
+
+    /**
+     * @typedef {Object} MergeRecord
+     * @property {String} layerType - The type of the layer (e.g., "def", "defParents").
+     * @property {String} layerName - Name of the layer, expected to be unique
+     * @property {Number} priority - The priority of the layer, used for determining merge order.
+     * @property {Object} layer - The layer definition object to be merged.
+     */
 
     // Consumes rawLayer values as signals, produces mergeRecords and merged as plain outputs
     fluid.hierarchyResolver = function (flatDefsIn = {}) {
@@ -1847,19 +1910,21 @@ const fluidJSScope = function (fluid) {
                     } else {
                         // Finally flatten cache into pure values ready for resolution
                         const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
-                        const order = fluid.C3_precedence(layerName, veryFlatDefs);
-                        const mergeRecords = order.map((layerName, i) => ({
+                        const order = fluid.C3_precedence(layerName, veryFlatDefs).reverse();
+                        const mergeRecords = order.map((oneLayerName, i) => ({
                             layerType: "def",
+                            layerName: oneLayerName,
                             priority: fluid.mergeRecordTypes.def + i,
-                            layer: veryFlatDefs[layerName]
+                            layer: veryFlatDefs[oneLayerName]
                         })).concat({
                             layerType: "defParents",
+                            layerName: `defParents:${layerName}`,
                             priority: fluid.mergeRecordTypes.defParents,
                             layer: {$layers: order}
                         });
                         return {
                             // Note merged is currently only read by fluid.readDef
-                            mergeRecords, merged: fluid.mergeLayers({}, mergeRecords)
+                            mergeRecords, merged: fluid.mergeLayerRecords({}, mergeRecords)
                         };
                     }
                 };
@@ -1915,7 +1980,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.def = function (layerName, layer) {
         if (layer === undefined) {
-            return fluid.getThroughSignals(fluid.readMergedDef(layerName), ["merged"]);
+            return fluid.getThroughSignals(fluid.readMergedDef(layerName), ["merged", "root"]);
         } else {
             fluid.writeDef(layerName, layer);
         }

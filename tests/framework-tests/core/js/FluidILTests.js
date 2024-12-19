@@ -11,7 +11,7 @@ You may obtain a copy of the ECL 2.0 License and BSD License at
 https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 */
 
-/* global QUnit */
+/* global QUnit, preactSignalsCore */
 
 "use strict";
 
@@ -19,6 +19,8 @@ fluid.setLogging(true);
 
 fluid.registerNamespace("fluid.tests");
 
+// noinspection ES6ConvertVarToLetConst
+var {signal} = preactSignalsCore;
 
 QUnit.module("Fluid IL Tests");
 
@@ -176,4 +178,67 @@ QUnit.test("FLUID-4930: Retrunking with expanders", function (assert) {
     const that = fluid.tests.retrunkingII();
     assert.equal(that.selectors.mousable, ".fld-bagatelle-segment, .fld-bagatelle-phyloPic",
         "Expander should have consumed sibling values");
+});
+
+/** FLUID-4930 retrunking test III - Structure taken from "gpii.express.user.validationMiddleware" */
+
+fluid.def("fluid.tests.FLUID4930.schemaHolder", {
+    $layers: "fluid.component",
+    schema: {
+        type: "object",
+        title: "gpii-express-user core user schema",
+        description: "This schema defines the common format for user data transmitted and received by the gpii-express-user library.",
+        definitions: {
+            email: {
+                type: "string",
+                format: "email",
+                required: true,
+                errors: {
+                    "": "gpii.express.user.email"
+                }
+            },
+            username: {
+                required: true,
+                type: "string",
+                minLength: 1,
+                errors: {
+                    "": "gpii.express.user.username"
+                }
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.FLUID4930.signup", {
+    $layers: "fluid.tests.FLUID4930.schemaHolder",
+    resources: {
+        schema: {
+            parsed: "$compute:{self}.generateSchema()"
+        }
+    },
+    model: {
+        inputSchema: "{self}.resources.schema.parsed"
+    },
+    generateSchema: "$method:fluid.tests.FLUID4930.generateSchema({self}.schema)",
+    schema: {
+        title: "gpii-express-user user signup schema",
+        description: "This schema defines the format accepted when creating a new user.",
+        properties: {
+            email: "{self}.schema.definitions.email",
+            username: "{self}.schema.definitions.username",
+            password: "{self}.schema.definitions.password",
+            confirm: "{self}.schema.definitions.confirm",
+            profile: "{self}.schema.definitions.profile"
+        }
+    }
+});
+
+fluid.tests.FLUID4930.generateSchema = function (schema) {
+    return signal(schema);
+};
+
+QUnit.test("FLUID-4930: Retrunking III", function (assert) {
+    const that = fluid.tests.FLUID4930.signup();
+    assert.equal(that.schema.properties.email.type, "string", "Successfully evaluated email option", );
+    assert.equal(that.schema.properties.username.type, "string", "Successfully evaluated username option");
 });

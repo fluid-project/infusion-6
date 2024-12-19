@@ -554,13 +554,15 @@ const fluidILScope = function (fluid) {
                     return target;
                 } else {
                     const next = deTarget[prop];
-                    if (fluid.isSignal(next) && next.$variety) {
+                    const nextSegs = [...segs, prop];
+                    const upSignals = fluid.get(shadow.signalMap, nextSegs);
+                    if (upSignals || fluid.isSignal(next)) {
                         const upcoming = fluid.deSignal(next);
                         // Problem here if material goes away or changes - proxies bound to old material will still be out there,
                         // although we do reevaluate our signal target
                         // We need to arrange that any signal at a particular path stays there, which implies we need
                         // rebindable computables
-                        return fluid.isPrimitive(upcoming) ? upcoming : fluid.proxyMat(next, shadow, [...segs, prop]);
+                        return fluid.isPrimitive(upcoming) || upSignals === true ? upcoming : fluid.proxyMat(next, shadow, nextSegs);
                     } else {
                         return next;
                     }
@@ -662,6 +664,9 @@ const fluidILScope = function (fluid) {
                 target[key] = expandedInner;
             } else {
                 target[key] = expanded;
+                if (fluid.isSignal(expanded)) {
+                    fluid.set(shadow.signalMap, segs, true);
+                }
             }
             segs.pop();
         });
@@ -731,7 +736,7 @@ const fluidILScope = function (fluid) {
             const layers = resolved.mergeRecords.concat([userLayer]);
 
             const flatMerged = {};
-            fluid.mergeLayers(flatMerged, layers);
+            fluid.mergeLayerRecords(flatMerged, layers);
             // TODO: Should really be a computed output so that graph can be properly connected
             shadow.flatMerged.value = flatMerged;
             // Need a basic scope record or we can't do expansion
