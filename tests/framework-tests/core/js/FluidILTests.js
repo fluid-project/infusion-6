@@ -288,6 +288,54 @@ QUnit.test("FLUID-4930: Retrunking III", function (assert) {
     assert.equal(that.schema.properties.username.type, "string", "Successfully evaluated username option");
     assert.undefined(that.schema.properties.password?.type, "Peacefully evaluate undefined reference");
     const schema = fluid.def("fluid.tests.FLUID4930.schemaHolder").value.schema;
-    assert.ok(Object.keys(schema.definitions).length, 2, "Resolved 2 keys in deep structure");
+    assert.equal(Object.keys(schema.definitions).length, 2, "Resolved 2 keys in deep structure");
     assert.deepEqual(that.model.inputSchema, fluid.tests.FLUID4930.signupExpected, "Resolved schema through method and computation");
+});
+
+/** FLUID-4930 retrunking test IV - Structure taken from "gpii.express.user.verify.resend" */
+
+fluid.def("fluid.tests.FLUID4930.verify.api", {
+    $layers: "fluid.component",
+    /* // Not supported yet - inject in subcomponent definition instead
+    $distribute: {
+        "source": "{self}.couch",
+        "target": "{self resend}.couch"
+    },*/
+    couch: {
+        port: 5984,
+        userDbName: "users",
+        userDbUrl: {
+            $compute: {
+                funcName: "fluid.stringTemplate",
+                args:     ["http://localhost:%port/%userDbName", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
+            }
+            /** Perhaps a DSL could write:
+             * $compute(fluid.stringTemplate(http://localhost:%port/%userDbName, {
+             *     port: $self.couch.port,
+             *     userDbName: $self.couch.userDbName
+             * })
+             */
+        }
+    },
+    resend: {
+        $component: {
+            $layers: "fluid.tests.FLUID4930.verify.resend",
+            couch: "{api}.couch"
+        }
+    }
+});
+
+fluid.def("fluid.tests.FLUID4930.verify.resend", {
+    $layers: "fluid.component",
+    urls: {
+        read: "$compute:fluid.stringTemplate(%userDbUrl/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
+    }
+});
+
+QUnit.test("FLUID-4930: Retrunking IV", function (assert) {
+    const that = fluid.tests.FLUID4930.verify.api();
+    const resend = that.resend;
+    assert.ok(resend, "Successfully constructed subcomponent");
+    assert.ok(fluid.hasLayer(resend, "fluid.tests.FLUID4930.verify.resend"), "Constructed subcomponent with layer");
+    assert.equal("Successfully evaluated email option", "http://localhost:5984/users/_design/lookup/_view/byUsernameOrEmail", that.resend.options.urls.read);
 });

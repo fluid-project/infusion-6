@@ -77,7 +77,7 @@ const fluidILScope = function (fluid) {
      * Visit the child components of a given component, applying a visitor function to each.
      * Allows for traversal of the component tree and supports options for controlling the traversal.
      *
-     * @param {Component} that - The parent component whose children are to be visited.
+     * @param {fluid.component} that - The parent component whose children are to be visited.
      * @param {Function} visitor - A function to be called for each child component.
      *     The function is invoked with the following arguments:
      *     - `component` (Object): The current child component being visited.
@@ -118,6 +118,15 @@ const fluidILScope = function (fluid) {
     fluid.contextName = 1;
     fluid.memberName = 2;
 
+    /**
+     * Converts an array of layer names into a hash object where each name and its nickname are mapped to a context type.
+     *
+     * @param {String[]} layerNames - An array of layer names to be processed.
+     * @return {Object<String, Number>} A hash object where:
+     *   - Each full layer name is a key, mapped to the number `fluid.contextName`.
+     *   - Each nickname of a valid layer name (computed using `fluid.computeNickName`) is also a key, mapped to the number `fluid.contextName`.
+     *   - Names that are references or expanders are ignored.
+     */
     fluid.layerNamesToHash = function (layerNames) {
         const contextHash = {};
         fluid.each(layerNames, function (layerName) {
@@ -174,6 +183,26 @@ const fluidILScope = function (fluid) {
             });
         }
     };
+
+    /**
+     * @typedef {Object} Shadow
+     * @property {String} path - The principal allocated path (point of construction) of the component in the component tree.
+     * @property {String} memberName - The name of the component within its parent.
+     * @property {Shadow} [parentShadow] - The shadow record associated with the parent component.
+     * @property {Object<String, fluid.component>} childComponents - A record of child components keyed by their member names.
+     * @property {Object} scopes - Cached layer scopes for the component.
+     * @property {Object} [injectedPaths] - A record of paths where this component has been injected, keyed by path.
+     */
+
+    /**
+     * @typedef {Object} DestroyRec
+     * @property {fluid.component} child - The child component being cleared.
+     * @property {Object} childShadow - The shadow record associated with the child component.
+     * @property {String} name - The name of the child component within its parent.
+     * @property {fluid.component} component - The parent component from which the child is being cleared.
+     * @property {Shadow} shadow - The shadow record associated with the parent component.
+     * @property {String} childPath - The fully qualified path to the child component in the component tree.
+     */
 
     /** Clear indexes held of the location of an injected or concrete component.
      * @param {fluid.instantiator} instantiator - The instantiator holding records to be cleared
@@ -249,7 +278,6 @@ const fluidILScope = function (fluid) {
     //     initTransactionId: signalling from fluid.operateInitialTransaction to fluid.enlistModelComponent
     //     materialisedPaths: self-guard in fluid.materialiseModelPath
 
-
     fluid.instantiator = function () {
         const that = {
             pathToComponent: {},
@@ -259,6 +287,15 @@ const fluidILScope = function (fluid) {
             }
         };
 
+        /**
+         * Records the metadata of a component in the component tree and updates its shadow record.
+         *
+         * @param {fluid.component} parent - The parent component of the component being recorded. Can be `null` for root components.
+         * @param {fluid.component} component - The component to record.
+         * @param {String} path - The fully qualified path of the component in the component tree.
+         * @param {String} name - The name of the component within its parent.
+         * @param {Boolean} created - Whether the component was freshly created (`true`) or injected (`false`).
+         */
         function recordComponent(parent, component, path, name, created) {
             // This is allocated initially in fluid.freshComponent
             const shadow = component[$m];
@@ -399,7 +436,7 @@ const fluidILScope = function (fluid) {
     };
 
     /** Returns <code>true</code> if the supplied reference holds a component which has been destroyed or for which destruction has started
-     * @param {Component} that - A reference to a component
+     * @param {fluid.component} that - A reference to a component
      * @param {Boolean} [strict] - If `true`, the test will only check whether the component has been fully destroyed
      * @return {Boolean} `true` if the reference is to a component which has been destroyed
      **/
@@ -417,9 +454,9 @@ const fluidILScope = function (fluid) {
      * Upgrades an element of an IL record which designates a function to prepare for a {func, args} representation.
      *
      * @param {Any} rec - The record to be upgraded. If an object will be returned unchanged. Otherwise it may be a function
-     * object or an IoC reference to one.
+     * object or an IL reference to one.
      * @param {String} key - The key in the returned record to hold the function, this will default to `funcName` if `rec` is a `string` *not*
-     * holding an IoC reference, or `func` otherwise
+     * holding an IL reference, or `func` otherwise
      * @return {Object} The original `rec` if it was not of primitive type, else a record holding { key : rec } if it was of primitive type.
      */
     fluid.upgradePrimitiveFunc = function (rec, key) {
@@ -495,13 +532,17 @@ const fluidILScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} ParsedContext
+     * @property {String} context - The context portion of the reference
+     * @property {String} path - The path portion of the reference
+     */
+
+    /**
      * Parse the string form of a contextualised IL reference into an object.
      *
      * @param {String} reference - The reference to be parsed.
      * @param {Number} [index] - Optional, index within the string to start parsing
-     * @return {ParsedContext} A structure holding the parsed structure, with members
-     *    context {String} The context portion of the reference. This will be a `string` for a flat reference, or a further `ParsedContext` for a recursive reference
-     *    path {String} The string portion of the reference
+     * @return {ParsedContext} A structure holding the parsed structure
      */
     fluid.parseContextReference = function (reference, index) {
         index = index || 0;
@@ -514,13 +555,27 @@ const fluidILScope = function (fluid) {
         return {context: context, path: path};
     };
 
-    fluid.resolveContext = function (context, that) {
+    /**
+     * Resolves a given context string to its corresponding component or scope within the component tree.
+     *
+     * @param {String} context - The context name to resolve. Special values:
+     *   - `"self"` resolves to the current component
+     *   - `"/"` resolves to the root component.
+     *   - Other values resolve to named scopes in the current component's scope chain.
+     * @param {fluid.component} self - The current component from which the resolution starts.
+     * @return {fluid.component|undefined} The resolved component or scope. Returns:
+     *   - The current component if `context` is `"self"`.
+     *   - The root component if `context` is `"/"`.
+     *   - The component or scope corresponding to `context` in the current component's scope chain, if found.
+     *   - `undefined` if the context cannot be resolved.
+     */
+    fluid.resolveContext = function (context, self) {
         if (context === "self") {
-            return that;
+            return self;
         } else if (context === "/") {
             return fluid.rootComponent;
         } else {
-            return that[$m].scopes.value.ownScope[context];
+            return self[$m].scopes.value.ownScope[context];
         }
     };
 
@@ -537,6 +592,63 @@ const fluidILScope = function (fluid) {
                 message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
                 path: that[$m].path
             }));
+    };
+
+    fluid.computeInstance = function (instance, ourLayers, mergeRecords, parent, memberName) {
+        const instantiator = fluid.globalInstantiator;
+        const shadow = instance[$m];
+        // This will be a signal that at the least we can derive our key set from
+        shadow.flatMerged = signal();
+        shadow.expanded = signal();
+        // TODO: How can we have shrinkage in this map? It should really be signalised itself
+        shadow.proxyMap = Object.create(null);
+
+        const resolver = fluid.hierarchyResolver();
+        let instanceLayerName;
+        if (ourLayers.length > 1) {
+            // TODO: These layer names should be economised on when they coincide, perhaps could just be guids/hashes of their constituents
+            instanceLayerName = parent[$m].path + "-" + memberName;
+            // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
+            fluid.rawLayer(instanceLayerName, {$layers: ourLayers});
+        } else {
+            instanceLayerName = ourLayers[0];
+        }
+
+        resolver.storeLayer(instanceLayerName);
+        const resolvedSignal = resolver.resolve(instanceLayerName);
+
+        // This whole function is a "computed" of the layer hierarchy
+        const computeInstance = function (resolved) {
+
+            // layers themselves need to be stored somewhere - recall the return should be a signal not a component
+            // the merged result is actual a signal with respect to the supplied layers - fresh layers can arise or old ones can be removed
+            // OK - so how will we REMOVE properties in the case we need to unmerge? This is what implies that the entire top level
+            // of properties needs to be signalised? Or does the "instance" become a factory and we just construct a completely fresh
+            // component instance if there is a change in top-level properties?
+            // If we signalise the whole top layer then at least we don't need to ever discard the root reference.
+            // And also - if anyone wants a "flattened" component, this naturally can't agree with the old root reference.
+            // Does this commit us to "public zebras"?
+            const layers = resolved.mergeRecords.concat(mergeRecords);
+
+            const flatMerged = {};
+            fluid.mergeLayerRecords(flatMerged, layers);
+            // TODO: Should really be a computed output so that graph can be properly connected
+            shadow.flatMerged.value = flatMerged;
+            // Need a basic scope record or we can't do expansion
+            instantiator.recordKnownComponent(parent, instance, memberName, true);
+
+            const expanded = {};
+            shadow.expanded.value = expanded;
+            shadow.signalMap = Object.create(null);
+            fluid.expandLayer(expanded, flatMerged, instance, shadow, []);
+            fluid.applyLayerSignals(instance, expanded);
+
+            return instance;
+        };
+
+        const computer = fluid.computed(computeInstance, [resolvedSignal]);
+        computer.$variety = "$component";
+        return computer;
     };
 
     fluid.proxyMat = function (target, shadow, segs) {
@@ -642,16 +754,33 @@ const fluidILScope = function (fluid) {
         return togo;
     };
 
+    fluid.expandComponentRecord = function (record, that, key) {
+        const togo = fluid.freshComponent();
+        const expanded = fluid.readerExpandLayer(record);
+
+        const subLayerRecord = {
+            layerType: "subcomponent",
+            layer: expanded
+        };
+
+        const computer = fluid.computeInstance(togo, expanded.$layers, [subLayerRecord], that, key);
+
+        // No point returning the signal as we usually do - since the entire component top is signalised
+        // Component references are stable even if everything else changes
+        return computer.value;
+    };
+
     fluid.recordTypes = Object.entries({
         "$method": fluid.expandMethodRecord,
-        "$compute": fluid.expandComputeRecord
+        "$compute": fluid.expandComputeRecord,
+        "$component": fluid.expandComponentRecord
     }).map(([key, handler]) => ({key, handler}));
 
-    fluid.expandElement = function (that, element) {
+    fluid.expandElement = function (that, element, key) {
         if (fluid.isPlainObject(element, true)) {
             const record = fluid.recordTypes.find(record => element[record.key]);
             if (record) {
-                return record.handler(element[record.key], that);
+                return record.handler(element[record.key], that, key);
             } else {
                 return element;
             }
@@ -663,10 +792,10 @@ const fluidILScope = function (fluid) {
     };
 
     fluid.expandLayer = function (target, flatMerged, that, shadow, segs) {
-        fluid.each(flatMerged, function (value, key) {
+        fluid.each(flatMerged, function expandOneLayer(value, key) {
             segs.push(key);
             const uncompact = fluid.expandCompactElement(value);
-            const expanded = fluid.expandElement(that, uncompact || value);
+            const expanded = fluid.expandElement(that, uncompact || value, key);
             if (fluid.isPlainObject(expanded, true)) {
                 const expandedInner = {}; // TODO: Make this lazy and only construct a fresh object if there is an expansion
                 fluid.expandLayer(expandedInner, value, that, shadow, segs);
@@ -694,81 +823,32 @@ const fluidILScope = function (fluid) {
         });
     };
 
-    fluid.initFreeComponent = function (componentName, resolverIn, initArgs) {
-        const instantiator = fluid.globalInstantiator;
+    fluid.initFreeComponent = function (componentName, initArgs) {
         // TODO: Perhaps one day we will support a directive which allows the user to select a current component
         // root for free components other than the global root
 
         const instance = fluid.freshComponent();
         const instanceName = fluid.computeGlobalMemberName(componentName, instance.$id);
 
-        // If we support other signatures we might want to do an early resolution, as we used to with "upDefaults"
         const argLayer = initArgs[0] || {};
-        let instanceLayerName, resolver;
-        if (argLayer.$layers) {
-            // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
-            fluid.rawLayer(instanceName, {...argLayer, $layers: [componentName].concat(argLayer.$layers)});
-            resolver = fluid.hierarchyResolver(resolverIn.flatDefs);
-            instanceLayerName = instanceName;
-            resolver.storeLayer(instanceLayerName);
-        } else {
-            instanceLayerName = componentName;
-            resolver = resolverIn;
-        }
-        // Break out this middle section into subcomponent constructor
-        const shadow = instance[$m];
-        // This will be a signal that at the least we can derive our key set from
-        shadow.flatMerged = signal();
-        shadow.expanded = signal();
-        // TODO: How can we have shrinkage in this map? It should really be signalised itself
-        shadow.proxyMap = Object.create(null);
+        const ourLayers = [componentName].concat(fluid.makeArray(argLayer.$layers));
 
-        const resolvedSignal = resolver.resolve(instanceLayerName);
-
-        // This whole function is a "computed" of the layer hierarchy
-        const computeInstance = function (resolved) {
-            const userLayer = {
-                layerType: "user",
-                layer: {
-                    ...argLayer
-                }
-            };
-
-            // layers themselves need to be stored somewhere - recall the return should be a signal not a component
-            // the merged result is actual a signal with respect to the supplied layers - fresh layers can arise or old ones can be removed
-            // OK - so how will we REMOVE properties in the case we need to unmerge? This is what implies that the entire top level
-            // of properties needs to be signalised? Or does the "instance" become a factory and we just construct a completely fresh
-            // component instance if there is a change in top-level properties?
-            // If we signalise the whole top layer then at least we don't need to ever discard the root reference.
-            // And also - if anyone wants a "flattened" component, this naturally can't agree with the old root reference.
-            // Does this commit us to "public zebras"?
-            const layers = resolved.mergeRecords.concat([userLayer]);
-
-            const flatMerged = {};
-            fluid.mergeLayerRecords(flatMerged, layers);
-            // TODO: Should really be a computed output so that graph can be properly connected
-            shadow.flatMerged.value = flatMerged;
-            // Need a basic scope record or we can't do expansion
-            instantiator.recordKnownComponent(fluid.rootComponent, instance, instanceName, true);
-
-            const expanded = {};
-            shadow.expanded.value = expanded;
-            shadow.signalMap = Object.create(null);
-            fluid.expandLayer(expanded, flatMerged, instance, shadow, []);
-            fluid.applyLayerSignals(instance, expanded);
-
-            return instance;
+        const userLayerRecord = {
+            layerType: "user",
+            layer: {
+                ...argLayer
+            }
         };
 
-        const computer = fluid.computed(computeInstance, [resolvedSignal]);
-        computer.$variety = "$component";
-        const proxy = fluid.proxyMat(computer, shadow, []);
+        const computer = fluid.computeInstance(instance, ourLayers, [userLayerRecord], fluid.rootComponent, instanceName);
+
+        const proxy = fluid.proxyMat(computer, instance[$m], []);
         return proxy;
     };
 
     /** Destroys a component held at the specified path. The parent path must represent a component, although the component itself may be nonexistent
      * @param {String|String[]} path - Path where the new component is to be destroyed, represented as a string or array of string segments
-     * @param {Instantiator} [instantiator] - [optional] The instantiator holding the component to be destroyed - if blank, the global instantiator will be used.
+     * @param {fluid.instantiator} [instantiator] - [optional] The instantiator holding the component to be destroyed - if blank, the global instantiator will be used.
      */
     fluid.destroy = function (path, instantiator) {
         instantiator = instantiator || fluid.globalInstantiator;

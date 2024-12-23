@@ -350,7 +350,7 @@ const fluidJSScope = function (fluid) {
         return typeof(ref) === "string" && ref.charAt(0) === "{";
     };
 
-    /** Determine whether the supplied value is a reference or an expander. The test is passed if either fluid.isIoCReference passes
+    /** Determine whether the supplied value is a reference or an expander. The test is passed if either fluid.isILReference passes
      * or the value has an "expander" member
      * @param {any} ref - The value to be tested
      * @return {Boolean} `true` if the supplied value is a reference or expander
@@ -458,6 +458,15 @@ const fluidJSScope = function (fluid) {
         }
     };
 
+    /**
+     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
+     *
+     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
+     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String): The key of the current property .
+     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
+     */
     fluid.transform = function (source, func) {
         if (source) {
             const togo = {};
@@ -470,6 +479,14 @@ const fluidJSScope = function (fluid) {
         }
     };
 
+    /**
+     * Iterates over the properties of an object, invoking a provided function for each item.
+     *
+     * @param {Object} source - The object or array to iterate over. If `null` or `undefined`, the function does nothing.
+     * @param {Function} func - The function to be invoked for each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String|Number): The key of the current property.
+     */
     fluid.each = function (source, func) {
         if (source) {
             for (const key in source) {
@@ -1788,6 +1805,7 @@ const fluidJSScope = function (fluid) {
     };
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
+    // Do we actually need this in this role?
     fluid.readerExpandLayer = function (layer) {
         // TODO: Create links between old and new data so that we can route errors back
         return {...layer, $layers: fluid.makeArray(layer.$layers)};
@@ -1875,7 +1893,8 @@ const fluidJSScope = function (fluid) {
      * @property {Object} layer - The layer definition object to be merged.
      */
 
-    // Consumes rawLayer values as signals, produces mergeRecords and merged as plain outputs
+    // Consumes rawLayer values as signals by issuing reads to fluid.readLayer
+    // produces mergeRecords and merged as plain outputs
     fluid.hierarchyResolver = function (flatDefsIn = {}) {
         const flatDefs = Object.assign({}, flatDefsIn);
         const readerExpand = layer => fluid.readerExpandLayer(layer);
@@ -1941,7 +1960,13 @@ const fluidJSScope = function (fluid) {
         return that;
     };
 
-
+    /**
+     * Checks whether a given layer contains a specified layer name in its `$layers` property.
+     *
+     * @param {Object} layer - The layer object to check. It should contain a `$layers` property, which is an array of layer names.
+     * @param {String} layerName - The name of the layer to check for.
+     * @return {Boolean} `true` if the layer contains the specified layer name, otherwise `false`.
+     */
     fluid.hasLayer = function (layer, layerName) {
         return layer.$layers && layer.$layers.includes(layerName);
     };
@@ -1952,16 +1977,17 @@ const fluidJSScope = function (fluid) {
      * @return {signal<resolve>} - Signal for layers (which is mergeRecords and merged)
      */
     fluid.readMergedDef = function (layerName) {
-        const creator = fluid.getGlobalValue(layerName);
-        return creator[$m].resolver.resolve(layerName);
+        // TODO: economise on these in the "giant mat"
+        const resolver = fluid.hierarchyResolver();
+        resolver.storeLayer(layerName);
+        return resolver.resolve(layerName);
     };
 
     // Must be defined before we construct any components
-    fluid.makeComponentCreator = function (componentName, resolver) {
+    fluid.makeComponentCreator = function (componentName) {
         const creator = function () {
-            return fluid.initFreeComponent(componentName, resolver, arguments);
+            return fluid.initFreeComponent(componentName, arguments);
         };
-        creator[$m] = {resolver};
         // Allow use of creator functions as namespaces - assign any existing members onto the freshly created function
         const existing = fluid.getGlobalValue(componentName);
         if (existing) {
@@ -1972,9 +1998,7 @@ const fluidJSScope = function (fluid) {
 
     fluid.writeDef = function (layerName, layer) {
         fluid.writeLayer(layerName, layer);
-        const resolver = fluid.hierarchyResolver();
-        resolver.storeLayer(layerName);
-        fluid.makeComponentCreator(layerName, resolver);
+        fluid.makeComponentCreator(layerName);
     };
 
     /**
