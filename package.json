@@ -41,7 +41,7 @@
     },
     "devDependencies": {
         "browserslist-config-fluid": "0.1.0",
-        "cpy-cli": "3.1.1",
+        "cpy-cli": "4.2.0",
         "eslint-config-fluid": "2.1.2",
         "eslint-plugin-jsdoc": "39.6.2",
         "fast-glob": "3.2.11",
