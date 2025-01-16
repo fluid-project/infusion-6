@@ -548,11 +548,17 @@ const fluidILScope = function (fluid) {
         index = index || 0;
         const endcpos = reference.indexOf("}", index + 1);
         const context = reference.substring(index + 1, endcpos);
+        const colpos = reference.indexOf(":");
+        let name;
+        if (colpos !== -1) {
+            name = reference.substring(colpos + 1);
+            reference = reference.substring(0, colpos);
+        }
         let path = reference.substring(endcpos + 1, reference.length);
         if (path.charAt(0) === ".") {
             path = path.substring(1);
         }
-        return {context: context, path: path};
+        return {context, path, name};
     };
 
     /**
@@ -563,24 +569,30 @@ const fluidILScope = function (fluid) {
      *   - `"/"` resolves to the root component.
      *   - Other values resolve to named scopes in the target component's scope chain.
      * @param {fluid.component} self - The component site from which resolution starts.
+     * @param {Function} [resolver] - A function dynamically resolving a context name to a local context
      * @return {Signal<fluid.component|undefined>} The resolved component or scope. Returns:
      *   - The target component if `context` is `"self"`.
      *   - The root component if `context` is `"/"`.
      *   - The component or scope corresponding to `context` in the target component's scope chain, if found.
      *   - `undefined` if the context cannot be resolved.
      */
-    fluid.resolveContext = function (context, self) {
+    fluid.resolveContext = function (context, self, resolver) {
         return computed( () => {
             if (context === "self") {
                 return self;
             } else if (context === "/") {
                 return fluid.rootComponent;
             } else {
-                const component = self[$m].scopes.value.ownScope[context];
-                return component || fluid.unavailable({
-                    message: "Cannot resolve context " + context + " from component at path " + self[$m].path,
-                    site: self
-                });
+                const local = resolver ? resolver(context) : fluid.NoValue;
+                if (local === fluid.NoValue) {
+                    const component = self[$m].scopes.value.ownScope[context];
+                    return component || fluid.unavailable({
+                        message: "Cannot resolve context " + context + " from component at path " + self[$m].path,
+                        site: self
+                    });
+                } else {
+                    return local;
+                }
             }
         });
     };
@@ -590,10 +602,10 @@ const fluidILScope = function (fluid) {
         return Object.assign(fluid.getThroughSignals(component, segs), {component, segs, $variety: "$ref"});
     };
 
-    fluid.fetchContextReference = function (ref, that) {
+    fluid.fetchContextReference = function (ref, that, resolver) {
         const parsed = fluid.parseContextReference(ref);
         return computed( () => {
-            const target = fluid.resolveContext(parsed.context, that).value;
+            const target = fluid.resolveContext(parsed.context, that, resolver).value;
             return fluid.isUnavailable(target) ? fluid.mergeUnavailable(fluid.unavailable({
                 message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
                 path: that[$m].path
@@ -732,24 +744,39 @@ const fluidILScope = function (fluid) {
             fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, that) : rec.func;
     };
 
-    fluid.resolveArgMaterial = function (material, that) {
+    // eslint-disable-next-line jsdoc/require-returns-check
+    /**
+     * Resolve material intended for compute and method arguments - this only expands {} references, possibly into a
+     * a local context
+     * @param {any} material - The material to be expanded
+     * @param {fluid.component} that - Component from whose point of view the material is to be expanded
+     * @param {Function} [resolver] - A function dynamically resolving a context name to a local context
+     * @return {any} The expanded material, with signals in place of any references discovered
+     */
+    fluid.resolveArgMaterial = function (material, that, resolver) {
         if (fluid.isPrimitive(material)) {
-            return fluid.isILReference(material) ? fluid.fetchContextReference(material, that) : material;
+            return fluid.isILReference(material) ? fluid.fetchContextReference(material, that, resolver) : material;
         } else if (Array.isArray(material)) {
-            return material.map(member => fluid.resolveArgMaterial(member, that));
+            return material.map(member => fluid.resolveArgMaterial(member, that, resolver));
         } else if (fluid.isPlainObject(material, true)) {
-            return fluid.transform(material, member => fluid.resolveArgMaterial(member, that));
+            return fluid.transform(material, member => fluid.resolveArgMaterial(member, that, resolver));
         }
     };
 
-    fluid.resolveMethodArgs = function (argRecs, args, that) {
-        // TODO: Resolve 0: onto args
-        return fluid.resolveArgMaterial(argRecs, that);
+    fluid.resolveComputeArgs = function (argRecs, that, resolver) {
+        return fluid.resolveArgMaterial(argRecs, that, resolver);
     };
 
-    fluid.resolveComputeArgs = function (argRecs, that) {
-        // Slightly different to resolveMethodArgs - doesn't support 0: syntax
-        return fluid.resolveArgMaterial(argRecs, that);
+    fluid.makeArgResolver = function () {
+        const that = {
+            backing: [],
+            resolve: function (context) {
+                const argNum = +context;
+                return Number.isInteger(+argNum) ? (argNum in that.backing ? that.backing[argNum] :
+                    fluid.unavailable({message: "No argument at position " + context + " was not supplied to this method call"})) : fluid.NoValue;
+            }
+        };
+        return that;
     };
 
     fluid.expandMethodRecord = function (record, that) {
@@ -758,10 +785,13 @@ const fluidILScope = function (fluid) {
         const func = fluid.resolveFuncRecord(record, that);
         let togo;
         if (record.args) {
+            const resolver = fluid.makeArgResolver();
             const argRecs = fluid.makeArray(record.args);
+            const argResolver = fluid.resolveComputeArgs(argRecs, that, resolver.resolve);
             togo = function applyMethod(...args) {
+                resolver.backing = args;
                 // TODO: Only flatten knowably signalised things
-                const resolvedArgs = fluid.resolveMethodArgs(argRecs, args, that).map(fluid.flattenSignals);
+                const resolvedArgs = argResolver.map(fluid.flattenSignals);
                 const resolvedFunc = fluid.deSignal(func);
                 return resolvedFunc.apply(that, resolvedArgs);
             };

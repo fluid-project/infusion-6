@@ -672,7 +672,7 @@ const fluidJSScope = function (fluid) {
      * is intended for "ephemeral use", i.e. returned directly from strategies and transforms and should not be
      * stored in data structures */
     // TODO: No longer currently consumed by fluid.transform but maybe we want it back
-    fluid.$NoValue = fluid.makeMarker("No Value");
+    fluid.NoValue = fluid.makeMarker("No Value");
 
     /**
      * Check if an object is a marker of a specific type or one of a set of types.

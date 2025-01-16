@@ -56,6 +56,24 @@ QUnit.test("Basic construction and destruction", function (assert) {
     assert.ok(that.$lifecycleStatus === "destroyed", "Component successfully destroyed");
 });
 
+// Method argument resolution
+
+fluid.tests.lookupTaxon = function (entries, query, maxSuggestions) {
+    return entries.filter(entry => entry.includes(query)).slice(0, maxSuggestions);
+};
+
+fluid.def("fluid.tests.shortMethod", {
+    entries: ["Acmispon parviflorus", "Vicia hirsuta", "Stellaria graminea"],
+    lookupTaxon: "$method:fluid.tests.lookupTaxon({self}.entries, {0}:query, {1}:maxSuggestions)"
+});
+
+QUnit.test("Method argument resolution", function (assert) {
+    const that = fluid.tests.shortMethod();
+    const results = that.lookupTaxon("Acmispon", 1);
+    assert.deepEqual(results, ["Acmispon parviflorus"], "Resolved method arguments");
+});
+
+
 /** FLUID-4914 derived grade resolution tests **/
 
 fluid.def("fluid.tests.dataSource", {
