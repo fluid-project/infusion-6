@@ -561,22 +561,28 @@ const fluidILScope = function (fluid) {
      * @param {String} context - The context name to resolve. Special values:
      *   - `"self"` resolves to the current component
      *   - `"/"` resolves to the root component.
-     *   - Other values resolve to named scopes in the current component's scope chain.
-     * @param {fluid.component} self - The current component from which the resolution starts.
-     * @return {fluid.component|undefined} The resolved component or scope. Returns:
-     *   - The current component if `context` is `"self"`.
+     *   - Other values resolve to named scopes in the target component's scope chain.
+     * @param {fluid.component} self - The component site from which resolution starts.
+     * @return {Signal<fluid.component|undefined>} The resolved component or scope. Returns:
+     *   - The target component if `context` is `"self"`.
      *   - The root component if `context` is `"/"`.
-     *   - The component or scope corresponding to `context` in the current component's scope chain, if found.
+     *   - The component or scope corresponding to `context` in the target component's scope chain, if found.
      *   - `undefined` if the context cannot be resolved.
      */
     fluid.resolveContext = function (context, self) {
-        if (context === "self") {
-            return self;
-        } else if (context === "/") {
-            return fluid.rootComponent;
-        } else {
-            return self[$m].scopes.value.ownScope[context];
-        }
+        return computed( () => {
+            if (context === "self") {
+                return self;
+            } else if (context === "/") {
+                return fluid.rootComponent;
+            } else {
+                const component = self[$m].scopes.value.ownScope[context];
+                return component || fluid.unavailable({
+                    message: "Cannot resolve context " + context + " from component at path " + self[$m].path,
+                    site: self
+                });
+            }
+        });
     };
 
     fluid.getForComponent = function (component, path) {
@@ -586,12 +592,26 @@ const fluidILScope = function (fluid) {
 
     fluid.fetchContextReference = function (ref, that) {
         const parsed = fluid.parseContextReference(ref);
-        const target = fluid.resolveContext(parsed.context, that);
-        return target ? fluid.getForComponent(target, parsed.path) :
-            signal(fluid.unavailable({
+        return computed( () => {
+            const target = fluid.resolveContext(parsed.context, that).value;
+            return fluid.isUnavailable(target) ? fluid.mergeUnavailable(fluid.unavailable({
                 message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
                 path: that[$m].path
-            }));
+            }), target) : fluid.getForComponent(target, parsed.path);
+        });
+    };
+
+    // Assign any signals from source into target, or create fresh ones if they are not signalised
+    fluid.applyLayerSignals = function (target, source) {
+        fluid.each(source, (value, key) => {
+            if (fluid.isSignal(value)) {
+                target[key] = value;
+            } else {
+                const signalised = signal(value);
+                signalised.$variety = "$layer";
+                target[key] = signalised;
+            }
+        });
     };
 
     fluid.computeInstance = function (instance, ourLayers, mergeRecords, parent, memberName) {
@@ -712,14 +732,24 @@ const fluidILScope = function (fluid) {
             fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, that) : rec.func;
     };
 
+    fluid.resolveArgMaterial = function (material, that) {
+        if (fluid.isPrimitive(material)) {
+            return fluid.isILReference(material) ? fluid.fetchContextReference(material, that) : material;
+        } else if (Array.isArray(material)) {
+            return material.map(member => fluid.resolveArgMaterial(member, that));
+        } else if (fluid.isPlainObject(material, true)) {
+            return fluid.transform(material, member => fluid.resolveArgMaterial(member, that));
+        }
+    };
+
     fluid.resolveMethodArgs = function (argRecs, args, that) {
         // TODO: Resolve 0: onto args
-        return argRecs.map(argRec => fluid.isILReference(argRec) ? fluid.fetchContextReference(argRec, that).value : argRec);
+        return fluid.resolveArgMaterial(argRecs, that);
     };
 
     fluid.resolveComputeArgs = function (argRecs, that) {
         // Slightly different to resolveMethodArgs - doesn't support 0: syntax
-        return argRecs.map(argRec => fluid.isILReference(argRec) ? fluid.fetchContextReference(argRec, that) : argRec);
+        return fluid.resolveArgMaterial(argRecs, that);
     };
 
     fluid.expandMethodRecord = function (record, that) {
@@ -807,19 +837,6 @@ const fluidILScope = function (fluid) {
                 }
             }
             segs.pop();
-        });
-    };
-
-    // Assign any signals from source into target, or create fresh ones if they are not signalised
-    fluid.applyLayerSignals = function (target, source) {
-        fluid.each(source, (value, key) => {
-            if (fluid.isSignal(value)) {
-                target[key] = value;
-            } else {
-                const signalised = signal(value);
-                signalised.$variety = "$layer";
-                target[key] = signalised;
-            }
         });
     };
 

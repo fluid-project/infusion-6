@@ -278,13 +278,6 @@ const fluidJSScope = function (fluid) {
         }
     };
 
-    // Functional programming utilities.
-
-    fluid.proxySymbol = Symbol("fluid.proxyTarget");
-    const $t = fluid.proxySymbol;
-
-    fluid.unProxy = target => target?.[$t] ? target[$t] : target;
-
     // Type checking functions
 
     /**
@@ -300,8 +293,7 @@ const fluidJSScope = function (fluid) {
 
     /** Determines whether the supplied object can be treated as an array (primarily, by iterating over numeric keys bounded from 0 to length).
      * The strategy used is an optimised approach taken from an earlier version of jQuery - detecting whether the toString() version
-     * of the object agrees with the textual form [object Array], or else whether the object is a
-     * jQuery object (the most common source of "fake arrays").
+     * of the object agrees with the textual form [object Array]
      *
      * @param {any} totest - The value to be tested
      * @return {Boolean} `true` if the supplied value is an array
@@ -369,6 +361,8 @@ const fluidJSScope = function (fluid) {
     fluid.isUncopyable = function (totest) {
         return fluid.isPrimitive(totest) || !fluid.isPlainObject(totest);
     };
+
+    // Functional programming utilities.
 
     /** A function which raises a failure if executed */
     fluid.notImplemented = function () {
@@ -701,6 +695,21 @@ const fluidJSScope = function (fluid) {
         }
     };
 
+    fluid.logLevelsSpec = {
+        "FATAL": 0,
+        "FAIL": 5,
+        "WARN": 10,
+        "IMPORTANT": 12, // The default logging "off" level - corresponds to the old "false"
+        "INFO": 15, // The default logging "on" level - corresponds to the old "true"
+        "TRACE": 20
+    };
+
+    /* A structure holding all supported log levels as supplied as a possible first argument to fluid.log
+     * Members with a higher value of the "priority" field represent lower priority logging levels */
+    fluid.logLevel = fluid.transform(fluid.logLevelsSpec, (key, value) => fluid.makeMarker(key, {priority: value}));
+
+    fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
+
     /**
      * Create a marker representing an "Unavailable" state with an associated waitset.
      * The marker is mutable.
@@ -849,20 +858,17 @@ const fluidJSScope = function (fluid) {
         });
     };
 
-    fluid.logLevelsSpec = {
-        "FATAL": 0,
-        "FAIL": 5,
-        "WARN": 10,
-        "IMPORTANT": 12, // The default logging "off" level - corresponds to the old "false"
-        "INFO": 15, // The default logging "on" level - corresponds to the old "true"
-        "TRACE": 20
+    // Reproduce constructor at https://github.com/preactjs/signals/blob/main/packages/core/src/index.ts#L524-L531
+    // via mangled names registry at https://github.com/preactjs/signals/blob/main/mangle.json
+
+    fluid.rebindComputed = function (computed, func) {
+        computed.x = func;       // this._fn = fn;
+        computed.s = undefined;  // this._sources = undefined;
+        // this._globalVersion = globalVersion - 1; // presumably don't need to reproduce this
+        computed.f = 1 << 2;     // this._flags = OUTDATED;
     };
 
-    /* A structure holding all supported log levels as supplied as a possible first argument to fluid.log
-     * Members with a higher value of the "priority" field represent lower priority logging levels */
-    fluid.logLevel = fluid.transform(fluid.logLevelsSpec, (key, value) => fluid.makeMarker(key, {priority: value}));
-
-    fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
+    // Path handling
 
     // See original comment fom old Fluid.js
     // Performance testing in early 2015 suggests that modern browsers now allow these to execute slightly faster
@@ -1752,6 +1758,11 @@ const fluidJSScope = function (fluid) {
 
 
     /*** DEFAULTS AND OPTIONS MERGING SYSTEM ***/
+
+    fluid.proxySymbol = Symbol("fluid.proxyTarget");
+    const $t = fluid.proxySymbol;
+
+    fluid.unProxy = target => target?.[$t] ? target[$t] : target;
 
     // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
     fluid.metadataSymbol = Symbol("fluid.metadata");

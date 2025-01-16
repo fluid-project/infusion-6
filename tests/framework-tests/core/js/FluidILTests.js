@@ -337,5 +337,5 @@ QUnit.test("FLUID-4930: Retrunking IV", function (assert) {
     const resend = that.resend;
     assert.ok(resend, "Successfully constructed subcomponent");
     assert.ok(fluid.hasLayer(resend, "fluid.tests.FLUID4930.verify.resend"), "Constructed subcomponent with layer");
-    assert.equal("Successfully evaluated email option", "http://localhost:5984/users/_design/lookup/_view/byUsernameOrEmail", that.resend.options.urls.read);
+    assert.equal(that.resend.urls.read, "http://localhost:5984/users/_design/lookup/_view/byUsernameOrEmail", "Successfully evaluated email option");
 });
