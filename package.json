@@ -25,6 +25,12 @@
         "deps": "run-p deps:*",
         "deps:preact-signals-core": "cpy node_modules/@preact/signals-core/dist/signals-core.min.js src/lib/preact-signals/",
         "deps:preact-signals-core-map": "cpy node_modules/@preact/signals-core/dist/signals-core.min.js.map src/lib/preact-signals/",
+        "deps:preact-signals": "cpy node_modules/@preact/signals/dist/signals.min.js src/lib/preact/",
+        "deps:preact-signals-map": "cpy node_modules/@preact/signals/dist/signals.min.js.map src/lib/preact/",
+        "deps:preact": "cpy node_modules/preact/dist/preact.min.js src/lib/preact/",
+        "deps:preact-map": "cpy node_modules/preact/dist/preact.min.js.map src/lib/preact/",
+        "deps:preact-hooks": "cpy node_modules/preact/hooks/dist/hooks.umd.js src/lib/preact/",
+        "deps:preact-hooks/map": "cpy node_modules/preact/hooks/dist/hooks.umd.js.map src/lib/preact/",
         "prepare": "run-s deps",
         "lint": "fluid-lint-all",
         "start": "serve"
@@ -37,11 +43,14 @@
     ],
     "dependencies": {
         "fluid-resolve": "1.3.0",
-        "@preact/signals-core": "1.7.0"
+        "@preact/signals-core": "1.7.0",
+        "@preact/signals": "2.0.1",
+        "preact": "10.25.4"
     },
     "devDependencies": {
         "browserslist-config-fluid": "0.1.0",
-        "cpy-cli": "4.2.0",
+        "cpy": "8.1.2",
+        "cpy-cli": "3.1.1",
         "eslint-config-fluid": "2.1.2",
         "eslint-plugin-jsdoc": "39.6.2",
         "fast-glob": "3.2.11",

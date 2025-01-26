@@ -74,3 +74,7 @@ QUnit.assert.undefined = function (value, message) {
 QUnit.assert.notUndefined = function (value, message) {
     this.ok(value !== undefined, message);
 };
+
+QUnit.assert.unavailable = function (value, message) {
+    this.ok(fluid.isUnavailable(value), message);
+};

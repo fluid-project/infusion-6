@@ -53,7 +53,7 @@ QUnit.test("Basic construction and destruction", function (assert) {
 
     assert.ok(that.destroy, "Component has a destroy method");
     that.destroy();
-    assert.ok(that.$lifecycleStatus === "destroyed", "Component successfully destroyed");
+    assert.ok(fluid.isDestroyed(that), "Component successfully destroyed");
 });
 
 // Method argument resolution
@@ -71,6 +71,59 @@ QUnit.test("Method argument resolution", function (assert) {
     const that = fluid.tests.shortMethod();
     const results = that.lookupTaxon("Acmispon", 1);
     assert.deepEqual(results, ["Acmispon parviflorus"], "Resolved method arguments");
+});
+
+// Effects
+
+// Basic resolution
+
+fluid.tests.logValue = function (value, log) {
+    log(value);
+};
+
+fluid.def("fluid.tests.effectsI", {
+    gridBounds: [0, 10],
+    log: () => {},
+    fitBounds: "$effect:fluid.tests.logValue({self}.gridBounds, {self}.log)"
+});
+
+QUnit.test("Effects resolution I", function (assert) {
+    const log = [];
+    const that = fluid.tests.effectsI({
+        log: bounds => log.push(bounds)
+    });
+    assert.deepEqual(log, [[0, 10]], "Initial effect on startup");
+    log.length = 0;
+    that.gridBounds = [0, 20];
+    assert.deepEqual(log, [[0, 20]], "Effect on update");
+});
+
+// Read/write
+
+fluid.def("fluid.tests.effectsII", {
+    $layers: "fluid.component",
+    count: 1,
+    log: () => {},
+    logCount: "$effect:fluid.tests.logValue({self}.count, {self}.log)"
+});
+
+QUnit.test("Effects resolution II - read/write and dispose", function (assert) {
+    const log = [];
+    const that = fluid.tests.effectsII({
+        log: count => log.push(count)
+    });
+    assert.deepEqual(log, [1], "Initial effect on startup");
+    log.length = 0;
+    that.count++;
+    assert.deepEqual(log, [2], "Effect on update");
+    log.length = 0;
+    that.count++;
+    assert.deepEqual(log, [3], "Effect on update");
+    that.destroy();
+    assert.throws( () => {
+        that.count++;
+    }, (err) => err.message.includes("destroyed"),
+    "Error thrown accessing destroyed component");
 });
 
 

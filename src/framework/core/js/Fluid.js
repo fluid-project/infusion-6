@@ -790,8 +790,9 @@ const fluidJSScope = function (fluid) {
      */
     fluid.flattenSignals = function (root) {
         const value = fluid.deSignal(root);
-        return fluid.isPrimitive(value) || !fluid.isPlainObject(value) ? value :
-            fluid.isArrayable(value) ? value.map(fluid.flattenSignals) : fluid.transform(value, fluid.flattenSignals);
+        return fluid.isUnavailable(value) ? undefined :
+            fluid.isPrimitive(value) || !fluid.isPlainObject(value) ? value :
+                fluid.isArrayable(value) ? value.map(fluid.flattenSignals) : fluid.transform(value, fluid.flattenSignals);
     };
 
     /**
@@ -858,24 +859,13 @@ const fluidJSScope = function (fluid) {
         });
     };
 
-    // Reproduce constructor at https://github.com/preactjs/signals/blob/main/packages/core/src/index.ts#L524-L531
-    // via mangled names registry at https://github.com/preactjs/signals/blob/main/mangle.json
-
-    fluid.rebindComputed = function (computed, func) {
-        computed.x = func;       // this._fn = fn;
-        computed.s = undefined;  // this._sources = undefined;
-        // this._globalVersion = globalVersion - 1; // presumably don't need to reproduce this
-        computed.f = 1 << 2;     // this._flags = OUTDATED;
-    };
-
     // Path handling
 
     // See original comment fom old Fluid.js
     // Performance testing in early 2015 suggests that modern browsers now allow these to execute slightly faster
     // than the equivalent machinery written using complex regexps - therefore they will continue to be maintained
     // here. However, there is still a significant performance gap with respect to the performance of String.split(".")
-    // especially on Chrome, so we will continue to insist that component member names do not contain a "." character
-    // for the time being.
+    // especially on Chrome
     // Retesting in 2024 shows that the advantage is still there
     fluid.getPathSegmentImpl = function (accept, path, i) {
         let segment = "";
@@ -964,10 +954,10 @@ const fluidJSScope = function (fluid) {
     /**
      * Compose a set of path segments supplied as arguments into a single escaped EL expression.
      * Each segment is concatenated with a period (.) separator and special characters are escaped as needed.
-     * @param {...String} segments - The individual path segments to compose.
+     * @param {String[]} segments - The individual segments to compose.
      * @return {String} The fully composed and escaped EL expression.
      */
-    fluid.composeSegments = function (...segments) {
+    fluid.composeSegments = function (segments) {
         let path = "";
         for (let i = 0; i < segments.length; ++i) {
             path = fluid.composeSegment(path, segments[i]);
@@ -998,15 +988,25 @@ const fluidJSScope = function (fluid) {
      *
      * @param {any} root - The root object to begin traversal from.
      * @param {String[]} segs - An array of segment names representing the path to traverse.
+     * @param {signal<T>} [invalidator] - An optional signal to trigger refetching
      * @return {Computed<any>} A computed value that resolves the path through any `Signal` encountered, a plain value if
      * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
      */
-    fluid.getThroughSignals = function (root, segs) {
+    fluid.getThroughSignals = function (root, segs, invalidator) {
         const togo = computed(() => {
+            fluid.deSignal(invalidator);
             let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
+                if (!move) {
+                    break;
+                }
                 const seg = segs[j];
-                move = fluid.deSignal(move?.[seg]);
+                // If there's no member and it is some kind of layer/component, produce a cheap "unavailable" value
+                if (!(seg in move) && root[$m]) {
+                    move = fluid.unavailable({messageKey: "NoMember", memberName: seg, layer: root});
+                    break;
+                }
+                move = fluid.deSignal(move[seg]);
             }
             return move;
         });
@@ -1035,24 +1035,42 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Traverse a nested object structure and ensure that all segments of the given path exist.
-     * If a segment does not exist, it is created as an empty object.
-     * Returns a stack of objects traversed or created, starting with the deepest object.
-     *
+     * Retrieves a nested object within the specified root by path segments, creating it if it does not exist.
      * @param {Object} root - The root object to begin traversal from.
      * @param {String[]} segs - An array of path segments to traverse.
-     * @return {Object[]} A stack of objects traversed or created, with the deepest object at the start of the array.
+     * @return {Object} The existing or newly created nested object associated with the path.
      */
     fluid.getRecInsist = function (root, segs) {
-        const stack = [];
         segs.forEach(seg => {
             if (!root[seg]) {
                 root[seg] = Object.create(null);
             }
             root = root[seg];
-            stack.unshift(root);
         });
-        return stack;
+        return root;
+    };
+
+    /**
+     * Recursively traverses all keys and values within a nested plain object, invoking a visitor function for each key-value pair.
+     *
+     * @param {Object} root - The root plain object to traverse.
+     * @param {Function} visitor - The visitor function to invoke for each key-value pair.
+     *        The function signature is `visitor(record, segs)`:
+     *        - `record`: The current value at the leaf node.
+     *        - `segs`: An array of segments representing the path to the current value.
+     * @param {String[]} [segs=[]] - A shared stack of path segments (used internally).
+     */
+    fluid.forEachDeep = function (root, visitor, segs = []) {
+        if (fluid.isPlainObject(root, true)) {
+            if (root[$m]) {
+                visitor(root[$m], segs);
+            }
+            fluid.each(root, (value, key) => {
+                segs.push(key);
+                fluid.forEachDeep(value, visitor, segs);
+                segs.pop();
+            });
+        }
     };
 
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
@@ -1768,6 +1786,12 @@ const fluidJSScope = function (fluid) {
     fluid.metadataSymbol = Symbol("fluid.metadata");
     const $m = fluid.metadataSymbol;
 
+    fluid.makeLayer = function (memberName, parent) {
+        const togo = Object.create(null);
+        togo[$m] = {type: "layer", memberName, parent};
+        return togo;
+    };
+
     // Lookup of layer names to signal<{raw: layer}>
     // where "raw" has not yet been readerExpanded
     fluid.layerStore = {};
@@ -1865,7 +1889,7 @@ const fluidJSScope = function (fluid) {
                 }
             }
             if (count > 1 && fluid.isPlainObject(last, true)) {
-                newTarget = {};
+                newTarget = fluid.makeLayer(key, target);
                 const newLayers = layers.map(layer => layer?.[key]);
                 segs.push(key);
                 fluid.mergeLayers(newTarget, segs, layerMap, newLayers, mergeRecords);
@@ -1935,7 +1959,7 @@ const fluidJSScope = function (fluid) {
                 }
                 return layerComputer;
             },
-            // Given a layerName, resolves a signal of {mergeRecords, merged} structure or unavailable if parents are not defined
+            // Given a layerName, resolves a computed of {mergeRecords, merged} structure dependent on registry or unavailable if parents are not defined
             resolve: (layerName) => {
                 const resolveLayers = function () {
                     // First prime the cache by evalauting all signals at tip

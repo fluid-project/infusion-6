@@ -10,7 +10,7 @@ const outerSignal = signal(0);
 
 const moveSignal = signal(0);
 
-// Verify that we can't update an unrelated signal during a computation
+// Verify that we can't update an unrelated signal during a computation - in fact we can
 
 const computer = computed(() => {
     const togo = moveSignal.value + 1;
@@ -19,12 +19,12 @@ const computer = computed(() => {
 });
 
 
-console.log("Computer: ", computer.value);
+console.log("Computer: ", computer.value); // 1
 
-console.log("Outer signal ", outerSignal.value);
+console.log("Outer signal ", outerSignal.value); // 1
 
 ++moveSignal.value;
 
-console.log("Computer: ", computer.value);
+console.log("Computer: ", computer.value); // 2
 
-console.log("Outer signal ", outerSignal.value);
+console.log("Outer signal ", outerSignal.value); // 2
