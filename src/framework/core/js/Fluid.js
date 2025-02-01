@@ -859,6 +859,52 @@ const fluidJSScope = function (fluid) {
         });
     };
 
+    fluid.sampleComputed = computed(() => {});
+    const computedPrototype = Object.getPrototypeOf(fluid.sampleComputed);
+    const computedPrototypeDescriptor = Object.getOwnPropertyDescriptor(computedPrototype, "value");
+
+    fluid.delegateUnavailable = fluid.unavailable({message: "No written value for delegated signal"});
+
+    fluid.DelegatedSignal = function (outerSignal, onWrite, onReset) {
+        const computer = computed( () => {
+            const targetValue = computer._target.value;
+            return fluid.isUnavailable(targetValue) ? computer._outerSignal.value : targetValue;
+        });
+        Object.setPrototypeOf(computer, fluid.DelegatedSignal.prototype);
+        computer._outerSignal = outerSignal;
+        computer._onWrite = onWrite;
+        computer._onReset = onReset;
+        computer._target = signal(fluid.delegateUnavailable);
+        return computer;
+    };
+
+    fluid.DelegatedSignal.prototype = fluid.sampleComputed;
+
+    fluid.DelegatedSignal.prototype.reset = function () {
+        if (this._onReset) {
+            this.onReset(this._target, this);
+        }
+        this._target.value = fluid.delegateUnavailable;
+    };
+
+    Object.defineProperty(fluid.DelegatedSignal.prototype, "value", {
+        get: computedPrototypeDescriptor.get,
+        set: function (newValue) {
+            if (this._target) {
+                this._target.value = newValue;
+            } else {
+                this._target = signal(newValue);
+                if (this._onWrite) {
+                    this._onWrite(this._target, this);
+                }
+            }
+        }
+    });
+
+    fluid.delegatedSignal = function (outerSignal, onWrite, onReset) {
+        return new fluid.DelegatedSignal(outerSignal, onWrite, onReset);
+    };
+
     // Path handling
 
     // See original comment fom old Fluid.js
@@ -988,13 +1034,11 @@ const fluidJSScope = function (fluid) {
      *
      * @param {any} root - The root object to begin traversal from.
      * @param {String[]} segs - An array of segment names representing the path to traverse.
-     * @param {signal<T>} [invalidator] - An optional signal to trigger refetching
      * @return {Computed<any>} A computed value that resolves the path through any `Signal` encountered, a plain value if
      * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
      */
-    fluid.getThroughSignals = function (root, segs, invalidator) {
+    fluid.getThroughSignals = function (root, segs) {
         const togo = computed(() => {
-            fluid.deSignal(invalidator);
             let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
                 if (!move) {
@@ -1067,7 +1111,7 @@ const fluidJSScope = function (fluid) {
             }
             fluid.each(root, (value, key) => {
                 segs.push(key);
-                fluid.forEachDeep(value, visitor, segs);
+                fluid.forEachDeep(value, visitor, [...segs]);
                 segs.pop();
             });
         }
@@ -1857,7 +1901,7 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Recursively merge multiple layers into a target object, resolving conflicts and maintaining a mapping of values to their originating layers.
+     * Recursively merge multiple layers into a target object, maintaining a mapping of values to their originating layers.
      *
      * @param {Object} target - The target object where merged results will be stored.
      * @param {String[]} segs - The current path segments being traversed during the merge.
@@ -1917,7 +1961,7 @@ const fluidJSScope = function (fluid) {
 
         fluid.mergeLayers(root, segs, layerMap, layers, mergeRecords);
 
-        return {root, layerMap};
+        return layerMap;
     };
 
     /**
@@ -1959,7 +2003,7 @@ const fluidJSScope = function (fluid) {
                 }
                 return layerComputer;
             },
-            // Given a layerName, resolves a computed of {mergeRecords, merged} structure dependent on registry or unavailable if parents are not defined
+            // Given a layerName, resolves a computed of {mergeRecords, merged, layerMap} structure dependent on registry or unavailable if parents are not defined
             resolve: (layerName) => {
                 const resolveLayers = function () {
                     // First prime the cache by evalauting all signals at tip
@@ -1983,9 +2027,10 @@ const fluidJSScope = function (fluid) {
                             priority: fluid.mergeRecordTypes.defParents,
                             layer: {$layers: order}
                         });
+                        const merged = {};
                         return {
                             // Note merged is currently only read by fluid.readDef
-                            mergeRecords, merged: fluid.mergeLayerRecords({}, mergeRecords)
+                            mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
                         };
                     }
                 };
