@@ -126,6 +126,35 @@ QUnit.test("Effects resolution II - read/write and dispose", function (assert) {
     "Error thrown accessing destroyed component");
 });
 
+// Identical to the previous test only using the signals API to interact with the component rather than the
+// convenient but slower proxy API
+QUnit.test("Effects resolution II - read/write and dispose via signals API", function (assert) {
+    const log = [];
+    const proxy = fluid.tests.effectsII({
+        log: count => log.push(count)
+    });
+    assert.deepEqual(log, [1], "Initial effect on startup");
+    log.length = 0;
+
+    // Get the real, signalised component instance from behind the proxy
+    const that = proxy[fluid.proxySymbol].value;
+    // Upgrade the "count" property from a definition layer computed signal to a live writeable signal
+    const countSignal = fluid.pathToLive(that, "count");
+
+    // Update the count via the signals API - more efficient than using the proxy
+    countSignal.value++;
+    assert.deepEqual(log, [2], "Effect on update");
+    log.length = 0;
+    countSignal.value++;
+    assert.deepEqual(log, [3], "Effect on update");
+    that.destroy();
+    log.length = 0;
+
+    // The signal can't be invalidated after destruction, but all effects allocated by the component will be disposed
+    countSignal.value++;
+    assert.deepEqual(log, [], "No effect after destruction");
+});
+
 
 /** FLUID-4914 derived grade resolution tests **/
 
@@ -155,7 +184,7 @@ QUnit.test("FLUID-4914: resolve grade as context name", function (assert) {
     const url = dataSource.resolve();
     assert.equal(url, dataSource.url, "Resolved grade context name via invoker");
     const data = dataSource.get();
-    assert.deepEqual(data, {value: 4}, "Resolved grade context name as demands context");
+    assert.deepEqual(data, {value: 4}, "Resolved structure through base layer method call");
 });
 
 /** Taken from FLUID-5288: Improved diagnostic for incomplete grade hierarchy **/

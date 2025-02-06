@@ -294,6 +294,8 @@ QUnit.test("stringTemplate: multiple replacement", assert => {
     assert.equal(expected, result, "The template strings should match.");
 });
 
+
+
 QUnit.test("FLUID-4842 test - configurable \"soft failure\"", assert => {
     const testArgs = [1, "thingit"];
 

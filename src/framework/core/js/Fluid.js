@@ -736,7 +736,7 @@ const fluidJSScope = function (fluid) {
     fluid.error = (...args) => fluid.makeMarker("Unavailable", {causes: [{type: "Error", message: args}]}, true);
 
     /**
-     * Check if an object is a marker of type "Unavailable" or "Error".
+     * Check if an object is a marker of type "Unavailable"
      *
      * @param {Object} totest - The object to test.
      * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
@@ -1111,7 +1111,7 @@ const fluidJSScope = function (fluid) {
             }
             fluid.each(root, (value, key) => {
                 segs.push(key);
-                fluid.forEachDeep(value, visitor, [...segs]);
+                fluid.forEachDeep(value, visitor, segs);
                 segs.pop();
             });
         }
@@ -2091,7 +2091,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.def = function (layerName, layer) {
         if (layer === undefined) {
-            return fluid.getThroughSignals(fluid.readMergedDef(layerName), ["merged", "root"]);
+            return fluid.getThroughSignals(fluid.readMergedDef(layerName), ["merged"]);
         } else {
             fluid.writeDef(layerName, layer);
         }
