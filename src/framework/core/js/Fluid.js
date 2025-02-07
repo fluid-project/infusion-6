@@ -786,13 +786,28 @@ const fluidJSScope = function (fluid) {
     /**
      * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
      * @param {any} root - The root data structure to process.
+     * @param {String} strategy - Strategy to be used
+     * @param {Object} [flatMap] - Map of what should be flattened
+     * @param {String[]} [segs] - Path segments
      * @return {any} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
      */
-    fluid.flattenSignals = function (root) {
+    fluid.flattenSignals = function (root, strategy, flatMap, segs = []) {
         const value = fluid.deSignal(root);
-        return fluid.isUnavailable(value) ? undefined :
-            fluid.isPrimitive(value) || !fluid.isPlainObject(value) ? value :
-                fluid.isArrayable(value) ? value.map(fluid.flattenSignals) : fluid.transform(value, fluid.flattenSignals);
+        const mapper = (member, key) => {
+            segs.push(key);
+            const togo = fluid.flattenSignals(member, strategy, flatMap?.[key], segs);
+            segs.pop();
+            return togo;
+        };
+        if (fluid.isUnavailable(value)) {
+            return strategy === "methodStrategy" ? undefined : value;
+        } else if (fluid.isPrimitive(value) || !fluid.isPlainObject(value)) {
+            return value;
+        } else if (fluid.isArrayable(value)) {
+            return value.map(mapper);
+        } else {
+            return fluid.transform(value, mapper);
+        }
     };
 
     /**
@@ -829,15 +844,16 @@ const fluidJSScope = function (fluid) {
     /**
      * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
      *
-     * @param {Function|Signal<Function>} func - The function to compute the value
-     * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
+     * @param {Function|Signal<Function>} funcSignal - The function to compute the value
+     * @param {Array} argSignals - The arguments to pass to the function. These may include signals, which will be resolved.
      * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @return {Object} A computed value that resolves the function's result, or an "unavailable" marker if any argument is unavailable.
      */
-    fluid.computed = function (func, args, options) {
-        return computed(() => {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(args, options);
-            return unavailable ? unavailable : fluid.deSignal(func).apply(null, designalArgs);
+    fluid.computed = function (funcSignal, argSignals, options) {
+        return computed(function fluidComputed() {
+            const {designalArgs, unavailable} = fluid.processSignalArgs(argSignals, options);
+            const func = fluid.deSignal(funcSignal);
+            return unavailable ? unavailable : fluid.isUnavailable(func) ? func : func.apply(null, designalArgs);
         });
     };
 
@@ -851,12 +867,13 @@ const fluidJSScope = function (fluid) {
      * @return {Object} An effect that executes the function if all arguments are available, or does nothing if any argument is unavailable.
      */
     fluid.effect = function (func, args, argSpecs) {
-        return effect(() => {
+        const togo = effect(function fluidEffect() {
             const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
             if (!unavailable) {
-                func.apply(null, designalArgs);
+                func.apply(this, designalArgs);
             }
         });
+        return togo;
     };
 
     fluid.sampleComputed = computed(() => {});
@@ -1038,10 +1055,10 @@ const fluidJSScope = function (fluid) {
      * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
      */
     fluid.getThroughSignals = function (root, segs) {
-        const togo = computed(() => {
+        const togo = computed(function getThroughSignals() {
             let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
-                if (!move) {
+                if (!move || fluid.isUnavailable(move)) {
                     break;
                 }
                 const seg = segs[j];

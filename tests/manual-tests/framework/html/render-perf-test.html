@@ -8,6 +8,8 @@
 
     <script src="../../../../src/lib/preact/preact.min.js"></script>
 
+
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.js"></script>
     <!--
     <script src="../../../../src/lib/preact/hooks.umd.js"></script>
     <script src="../../../../src/lib/preact/signals.min.js"></script>
@@ -15,7 +17,7 @@
 
     <script src="../../../../src/framework/core/js/Fluid.js"></script>
 
-    <script src="../js/render-perf-test.js"></script>
+
 </head>
 <style>
     .target {
@@ -25,11 +27,12 @@
 <body>
 <main>
     <button id="run-tests">Render Tests</button>
-    <h1>Performance Tests: Raw InnerHTML vs Preact reconciliation</h1>
+    <h1>Performance Tests: Raw InnerHTML vs Preact vs Vue reconciliation</h1>
     <h2>Results</h2>
     <ul class="results"></ul>
     <div class="target"></div>
 </main>
+<script src="../js/render-perf-test.js"></script>
 <script>
     document.querySelector("#run-tests").addEventListener("click", runTests);
 </script>

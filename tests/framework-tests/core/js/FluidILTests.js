@@ -439,3 +439,31 @@ QUnit.test("FLUID-4930: Retrunking IV", function (assert) {
     assert.ok(fluid.hasLayer(resend, "fluid.tests.FLUID4930.verify.resend"), "Constructed subcomponent with layer");
     assert.equal(that.resend.urls.read, "http://localhost:5984/users/_design/lookup/_view/byUsernameOrEmail", "Successfully evaluated email option");
 });
+
+// Async computation test
+
+fluid.def("fluid.tests.fetchCompute", {
+    $layers: "fluid.component",
+    first: "$compute:fluid.fetchJSON(../testData/data-2.json)",
+    second: "$compute:fluid.fetchJSON(../testData/data-3.json)",
+    result: {
+        "$compute": {
+            func: (a, b) => a + b,
+            args: ["{self}.first.value", "{self}.second.value"]
+        }
+    }
+});
+
+QUnit.test("Async computation test", async function (assert) {
+    const log = [];
+    const that = fluid.tests.fetchCompute({
+        logResult: {
+            "$effect": {
+                func: result => log.push(result),
+                args: "{self}.result"
+            }
+        }
+    });
+    await fluid.toPromise(that, "result");
+    assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
+});

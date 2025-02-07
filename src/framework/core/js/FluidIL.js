@@ -586,8 +586,7 @@ const fluidILScope = function (fluid) {
 
     fluid.fetchContextReference = function (ref, shadow, resolver) {
         const parsed = fluid.parseContextReference(ref);
-        const refComputer = computed( () => {
-            fluid.log("Triggering computation of ref ", ref);
+        const refComputer = computed( function fetchContextReference() {
             const target = fluid.resolveContext(parsed.context, shadow, resolver).value;
             return fluid.isUnavailable(target) ? fluid.mergeUnavailable(fluid.unavailable({
                 message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
@@ -648,6 +647,8 @@ const fluidILScope = function (fluid) {
         return that;
     };
 
+    const methodFlattener = root => fluid.flattenSignals(root, "methodStrategy");
+
     fluid.expandMethodRecord = function (record, shadow) {
         // Old fluid.makeInvoker used to have:
         // func = func || (invokerec.funcName ? fluid.getGlobalValueNonComponent(invokerec.funcName, "an invoker") : fluid.expandImmediate(invokerec.func, that));
@@ -660,7 +661,7 @@ const fluidILScope = function (fluid) {
             togo = function applyMethod(...args) {
                 resolver.backing = args;
                 // TODO: Only flatten knowably signalised things
-                const resolvedArgs = argResolver.map(fluid.flattenSignals);
+                const resolvedArgs = argResolver.map(methodFlattener);
                 const resolvedFunc = fluid.deSignal(func);
                 return resolvedFunc.apply(shadow, resolvedArgs);
             };
@@ -1094,6 +1095,44 @@ const fluidILScope = function (fluid) {
     fluid.def("fluid.resolveRootSingle", {$layers: "fluid.resolveRoot"});
 
     fluid.constructRootComponents(fluid.globalInstantiator); // currently a singleton - in future, alternative instantiators might come back
+
+    // Utilities for working with requests, components and signals
+
+    /**
+     * Fetches JSON data from a given URL and stores the result in a signal.
+     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
+     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
+     *
+     * @param {String} url - The URL to fetch JSON data from.
+     * @param {RequestInit} [options] - Optional fetch configuration options.
+     * @return {signal<any>} A signal containing the fetched JSON data or an "unavailable" state.
+     */
+    fluid.fetchJSON = function (url, options) {
+        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`}));
+        fetch(url, options)
+            .then(response => response.json())
+            .then(json => togo.value = json)
+            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`}));
+        return togo;
+    };
+
+    /**
+     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value to an
+     * available value.
+     *
+     * @param {Component} component - The component containing the signal.
+     * @param {String|String[]} path - The path within the component where the signal is located.
+     * @return {Promise<any>} A Promise that resolves with the value of the signal when it updates.
+     */
+    fluid.toPromise = function (component, path) {
+        const pathSignal = fluid.getForComponent(component, path);
+        return new Promise( (resolve) => {
+            fluid.effect(function (pathValue) {
+                resolve(pathValue);
+                this.d(); // Dispose ourselves after triggering - see https://github.com/preactjs/signals/issues/395
+            }, [pathSignal]);
+        });
+    };
 
 };
 

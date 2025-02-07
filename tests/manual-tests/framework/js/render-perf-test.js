@@ -1,6 +1,6 @@
 "use strict";
 
-/* global preact */
+/* global preact, Vue */
 
 const medianWithoutExtremes = function (results) {
     results.sort((a, b) => a - b);
@@ -54,6 +54,8 @@ const parseDOM = function (template) {
 
 const preactProcessor = makeProcessor(preact.h);
 
+const vueProcessor = makeProcessor(Vue.h);
+
 const sources = {};
 
 const fetchSources = async function () {
@@ -62,10 +64,20 @@ const fetchSources = async function () {
 
     const parsed2 = parseDOM(markup1);
     const parsed1 = parseDOM(markup2);
-    Object.assign(sources, {markup1, markup2, parsed1, parsed2});
+    const empty = document.createElement("div");
+    Object.assign(sources, {markup1, markup2, parsed1, parsed2, empty});
 };
 
-fetchSources().then();
+const target = document.querySelector(".target");
+
+let app, vueSourceRef;
+
+fetchSources().then(() => {
+    vueSourceRef = Vue.ref(sources.empty);
+    app = Vue.createApp({ render: () => Vue.h("div", [vueProcessor(vueSourceRef.value)])});
+    app.mount(target);
+});
+
 
 // eslint-disable-next-line no-unused-vars
 const runTests = async function () {
@@ -77,18 +89,27 @@ const runTests = async function () {
 
     let source;
 
-    const render = function () {
+    const renderPreact = function () {
         return preactProcessor(source);
+    };
+
+    const renderVue = function (sourceRef) {
+        return Vue.computed( () => vueProcessor(sourceRef.value));
     };
 
     const testPreact = function () {
         source = sources.parsed1;
-        preact.render(preact.h(render), target);
+        preact.render(preact.h(renderPreact), target);
         source = sources.parsed2;
-        preact.render(preact.h(render), target);
+        preact.render(preact.h(renderPreact), target);
     };
 
-    const target = document.querySelector(".target");
+    const testVue = async function () {
+        vueSourceRef.value = sources.parsed1;
+        await Vue.nextTick();
+        vueSourceRef.value = sources.parsed2;
+        await Vue.nextTick();
+    };
 
     const results = [];
     const times = [];
@@ -99,9 +120,11 @@ const runTests = async function () {
         const its = 10;
 
         for (let i = 0; i < its; ++i) {
-            // testInner();
+            //testInner();
             testPreact();
-            const nodes = target.querySelectorAll("*");
+            //await testVue();
+            // const nodes = target.querySelectorAll("*");
+            // console.log(nodes.length + " nodes in target");
         }
 
         const delay = (Date.now() - now);
@@ -114,6 +137,8 @@ const runTests = async function () {
     target.innerHTML = "";
 
     fluid.each(results, function (result) {
+        console.log(result);
+        return;
         document.querySelector(".results").append(
             Object.assign(document.createElement("li"), { textContent: result })
         );
