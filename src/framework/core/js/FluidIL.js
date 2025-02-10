@@ -554,9 +554,10 @@ const fluidILScope = function (fluid) {
 
     fluid.getForComponent = function (component, path) {
         const segs = fluid.pathToSegs(path);
-        const computer = component[$m].computer;
-        const getter = fluid.getThroughSignals(computer, segs);
-        return Object.assign(getter, {segs, $variety: "$ref"});
+        const shadow = component[$m];
+        // TODO: We could store these references in the signalMap since they are transparent - unless unavailable
+        const getter = fluid.getThroughSignals(shadow.computer, segs);
+        return Object.assign(getter, {site: shadow, segs, $variety: "$ref"});
     };
 
     fluid.pathToLive = function (component, path) {
@@ -591,9 +592,9 @@ const fluidILScope = function (fluid) {
             return fluid.isUnavailable(target) ? fluid.mergeUnavailable(fluid.unavailable({
                 message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
                 path: shadow.path
-            }), target) : fluid.isComponent(target) ? fluid.getForComponent(target, parsed.path).value : fluid.get(target, parsed.path);
+            }), target) : fluid.isComponent(target) ? fluid.getForComponent(target, parsed.path) : fluid.get(target, parsed.path);
         });
-        return Object.assign(refComputer, {ref, $variety: "$ref"});
+        return Object.assign(refComputer, {parsed, site: shadow, $variety: "$contextRef"});
     };
 
     fluid.possiblyProxyComponent = function (value) {
@@ -610,6 +611,58 @@ const fluidILScope = function (fluid) {
     fluid.resolveFuncRecord = function (rec, shadow) {
         return rec.funcName ? fluid.getGlobalValue(rec.funcName) :
             fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow) : rec.func;
+    };
+
+    /**
+     * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
+     *
+     * @param {any} ref - The value to resolve. May be a `Signal` or a plain value.
+     * @param {Object} [shadowRec] - Section of a shadow map we are traversing - when we run off the end of this, we must stop flattening
+     * @return {any} The resolved value if `ref` is a `Signal`, or the original value if it is not.
+     */
+    fluid.deSignalToSite = function (ref, shadowRec) {
+        while (fluid.isSignal(ref)) {
+            // It's a $ref return from fluid.getForComponent - use it to locate a shadow map around the referenced site
+            if (ref.$variety === "$ref") {
+                const shadowMap = ref.site.shadowMap;
+                shadowRec = fluid.get(shadowMap, ref.segs);
+            } else { // We've just resolved some other kind of signal and any previous shadowMap is invalid
+                shadowRec = null;
+            }
+            ref = ref.value;
+        }
+        return {value: ref, shadowRec};
+    };
+
+    // eslint-disable-next-line jsdoc/require-returns-check
+    /**
+     * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
+     * @param {any|Signal<any>} root - The root data structure to process.
+     * @param {String} strategy - Strategy to be used
+     * @param {Object} [shadowRecIn] - Section of a shadow map we are traversing - when we run off the end of this, we must stop flattening
+     * @return {any} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
+     */
+    fluid.flattenSignals = function (root, strategy, shadowRecIn) {
+        const {value, shadowRec} = fluid.deSignalToSite(root, shadowRecIn);
+        if (fluid.isUnavailable(value)) {
+            return strategy === "methodStrategy" ? undefined : value;
+        } else if (fluid.isPrimitive(value) || !fluid.isPlainObject(value)) {
+            return value;
+        }
+        // We have handled all primitive values by here - now determine whether we should recurse if we are in signal portion of mat
+        const mapper = (member, key) => {
+            const togo = fluid.flattenSignals(member, strategy, shadowRec?.[key]);
+            return togo;
+        };
+        if (shadowRec?.[$m]?.hasSignal) {
+            if (fluid.isArrayable(value)) {
+                return value.map(mapper);
+            } else {
+                return fluid.transform(value, mapper);
+            }
+        } else {
+            return value;
+        }
     };
 
     // eslint-disable-next-line jsdoc/require-returns-check
@@ -641,7 +694,7 @@ const fluidILScope = function (fluid) {
             resolve: function (context) {
                 const argNum = +context;
                 return Number.isInteger(+argNum) ? (argNum in that.backing ? that.backing[argNum] :
-                    fluid.unavailable({message: "No argument at position " + context + " was not supplied to this method call"})) : fluid.NoValue;
+                    fluid.unavailable({message: "No argument at position " + context + " was supplied to this method call"})) : fluid.NoValue;
             }
         };
         return that;
@@ -949,6 +1002,7 @@ const fluidILScope = function (fluid) {
                     fluid.expandLayer(instance, flatMerged, shadow, []);
                 }
                 fluid.disposeEffects(shadow);
+                // Here Lies the Gap of the Queen of Sheba
                 return instance;
             });
 
@@ -1025,6 +1079,12 @@ const fluidILScope = function (fluid) {
             });
             return rec.proxy = proxy;
         }
+    };
+
+    // Get the underlying value hosted by a proxy - probably only of real value in test cases
+    fluid.unwrapProxy = function (maybeProxy) {
+        const target = maybeProxy?.[$t];
+        return target ? fluid.deSignal(target) : maybeProxy;
     };
 
     fluid.initFreeComponent = function (componentName, initArgs) {

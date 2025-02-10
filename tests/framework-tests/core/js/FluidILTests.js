@@ -379,7 +379,7 @@ fluid.tests.FLUID4930.signupExpected = {
 };
 
 fluid.tests.FLUID4930.generateSchema = function (schema) {
-    return signal(schema);
+    return Object.assign({}, schema);
 };
 
 QUnit.test("FLUID-4930: Retrunking III", function (assert) {
@@ -466,4 +466,53 @@ QUnit.test("Async computation test", async function (assert) {
     });
     await fluid.toPromise(that, "result");
     assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
+});
+
+// Shape cognition test - framework should only travere and flatten signals in material which is derived from configuration
+
+const $tv = Symbol("fluid.testValue");
+
+// Function which returns an obnoxious circularly linked object which should not be traversed
+fluid.tests.obnoxiousReturn = function () {
+    const parent = {};
+    parent[$tv] = "original";
+    parent.child = parent;
+    return Object.freeze(parent);
+};
+
+fluid.def("fluid.tests.shapeCognition", {
+    $layers: "fluid.component",
+    holder: {
+        member: "$compute:fluid.tests.obnoxiousReturn()"
+    },
+    computed: "$compute:fluid.identity({self}.holder)",
+    fromMethod: null,
+    fromEffect: null,
+    method: {
+        $method: {
+            func: (self, holder) => self.fromMethod = holder,
+            args: ["{self}", "{self}.holder"]
+        }
+    },
+    effect: {
+        $effect: {
+            func: (self, holder) => self.fromEffect = holder,
+            args: ["{self}", "{self}.holder"]
+        }
+    }
+});
+
+QUnit.test("Shape cognition test", function (assert) {
+    const checkObnoxious = function (totest) {
+        const unwrapped = fluid.unwrapProxy(totest);
+        assert.ok(unwrapped.child, "Check child property");
+        assert.equal(unwrapped[$tv], "original", "Original hidden property present");
+        assert.equal(unwrapped.child, unwrapped, "Child property equals parent");
+    };
+    const that = fluid.tests.shapeCognition();
+    checkObnoxious(that.holder.member);
+    checkObnoxious(that.computed.member);
+    checkObnoxious(that.fromEffect.member);
+    that.method();
+    checkObnoxious(that.fromMethod.member);
 });

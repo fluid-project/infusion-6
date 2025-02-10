@@ -770,7 +770,7 @@ const fluidJSScope = function (fluid) {
     fluid.isSignal = value => value instanceof preactSignalsCore.Signal;
 
     /**
-     * Resolve a value from a `Signal` (possibly recursively), or return the value as-is if it is not a `Signal`.
+     * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
      *
      * @param {any} ref - The value to resolve. May be a `Signal` or a plain value.
      * @return {any} The resolved value if `ref` is a `Signal`, or the original value if it is not.
@@ -780,34 +780,6 @@ const fluidJSScope = function (fluid) {
             ref = ref.value;
         }
         return ref;
-    };
-
-    // eslint-disable-next-line jsdoc/require-returns-check
-    /**
-     * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
-     * @param {any} root - The root data structure to process.
-     * @param {String} strategy - Strategy to be used
-     * @param {Object} [flatMap] - Map of what should be flattened
-     * @param {String[]} [segs] - Path segments
-     * @return {any} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
-     */
-    fluid.flattenSignals = function (root, strategy, flatMap, segs = []) {
-        const value = fluid.deSignal(root);
-        const mapper = (member, key) => {
-            segs.push(key);
-            const togo = fluid.flattenSignals(member, strategy, flatMap?.[key], segs);
-            segs.pop();
-            return togo;
-        };
-        if (fluid.isUnavailable(value)) {
-            return strategy === "methodStrategy" ? undefined : value;
-        } else if (fluid.isPrimitive(value) || !fluid.isPlainObject(value)) {
-            return value;
-        } else if (fluid.isArrayable(value)) {
-            return value.map(mapper);
-        } else {
-            return fluid.transform(value, mapper);
-        }
     };
 
     /**
@@ -829,7 +801,8 @@ const fluidJSScope = function (fluid) {
         for (let i = 0; i < args.length; ++i) {
             const arg = args[i];
             if (arg instanceof preactSignalsCore.Signal) {
-                const value = flattenArg ? flattenArg(arg, i) : arg.value;
+                const deref = arg.value;
+                const value = flattenArg ? flattenArg(deref, i) : deref;
                 designalArgs.push(value);
                 if (fluid.isUnavailable(value)) {
                     unavailable = fluid.mergeUnavailable(unavailable, value);
