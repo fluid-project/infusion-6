@@ -78,3 +78,43 @@ QUnit.assert.notUndefined = function (value, message) {
 QUnit.assert.unavailable = function (value, message) {
     this.ok(fluid.isUnavailable(value), message);
 };
+
+
+/* Assert that one or more DOM nodes and possibly their descendents match a JSON specification
+ */
+QUnit.assert.assertNode = function (node, expected, message) {
+    if (!node.nodeType) { // Some types of DOM nodes (e.g. select) have a valid "length" property
+        if (node.length === 1 && expected.length === undefined) {
+            node = node[0];
+        }
+        else if (node.length !== undefined) {
+            this.equal(node.length, expected.length, message + ": Expected number of nodes ");
+            for (let i = 0; i < node.length; ++i) {
+                QUnit.assert.assertNode.call(this, node[i], expected[i], message + ": node " + i + ": ");
+            }
+            return;
+        }
+    }
+    for (let key in expected) {
+        let attr = key.startsWith("$") ? null : node.getAttribute(key);
+        let messageExt = " - attribute " + key + "";
+        if (key === "$tagName") {
+            attr = node.tagName.toLowerCase();
+            messageExt = " - node name";
+        }
+        else if (key === "$innerText") {
+            attr = node.innerText.trim();
+        }
+        else if (key === "$innerHTML") {
+            attr = node.innerHTML;
+        }
+        const evalue = expected[key];
+        const pass = evalue === attr;
+        if (key === "$children") {
+            const children = [...node.childNodes];
+            QUnit.assert.assertNode.call(this, children, evalue, "> " + message);
+        } else {
+            this.ok(pass, message + messageExt + " expected value: " + evalue + " actual: " + attr);
+        }
+    }
+};

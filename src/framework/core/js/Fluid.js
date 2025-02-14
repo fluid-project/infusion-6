@@ -316,8 +316,9 @@ const fluidJSScope = function (fluid) {
             return !strict;
         } else if (string !== "[object Object]") {
             return false;
-        } // FLUID-5226: This inventive strategy taken from jQuery detects whether the object's prototype is directly Object.prototype by virtue of having an "isPrototypeOf" direct member
-        return !totest.constructor || !totest.constructor.prototype || Object.prototype.hasOwnProperty.call(totest.constructor.prototype, "isPrototypeOf");
+        } // Adapted from https://stackoverflow.com/a/76387885/1381443
+        const prototype = Object.getPrototypeOf(totest);
+        return prototype === null || prototype === Object.prototype || Object.getPrototypeOf(prototype) === null;
     };
 
     /**
@@ -719,6 +720,9 @@ const fluidJSScope = function (fluid) {
      */
     fluid.unavailable = (cause = {}) => fluid.makeMarker("Unavailable", {
         causes: fluid.makeArray(cause).map(oneCause => {
+            if (typeof(oneCause) === "string") {
+                oneCause = {message: oneCause};
+            }
             if (!oneCause.type) {
                 oneCause.type = "Unavailable";
             }
@@ -2208,7 +2212,6 @@ const fluidJSScope = function (fluid) {
     // Message resolution and templating
 
     /**
-     *
      * Simple string template system.  Takes a template string containing tokens in the form of "%value" or
      * "%deep.path.to.value".  Returns a new string with the tokens replaced by the specified values.  Keys and values
      * can be of any data type that can be coerced into a string.
@@ -2231,6 +2234,60 @@ const fluidJSScope = function (fluid) {
             }
         }
         return template;
+    };
+
+    const tagRE = /\{\{((?:.)+?)\}\}/g;
+
+    /**
+     * Simple moustache-style string template system.  Takes a template string containing tokens in the form of "{{value}}" or
+     * "{{deep.path.to.value}}". Returns an array of token segments which are either plain strings or object {key} holding
+     * the parsed token paths.
+     *
+     * @param {String} template - A string that contains placeholders for tokens of the form `%token` embedded into it.
+     * @return {Array<String|Object>} An array of token values
+     */
+    fluid.parseStringTemplate = function (template) {
+        const tokens = [];
+        let lastIndex = tagRE.lastIndex = 0;
+        let match, index;
+
+        // TODO: support full references, etc.
+        const parseKey = key => fluid.pathToSegs(key);
+
+        while ((match = tagRE.exec(template))) {
+            index = match.index;
+            // push text token
+            if (index > lastIndex) {
+                tokens.push(template.slice(lastIndex, index));
+            }
+            // interpolated token
+            const exp = match[1].trim();
+            tokens.push({ key: exp, parsed: parseKey(exp)});
+            lastIndex = index + match[0].length;
+        }
+        if (lastIndex < template.length) {
+            tokens.push(template.slice(lastIndex));
+        }
+        return tokens;
+    };
+
+    /**
+     * Renders a parsed string template against a deep signal source by replacing tokens with their corresponding values.
+     * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
+     * string concatenated.
+     *
+     * @param {Array<string|{key: string}>} tokens - An array of tokens, where each token is either a string
+     *        or an object with a `key` property indicating a path in the source.
+     * @param {Signal<any>} source - The source object containing values for token replacement.
+     * @return {String|Signal<string>} A computed signal representing the resolved string.
+     */
+    fluid.renderStringTemplate = function (tokens, source) {
+        if (tokens.length === 1 && typeof(tokens[0]) === "string") {
+            return tokens[0];
+        } else {
+            const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.getThroughSignals(source, token.parsed));
+            return fluid.computed(tokens => tokens.join(""), [liveTokens]);
+        }
     };
 };
 

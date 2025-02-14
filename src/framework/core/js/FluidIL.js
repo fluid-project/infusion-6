@@ -525,15 +525,16 @@ const fluidILScope = function (fluid) {
      *   - Other values resolve to named scopes in the target component's scope chain.
      * @param {Shadow} shadow - The component site from which resolution starts.
      * @param {Function} [resolver] - A function dynamically resolving a context name to a local context
-     * @return {signal<Component>} Signal for shadow for the resolved component or scope. Returns:
+     * @return {signal<Component>} Signal for the resolved component or scope. Returns:
      *   - The target component if `context` is `"self"`.
      *   - The root component if `context` is `"/"`.
      *   - The component or scope corresponding to `context` in the target component's scope chain, if found.
-     *   - `undefined` if the context cannot be resolved.
+     *   - An unavailable value if the context cannot be resolved.
      */
     fluid.resolveContext = function (context, shadow, resolver) {
         return computed( () => {
             if (context === "self") {
+                // TODO: We have to return instance so that it doesn't seem to change when component changes
                 return shadow.that;
             } else if (context === "/") {
                 return shadow.instantiator.rootComponent;
@@ -541,7 +542,7 @@ const fluidILScope = function (fluid) {
                 const local = resolver ? resolver(context) : fluid.NoValue;
                 if (local === fluid.NoValue) {
                     const resolvedShadow = shadow.scopes.value.ownScope[context];
-                    return resolvedShadow?.that || fluid.unavailable({
+                    return resolvedShadow?.computer.value || fluid.unavailable({
                         message: "Cannot resolve context " + context + " from component at path " + shadow.path,
                         site: shadow
                     });
@@ -713,7 +714,6 @@ const fluidILScope = function (fluid) {
             const argResolver = fluid.resolveComputeArgs(argRecs, shadow, resolver.resolve);
             togo = function applyMethod(...args) {
                 resolver.backing = args;
-                // TODO: Only flatten knowably signalised things
                 const resolvedArgs = argResolver.map(methodFlattener);
                 const resolvedFunc = fluid.deSignal(func);
                 return resolvedFunc.apply(shadow, resolvedArgs);
@@ -732,7 +732,6 @@ const fluidILScope = function (fluid) {
         const func = fluid.resolveFuncRecord(record, shadow);
         const args = fluid.makeArray(record.args);
         const resolvedArgs = fluid.resolveComputeArgs(args, shadow);
-        // TODO: Only flatten knowably signalised things - this implies using the "shadowMap" in the shadow
         const togo = fluid.computed(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
         togo.$variety = "$compute";
         return togo;
@@ -742,7 +741,6 @@ const fluidILScope = function (fluid) {
         const func = fluid.resolveFuncRecord(record, shadow);
         const args = fluid.makeArray(record.args);
         const resolvedArgs = fluid.resolveComputeArgs(args, shadow);
-        // TODO: Only flatten knowably signalised things - this implies using the "shadowMap" in the shadow
         const togo = fluid.effect(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
         togo.$variety = "$effect";
         return togo;
