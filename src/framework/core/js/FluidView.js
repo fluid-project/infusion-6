@@ -49,13 +49,13 @@ const fluidViewScope = function (fluid) {
                 return fluid.renderStringTemplate(tokens, self);
             } else if (typeof node === "object") {
                 fluid.each(node.props, (value, key) => {
-                    const tokens = fluid.parseStringTemplate(value);
-                    node.props[key] = fluid.renderStringTemplate(tokens, self);
+                    if (key === "children") {
+                        node.props.children = fluid.makeArray(node.props.children).map(processNode);
+                    } else {
+                        const tokens = fluid.parseStringTemplate(value);
+                        node.props[key] = fluid.renderStringTemplate(tokens, self);
+                    }
                 });
-                // Process children recursively in place
-                if (Array.isArray(node.props.children)) {
-                    node.props.children = node.props.children.map(processNode);
-                }
             }
 
             return node;

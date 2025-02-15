@@ -88,6 +88,7 @@ QUnit.assert.assertNode = function (node, expected, message) {
             node = node[0];
         }
         else if (node.length !== undefined) {
+            expected = fluid.makeArray(expected);
             this.equal(node.length, expected.length, message + ": Expected number of nodes ");
             for (let i = 0; i < node.length; ++i) {
                 QUnit.assert.assertNode.call(this, node[i], expected[i], message + ": node " + i + ": ");
@@ -104,8 +105,9 @@ QUnit.assert.assertNode = function (node, expected, message) {
         }
         else if (key === "$innerText") {
             attr = node.innerText.trim();
-        }
-        else if (key === "$innerHTML") {
+        } else if (key === "$textContent") {
+            attr = node.textContent;
+        } else if (key === "$innerHTML") {
             attr = node.innerHTML;
         }
         const evalue = expected[key];
