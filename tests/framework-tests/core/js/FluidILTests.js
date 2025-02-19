@@ -484,7 +484,10 @@ fluid.def("fluid.tests.shapeCognition", {
     },
     effect: {
         $effect: {
-            func: (self, holder) => self.fromEffect = holder,
+            func: (self, holder) => {
+                debugger;
+                self.fromEffect = holder;
+            },
             args: ["{self}", "{self}.holder"]
         }
     }

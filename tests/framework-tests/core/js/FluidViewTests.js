@@ -16,7 +16,7 @@ fluid.def("fluid.tests.basicRenderTest", {
 
 const qs = sel => document.querySelector(sel);
 
-QUnit.test("Basic dynamic rendering test", function (assert) {
+QUnit.test("Basic static rendering test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.basicRenderTest({container});
     const expected = {
@@ -36,7 +36,7 @@ fluid.def("fluid.tests.nestedRenderTest", {
 });
 
 
-QUnit.test("Basic dynamic rendering test", function (assert) {
+QUnit.test("Basic dynamic rendering test", async function (assert) {
     const container = qs(".container");
     const that = fluid.tests.nestedRenderTest({container});
     const expected = {
@@ -51,6 +51,10 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
     const inner = root.firstElementChild;
     assert.assertNode(root, expected, "Initial render correct");
     that.text = "Updated value";
+
+    // Wait a little since Preact renders async for no very clear reason
+    await new Promise(resolve => setTimeout(resolve, 1));
+
     assert.equal(inner.textContent, "Updated value", "Updated text content rendered");
     assert.equal(container.firstElementChild, root, "Rendered root undisturbed");
     assert.equal(root.firstElementChild, inner, "Inner node undisturbed");

@@ -1046,6 +1046,7 @@ const fluidJSScope = function (fluid) {
                 }
                 move = fluid.deSignal(move[seg]);
             }
+            console.log("Rerun fluid.getThroughSignals for segs ", segs, " returning ", move);
             return move;
         });
         togo.$variety = "$ref";
@@ -2252,7 +2253,7 @@ const fluidJSScope = function (fluid) {
         let match, index;
 
         // TODO: support full references, etc.
-        const parseKey = key => fluid.pathToSegs(key);
+        const parseKey = key => ({context: "self", path: key});
 
         while ((match = tagRE.exec(template))) {
             index = match.index;
@@ -2271,24 +2272,6 @@ const fluidJSScope = function (fluid) {
         return tokens;
     };
 
-    /**
-     * Renders a parsed string template against a deep signal source by replacing tokens with their corresponding values.
-     * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
-     * string concatenated.
-     *
-     * @param {Array<string|{key: string}>} tokens - An array of tokens, where each token is either a string
-     *        or an object with a `key` property indicating a path in the source.
-     * @param {Signal<any>} source - The source object containing values for token replacement.
-     * @return {String|Signal<string>} A computed signal representing the resolved string.
-     */
-    fluid.renderStringTemplate = function (tokens, source) {
-        if (tokens.length === 1 && typeof(tokens[0]) === "string") {
-            return tokens[0];
-        } else {
-            const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.getThroughSignals(source, token.parsed));
-            return fluid.computed(tokens => tokens.join(""), [liveTokens]);
-        }
-    };
 };
 
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
