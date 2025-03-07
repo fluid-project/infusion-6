@@ -377,7 +377,7 @@ QUnit.test("fluid.get and fluid.set", assert => {
     fluid.set(model, "path2.past", "attach");
     assert.deepEqual(model, { path2: { past: "attach" }, path3: "thing" }, "Set blank value");
 
-    fluid.registerGlobalFunction("fluid.newFunc", function () {
+    fluid.setGlobalValue("fluid.newFunc", function () {
         return 2;
     });
     assert.equal(fluid.newFunc(), 2, "Call new global function");
@@ -398,16 +398,16 @@ QUnit.test("Globals", assert => {
     assert.equal(fluid.engage.mccord.func(), 2, "Call function in namespace");
 
     const fluidd = fluid.getGlobalValue("nothing.fluid");
-    assert.undefined(fluidd, "No environment slippage");
+    assert.unavailable(fluidd, "No environment slippage");
 
     const fluidd2 = fluid.getGlobalValue("fluid.fluid");
-    assert.undefined(fluidd2, "No environment slippage");
+    assert.unavailable(fluidd2, "No environment slippage");
 
     fluid.registerNamespace("cspace.autocomplete");
     const fluidd3 = fluid.getGlobalValue("cspace.fluid");
-    assert.undefined(fluidd3, "No environment slippage");
+    assert.unavailable(fluidd3, "No environment slippage");
     const fluidd4 = fluid.getGlobalValue("cspace.fluid.get");
-    assert.undefined(fluidd4, "No environment slippage");
+    assert.unavailable(fluidd4, "No environment slippage");
 });
 
 QUnit.test("Sorting listeners", assert => {

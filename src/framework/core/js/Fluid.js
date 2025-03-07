@@ -834,7 +834,6 @@ const fluidJSScope = function (fluid) {
         });
     };
 
-    // TODO: Return needs to be wrapped in a special marker so that component destruction can dispose it
     /**
      * Create an effect that executes a function with resolved arguments, resolving any signals and handling unavailability.
      *

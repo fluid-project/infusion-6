@@ -606,7 +606,7 @@ const fluidILScope = function (fluid) {
     };
 
     /**
-     * Renders a parsed string template against a deep signal source by replacing tokens with their corresponding values.
+     * Renders a parsed string template against the local component tree by replacing tokens with their corresponding values.
      * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
      * string concatenated.
      *
