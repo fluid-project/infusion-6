@@ -51,6 +51,7 @@ const fluidViewScope = function (fluid) {
             const renderEffect = fluid.effect( function (element, text) {
                 applyFunc(element, text);
             }, [vnode.elementSignal, rendered]);
+            // TODO: Create generalised means to nullify all effects allocated by a component - somehow arrange for these to end up at an address
             fluid.pushArray(vnode, "renderEffects", renderEffect);
         } else {
             fluid.pushArray(vnode, "onDomBind", element => applyFunc(element, rendered));
@@ -67,7 +68,8 @@ const fluidViewScope = function (fluid) {
             } else {
                 fluid.each(vnode.attrs, (value, key) => {
                     const tokens = fluid.parseStringTemplate(value);
-                    fluid.bindDomTokens(vnode, tokens, (node, text) => node.setAttribute(key, text));
+                    const rendered = fluid.renderStringTemplate(tokens, self);
+                    fluid.bindDomTokens(vnode, rendered, (node, text) => node.setAttribute(key, text));
                     vnode.attrs[key] = fluid.renderStringTemplate(tokens, self);
                 });
                 vnode.children = vnode.children.map(processVNode);

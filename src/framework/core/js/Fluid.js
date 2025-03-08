@@ -786,6 +786,10 @@ const fluidJSScope = function (fluid) {
         return ref;
     };
 
+    fluid.defaultSignalOptions = {
+        flattenArg: fluid.deSignal
+    };
+
     /**
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects
      * and identifying and coalescing "unavailable" values if present.
@@ -828,7 +832,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.computed = function (funcSignal, argSignals, options) {
         return computed(function fluidComputed() {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(argSignals, options);
+            const {designalArgs, unavailable} = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions);
             const func = fluid.deSignal(funcSignal);
             return unavailable ? unavailable : fluid.isUnavailable(func) ? func : func.apply(null, designalArgs);
         });
@@ -839,12 +843,12 @@ const fluidJSScope = function (fluid) {
      *
      * @param {Function} func - The function to execute
      * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
-     * @param {Array} [argSpecs] - Additional specifications for processing arguments (optional).
+     * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @return {Object} An effect that executes the function if all arguments are available, or does nothing if any argument is unavailable.
      */
-    fluid.effect = function (func, args, argSpecs) {
+    fluid.effect = function (func, args, options) {
         const togo = effect(function fluidEffect() {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(args, argSpecs);
+            const {designalArgs, unavailable} = fluid.processSignalArgs(args, options || fluid.defaultSignalOptions);
             if (!unavailable) {
                 func.apply(this, designalArgs);
             }

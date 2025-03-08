@@ -620,7 +620,9 @@ const fluidILScope = function (fluid) {
             return tokens[0];
         } else {
             const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.fetchContextReference(token.parsed, self.shadow));
-            const togo = fluid.computed(tokens => tokens.join(""), [liveTokens]);
+            const togo = fluid.computed(function (...tokens) {
+                return tokens.join("");
+            }, liveTokens);
             togo.$tokens = liveTokens;
             return togo;
         }
