@@ -101,6 +101,7 @@ QUnit.test("Effects resolution II - read/write and dispose", function (assert) {
     });
     assert.deepEqual(log, [1], "Initial effect on startup");
     log.length = 0;
+
     that.count++;
     assert.deepEqual(log, [2], "Effect on update");
     log.length = 0;
@@ -142,6 +143,51 @@ QUnit.test("Effects resolution II - read/write and dispose via signals API", fun
     assert.deepEqual(log, [], "No effect after destruction");
 });
 
+
+QUnit.test("Effects resolution II - no notification on unrelated update", function (assert) {
+    const log = [];
+    const that = fluid.tests.effectsII({
+        log: count => log.push(count)
+    });
+    assert.deepEqual(log, [1], "Initial effect on startup");
+    log.length = 0;
+
+    that.unrelated = 1;
+    assert.deepEqual(log, [], "No effect on unrelated upated destruction");
+});
+
+const globalHolder = {
+    computedCount: 0,
+    effectCount: 0
+};
+
+fluid.def("fluid.tests.selfUpdate", {
+    $layers: "fluid.component",
+    selfComputed: {
+        $compute: {
+            args: "{self}",
+            func: (self) => {
+                console.log("Received update with ", self);
+                return ++globalHolder.computedCount;
+            }
+        }
+    },
+    selfEffect: {
+        $effect: {
+            args: "{self}.selfComputed",
+            func: (selfComputed) => {
+                console.log("Effect received ", selfComputed);
+                globalHolder.effectCount = selfComputed;
+            }
+        }
+    }
+});
+
+QUnit.test("Computed arg sensitivity", function (assert) {
+    const that = fluid.tests.selfUpdate();
+    that.updated = 1;
+    assert.equal(globalHolder.effectCount, 1, "Just one updated to computed");
+});
 
 /** FLUID-4914 derived grade resolution tests **/
 
@@ -485,7 +531,6 @@ fluid.def("fluid.tests.shapeCognition", {
     effect: {
         $effect: {
             func: (self, holder) => {
-                debugger;
                 self.fromEffect = holder;
             },
             args: ["{self}", "{self}.holder"]

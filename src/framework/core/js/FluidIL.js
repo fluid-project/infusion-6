@@ -371,7 +371,7 @@ const fluidILScope = function (fluid) {
                 }
                 childShadow.lifecycleStatus = "destroying";
                 fluid.each(childShadow.childComponents, (gchildShadow, memberName) =>
-                    that.clearComponent(gchildShadow, memberName, null, destroyRecs, true)
+                    that.clearComponent(childShadow, memberName, gchildShadow, destroyRecs, true)
                 );
                 //fluid.fireEvent(child, "onDestroy", [child, name || "", component]);
                 // fluid.fireDestroy(child, name, component);
@@ -566,6 +566,8 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    // TODO: Need some way to target another layer other than the liveLayer, e.g. for the renderer writing to "container" - this
+    // state is not transportable
     fluid.pathToLive = function (component, path) {
         const segs = fluid.pathToSegs(path),
             shadow = component[$m];
@@ -612,7 +614,7 @@ const fluidILScope = function (fluid) {
      *
      * @param {Array<string|{key: string}>} tokens - An array of tokens, where each token is either a string
      *        or an object with a `key` property indicating a path in the source.
-     * @param {Signal<Component>} self - Site of the references to be interpolated
+     * @param {ComponentComputer} self - Site of the references to be interpolated
      * @return {String|Signal<string>} A computed signal representing the resolved string.
      */
     fluid.renderStringTemplate = function (tokens, self) {
@@ -686,7 +688,7 @@ const fluidILScope = function (fluid) {
             const togo = fluid.flattenSignals(member, strategy, shadowRec?.[key]);
             return togo;
         };
-        if (shadowRec?.[$m]?.hasSignal) {
+        if (shadowRec?.[$m]?.hasSignalChild) {
             if (fluid.isArrayable(value)) {
                 return value.map(mapper);
             } else {
@@ -783,16 +785,12 @@ const fluidILScope = function (fluid) {
 
         const subLayerRecord = {
             layerType: "subcomponent",
+            // TODO: Eventually will allow nesting deeper on path
+            layerName: `subcomponent:${key}`,
             layer: expanded
         };
-        const potentia = {
-            layerNames: expanded.$layers,
-            mergeRecords: [subLayerRecord]
-        };
         // TODO: detect injected reference and take direct path to instantiator
-
-        const computer = fluid.computeInstance(potentia, shadow, key);
-        return computer;
+        return fluid.pushPotentia(shadow, key, [subLayerRecord], expanded.$layers);
     };
 
     fluid.elementExpanderRecord = function () {};
@@ -810,6 +808,7 @@ const fluidILScope = function (fluid) {
     }, {
         key: "$component",
         handler: fluid.expandComponentRecord
+        // TODO: Need to turn this record into an effect so that effect (potentia) can be withdrawn
     }].map(rec => Object.assign(Object.create(fluid.elementExpanderRecord.prototype), rec));
 
     /**
@@ -821,7 +820,7 @@ const fluidILScope = function (fluid) {
      */
     fluid.siteSignal = function (signal, shadow, segs) {
         signal.site = shadow;
-        signal.segs = segs;
+        signal.segs = [...segs];
         return signal;
     };
 
@@ -906,6 +905,11 @@ const fluidILScope = function (fluid) {
             const seg = segs[i];
             const rec = fluid.getRecInsist(shadowMap, [seg, $m]);
             rec.hasSignal = true;
+            if (i < segs.length - 1) {
+                // This is a signal to flattenSignals to indicate that it should clone and expand since this path is in
+                // the interior of the mat
+                rec.hasSignalChild = true;
+            }
             shadowMap = shadowMap[seg];
         }
     };
@@ -988,7 +992,9 @@ const fluidILScope = function (fluid) {
             }
         });
         delete shadow.oldShadowMap;
-        if (fluid.isEmptyPotentia(shadow.potentia.value)) {
+        // TODO: entangled here - clearComponent is old-world, does stuff like deleting scopes - can be more reactive, and should
+        // probably occur whenever instance becomes invalid.
+        if (fluid.isEmptyPotentia(shadow.potentia.peek())) {
             shadow.instantiator.clearComponent(shadow.parentShadow, shadow.memberName, shadow);
         }
     };
@@ -1002,54 +1008,101 @@ const fluidILScope = function (fluid) {
         });
     };
 
-    fluid.computeInstance = function (potentia, parentShadow, memberName) {
-        const instantiator = parentShadow.instantiator;
+    /**
+     * @typedef {signal<fluid.component>} ComponentComputer
+     * @property {fluid.component} value - The component value associated with the signal.
+     * @property {Shadow} shadow - The shadow record associated with the component.
+     * @property {"$component"} $variety - A string indicating the type of the signal, which should be "$component".
+     */
+
+    /**
+     * Represents the potential state of a component, defining its layer-based configuration and merge records.
+     *
+     * @typedef {Object} Potentia
+     * @property {String[]} layerNames - An array of direct layer names applied to the component
+     * @property {MergeRecord[]} mergeRecords - An array of merge records representing the component's configuration.
+     * @property {Object} [props] - Optional component properties, typically including an `$id` field.
+     */
+
+    /**
+     * Updates or initializes a component's potentia by merging new records and layer names.
+     * If a potentia already exists, it filters out old merge records that belong to layers being updated.
+     * Otherwise, it computes a new instance.
+     *
+     * @param {Shadow} parentShadow - The shadow record of the parent component.
+     * @param {string} memberName - The name of the component within its parent.
+     * @param {MergeRecord[]} mergeRecords - An array of merge records representing the component's configuration.
+     * @param {String[]} [layerNames] - An array of direct layer names applied to the component
+     * @return {ComponentComputer} The updated or newly computed component.
+     */
+    fluid.pushPotentia = function (parentShadow, memberName, mergeRecords, layerNames = []) {
         const existing = parentShadow.childComponents[memberName];
         if (existing) {
-            const shadow = existing[$m];
+            const shadow = existing;
+            const oldPotentia = shadow.potentia.peek(); // Avoid creating a read dependency
+            const writtenLayers = new Set(mergeRecords.map(mergeRecord => mergeRecord.layerType));
+            const filteredRecords = oldPotentia.mergeRecords.filter(mergeRecord => !writtenLayers.has(mergeRecord.layerType));
+            const newMergeRecords = filteredRecords.concat(mergeRecords.filter(mergeRecord => mergeRecord.layer));
+            const newLayerNames = oldPotentia.layerNames || layerNames;
+
+            const potentia = {mergeRecords: newMergeRecords, layerNames: newLayerNames};
             shadow.potentia.value = potentia;
             return shadow.computer;
         } else {
-            const shadow = Object.create(fluid.shadow.prototype);
-
-            shadow.potentia = signal(potentia);
-            shadow.liveLayer = Object.create(null);
-            shadow.shadowMap = Object.create(null);
-
-            shadow.flatMerged = fluid.flatMergedComputer(shadow);
-            shadow.instanceId = 0;
-
-            const computer = computed(() => {
-                shadow.oldShadowMap = shadow.shadowMap;
-                shadow.shadowMap = Object.create(null);
-                const flatMerged = shadow.flatMerged.value;
-
-                let instance;
-                if (fluid.isUnavailable(flatMerged)) {
-                    instance = flatMerged;
-                } else {
-                    // These props may just be the id for a free component
-                    instance = fluid.freshComponent(potentia.props, shadow);
-                    instance.instanceId = shadow.instanceId++;
-                    console.log("Allocated instanceId " + shadow.instanceId + " at site " + shadow.path);
-                    fluid.expandLayer(instance, flatMerged, shadow, []);
-                }
-                fluid.disposeEffects(shadow);
-                // Here Lies the Gap of the Queen of Sheba
-                return instance;
-            });
-
-            computer.$variety = "$component";
-            shadow.computer = computer;
-            computer.shadow = shadow;
-
-            // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
-            instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
-
-            shadow.effectScheduler = effect( () => fluid.scheduleEffects(shadow, computer.value));
-
-            return computer;
+            return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName);
         }
+    };
+
+    /**
+     * Computes an instance for a given potentia and returns the associated component computer signal.
+     * @param {Potentia} potentia - The potentia (potential component configuration).
+     * @param {Shadow} parentShadow - The shadow record associated with the parent component.
+     * @param {String} memberName - The name of the member for this component in the parent.
+     * @return {ComponentComputer} - The computed instance as a signal with shadow and $variety properties.
+     */
+    fluid.computeInstance = function (potentia, parentShadow, memberName) {
+        const instantiator = parentShadow.instantiator;
+
+        const shadow = Object.create(fluid.shadow.prototype);
+
+        shadow.potentia = signal(potentia);
+        shadow.liveLayer = Object.create(null);
+        shadow.shadowMap = Object.create(null);
+
+        shadow.instanceId = 0;
+        shadow.flatMerged = fluid.flatMergedComputer(shadow);
+
+        const computer = computed(() => {
+            shadow.oldShadowMap = shadow.shadowMap;
+            shadow.shadowMap = Object.create(null);
+            const flatMerged = shadow.flatMerged.value;
+
+            let instance;
+            if (fluid.isUnavailable(flatMerged)) {
+                instance = flatMerged;
+            } else {
+                // These props may just be the id for a free component
+                instance = fluid.freshComponent(potentia.props, shadow);
+                instance.instanceId = shadow.instanceId++;
+                console.log("Allocated instanceId " + shadow.instanceId + " at site " + shadow.path);
+                fluid.expandLayer(instance, flatMerged, shadow, []);
+            }
+            fluid.disposeEffects(shadow);
+            // Here Lies the Gap of the Queen of Sheba
+            return instance;
+        });
+
+        computer.$variety = "$component";
+        shadow.computer = computer;
+        computer.shadow = shadow;
+
+        // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
+        instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
+
+        shadow.effectScheduler = effect( () => fluid.scheduleEffects(shadow, computer.value));
+        shadow.effectScheduler.$variety = "effectScheduler";
+
+        return computer;
     };
 
     fluid.expectLiveAccess = function (shadow, prop) {
@@ -1058,6 +1111,15 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    /**
+     * Construct a proxy wrapper for a supplied component from its computer - reads will be designalised, and writes
+     * will be upgraded into a live layer, allocating a fresh property in the layer if required.
+     *
+     * @param {ComponentComputer} target - The component computer to be proxied
+     * @param {Shadow} shadow - The shadow record of the target component.
+     * @param {Array<string>} segs - The path segments representing the location within the component structure.
+     * @return {Proxy<fluid.component>} The retrieved or newly created metadata record.
+     */
     fluid.proxyMat = function (target, shadow, segs) {
         const rec = fluid.getRecInsist(shadow.shadowMap, [...segs, $m]);
         const existing = rec.proxy;
@@ -1163,11 +1225,20 @@ const fluidILScope = function (fluid) {
         fluid.destroyComponent(that);
     };
 
+    /**
+     * Determines whether a given Potentia object is empty, meaning it has no associated layers or merge records.
+     * @param {Potentia} potentia - The Potentia object to check.
+     * @return {Boolean} `true` if the Potentia object is empty; otherwise, `false`.
+     */
     fluid.isEmptyPotentia = function (potentia) {
         return potentia.layerNames.length === 0 && potentia.mergeRecords.length === 0;
     };
 
     // TODO: Special syntax to just access signal
+    /**
+     * Destroys a component by resetting its Potentia, removing all layer names and merge records.
+     * @param {ComponentComputer} proxy - The component to be destroyed.
+     */
     fluid.destroyComponent = function (proxy) {
         proxy[$t].shadow.potentia.value = {layerNames: [], mergeRecords: []};
     };

@@ -462,6 +462,9 @@
         }
     };
     Computed.prototype._notify = function () {
+        if (this.$tracked) {
+            debugger;
+        }
         if (!(this._flags & NOTIFIED)) {
             this._flags |= OUTDATED | NOTIFIED;
             for (var node = this._targets; node !== undefined; node = node._nextTarget) {

@@ -4,11 +4,34 @@
 
 const fluidViewScope = function (fluid) {
 
+    /**
+     * @typedef {Object} VNode
+     * @property {String} tag - The tag name of the element (e.g., 'div', 'span').
+     * @property {Object<String, String>} attrs - A key-value map of the element's attributes.
+     * @property {VNode[]} [children] - An array of child virtual nodes.
+     * @property {String} [text] - The text content in the case this VNode represents a DOM TextNode.
+     *
+     * @property {signal<HTMLElement>|undefined} [elementSignal] - A signal that resolves to the corresponding DOM element.
+     * @property {Function[]} [renderEffects] - An array of effects that manage updates to the corresponding DOM element
+     */
+
+    /**
+     * Parses an HTML string into a DOM element.
+     *
+     * @param {String} template - The HTML string to parse.
+     * @return {HTMLElement|null} The first element in the parsed DOM fragment, or null if none exists.
+     */
     fluid.parseDOM = function (template) {
         const fragment = document.createRange().createContextualFragment(template);
         return fragment.firstElementChild;
     };
 
+    /**
+     * Converts a single DOM Element node to a VNode
+     *
+     * @param {HTMLElement} element - The DOM element to convert.
+     * @return {VNode} The virtual node representation of the element.
+     */
     fluid.elementToVNode = function (element) {
         const tag = element.tagName.toLowerCase();
         const attrs = {};
@@ -18,11 +41,16 @@ const fluidViewScope = function (fluid) {
             attrs[attr.name] = attr.value;
         }
         // Could also have members:
-        // element/onDomBind
-        // OR: elementSignal/renderEffects
+        // elementSignal/renderEffects
         return {tag, attrs};
     };
 
+    /**
+     * Converts a DOM tree into a virtual DOM representation.
+     *
+     * @param {Node} node - The root node of the DOM to convert.
+     * @return {VNode|null} A virtual DOM representation of the tree, or null if the node type is not supported.
+     */
     fluid.domToVDom = function (node) {
         if (node.nodeType === Node.TEXT_NODE) {
             return {text: node.nodeValue.trim()};
@@ -45,20 +73,82 @@ const fluidViewScope = function (fluid) {
 
     fluid.unavailableElement = fluid.unavailable("DOM element not available");
 
+    /**
+     * @callback DomApplyFunction
+     * @param {HTMLElement} element - The DOM element to which the function applies changes.
+     * @param {String|Number|Boolean} value - The rendered content to be applied.
+     */
+
+    fluid.allocateVNodeEffect = function (vnode, effectMaker) {
+        vnode.elementSignal ||= signal(fluid.unavailableElement);
+        const renderEffect = effectMaker(vnode);
+        // TODO: Create generalised means to nullify all effects allocated by a component - somehow arrange for these to end up at an address
+        fluid.pushArray(vnode, "renderEffects", renderEffect);
+        return renderEffect;
+    };
+
+    /**
+     * Binds a rendered signal or static value to a virtual DOM node and applies a function when the DOM element is available.
+     *
+     * @param {VNode} vnode - The virtual DOM node to bind to.
+     * @param {Signal|String|Number|Boolean} rendered - A signal or static value representing the rendered content.
+     * @param {DomApplyFunction} applyFunc - A function that applies the rendered content to the actual DOM element.
+     */
     fluid.bindDomTokens = function (vnode, rendered, applyFunc) {
         if (fluid.isSignal(rendered)) {
-            vnode.elementSignal ||= signal(fluid.unavailableElement);
-            const renderEffect = fluid.effect( function (element, text) {
-                applyFunc(element, text);
-            }, [vnode.elementSignal, rendered]);
-            // TODO: Create generalised means to nullify all effects allocated by a component - somehow arrange for these to end up at an address
-            fluid.pushArray(vnode, "renderEffects", renderEffect);
-        } else {
-            fluid.pushArray(vnode, "onDomBind", element => applyFunc(element, rendered));
+            fluid.allocateVNodeEffect(vnode, vnode => {
+                const togo = fluid.effect( function (element, text) {
+                    applyFunc(element, text);
+                }, [vnode.elementSignal, rendered]);
+                togo.$variety = "bindDomTokens";
+                return togo;
+            });
         }
     };
 
+    /**
+     * Processes an attribute directive found on a virtual node.
+     *
+     * @param {VNode} vnode - The virtual node to which the attribute belongs.
+     * @param {String} value - The attribute value, holding a directive through beginning with "v-"
+     * @param {String} key - The name of the attribute.
+     * @param {ComponentComputer} self - The component in whose context the attribute is processed.
+     */
+    fluid.processAttributeDirective = function (vnode, value, key, self) {
+        if (key === "v-id") {
+            // This effect binds to the DOM node, when it is disposed,
+            fluid.allocateVNodeEffect(vnode, vnode => {
+                const disposable = function () {
+                    fluid.pushPotentia(self.shadow, value, [{layerType: "template"}]);
+                };
+                const templateRecord = {
+                    layerType: "template",
+                    layer: {
+                        container: vnode.elementSignal
+                    }
+                };
+
+                fluid.pushPotentia(self.shadow, value, [templateRecord]);
+                return disposable;
+            });
+        }
+    };
+
+    /**
+     * Parses a DOM element and processes its virtual node tree to replace template strings with rendered content.
+     * It processes both text and attribute templates, binding the rendered values to the corresponding DOM elements.
+     * The function recursively processes the virtual node tree, rendering and binding content as needed.
+     *
+     * @param {Element} element - The DOM element whose contents (including attributes and children) will be parsed and rendered.
+     * @param {ComponentComputer} self - The Infusion component in the context of which template references are to be parsed
+     * @return {VNode} The processed VNode with rendered text and attributes.
+     */
     fluid.parseTemplate = function (element, self) {
+        /**
+         * Recursively processes a VNode by rendering any template strings found in its text or attributes
+         * @param {VNode} vnode - The virtual node (vNode) to be processed.
+         * @return {VNode} The processed VNode with rendered content in text and attributes.
+         */
         function processVNode(vnode) {
             if (vnode.text !== undefined) {
                 const tokens = fluid.parseStringTemplate(vnode.text);
@@ -67,10 +157,15 @@ const fluidViewScope = function (fluid) {
                 return Object.assign(vnode, {text: rendered});
             } else {
                 fluid.each(vnode.attrs, (value, key) => {
-                    const tokens = fluid.parseStringTemplate(value);
-                    const rendered = fluid.renderStringTemplate(tokens, self);
-                    fluid.bindDomTokens(vnode, rendered, (node, text) => node.setAttribute(key, text));
-                    vnode.attrs[key] = fluid.renderStringTemplate(tokens, self);
+                    if (key.startsWith("v-")) {
+                        fluid.processAttributeDirective(vnode, value, key, self);
+                        delete vnode.attrs[key];
+                    } else {
+                        const tokens = fluid.parseStringTemplate(value);
+                        const rendered = fluid.renderStringTemplate(tokens, self);
+                        fluid.bindDomTokens(vnode, rendered, (node, text) => node.setAttribute(key, text));
+                        vnode.attrs[key] = fluid.renderStringTemplate(tokens, self);
+                    }
                 });
                 vnode.children = vnode.children.map(processVNode);
             }
@@ -78,21 +173,26 @@ const fluidViewScope = function (fluid) {
         }
 
         const tree = fluid.domToVDom(element);
-        return processVNode(tree);
+        const togo = processVNode(tree);
+        return togo;
     };
 
     fluid.unbindDom = function (/*vnode, element*/) {
         // Try to remove event listeners and the like?
     };
 
+    /**
+     * Binds a DOM element to a virtual node (VNode), setting up necessary bindings or effect handling.
+     * If the VNode contains a signal, it will update its value with the provided element.
+     * If it contains a set of binding functions, those functions will be invoked with the element.
+     *
+     * @param {VNode} vnode - The virtual node to bind the element to.
+     * @param {HTMLElement} element - The DOM element to bind to the virtual node.
+     */
     fluid.bindDom = function (vnode, element) {
         if (vnode.elementSignal) {
             fluid.unbindDom(vnode, vnode.elementSignal.value);
             vnode.elementSignal.value = element;
-        } else if (vnode.onDomBind) {
-            fluid.unbindDom(vnode, vnode.element);
-            vnode.element = element;
-            vnode.onDomBind.forEach(binder => binder(element));
         }
     };
 
@@ -100,6 +200,12 @@ const fluidViewScope = function (fluid) {
         $layers: "fluid.component"
     });
 
+    /**
+     * Creates a DOM node from a virtual node (VNode), either a text node or an element node.
+     *
+     * @param {VNode} vnode - The virtual node to convert into a DOM node.
+     * @return {Node} - A newly created DOM node corresponding to the VNode.
+     */
     fluid.nodeFromVNode = function (vnode) {
         if (vnode.text) {
             return document.createTextNode(vnode.text);
@@ -108,6 +214,13 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    /**
+     * Checks whether a DOM node matches a given virtual node (VNode).
+     *
+     * @param {Node} node - The actual DOM node to compare.
+     * @param {VNode} vnode - The virtual node to match against.
+     * @return {Boolean} - `true` if the node matches the vnode, otherwise `false`.
+     */
     fluid.matchNodeToVNode = function (node, vnode) {
         if (vnode.text) {
             return node.nodeType === Node.TEXT_NODE;
@@ -116,10 +229,45 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    /**
+     * Cause the attributes of the supplied DOM node to agree with the `attrs` member of the supplied VNode
+     *
+     * @param {VNode} vnode - The VNode whose attributes are to be applied
+     * @param {HTMLElement} element - The DOM node whose attributes are to be patched
+     */
+    fluid.patchAttrs = function (vnode, element) {
+        for (let i = element.attributes.length - 1; i >= 0; i--) {
+            const attrName = element.attributes[i].name;
+            if (!(attrName in vnode.attrs)) {
+                element.removeAttribute(attrName);
+            }
+        }
+        for (const [key, value] of Object.entries(vnode.attrs)) {
+            if (element.getAttribute(key) !== value) {
+                element.setAttribute(key, value);
+            }
+        }
+    };
+
     // Helpful comparison: https://lazamar.github.io/virtual-dom/#applying-a-diff
+    /**
+     * Updates the DOM to match the given virtual node (VNode) structure.
+     *
+     * This function ensures that the provided `element` correctly reflects the structure
+     * of `vnode.children`, updating, replacing, or removing child elements as necessary.
+     *
+     * @param {VNode} vnode - The virtual node representing the desired DOM structure.
+     * @param {Node} element - The actual DOM element to be patched.
+     */
     fluid.patchChildren = function (vnode, element) {
         fluid.bindDom(vnode, element);
-        if (vnode.children) {
+        if (vnode.text !== undefined) {
+            element.textContent = vnode.text;
+        }
+        if (vnode.attrs !== undefined) {
+            fluid.patchAttrs(vnode, element);
+        }
+        if (vnode.children !== undefined) {
             const vcount = vnode.children.length;
             for (let i = 0; i < vcount; ++i) {
                 const vchild = vnode.children[i];
@@ -141,6 +289,16 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    /**
+     * Renders a virtual DOM tree (VNode) into a container element.
+     *
+     * This function updates the container's contents to match the provided virtual tree.
+     * If `elideParent` is true, the `vTree`'s children are grafted as children of the current container.
+     *
+     * @param {HTMLElement} container - The target DOM element where the virtual tree should be rendered.
+     * @param {VNode} vTree - The virtual node representing the desired DOM structure.
+     * @param {boolean} [elideParent=false] - If true, renders `vTree` directly into the container.
+     */
     fluid.renderView = function (container, vTree, elideParent) {
         let useTree = vTree;
         if (!elideParent) {

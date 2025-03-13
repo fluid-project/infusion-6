@@ -1890,11 +1890,12 @@ const fluidJSScope = function (fluid) {
 
     // The types of merge record the system supports, with the weakest records first
     fluid.mergeRecordTypes = {
-        def: 1000, // and above
-        defParents: 900,
+        def: 1000, // and below, for resolved parents in hierarchy
+        defParents: 900, // layer holding resolved $layers member through hierarchy
         subcomponent: 700, // and above - wrt. nesting depth
         user: 600, // supplied as constructor arguments
-        distribution: 100, // and above
+        distribution: 200, // and above
+        template: 100, // layer entries synthesized out of template
         live: 0
     };
 
@@ -1955,6 +1956,12 @@ const fluidJSScope = function (fluid) {
      */
     fluid.mergeLayerRecords = function (root, mergeRecords) {
         const layerMap = {}, segs = [];
+        mergeRecords.forEach(mergeRecord => {
+            if (!mergeRecord.priority) {
+                mergeRecord.priority = fluid.mergeRecordTypes[mergeRecord.layerType];
+            }
+        });
+        mergeRecords.sort((a, b) => b.priority - a.priority);
         const layers = mergeRecords.map(mergeRecord => mergeRecord.layer);
 
         fluid.mergeLayers(root, segs, layerMap, layers, mergeRecords);
@@ -1965,9 +1972,9 @@ const fluidJSScope = function (fluid) {
     /**
      * @typedef {Object} MergeRecord
      * @property {String} layerType - The type of the layer (e.g., "def", "defParents").
-     * @property {String} layerName - Name of the layer, expected to be unique
-     * @property {Number} priority - The priority of the layer, used for determining merge order.
-     * @property {Object} layer - The layer definition object to be merged.
+     * @property {Object} [layer] - The layer definition object to be merged.
+     * @property {String} [layerName] - Name of the layer, expected to be unique
+     * @property {Number} [priority] - The priority of the layer, used for determining merge order.
      */
 
     // Consumes rawLayer values as signals by issuing reads to fluid.readLayer
@@ -2017,9 +2024,11 @@ const fluidJSScope = function (fluid) {
                         const mergeRecords = order.map((oneLayerName, i) => ({
                             layerType: "def",
                             layerName: oneLayerName,
-                            priority: fluid.mergeRecordTypes.def + i,
+                            // Towards the right here, stronger records
+                            priority: fluid.mergeRecordTypes.def - i,
                             layer: veryFlatDefs[oneLayerName]
                         })).concat({
+                            // Definition just holding the resolved $layers member, overriding all previous entries
                             layerType: "defParents",
                             layerName: `defParents:${layerName}`,
                             priority: fluid.mergeRecordTypes.defParents,
