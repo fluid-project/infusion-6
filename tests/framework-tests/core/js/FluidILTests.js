@@ -1,13 +1,10 @@
-/* global QUnit, preactSignalsCore */
+/* global QUnit */
 
 "use strict";
 
 fluid.setLogging(true);
 
 fluid.registerNamespace("fluid.tests");
-
-// noinspection ES6ConvertVarToLetConst
-var {signal} = preactSignalsCore;
 
 QUnit.module("Fluid IL Tests");
 
@@ -16,7 +13,7 @@ QUnit.test("Basic live merging", function (assert) {
         $layers: "fluid.component",
         testValue: 0
     });
-    const testDef = fluid.def("fluid.tests.testComponent");
+    const testDef = fluid.readMergedDef("fluid.tests.testComponent");
     assert.strictEqual(testDef.value.testValue, 0, "Retrieve basic value");
     assert.strictEqual(testDef.value.events.onCreate, 0, "Retrieve merged value");
     fluid.def("fluid.tests.testComponent", {
@@ -238,6 +235,33 @@ QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", func
     fluid.deleteLayer("fluid.tests.nonexistentGrade");
 });
 
+/** FLUID-7001 circular hierarchy tests */
+
+fluid.def("fluid.tests.circularComponent", {
+    $layers: "fluid.tests.circularComponent"
+});
+
+QUnit.test("FLUID-7001 circularity", function (assert) {
+    const that = fluid.tests.circularComponent();
+    assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
+    assert.ok(that.causes[0].message.includes("circular"), "Received relevant message");
+});
+
+fluid.def("fluid.tests.indirectCircularComponent", {
+    $layers: "fluid.tests.indirectCircularComponentParent"
+});
+
+fluid.def("fluid.tests.indirectCircularComponentParent", {
+    $layers: "fluid.tests.indirectCircularComponent"
+});
+
+
+QUnit.test("FLUID-7001 indirect circularity", function (assert) {
+    const that = fluid.tests.indirectCircularComponent();
+    assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
+    assert.ok(that.causes[0].message.includes("circular"), "Received relevant message");
+});
+
 /** FLUID-4930 retrunking test taken from fluid-authoring arrow rendering **/
 
 fluid.tests.vectorToPolar = function (start, end) {
@@ -421,7 +445,7 @@ QUnit.test("FLUID-4930: Retrunking III", function (assert) {
     assert.equal(that.schema.properties.email.type, "string", "Successfully evaluated email option");
     assert.equal(that.schema.properties.username.type, "string", "Successfully evaluated username option");
     assert.undefined(that.schema.properties.password?.type, "Peacefully evaluate undefined reference");
-    const schema = fluid.def("fluid.tests.FLUID4930.schemaHolder").value.schema;
+    const schema = fluid.def("fluid.tests.FLUID4930.schemaHolder").schema;
     assert.equal(Object.keys(schema.definitions).length, 2, "Resolved 2 keys in deep structure");
     assert.deepEqual(that.model.inputSchema, fluid.tests.FLUID4930.signupExpected, "Resolved schema through method and computation");
 });
@@ -472,6 +496,53 @@ QUnit.test("FLUID-4930: Retrunking IV", function (assert) {
     assert.ok(resend, "Successfully constructed subcomponent");
     assert.ok(fluid.hasLayer(resend, "fluid.tests.FLUID4930.verify.resend"), "Constructed subcomponent with layer");
     assert.equal(that.resend.urls.read, "http://localhost:5984/users/_design/lookup/_view/byUsernameOrEmail", "Successfully evaluated email option");
+});
+
+fluid.tests.refIdentityObj = {
+    a: 1
+};
+
+fluid.def("fluid.tests.expansionFringe", {
+    $layers: "fluid.component",
+    rootFringe: {
+        $compute: {
+            func: () => fluid.tests.refIdentityObj
+        }
+    },
+    innerFringe: {
+        inner: {
+            $compute: {
+                func: () => fluid.tests.refIdentityObj
+            }
+        }
+    }
+});
+
+QUnit.test("Expansion fringe test", function (assert) {
+    const that = fluid.tests.expansionFringe();
+    assert.equal(that.rootFringe, fluid.tests.refIdentityObj, "Computed object at root has not been cloned");
+    assert.equal(that.innerFringe.inner, fluid.tests.refIdentityObj, "Nested computed object has not been cloned");
+});
+
+fluid.def("fluid.tests.FLUID7000scope", {
+    joined: {
+        $component: {
+            $layers: "fluid.component",
+            value: "root",
+            joined: {
+                $component: {
+                    $layers: "fluid.component",
+                    value: "sibling"
+                }
+            },
+            joinedResolution: "{joined}.value"
+        }
+    }
+});
+
+QUnit.test("FLUID-7000 scoping test", function (assert) {
+    const that = fluid.tests.FLUID7000scope();
+    assert.equal(that.joined.joinedResolution, "sibling", "Same-named scope resolved to sibling by preference");
 });
 
 // Async computation test

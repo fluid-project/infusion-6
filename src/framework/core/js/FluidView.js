@@ -116,11 +116,17 @@ const fluidViewScope = function (fluid) {
      */
     fluid.processAttributeDirective = function (vnode, value, key, self) {
         if (key === "v-id") {
-            // This effect binds to the DOM node, when it is disposed,
+            // This effect binds to the DOM node, when it is disposed, will empty the template definition.
+            // We likely don't want to use this in practice since a template update is going to update this live and
+            // we'd prefer to reuse whatever is in the DOM without tearing it down.
             fluid.allocateVNodeEffect(vnode, vnode => {
                 const disposable = function () {
                     fluid.pushPotentia(self.shadow, value, [{layerType: "template"}]);
                 };
+                disposable.$variety = "$component";
+                // Cheapest way to signal to fluid.patchChildren that it should not attempt to recurse on child nodes
+                // by itself:
+                delete vnode.children;
                 const templateRecord = {
                     layerType: "template",
                     layer: {
@@ -167,7 +173,9 @@ const fluidViewScope = function (fluid) {
                         vnode.attrs[key] = fluid.renderStringTemplate(tokens, self);
                     }
                 });
-                vnode.children = vnode.children.map(processVNode);
+                if (vnode.children !== undefined) {
+                    vnode.children = vnode.children.map(processVNode);
+                }
             }
             return vnode;
         }
@@ -267,6 +275,7 @@ const fluidViewScope = function (fluid) {
         if (vnode.attrs !== undefined) {
             fluid.patchAttrs(vnode, element);
         }
+        // It may be undefined because this is a joint to a subcomnponent as applied in fluid.processAttributeDirective
         if (vnode.children !== undefined) {
             const vcount = vnode.children.length;
             for (let i = 0; i < vcount; ++i) {

@@ -1985,10 +1985,17 @@ const fluidJSScope = function (fluid) {
         const that = {
             // A local store, so that we can use C3_precedence with direct lookups
             flatDefs,
-            storeParents: layer => {
-                return layer.$layers.map(layerName => that.storeLayer(layerName));
+            storeParents: (layer, rootLayer) => {
+                return layer.$layers.map(layerName => {
+                    if (layerName === rootLayer) {
+                        // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
+                        return signal(fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`));
+                    } else {
+                        return that.storeLayer(layerName, rootLayer);
+                    }
+                });
             },
-            storeLayer: (layerName) => {
+            storeLayer: (layerName, rootLayer) => {
                 let layerComputer = flatDefs[layerName];
                 if (!layerComputer) {
                     // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
@@ -1999,10 +2006,10 @@ const fluidJSScope = function (fluid) {
                             return layer;
                         } else {
                             const readerExpanded = readerExpand(layer.raw);
-                            const parentComputers = that.storeParents(readerExpanded);
+                            const parentComputers = that.storeParents(readerExpanded, rootLayer || layerName);
                             // Ensure layer computers for all parent layers get evaluated right now
-                            parentComputers.map(computer => computer.value);
-                            return readerExpanded;
+                            const {unavailable} = fluid.processSignalArgs(parentComputers);
+                            return unavailable || readerExpanded;
                         }
                     });
                 }
@@ -2041,7 +2048,7 @@ const fluidJSScope = function (fluid) {
                         };
                     }
                 };
-                return computed(() => resolveLayers());
+                return computed(resolveLayers);
             }
         };
         return that;
@@ -2061,13 +2068,14 @@ const fluidJSScope = function (fluid) {
     /**
      * Retrieves a layer's merged configuration
      * @param {String} layerName - The name of the grade whose options are to be read or written
-     * @return {signal<resolve>} - Signal for layers (which is mergeRecords and merged)
+     * @return {signal<Object>} - Signal for layers (which is mergeRecords and merged)
      */
     fluid.readMergedDef = function (layerName) {
         // TODO: economise on these in the "giant mat"
         const resolver = fluid.hierarchyResolver();
         resolver.storeLayer(layerName);
-        return resolver.resolve(layerName);
+        const resolved = resolver.resolve(layerName);
+        return fluid.getThroughSignals(resolved, ["merged"]);
     };
 
     // Must be defined before we construct any components
@@ -2085,6 +2093,7 @@ const fluidJSScope = function (fluid) {
 
     fluid.writeDef = function (layerName, layer) {
         fluid.writeLayer(layerName, layer);
+        // TODO: This should just be a natural side-effect of writing any layer descended from fluid.component
         fluid.makeComponentCreator(layerName);
     };
 
@@ -2098,7 +2107,8 @@ const fluidJSScope = function (fluid) {
      */
     fluid.def = function (layerName, layer) {
         if (layer === undefined) {
-            return fluid.getThroughSignals(fluid.readMergedDef(layerName), ["merged"]);
+            //
+            return fluid.readLayer(layerName).value.raw;
         } else {
             fluid.writeDef(layerName, layer);
         }

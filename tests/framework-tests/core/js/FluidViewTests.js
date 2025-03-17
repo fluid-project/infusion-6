@@ -105,48 +105,95 @@ fluid.def("fluid.tests.nestedInner", {
     template: `<div class="inner">Text from inner</div>`
 });
 
-QUnit.test("Nested render test", function (assert) {
-    const container = qs(".container");
-    const that = fluid.tests.nestedOuter({container});
-    const expected = {
+fluid.tests.nestedExpect = {
+    $tagName: "div",
+    "class": "outer",
+    $children: {
         $tagName: "div",
-        "class": "outer",
+        "class": "outerInner",
         $children: {
             $tagName: "div",
-            "class": "outerInner",
-            $children: {
-                $tagName: "div",
-                "class": "inner",
-                $textContent: "Text from inner"
-            }
+            "class": "inner",
+            $textContent: "Text from inner"
         }
-    };
-    const root = container.firstElementChild;
-    assert.assertNode(root, expected, "Initial render correct");
+    }
+};
 
-    const getParents = el => {
-        const parents = [];
-        while (el !== container) {
-            parents.push(el);
-            el = el.parentNode;
-        }
-        return parents;
+fluid.tests.getNodeParents = function (container, selector) {
+    let el = container.querySelector(selector);
+    const parents = [];
+    while (el !== container) {
+        parents.push(el);
+        el = el.parentNode;
+    }
+    return parents;
+};
+
+/**
+ * Updates the definition of a given layer and returns a function to restore the previous definition.
+ *
+ * @param {String} layerName - The name of the layer whose definition is to be updated.
+ * @param {Object} def - The new definition to be assigned to the layer.
+ * @return {Function} A function that, when called, restores the previous definition of the layer.
+ */
+fluid.tests.updateRestoreDef = function (layerName, def) {
+    const oldDef = fluid.def(layerName);
+    fluid.def(layerName, def);
+    return () => {
+        fluid.def(layerName, oldDef);
     };
-    const nodes1 = getParents(container.querySelector(".inner"));
+};
+
+
+QUnit.test("Nested render test - adapt inner", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.nestedOuter({container});
+
+    const root = container.firstElementChild;
+    assert.assertNode(root, fluid.tests.nestedExpect, "Initial render correct");
+
+    const nodes1 = fluid.tests.getNodeParents(container, ".inner");
 
     // Update the inner layer definition to include a new template
-    fluid.def("fluid.tests.nestedInner", {
+    const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.nestedInner", {
         $layers: "fluid.templateViewComponent",
         template: `<div class="inner">New brush</div>`
     });
 
-    const newExpected = fluid.copy(expected);
+    const newExpected = fluid.copy(fluid.tests.nestedExpect);
     newExpected.$children.$children.$textContent = "New brush";
     assert.assertNode(root, newExpected, "Updated render correct");
 
-    const nodes2 = getParents(container.querySelector(".inner"));
+    const nodes2 = fluid.tests.getNodeParents(container, ".inner");
 
     assert.ok(nodes1.every((e, i) => e === nodes2[i]), "DOM nodes undisturbed");
 
+    restoreDef();
+    that.destroy();
+});
+
+QUnit.test("Nested render test - adapt outer", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.nestedOuter({container});
+
+    const root = container.firstElementChild;
+    assert.assertNode(root, fluid.tests.nestedExpect, "Initial render correct");
+
+    const nodes1 = fluid.tests.getNodeParents(container, ".inner");
+
+    const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.nestedOuter", {
+        $layers: "fluid.templateViewComponent",
+        template: `<div class="outer"><div class="newHandle" v-id="inner"></div>`
+    });
+
+    const newExpected = fluid.copy(fluid.tests.nestedExpect);
+    newExpected.$children["class"] = "newHandle";
+    assert.assertNode(root, newExpected, "Updated render correct");
+
+    const nodes2 = fluid.tests.getNodeParents(container, ".inner");
+
+    assert.ok(nodes1.every((e, i) => e === nodes2[i]), "DOM nodes undisturbed");
+
+    restoreDef();
     that.destroy();
 });
