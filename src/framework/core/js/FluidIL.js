@@ -154,13 +154,10 @@ const fluidILScope = function (fluid) {
             const layers = shadow.computer?.value?.$layers || [];
             const contextHash = shadow.contextHash = fluid.layerNamesToHash(layers);
 
-
             // This is filtered out again in recordComponent
             fluid.applyToContexts(contextHash, shadow.memberName, fluid.memberName);
             fluid.each(contextHash, function (disposition, context) {
-                //ownScope[context] = shadow;
                 if (shadow.parentShadow && shadow.parentShadow.that !== fluid.rootComponent) {
-                    // Note that ownScope should properly be signals too
                     fluid.applyToScope(shadow.parentShadow.scope, context, shadow, disposition);
                 }
             });

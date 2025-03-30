@@ -1,12 +1,6 @@
-
 ## What Is Infusion? ##
 
-Infusion is a different kind of JavaScript framework. Our approach is to leave you in control—it's your interface,
-using your markup, your way. Infusion is accessible and very, very configurable.
-
-Infusion includes:
-* an application framework for developing flexible stuff with JavaScript and jQuery
-* a collection of accessible UI components
+![](https://fluid-project.github.io/infusion-6/test-foreign.svg)
 
 This is a prototype implementation of a future version of Infusion, Infusion 6 - it will not be compatible with previous versions
 of Infusion and none of the current code samples or documentation are valid. Visit the [Fluid Technology](https://matrix.to/#/#fluid-tech:matrix.org) channel on Element for more information.
