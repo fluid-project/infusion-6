@@ -1,51 +1,27 @@
 ## What Is Infusion? ##
 
-![](https://fluid-project.github.io/infusion-6/test-foreign.svg)
 
-This is a prototype implementation of a future version of Infusion, Infusion 6 - it will not be compatible with previous versions
-of Infusion and none of the current code samples or documentation are valid. Visit the [Fluid Technology](https://matrix.to/#/#fluid-tech:matrix.org) channel on Element for more information.
+<a href="https://fluidproject.org/infusion"><img src="https://ponder.org.uk/img/infusion.png" height="100px"
+style="margin-bottom: 30px; margin-top: -10px;"/></a>
 
-## Where Can I See Infusion Components? ##
+Infusion, originally an initiative of the [Fluid community](https://fluidproject.org/) since 2008, is a JavaScript
+library enabling the creation of flexible software. Versions 1 through 4 of Infusion, [documented](https://docs.fluidproject.org/infusion/development/)
+and hosted on the Fluid project's site, were relatively conventionally structured libraries supporting the development
+of various UI widgets.
 
-<http://fluidproject.org/infusion.html>
+This repository holds a prototype for a [comprehensive rewrite](https://github.com/fluid-project/infusion-6) of Infusion which is underway for
+[version 6](https://github.com/fluid-project/infusion-6) based on reactive primitives throughout, structuring it as
+a [software substrate](https://ponder.org.uk/term/substrate) constituting an [integration domain](https://ponder.org.uk/term/integration-domain).
 
-## How Do I Get Infusion? ##
+Infusion 6 is not compatible with previous versions
+of Infusion and none of the current code samples or documentation are valid.
+Visit the [Fluid Technology](https://matrix.to/#/#fluid-tech:matrix.org) channel on Element for more information.
 
-* [Download a Release](https://github.com/fluid-project/infusion/releases)
-* [Install from NPM](https://www.npmjs.com/package/infusion)
-* [Fork on GitHub](https://github.com/fluid-project/infusion)
-* [Use from the CDNJS Content Distribution Network](https://cdnjs.com/libraries/infusion)
-  * To try out Infusion quickly you can use the following `script` tag to include the full framework from the CDN: `<script src='https://cdnjs.cloudflare.com/ajax/libs/infusion/2.0.0/infusion-all.min.js'></script>`
-
-See [How Do I Create an Infusion Package?](#how-do-i-create-an-infusion-package), for details on creating complete or
-custom packages of Infusion.
-
-## Where is the Infusion Documentation? ##
-
-Infusion has comprehensive documentation at <http://docs.fluidproject.org/infusion>.
-
-## Who Makes Infusion, and How Can I Help? ##
-
-The Fluid community is an international group of designers, developers, and testers who focus on a common mission:
-improving the user experience and accessibility of the open web.
-
-The best way to join the Fluid Community is to jump into any of our community activities. Visit our
-[website](http://fluidproject.org/) for links to our mailing lists, chat room, wiki, etc.
-
-## Inclusion ##
-
-The Fluid community is dedicated to inclusive design&mdash;design that considers the full range of human diversity with respect to ability, language, culture, gender, age and other forms of human difference. To help ensure that our community is a safe space for all contributors, we have adopted a [code of conduct](https://wiki.fluidproject.org/display/fluid/Inclusion+in+the+Fluid+Community) based on the [Contributor Covenant](http://contributor-covenant.org/). All participants and contributors have the responsibility to uphold this code. Please contact the [Advocacy working group](mailto:fluid-advocacy@fluidproject.org) if you encounter unacceptable behaviour.
-
-## Where is Infusion Used? ##
-
-Infusion is the cornerstone of a number of Fluid's own projects dedicated to supporting inclusive design on the Web. You
-can see some of them featured on our [Projects page](http://fluidproject.org/projects.html). Infusion is also used in a
-variety of third-party applications, which are listed on the
-[Infusion Integrations](https://wiki.fluidproject.org/display/fluid/Infusion+Integrations) wiki page.
+Work in progress on this implementation can be tracked on Antranig Basman's [Work in Progress](https://ponder.org.uk/wip/) stream.
 
 ### Dependencies ###
 
-* [node.js](http://nodejs.org/)
+* [Preact signals core](https://www.npmjs.com/package/@preact/signals-core)
 
 All other development dependencies will be installed by running the following from the project root:
 

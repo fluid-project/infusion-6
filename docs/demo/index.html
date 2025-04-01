@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" href="../pell/css/pell.css" />
+    <link rel="stylesheet" href="demo.css" />
+
+    <script src="../pell/js/pell.js"></script>
+
+    <title>Self-editing demo</title>
+</head>
+<body>
+
+<nav class="navbar navbar-default navbar-fixed-top navbar-custom">
+    <div class="container-fluid">
+        <div class="navbar-ponder">
+            <a class="navbar-ponder-brand" href="../../">Antranig Basman</a>
+            <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#main-navbar">
+                <span class="sr-only">Toggle navigation</span>
+                <svg width="36" height="36" viewBox="0 0 24 24" stroke="#888" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20 7L4 7" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M20 12L4 12" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M20 17L4 17" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            </button>
+            <div class="collapse navbar-collapse" id="main-navbar">
+                <ul class="nav navbar-nav navbar-right">
+                    <li>
+                        <a title="Posts" href="../../post">Posts</a>
+                    </li>
+                    <li>
+                        <a title="WiP" href="../../wip">WiP</a>
+                    </li>
+                    <li>
+                        <a title="About" href="../../page/about/">About</a>
+                    </li>
+                    <li>
+                        <a title="Communities" href="../../communities">Communities</a>
+                    </li>
+                    <li>
+                        <a title="Projects" href="../../projects">Projects</a>
+                    </li>
+                    <li>
+                        <a title="Terms" href="../../term">Terms</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+    </div>
+</nav>
+
+<header class="header-section ">
+    <div class="intro-header no-img">
+        <div class="container">
+            <div class="header-row">
+                <div class="term-heading">
+                    <h1>Substrate  </h1>
+                    <hr class="small">
+                </div>
+            </div>
+        </div>
+    </div>
+</header>
+
+<div role="main">
+    <div class="row">
+        <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+            This content will be edited, <a href="https://github.com/jaredreich/pell">Pell</a>-mell:
+
+            <article role="main" class="blog-post">
+                <p>A substrate is a kind of self-sufficent model or material for the construction of software. Jonathan Edwards&rsquo; definition
+                    is a great starting point comprising the following points:</p>
+                <ul>
+                    <li>A complete and self-sufficient programming system</li>
+                    <li>Persistent code &amp; data store</li>
+                    <li>Direct-manipulation UI on that state</li>
+                    <li>Live programming</li>
+                    <li>Programming &amp; using are on a spectrum, not distinct</li>
+                    <li>Conceptually unified — not a “stack”</li>
+                </ul>
+                <p>Summarized as a slogan: “A PL, DB, &amp; WYSIWYG document unified together.”</p>
+                <p>Whilst I subscribe to all of these points, in my vision many of them are not essential definitional aspects, but
+                    instead essential <em>possibilities</em> – that is, that the substrate should be designed in such a way that they can be
+                    brought into view or &ldquo;disclosed&rdquo; idiomatically in any context. For example, direct-manipulation and live programming
+                    may not be appropriate or necessary for many users of a particular substrate&rsquo;s deployment – they may prefer to view
+                    it as a regular application, indistinguishable from one not built on a substrate, or even as a static document.
+                    But the path to bringing
+                    these capabilities into view should be reasonably direct and not involve a fundamental change in the structure of
+                    the application. This rules out pieces of obligately unidirectional machinery such as traditional kinds of &ldquo;compilers&rdquo;
+                    or build tools from the infrastructure of a substrate unless they can be civilised or incrementalised somehow.</p>
+            </article>
+        </div>
+    </div>
+    <div id="code">
+
+    </div>
+</div>
+
+<script>
+    const node = document.querySelector("article p");
+    const target = document.querySelector("#code");
+    pell.init({
+        element: node,
+        onChange: (html) => {
+            markup.innerHTML = "HTML Output: <br /><br />";
+            markup.innerText += html;
+        }
+    });
+</script>
+
+</body>
+</html>

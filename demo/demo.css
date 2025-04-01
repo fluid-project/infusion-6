@@ -1,0 +1,44 @@
+
+.header-row {
+    display: flex;
+    justify-content: space-evenly;
+    align-items: center;
+}
+
+
+.navbar-toggle {
+    display: flex;
+}
+
+.navbar-custom {
+    min-height: 40px;
+    margin-bottom: 15px;
+}
+
+.navbar-brand {
+    height: 40px;
+    padding: 10px 15px;
+}
+
+.pager li a:hover, .pager li a:focus {
+    color: #FFF;
+    background: #0085a1;
+    border: 1px solid #0085a1;
+}
+
+.pager li>a:focus, .pager li>a:hover {
+    text-decoration: none;
+    background-color: #eee;
+}
+
+.pager li a {
+    font-family: 'Open Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    text-transform: uppercase;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 10px 5px;
+    background: #FFF;
+    border-radius: 0;
+    color: #404040;
+}
