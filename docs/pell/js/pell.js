@@ -11,9 +11,6 @@ var formatBlock = 'formatBlock';
 var addEventListener = function addEventListener(parent, type, listener) {
   return parent.addEventListener(type, listener);
 };
-var appendChild = function appendChild(parent, child) {
-  return parent.appendChild(child);
-};
 var createElement = function createElement(tag) {
   return document.createElement(tag);
 };
@@ -163,11 +160,17 @@ var init = function init(settings) {
 
   var defaultParagraphSeparator = settings[defaultParagraphSeparatorString] || 'div';
 
+  const parent = settings.element.parentNode;
+  const editor = createElement("div");
+  editor.setAttribute("class", "pell");
+  parent.insertBefore(editor, settings.element);
+
   var actionbar = createElement('div');
   actionbar.className = classes.actionbar;
-  appendChild(settings.element, actionbar);
+  editor.appendChild(actionbar);
+    editor.appendChild(settings.element);
 
-  var content = settings.element.content = createElement('div');
+  var content = settings.element; // .content = createElement('div');
   content.contentEditable = true;
   content.className = classes.content;
   content.oninput = function (_ref) {
@@ -183,7 +186,7 @@ var init = function init(settings) {
       }, 0);
     }
   };
-  appendChild(settings.element, content);
+  // appendChild(settings.element, content);
 
   actions.forEach(function (action) {
     var button = createElement('button');
@@ -203,8 +206,7 @@ var init = function init(settings) {
       addEventListener(content, 'mouseup', handler);
       addEventListener(button, 'click', handler);
     }
-
-    appendChild(actionbar, button);
+      actionbar.appendChild(button);
   });
 
   if (settings.styleWithCSS) exec('styleWithCSS');
