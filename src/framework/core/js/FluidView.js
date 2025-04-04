@@ -115,7 +115,7 @@ const fluidViewScope = function (fluid) {
      * @param {ComponentComputer} self - The component in whose context the attribute is processed.
      */
     fluid.processAttributeDirective = function (vnode, value, key, self) {
-        if (key === "v-id") {
+        if (key === "@id") {
             // This effect binds to the DOM node, when it is disposed, will empty the template definition.
             // We likely don't want to use this in practice since a template update is going to update this live and
             // we'd prefer to reuse whatever is in the DOM without tearing it down.
@@ -163,7 +163,7 @@ const fluidViewScope = function (fluid) {
                 return Object.assign(vnode, {text: rendered});
             } else {
                 fluid.each(vnode.attrs, (value, key) => {
-                    if (key.startsWith("v-")) {
+                    if (key.charCodeAt(0) === 64) { // @
                         fluid.processAttributeDirective(vnode, value, key, self);
                         delete vnode.attrs[key];
                     } else {

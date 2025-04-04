@@ -2259,7 +2259,7 @@ const fluidJSScope = function (fluid) {
         return template;
     };
 
-    const tagRE = /\{\{((?:.)+?)\}\}/g;
+    const tagRE = /@\{((?:.)+?)\}/g;
 
     /**
      * Simple moustache-style string template system.  Takes a template string containing tokens in the form of "{{value}}" or

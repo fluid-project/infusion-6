@@ -11,7 +11,7 @@ QUnit.module("Fluid View Tests");
 fluid.def("fluid.tests.basicRender", {
     $layers: "fluid.templateViewComponent",
     text: "Initial value",
-    template: "<div>{{text}}</div>"
+    template: "<div>@{text}</div>"
 });
 
 const qs = sel => document.querySelector(sel);
@@ -32,7 +32,7 @@ QUnit.test("Basic static rendering test", function (assert) {
 fluid.def("fluid.tests.nestedNodeRender", {
     $layers: "fluid.templateViewComponent",
     text: "Initial value",
-    template: `<div><div class="inner">{{text}}</div></div>`
+    template: `<div><div class="inner">@{text}</div></div>`
 });
 
 
@@ -63,7 +63,7 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
 fluid.def("fluid.tests.dynamicAttribute", {
     $layers: "fluid.templateViewComponent",
     text: "Initial value",
-    template: `<div><input value="{{text}}"/></div>`
+    template: `<div><input value="@{text}"/></div>`
 });
 
 QUnit.test("Dynamic attribute test", function (assert) {
@@ -92,7 +92,7 @@ QUnit.test("Dynamic attribute test", function (assert) {
 
 fluid.def("fluid.tests.nestedOuter", {
     $layers: "fluid.templateViewComponent",
-    template: `<div class="outer"><div class="outerInner" v-id="inner"></div>`,
+    template: `<div class="outer"><div class="outerInner" @id="inner"></div>`,
     inner: {
         $component: {
             $layers: "fluid.tests.nestedInner"
@@ -183,7 +183,7 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
 
     const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.nestedOuter", {
         $layers: "fluid.templateViewComponent",
-        template: `<div class="outer"><div class="newHandle" v-id="inner"></div>`
+        template: `<div class="outer"><div class="newHandle" @id="inner"></div>`
     });
 
     const newExpected = fluid.copy(fluid.tests.nestedExpect);
