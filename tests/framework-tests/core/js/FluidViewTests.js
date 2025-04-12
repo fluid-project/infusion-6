@@ -14,7 +14,7 @@ fluid.def("fluid.tests.basicRender", {
     template: "<div>@{text}</div>"
 });
 
-const qs = sel => document.querySelector(sel);
+const qs = (sel, parent) => (parent || document).querySelector(sel);
 
 QUnit.test("Basic static rendering test", function (assert) {
     const container = qs(".container");
@@ -196,4 +196,28 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
 
     restoreDef();
     that.destroy();
+});
+
+fluid.def("fluid.tests.bindClick", {
+    $layers: "fluid.templateViewComponent",
+    value: 0,
+    template: `<div><button @onclick="{self}.increment"/></div>`,
+    increment: {
+        $method: {
+            args: "{self}",
+            func: self => self.value++
+        }
+    }
+});
+
+QUnit.test("Basic click test", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.bindClick({container});
+
+    assert.equal(that.value, 0, "Initial count 0");
+
+    const button = qs("button", container);
+    button.dispatchEvent(new MouseEvent("click"));
+
+    assert.equal(that.value, 1, "Updated count 1");
 });

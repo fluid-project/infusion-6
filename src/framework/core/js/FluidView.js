@@ -4,6 +4,8 @@
 
 const fluidViewScope = function (fluid) {
 
+    const $t = fluid.proxySymbol;
+
     /**
      * @typedef {Object} VNode
      * @property {String} tag - The tag name of the element (e.g., 'div', 'span').
@@ -55,7 +57,6 @@ const fluidViewScope = function (fluid) {
         if (node.nodeType === Node.TEXT_NODE) {
             return {text: node.nodeValue.trim()};
         }
-
         if (node.nodeType === Node.ELEMENT_NODE) {
             const togo = fluid.elementToVNode(node);
 
@@ -67,17 +68,94 @@ const fluidViewScope = function (fluid) {
 
             return togo;
         }
-
         return null; // Ignore other node types (comments, etc.)
     };
 
-    fluid.unavailableElement = fluid.unavailable("DOM element not available");
+    // event "on" handling logic lithified with thanks from https://github.com/vuejs/petite-vue/blob/main/src/directives/on.ts (Licencs: MIT)
+
+    const systemModifiers = ["ctrl", "shift", "alt", "meta"];
+
+
+    const modifierGuards = {
+        stop: (e) => e.stopPropagation(),
+        prevent: (e) => e.preventDefault(),
+        self: (e) => e.target !== e.currentTarget,
+        ctrl: (e) => !e.ctrlKey,
+        shift: (e) => !e.shiftKey,
+        alt: (e) => !e.altKey,
+        meta: (e) => !e.metaKey,
+        left: (e) => "button" in e && e.button !== 0,
+        middle: (e) => "button" in e && e.button !== 1,
+        right: (e) => "button" in e && e.button !== 2,
+        exact: (e, modifiers) =>
+            systemModifiers.some((m) => e[`${m}Key`] && !modifiers[m])
+    };
+
+    fluid.parseModifiers = (raw) => {
+        let modifiers;
+        raw = raw.replace(modifierRE, (_, m) => {
+            ;(modifiers || (modifiers = {}))[m] = true
+            return ''
+        })
+        return {event: raw, modifiers}
+    };
+
+    const hyphenateRE = /\B([A-Z])/g;
+    const modifierRE = /\.([\w-]+)/g
+
+    fluid.hyphenate = str => str.replace(hyphenateRE, "-$1").toLowerCase();
+
+    fluid.applyOns = function (shadow, el, on) {
+        if (on) {
+            on.forEach(({onKey, onValue}) => fluid.applyOn(shadow, el, onKey, onValue));
+        }
+    };
 
     /**
-     * @callback DomApplyFunction
-     * @param {HTMLElement} element - The DOM element to which the function applies changes.
-     * @param {String|Number|Boolean} value - The rendered content to be applied.
+     * Binds a DOM event to a handler function defined in the component context.
+     * Parses event modifiers and applies the appropriate event and behavior based on the directive key.
+     *
+     * @param {Shadow} shadow - The shadow record of the component, used to resolve context references.
+     * @param {HTMLElement} el - The DOM element to which the event handler is to be attached.
+     * @param {String} onKey - The directive key specifying the event name and any modifiers (e.g., 'click.ctrl.enter').
+     * @param {String} onValue - The key in the component context that resolves to the event handler function.
      */
+    fluid.applyOn = (shadow, el, onKey, onValue) => {
+        let {event, modifiers} = fluid.parseModifiers(onKey);
+
+        let ref = fluid.fetchContextReference(onValue, shadow);
+
+        // map modifiers
+        if (event === "click") {
+            if (modifiers?.right) {
+                event = "contextmenu";
+            }
+            if (modifiers?.middle) {
+                event = "mouseup";
+            }
+        }
+
+        const handler = e => {
+            if (modifiers) {
+                if ("key" in e && !(fluid.hyphenate(e.key) in modifiers)) {
+                    return;
+                }
+                for (const key in modifiers) {
+                    const guard = modifierGuards[key];
+                    if (guard && guard(e, modifiers)) {
+                        return;
+                    }
+                }
+            }
+            return fluid.deSignal(ref)(e);
+        };
+
+        el.addEventListener(event, handler, modifiers);
+    };
+
+
+    fluid.unavailableElement = fluid.unavailable("DOM element not available");
+
 
     fluid.allocateVNodeEffect = function (vnode, effectMaker) {
         vnode.elementSignal ||= signal(fluid.unavailableElement);
@@ -86,6 +164,12 @@ const fluidViewScope = function (fluid) {
         fluid.pushArray(vnode, "renderEffects", renderEffect);
         return renderEffect;
     };
+
+    /**
+     * @callback DomApplyFunction
+     * @param {HTMLElement} element - The DOM element to which the function applies changes.
+     * @param {String|Number|Boolean} value - The rendered content to be applied.
+     */
 
     /**
      * Binds a rendered signal or static value to a virtual DOM node and applies a function when the DOM element is available.
@@ -146,7 +230,7 @@ const fluidViewScope = function (fluid) {
      * The function recursively processes the virtual node tree, rendering and binding content as needed.
      *
      * @param {Element} element - The DOM element whose contents (including attributes and children) will be parsed and rendered.
-     * @param {ComponentComputer} self - The Infusion component in the context of which template references are to be parsed
+     * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
      * @return {VNode} The processed VNode with rendered text and attributes.
      */
     fluid.parseTemplate = function (element, self) {
@@ -163,8 +247,13 @@ const fluidViewScope = function (fluid) {
                 return Object.assign(vnode, {text: rendered});
             } else {
                 fluid.each(vnode.attrs, (value, key) => {
-                    if (key.charCodeAt(0) === 64) { // @
-                        fluid.processAttributeDirective(vnode, value, key, self);
+                    const firstChar = key.charCodeAt(0);
+                    if (firstChar === 64) { // @
+                        if (key.startsWith("@on")) {
+                            fluid.pushArray(vnode, "on", {onKey: key.slice(3).toLowerCase(), onValue: value});
+                        } else {
+                            fluid.processAttributeDirective(vnode, value, key, self);
+                        }
                         delete vnode.attrs[key];
                     } else {
                         const tokens = fluid.parseStringTemplate(value);
@@ -264,10 +353,11 @@ const fluidViewScope = function (fluid) {
      * This function ensures that the provided `element` correctly reflects the structure
      * of `vnode.children`, updating, replacing, or removing child elements as necessary.
      *
+     * @param {Shadow} shadow - Shadow for site from which resolution starts.
      * @param {VNode} vnode - The virtual node representing the desired DOM structure.
      * @param {Node} element - The actual DOM element to be patched.
      */
-    fluid.patchChildren = function (vnode, element) {
+    fluid.patchChildren = function (shadow, vnode, element) {
         fluid.bindDom(vnode, element);
         if (vnode.text !== undefined) {
             element.textContent = vnode.text;
@@ -275,7 +365,7 @@ const fluidViewScope = function (fluid) {
         if (vnode.attrs !== undefined) {
             fluid.patchAttrs(vnode, element);
         }
-        // It may be undefined because this is a joint to a subcomnponent as applied in fluid.processAttributeDirective
+        // It may be undefined because this is a joint to a subcomponent as applied in fluid.processAttributeDirective
         if (vnode.children !== undefined) {
             const vcount = vnode.children.length;
             for (let i = 0; i < vcount; ++i) {
@@ -283,6 +373,7 @@ const fluidViewScope = function (fluid) {
                 let other = element.childNodes[i];
                 if (!other || !fluid.matchNodeToVNode(other, vchild)) {
                     const fresh = fluid.nodeFromVNode(vchild);
+                    fluid.applyOns(shadow, fresh, vchild.on);
                     if (other) {
                         other.replaceWith(fresh);
                     } else {
@@ -290,7 +381,7 @@ const fluidViewScope = function (fluid) {
                     }
                     other = fresh;
                 }
-                fluid.patchChildren(vchild, other);
+                fluid.patchChildren(shadow, vchild, other);
             }
             for (let i = element.childNodes.length - 1; i >= vcount; --i) {
                 element.childNodes[i].remove();
@@ -304,17 +395,19 @@ const fluidViewScope = function (fluid) {
      * This function updates the container's contents to match the provided virtual tree.
      * If `elideParent` is true, the `vTree`'s children are grafted as children of the current container.
      *
+     * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
      * @param {HTMLElement} container - The target DOM element where the virtual tree should be rendered.
      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
      * @param {boolean} [elideParent=false] - If true, renders `vTree` directly into the container.
      */
-    fluid.renderView = function (container, vTree, elideParent) {
+    fluid.renderView = function (self, container, vTree, elideParent) {
         let useTree = vTree;
         if (!elideParent) {
             useTree = fluid.elementToVNode(container);
             useTree.children = [vTree];
         }
-        fluid.patchChildren(useTree, container);
+        const shadow = self[$t].shadow;
+        fluid.patchChildren(shadow, useTree, container);
     };
 
     fluid.def("fluid.templateViewComponent", {
@@ -323,7 +416,7 @@ const fluidViewScope = function (fluid) {
         templateDOM: "$compute:fluid.parseDOM({self}.template)",
         vTree: "$compute:fluid.parseTemplate({self}.templateDOM, {self})",
         container: "$compute:fluid.unavailable(Container not specified)",
-        render: "$effect:fluid.renderView({self}.container, {self}.vTree, {self}.elideParent)"
+        render: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree, {self}.elideParent)"
     });
 
 };

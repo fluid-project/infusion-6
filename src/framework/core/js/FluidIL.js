@@ -176,6 +176,7 @@ const fluidILScope = function (fluid) {
 
     /**
      * @typedef {Object} Shadow
+     * @property {Object} that - The component for which this shadow is held
      * @property {String} path - The principal allocated path (point of construction) of the component in the component tree.
      * @property {String} memberName - The name of the component within its parent.
      * @property {Shadow|null} [parentShadow] - The shadow record associated with the parent component.
@@ -587,6 +588,15 @@ const fluidILScope = function (fluid) {
         return existing;
     };
 
+    /**
+     * Resolves a context reference into a signal that dynamically tracks the value located at a path within another component or context.
+     *
+     * @param {String|Object} ref - A context reference string or parsed reference object. If a String, it will be parsed via `fluid.parseContextReference`.
+     * @param {Shadow} shadow - The shadow context of the component from which the reference is being resolved.
+     * @param {Function} [resolver] - An optional custom resolver function used for resolving context names to component computers.
+     * @return {Signal<any>} A signal representing the resolved reference value. It includes metadata: the parsed reference, the resolving site, and a `$variety` tag.
+     */
+
     fluid.fetchContextReference = function (ref, shadow, resolver) {
         const parsed = fluid.isPrimitive(ref) ? fluid.parseContextReference(ref) : ref;
         const refComputer = computed( function fetchContextReference() {
@@ -623,6 +633,20 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    /**
+     * @typedef {Object} FuncRecord
+     * @property {String} [funcName] - A global function name to be resolved via `fluid.getGlobalValue`. One of funcName or func should be set.
+     * @property {String|any} [func] - A reference to a function, either as an Infusion context reference string or as a direct function value.
+     * @property {Array<any>} [args] - Optional arguments to be passed to the function. These may include context references or values.
+     */
+
+    /**
+     * Resolves a function reference from a `FuncRecord`, which may refer to a global function name, a context reference, or a direct function.
+     *
+     * @param {FuncRecord} rec - A function record containing one of `funcName` or `func` to resolve.
+     * @param {Shadow} shadow - The shadow context used for resolving context references.
+     * @return {Signal<Function>|Function} Signal or value for the resolved function.
+     */
     fluid.resolveFuncRecord = function (rec, shadow) {
         return rec.funcName ? fluid.getGlobalValue(rec.funcName) :
             fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow) : rec.func;
@@ -730,6 +754,18 @@ const fluidILScope = function (fluid) {
     const methodFlattener = root => fluid.flattenSignals(root, "methodStrategy");
     const effectFlattener = root => fluid.flattenSignals(root, "effectStrategy");
 
+    /**
+     * Expands a method record and returns a function that can be called with arguments. The function dispatches the invocation
+     * of the resolved method (either directly or with computed arguments).
+     *
+     * If the method record contains arguments (`args`), it first resolves them and then returns a function that applies the
+     * resolved arguments to the resolved function. If no arguments are provided, a direct method dispatch is returned.
+     *
+     * @param {FuncRecord} record - The method record to expand. It contains a `func` (the function to call) and optional `args`
+     * that define the arguments to be resolved for the method.
+     * @param {Shadow} shadow - The shadow context in which the method is being expanded, providing access to the component and its state.
+     * @return {Function} A function that can be invoked with arguments, dispatching the resolved method with the provided arguments.
+     */
     fluid.expandMethodRecord = function (record, shadow) {
         // Old fluid.makeInvoker used to have:
         // func = func || (invokerec.funcName ? fluid.getGlobalValueNonComponent(invokerec.funcName, "an invoker") : fluid.expandImmediate(invokerec.func, that));
@@ -755,6 +791,15 @@ const fluidILScope = function (fluid) {
         return togo;
     };
 
+    /**
+     * Expands a compute-style function record into a computed signal.
+     * The function and its arguments are resolved from the record, and a signal is returned that tracks their computed value.
+     *
+     * @param {FuncRecord} record - The record describing the compute-style function. Must include either `func` or `funcName`, and optionally `args`.
+     * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @return {Signal<any>} A computed signal representing the result of invoking the resolved function with the resolved arguments.
+     *     Includes a `$variety` property set to `"$compute"`.
+     */
     fluid.expandComputeRecord = function (record, shadow) {
         const func = fluid.resolveFuncRecord(record, shadow);
         const args = fluid.makeArray(record.args);
@@ -764,6 +809,14 @@ const fluidILScope = function (fluid) {
         return togo;
     };
 
+    /**
+     * Expands an effect-style function record into a reactive effect.
+     * The function and its arguments are resolved from the record, and an effect is created that runs in response to changes.
+     *
+     * @param {FuncRecord} record - The record describing the effect-style function. Must include either `func` or `funcName`, and optionally `args`.
+     * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
+     */
     fluid.expandEffectRecord = function (record, shadow) {
         const func = fluid.resolveFuncRecord(record, shadow);
         const args = fluid.makeArray(record.args);
@@ -772,6 +825,16 @@ const fluidILScope = function (fluid) {
         togo.$variety = "$effect";
         return togo;
     };
+
+    /**
+     * Expands a subcomponent-style function record into a component instantiation.
+     * Produces a `subcomponent`-type layer record and pushes it into the component tree at the given `key` under the `shadow`.
+     *
+     * @param {FuncRecord} record - The component-style function record to be expanded. Expected to contain `func`, `funcName`, and/or `args`, along with `$layers`.
+     * @param {Shadow} shadow - The parent component's shadow record under which the subcomponent will be allocated.
+     * @param {String} key - The member name at which the subcomponent will be instantiated.
+     * @return {ComponentComputer} A reactive signal representing the component instance.
+     */
 
     fluid.expandComponentRecord = function (record, shadow, key) {
         const expanded = fluid.readerExpandLayer(record);
@@ -786,8 +849,22 @@ const fluidILScope = function (fluid) {
         return fluid.pushPotentia(shadow, key, [subLayerRecord], expanded.$layers);
     };
 
+    /**
+     * @typedef {Object} HandlerRecord
+     * @property {String} key - The type of element being processed, such as "$method", "$compute", "$effect", "$component", etc.
+     * @property {Function} handler - A function responsible for handling the record expansion, such as `fluid.expandMethodRecord`, `fluid.expandComputeRecord`, etc.
+     * @property {Boolean} [isEffect=false] - A flag indicating whether the handler is related to an effect, typically used for $effect records.
+     */
+
     fluid.elementExpanderRecord = function () {};
 
+    /**
+     * An array of handler records that define how different element types are expanded. Each record contains a key representing the type
+     * of element (e.g., "$method", "$compute", "$effect", "$component") and a handler function that processes the record. The handler
+     * function will expand or transform the record into a different form, such as a computed signal, effect, or component expansion.
+     *
+     * @type {HandlerRecord[]}
+     */
     fluid.expandElementTypes = [{
         key: "$method",
         handler: fluid.expandMethodRecord
@@ -805,7 +882,7 @@ const fluidILScope = function (fluid) {
     }].map(rec => Object.assign(Object.create(fluid.elementExpanderRecord.prototype), rec));
 
     /**
-     * Apply a site address to a signalised product in the form of members site, segs
+     * Apply a site address to a signalised product in the form of members `site, segs`
      * @param {signal|computed|effect} signal - A signalised product to be assigned a site address
      * @param {Shadow} shadow - The shadow for the component where the signal is sited
      * @param {String[]} segs - The path segments where the signal is sited within its component
@@ -817,6 +894,17 @@ const fluidILScope = function (fluid) {
         return signal;
     };
 
+    /**
+     * Mounts a signal-producing record into a component's shadow map at the specified path.
+     * If an identical record already exists in the previous shadow map, it is reused to preserve reactivity.
+     * Otherwise, the provided `handler` from the `handlerRecord` is invoked to produce the signal or effect.
+     *
+     * @param {HandlerRecord} handlerRecord - A handler metadata record containing a `handler` function and an `isEffect` flag.
+     * @param {FuncRecord} record - The signal-producing record that will be mounted. Typically includes fields like `func`, `args`, etc.
+     * @param {Shadow} shadow - The component shadow in which to mount the record.
+     * @param {String[]} segs - The path segments at which to mount the signal within the shadow structure
+     * @return {any} The signal or computed product that results from the mounting operation.
+     */
     fluid.mountSignalRecord = function (handlerRecord, record, shadow, segs) {
         const allSegs = [...segs, $m];
         const oldRec = fluid.get(shadow.oldShadowMap, allSegs);
