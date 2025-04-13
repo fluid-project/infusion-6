@@ -72,6 +72,7 @@ const fluidILScope = function (fluid) {
         return "component " + fluid.dumpThat(that) + " at path " + fluid.dumpComponentPath(that);
     };
 
+    // Currently disused - may reappear if we get distributions back
     /**
      * Visit the child components of a given component, applying a visitor function to each.
      * Allows for traversal of the component tree and supports options for controlling the traversal.
@@ -243,7 +244,7 @@ const fluidILScope = function (fluid) {
     // It is destroyed at: instantiator's "clearConcreteComponent"
     // Contents:
     //     path {String} Principal allocated path (point of construction) in tree
-    //     (value)) {Component} The component itself
+    //     (value) {Component} The component itself
     //     contextHash {String to Boolean} Map of context names which this component matches
     //     scope: A hash of names to components which are in scope from this component - populated in cacheShadowGrades
     //     childComponents: Hash of key names to subcomponents - both injected and concrete
@@ -593,7 +594,7 @@ const fluidILScope = function (fluid) {
      *
      * @param {String|Object} ref - A context reference string or parsed reference object. If a String, it will be parsed via `fluid.parseContextReference`.
      * @param {Shadow} shadow - The shadow context of the component from which the reference is being resolved.
-     * @param {Function} [resolver] - An optional custom resolver function used for resolving context names to component computers.
+     * @param {Function} [resolver] - An optional custom resolver function used for resolving context names.
      * @return {Signal<any>} A signal representing the resolved reference value. It includes metadata: the parsed reference, the resolving site, and a `$variety` tag.
      */
 
@@ -718,7 +719,7 @@ const fluidILScope = function (fluid) {
 
     // eslint-disable-next-line jsdoc/require-returns-check
     /**
-     * Resolve material intended for compute and method arguments - this only expands {} references, possibly into a
+     * Resolve material intended for compute and method arguments - this only expands {} references, possibly into
      * a local context
      * @param {any} material - The material to be expanded
      * @param {Shadow} shadow - Component from whose point of view the material is to be expanded
@@ -826,6 +827,17 @@ const fluidILScope = function (fluid) {
         return togo;
     };
 
+    fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded) {
+        const subLayerRecord = {
+            layerType: "subcomponent",
+            // TODO: Eventually will allow nesting deeper on path
+            layerName: `subcomponent:${memberName}`,
+            layer: expanded
+        };
+        // TODO: detect injected reference and take direct path to instantiator
+        return fluid.pushPotentia(shadow, memberName, [subLayerRecord], expanded.$layers);
+    };
+
     /**
      * Expands a subcomponent-style function record into a component instantiation.
      * Produces a `subcomponent`-type layer record and pushes it into the component tree at the given `key` under the `shadow`.
@@ -835,18 +847,38 @@ const fluidILScope = function (fluid) {
      * @param {String} key - The member name at which the subcomponent will be instantiated.
      * @return {ComponentComputer} A reactive signal representing the component instance.
      */
-
     fluid.expandComponentRecord = function (record, shadow, key) {
         const expanded = fluid.readerExpandLayer(record);
+        const sourceRecord = expanded.$for;
+        if (sourceRecord) {
+            const sourceSignal = fluid.fetchContextReference(sourceRecord.source, shadow);
+            const prefix = key + "|";
+            return fluid.computed(source => {
+                const allKeys = [];
 
-        const subLayerRecord = {
-            layerType: "subcomponent",
-            // TODO: Eventually will allow nesting deeper on path
-            layerName: `subcomponent:${key}`,
-            layer: expanded
-        };
-        // TODO: detect injected reference and take direct path to instantiator
-        return fluid.pushPotentia(shadow, key, [subLayerRecord], expanded.$layers);
+                const pushSubcomponentPotentia = function (value, subKey) {
+                    const fullKey = prefix + subKey;
+                    allKeys.push(fullKey);
+                    fluid.pushSubcomponentPotentia(shadow, fullKey, expanded);
+                };
+
+                let togo;
+                if (fluid.isArrayable(source)) {
+                    togo = source.map(pushSubcomponentPotentia);
+                } else {
+                    togo = fluid.transform(source, pushSubcomponentPotentia);
+                }
+                // Destroy components which no longer have matching entries
+                const goneKeys = Object.keys(shadow.childComponents)
+                    .filter(k => k.startsWith(prefix) && !allKeys.includes(k));
+                const goneShadows = goneKeys.map(k => shadow.childComponents[k]);
+                goneShadows.forEach(shadow => shadow.potentia.value = fluid.emptyPotentia);
+
+                return togo;
+            }, [sourceSignal]);
+        } else {
+            return fluid.pushSubcomponentPotentia(shadow, key, expanded);
+        }
     };
 
     /**
@@ -903,7 +935,7 @@ const fluidILScope = function (fluid) {
      * @param {FuncRecord} record - The signal-producing record that will be mounted. Typically includes fields like `func`, `args`, etc.
      * @param {Shadow} shadow - The component shadow in which to mount the record.
      * @param {String[]} segs - The path segments at which to mount the signal within the shadow structure
-     * @return {any} The signal or computed product that results from the mounting operation.
+     * @return {any|undefined} The signal or computed product that results from the mounting operation.
      */
     fluid.mountSignalRecord = function (handlerRecord, record, shadow, segs) {
         const allSegs = [...segs, $m];
@@ -1110,7 +1142,7 @@ const fluidILScope = function (fluid) {
      * Otherwise, it computes a new instance.
      *
      * @param {Shadow} parentShadow - The shadow record of the parent component.
-     * @param {string} memberName - The name of the component within its parent.
+     * @param {String} memberName - The name of the component within its parent.
      * @param {MergeRecord[]} mergeRecords - An array of merge records representing the component's configuration.
      * @param {String[]} [layerNames] - An array of direct layer names applied to the component
      * @return {ComponentComputer} The updated or newly computed component.
@@ -1308,6 +1340,8 @@ const fluidILScope = function (fluid) {
         fluid.destroyComponent(that);
     };
 
+    fluid.emptyPotentia = Object.freeze({layerNames: [], mergeRecords: []});
+
     /**
      * Determines whether a given Potentia object is empty, meaning it has no associated layers or merge records.
      * @param {Potentia} potentia - The Potentia object to check.
@@ -1323,7 +1357,7 @@ const fluidILScope = function (fluid) {
      * @param {ComponentComputer} proxy - The component to be destroyed.
      */
     fluid.destroyComponent = function (proxy) {
-        proxy[$t].shadow.potentia.value = {layerNames: [], mergeRecords: []};
+        proxy[$t].shadow.potentia.value = fluid.emptyPotentia;
     };
 
     fluid.def("fluid.component", {

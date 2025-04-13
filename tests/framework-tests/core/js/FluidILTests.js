@@ -623,3 +623,4 @@ QUnit.test("Shape cognition test", function (assert) {
     that.method();
     checkObnoxious(that.fromMethod.member);
 });
+

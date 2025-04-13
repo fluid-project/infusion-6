@@ -221,3 +221,51 @@ QUnit.test("Basic click test", function (assert) {
 
     assert.equal(that.value, 1, "Updated count 1");
 });
+
+fluid.tests.todos = [
+    {
+        "text": "Write some code",
+        "completed": false
+    },
+    {
+        "text": "Eat some food",
+        "completed": false
+    },
+    {
+        "text": "Sleep",
+        "completed": false
+    }
+];
+
+fluid.def("fluid.tests.forTodo", {
+    $layers: "fluid.templateViewComponent",
+    todos: fluid.tests.todos,
+    template: `<div id="main">
+        <section className="hero is-dark">
+            <h1 className="title">Todo List</h1>
+            <h2 className="subtitle">Get in charge of your life</h2>
+        </section>
+        <section className="section">
+            <div id="todos" className="section"></div>
+        </section>
+    </div>`,
+    todoHandler: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{forTodo}.todos",
+                value: "todo",
+                key: "todoIndex"
+            }
+        }
+    }
+});
+
+QUnit.test("For rendering test", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.forTodo({container});
+
+    const handlers = that.todoHandler;
+
+    assert.equal(handlers.length, 3, "Component constructed for each todo");
+});
