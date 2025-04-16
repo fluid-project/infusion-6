@@ -581,44 +581,28 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * @typedef {Number} Integer
+     * An integer number (whole number without fractional part).
+     * This is a semantic alias indicating the expected value should be an integer.
+     */
+
+    /**
      * Returns the converted integer if the input string can be converted to an integer. Otherwise, return NaN.
      *
      * @param {String|Number} string - A string to be returned in integer form.
-     * @return {Number|NaN} - The numeric value if the string can be converted, otherwise, returns NaN.
+     * @return {Integer|NaN} - The numeric value if the string can be converted, otherwise, returns NaN.
      */
     fluid.parseInteger = function (string) {
         return isFinite(string) && ((string % 1) === 0) ? Number(string) : NaN;
     };
 
     /**
-     * Derived from Sindre Sorhus's round-to node module ( https://github.com/sindresorhus/round-to ).
-     * License: MIT
-     *
-     * Rounds the supplied number to at most the number of decimal places indicated by the scale, omitting any trailing 0s.
-     * There are three possible rounding methods described below: "round", "ceil", "floor"
-     * Round: Numbers are rounded away from 0 (i.e 0.5 -> 1, -0.5 -> -1).
-     * Ceil: Numbers are rounded up
-     * Floor: Numbers are rounded down
-     * If the scale is invalid (i.e falsey, not a number, negative value), it is treated as 0.
-     * If the scale is a floating point number, it is rounded to an integer.
-     *
-     * @param {Number} num - the number to be rounded
-     * @param {Number} scale - the maximum number of decimal places to round to.
-     * @param {String} [method] - (optional) Request a rounding method to use ("round", "ceil", "floor").
-     *                          If nothing or an invalid method is provided, it will default to "round".
-     * @return {Number} The num value rounded to the specified number of decimal places.
+     * Removes all properties from the specified object.
+     * @param {Object} target - The object to be cleared of all own enumerable properties.
      */
-    fluid.round = function (num, scale, method) {
-        // treat invalid scales as 0
-        scale = scale && scale >= 0 ? Math.round(scale) : 0;
-
-        if (method === "ceil" || method === "floor") {
-            // The following is derived from https://github.com/sindresorhus/round-to/blob/v2.0.0/index.js#L20
-            return Number(Math[method](num + "e" + scale) + "e-" + scale);
-        } else {
-            // The following is derived from https://github.com/sindresorhus/round-to/blob/v2.0.0/index.js#L17
-            const sign = Math.sign(num);
-            return Number(sign * (Math.round(Number(Math.abs(num) + "e" + scale)) + "e-" + scale));
+    fluid.clear = function (target) {
+        for (let i in target) {
+            delete target[i];
         }
     };
 
@@ -729,6 +713,31 @@ const fluidJSScope = function (fluid) {
             return oneCause;
         })
     }, true);
+
+    fluid.formatUnavailable = function (unavailable) {
+        return "Value is unavailable: causes are " + unavailable.causes.map(cause => cause.message).join("\n");
+    };
+
+    fluid.unavailableProxy = function (target) {
+        const proxy = new Proxy(target, {
+            get: function (target, prop) {
+                if (prop === $t) {
+                    return target;
+                } else if (prop === Symbol.toPrimitive) {
+                    fluid.fail(fluid.formatUnavailable(target));
+                } else if (prop === "toString") {
+                    return () => fluid.formatUnavailable(target);
+                } else {
+                    return proxy;
+                }
+            },
+            getOwnPropertyDescriptor: function (target, key) {
+                return {value: this.get(target, key), enumerable: true, configurable: true};
+            },
+            getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignal(target))
+        });
+        return proxy;
+    };
 
     /**
      * Create a marker representing an "Error" state with associated arguments.

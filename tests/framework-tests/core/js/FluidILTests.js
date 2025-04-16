@@ -532,17 +532,26 @@ fluid.def("fluid.tests.FLUID7000scope", {
             joined: {
                 $component: {
                     $layers: "fluid.component",
-                    value: "sibling"
+                    value: "child",
+                    joinedResolution: "{joined}.value" // "child"
                 }
             },
-            joinedResolution: "{joined}.value"
+            sibling: {
+                $component: {
+                    $layers: "fluid.component",
+                    joinedResolution: "{joined}.value" // "child"
+                }
+            },
+            joinedResolution: "{joined}.value" // "root"
         }
     }
 });
 
 QUnit.test("FLUID-7000 scoping test", function (assert) {
     const that = fluid.tests.FLUID7000scope();
-    assert.equal(that.joined.joinedResolution, "sibling", "Same-named scope resolved to sibling by preference");
+    assert.equal(that.joined.joinedResolution, "root", "Same-named scope resolved to root in its own material");
+    assert.equal(that.joined.sibling.joinedResolution, "child", "Same-named scope resolved by sibling component to child");
+    assert.equal(that.joined.joined.joinedResolution, "child", "Same-named scope resolved to child in double nesting");
 });
 
 // Async computation test
