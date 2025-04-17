@@ -9,8 +9,10 @@
         "no-console": 0,
         "quotes": [
             "error",
-            "double",
-            { "allowTemplateLiterals": true }
+            "double", {
+               "allowTemplateLiterals": true,
+               "avoidEscape": true
+            }
         ]
     },
     "settings": {

@@ -884,7 +884,7 @@ const fluidILScope = function (fluid) {
             const sourceSignal = fluid.fetchContextReference(sourceRecord.source, shadow);
             fluid.markSignalised(shadow.shadowMap, segs, 0);
             const prefix = key + "|";
-            return fluid.computed(source => {
+            const togo = fluid.computed(source => {
                 const allKeys = [];
 
                 const pushSubcomponentPotentia = function (value, subKey) {
@@ -915,6 +915,8 @@ const fluidILScope = function (fluid) {
 
                 return togo;
             }, [sourceSignal]);
+            togo.$variety = "$componentStructure";
+            return togo;
         } else {
             return fluid.pushSubcomponentPotentia(shadow, key, expanded);
         }

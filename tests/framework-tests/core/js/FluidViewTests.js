@@ -238,19 +238,20 @@ fluid.tests.todos = [
 ];
 
 fluid.def("fluid.tests.todoItem", {
-    $layers: "fluid.component"
+    $layers: "fluid.templateViewComponent",
+    template: '<span class="todo tag is-large">@{text}<button class="delete is-small"></button></span>'
 });
 
 fluid.def("fluid.tests.forTodo", {
     $layers: "fluid.templateViewComponent",
     todos: fluid.tests.todos,
     template: `<div id="main">
-        <section className="hero is-dark">
-            <h1 className="title">Todo List</h1>
-            <h2 className="subtitle">Get in charge of your life</h2>
+        <section class="hero is-dark">
+            <h1 class="title">Todo List</h1>
+            <h2 class="subtitle">Get in charge of your life</h2>
         </section>
-        <section className="section">
-            <div id="todos" className="section"></div>
+        <section class="section">
+            <div @id="todoItem" class="section"></div>
         </section>
     </div>`,
     todoItem: {
