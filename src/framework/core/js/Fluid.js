@@ -1909,11 +1909,15 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} LayerMap - A structured map of paths to the names of the layers contributing values at those paths, with records held at key `$m`
+     */
+
+    /**
      * Recursively merge multiple layers into a target object, maintaining a mapping of values to their originating layers.
      *
      * @param {Object} target - The target object where merged results will be stored.
      * @param {String[]} segs - The current path segments being traversed during the merge.
-     * @param {Object} layerMap - A map of paths to the names of the layers contributing values at those paths.
+     * @param {LayerMap} layerMap - A structured map of paths to the names of the layers contributing values at those paths, with records held at key `$m`
      * @param {Object[]} layers - An array of layer objects to be merged.
      * @param {MergeRecord[]} mergeRecords - An array of `MergeRecord` objects providing metadata for the layers.
      */
@@ -1950,24 +1954,22 @@ const fluidJSScope = function (fluid) {
                 newTarget = last;
             }
             target[key] = newTarget;
-            fluid.set(layerMap, [...segs, key, $m], mergeRecords[lastIndex].layerName);
+            fluid.set(layerMap, [...segs, key, $m], mergeRecords[lastIndex].mergeRecordName);
         });
     };
 
     /**
      * Merge a set of layer records into a root object, producing a merged result and a mapping of values to their originating layers.
      *
-     * @param {Object} root - The root object to which layers will be merged.
+     * @param {Object} root - The root object to which layers will be merged. NOTE will be destructively updated.
      * @param {MergeRecord[]} mergeRecords - An array of `MergeRecord` objects describing the layers to be merged.
-     * @return {Object} An object containing:
-     *   - `root` (Object): The merged root object.
-     *   - `layerMap` (Object): A mapping of paths to the names of the layers contributing values at those paths.
+     * @return {LayerMap} `layerMap`: A structured map of paths to the names of the layers contributing values at those paths, with records held at key `$m`
      */
     fluid.mergeLayerRecords = function (root, mergeRecords) {
         const layerMap = {}, segs = [];
         mergeRecords.forEach(mergeRecord => {
             if (!mergeRecord.priority) {
-                mergeRecord.priority = fluid.mergeRecordTypes[mergeRecord.layerType];
+                mergeRecord.priority = fluid.mergeRecordTypes[mergeRecord.mergeRecordType];
             }
         });
         mergeRecords.sort((a, b) => b.priority - a.priority);
@@ -1980,88 +1982,199 @@ const fluidJSScope = function (fluid) {
 
     /**
      * @typedef {Object} MergeRecord
-     * @property {String} layerType - The type of the layer (e.g., "def", "defParents").
+     * @property {String} mergeRecordType - The type of the merge record (e.g., "def", "defParents").
+     * @property {String} mergeRecordName - Name of the merge record holding a layer, expected to be unique
      * @property {Object} [layer] - The layer definition object to be merged.
-     * @property {String} [layerName] - Name of the layer, expected to be unique
      * @property {Number} [priority] - The priority of the layer, used for determining merge order.
      */
 
-    // Consumes rawLayer values as signals by issuing reads to fluid.readLayer
-    // produces mergeRecords and merged as plain outputs
-    fluid.hierarchyResolver = function (flatDefsIn = {}) {
-        const flatDefs = Object.assign({}, flatDefsIn);
-        const readerExpand = layer => fluid.readerExpandLayer(layer);
-        const that = {
+    /**
+     * @typedef {Object} MergedHierarchyResolution
+     * @property {MergeRecord[]} mergeRecords - The array of merge records representing the merged layers and their priorities.
+     * @property {Object} merged - The final merged object representing the composite component definition.
+     * @property {LayerMap} layerMap - A map of all paths in the merged object to their source layers.
+     */
+
+    /**
+     * @typedef {Object} LayerLinkageRecord
+     * @property {String[]} inputNames - An array of layer names that must be present together to trigger the linkage.
+     * @property {String[]} outputNames - An array of layer names that should be applied when the inputNames co-occur.
+     */
+
+    // Lightweight version of
+    // https://docs.fluidproject.org/infusion/development/IoCAPI#fluidmakegradelinkagelinkagename-inputnames-outputnames
+    /** @type {LayerLinkageRecord[]} An array of co-occurrence rules describing how input component types should be transformed into output types. */
+    fluid.coOccurrenceRegistry = [];
+
+
+    /**
+     * Determine and return any new layer names that should be derived by co-occurrence rules from the supplied set of layer names.
+     * This scans the global `fluid.coOccurrenceRegistry` for entries whose `inputNames` are all present in `layerNames`,
+     * and returns the corresponding `outputNames` that are not already present in `layerNames`.
+     *
+     * @param {String[]} layerNames - The current set of layer names in the hierarchy.
+     * @return {String[]} An array of derived layer names that should be added based on co-occurrence rules.
+     */
+    fluid.resolveCoOccurrences = function (layerNames) {
+        const togo = [];
+        const existing = new Set(layerNames);
+
+        for (const record of fluid.coOccurrenceRegistry) {
+            const { inputNames, outputNames } = record;
+            const allPresent = inputNames.every(name => existing.has(name));
+            if (allPresent) {
+                for (const outputName of outputNames) {
+                    if (!existing.has(outputName)) {
+                        togo.push(outputName);
+                    }
+                }
+            }
+        }
+
+        return togo;
+    };
+
+    /**
+     * Perform one round of resolving co-occurring layer types within a layer hierarchy.
+     * Adds any new derived layers found by co-occurrence rules to the hierarchy resolver.
+     *
+     * @param {fluid.hierarchyResolver} hierarchyResolver - The resolver responsible for managing and caching layer definitions.
+     * @param {String[]} layerHierarchy - The current array of layer names in the hierarchy.
+     * @return {Boolean} `true` if new co-occurring layers were found and added, `false` otherwise.
+     */
+    fluid.resolveHierarchyRound = function (hierarchyResolver, layerHierarchy) {
+        const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy);
+        newCoOccurrences.map(layerName => hierarchyResolver.storeLayer(layerName));
+        return newCoOccurrences.length > 0;
+    };
+
+    /**
+     * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map,
+     * computing precedence, and producing merge records and a layer map suitable for instantiating the component.
+     *
+     * @param {String} layerName - The name of the top-level layer to resolve.
+     * @param {Object<String, Signal>} flatDefs - A map of layer names to signals containing raw layer definitions.
+     * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`, `merged`, and `layerMap`,
+     *     or an `unavailable` signal if resolution could not be completed.
+     */
+    fluid.resolveHierarchy = function (layerName, flatDefs) {
+        while (true) {
+            // First prime the cache by evaluating all signals at tip
+            fluid.each(flatDefs, def => def.value);
+            // Second check if any layers are unavailable
+            const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
+            if (unavailable) {
+                return unavailable;
+            } else {
+                // Finally flatten cache into pure values ready for resolution
+                const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
+                const order = fluid.C3_precedence(layerName, veryFlatDefs).reverse();
+                if (fluid.resolveHierarchyRound(order)) {
+                    continue;
+                }
+                const mergeRecords = order.map((oneLayerName, i) => ({
+                    mergeRecordType: "def",
+                    mergeRecordName: oneLayerName,
+                    // Towards the right here, stronger records
+                    priority: fluid.mergeRecordTypes.def - i,
+                    layer: veryFlatDefs[oneLayerName]
+                })).concat({
+                    // Definition just holding the resolved $layers member, overriding all previous entries
+                    mergeRecordType: "defParents",
+                    mergeRecordName: `defParents:${layerName}`,
+                    priority: fluid.mergeRecordTypes.defParents,
+                    layer: {$layers: order}
+                });
+                const merged = {};
+                return {
+                    // Note merged is currently only read by fluid.readDef
+                    mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
+                };
+            }
+
+        }
+    };
+
+    /**
+     * A resolver for computing and caching layered component definitions and their hierarchies.
+     * It evaluates layer definitions via signals, computes parent relationships, and produces fully
+     * merged definitions along with layer metadata.
+     */
+    class HierarchyResolver {
+        /**
+         * Create a new HierarchyResolver.
+         *
+         * @param {Object<String, Signal>} [flatDefsIn={}] - An optional initial map of precomputed layer signals.
+         */
+        constructor(flatDefsIn = {}) {
             // A local store, so that we can use C3_precedence with direct lookups
-            flatDefs,
-            storeParents: (layer, rootLayer) => {
-                return layer.$layers.map(layerName => {
-                    if (layerName === rootLayer) {
-                        // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
-                        return signal(fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`));
+            this.flatDefs = Object.assign({}, flatDefsIn);
+        }
+
+        /**
+         * Stores the parent layers referenced by the given `layer`, ensuring no circular references via `rootLayer`.
+         *
+         * @param {Object} layer - A layer definition object containing a `$layers` property listing parent layer names.
+         * @param {String} rootLayer - The name of the current root layer being resolved, used to detect circular references.
+         * @return {Signal[]} An array of Signals, one for each stored parent layer, or an `unavailable` signal if a circular reference is detected.
+         */
+        storeParents(layer, rootLayer) {
+            return layer.$layers.map(layerName => {
+                if (layerName === rootLayer) {
+                    // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
+                    return signal(fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`));
+                } else {
+                    return this.storeLayer(layerName, rootLayer);
+                }
+            });
+        }
+
+        /**
+         * Stores and returns a computed signal representing the expanded definition of the specified layer, by issuing a request
+         * to the layer registry via fluid.readLayer.
+         * Prevents circular and redundant resolution by caching in-progress computations.
+         *
+         * @param {String} layerName - The name of the layer to be stored and resolved.
+         * @param {String} [rootLayer] - The original root layer used for cycle detection. Defaults to `layerName` if not provided.
+         * @return {Signal} A computed signal that resolves to the expanded layer or an `unavailable` signal if resolution fails.
+         */
+        storeLayer(layerName, rootLayer) {
+            let layerComputer = this.flatDefs[layerName];
+            if (!layerComputer) {
+                // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
+                this.flatDefs[layerName] = "in progress";
+                this.flatDefs[layerName] = layerComputer = computed(() => {
+                    const layer = fluid.readLayer(layerName).value;
+                    if (fluid.isUnavailable(layer)) {
+                        return layer;
                     } else {
-                        return that.storeLayer(layerName, rootLayer);
+                        const readerExpanded = fluid.readerExpandLayer(layer.raw);
+                        const parentComputers = this.storeParents(readerExpanded, rootLayer || layerName);
+                        // Ensure layer computers for all parent layers get evaluated right now
+                        const {unavailable} = fluid.processSignalArgs(parentComputers);
+                        return unavailable || readerExpanded;
                     }
                 });
-            },
-            storeLayer: (layerName, rootLayer) => {
-                let layerComputer = flatDefs[layerName];
-                if (!layerComputer) {
-                    // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
-                    flatDefs[layerName] = "in progress";
-                    flatDefs[layerName] = layerComputer = computed(() => {
-                        const layer = fluid.readLayer(layerName).value;
-                        if (fluid.isUnavailable(layer)) {
-                            return layer;
-                        } else {
-                            const readerExpanded = readerExpand(layer.raw);
-                            const parentComputers = that.storeParents(readerExpanded, rootLayer || layerName);
-                            // Ensure layer computers for all parent layers get evaluated right now
-                            const {unavailable} = fluid.processSignalArgs(parentComputers);
-                            return unavailable || readerExpanded;
-                        }
-                    });
-                }
-                return layerComputer;
-            },
-            // Given a layerName, resolves a computed of {mergeRecords, merged, layerMap} structure dependent on registry or unavailable if parents are not defined
-            resolve: (layerName) => {
-                const resolveLayers = function () {
-                    // First prime the cache by evalauting all signals at tip
-                    fluid.each(flatDefs, def => def.value);
-                    // Second check if any layers are unavailable
-                    const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
-                    if (unavailable) {
-                        return unavailable;
-                    } else {
-                        // Finally flatten cache into pure values ready for resolution
-                        const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
-                        const order = fluid.C3_precedence(layerName, veryFlatDefs).reverse();
-                        const mergeRecords = order.map((oneLayerName, i) => ({
-                            layerType: "def",
-                            layerName: oneLayerName,
-                            // Towards the right here, stronger records
-                            priority: fluid.mergeRecordTypes.def - i,
-                            layer: veryFlatDefs[oneLayerName]
-                        })).concat({
-                            // Definition just holding the resolved $layers member, overriding all previous entries
-                            layerType: "defParents",
-                            layerName: `defParents:${layerName}`,
-                            priority: fluid.mergeRecordTypes.defParents,
-                            layer: {$layers: order}
-                        });
-                        const merged = {};
-                        return {
-                            // Note merged is currently only read by fluid.readDef
-                            mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
-                        };
-                    }
-                };
-                return computed(resolveLayers);
             }
-        };
-        return that;
-    };
+            return layerComputer;
+        }
+
+        /**
+         * Resolves the full hierarchy of a component definition from its layer name by computing its mergeRecords,
+         * merged contents, and layerMap. This is computed lazily and reacts to signals within the definitions.
+         *
+         * @param {String} layerName - The name of the top-level layer whose hierarchy is to be resolved.
+         * @return {Computed<MergedHierarchyResolution>} A computed signal whose value is a fully resolved merged component definition.
+         */
+        resolve(layerName) {
+            const resolveLayers = function () {
+                return fluid.resolveHierarchy(layerName, this.flatDefs);
+            }.bind(this);
+            return computed(resolveLayers);
+        }
+    }
+
+    fluid.HierarchyResolver = HierarchyResolver;
 
     /**
      * Checks whether a given layer contains a specified layer name in its `$layers` property.
@@ -2077,11 +2190,11 @@ const fluidJSScope = function (fluid) {
     /**
      * Retrieves a layer's merged configuration
      * @param {String} layerName - The name of the grade whose options are to be read or written
-     * @return {signal<Object>} - Signal for layers (which is mergeRecords and merged)
+     * @return {Computed<any>} - Signal for merged definition
      */
     fluid.readMergedDef = function (layerName) {
         // TODO: economise on these in the "giant mat"
-        const resolver = fluid.hierarchyResolver();
+        const resolver = new fluid.HierarchyResolver();
         resolver.storeLayer(layerName);
         const resolved = resolver.resolve(layerName);
         return fluid.getThroughSignals(resolved, ["merged"]);

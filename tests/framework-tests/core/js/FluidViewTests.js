@@ -239,7 +239,7 @@ fluid.tests.todos = [
 
 fluid.def("fluid.tests.todoItem", {
     $layers: "fluid.templateViewComponent",
-    template: '<span class="todo tag is-large">@{text}<button class="delete is-small"></button></span>'
+    template: '<span class="todo tag is-large">@text<button class="delete is-small"></button></span>'
 });
 
 fluid.def("fluid.tests.forTodo", {
@@ -251,10 +251,10 @@ fluid.def("fluid.tests.forTodo", {
             <h2 class="subtitle">Get in charge of your life</h2>
         </section>
         <section class="section">
-            <div @id="todoItem" class="section"></div>
+            <div @id="todoItems" class="section"></div>
         </section>
     </div>`,
-    todoItem: {
+    todoItems: {
         $component: {
             $layers: "fluid.tests.todoItem",
             $for: {
@@ -271,8 +271,8 @@ QUnit.test("For rendering test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.forTodo({container});
 
-    const items = that.todoItem;
+    const items = that.todoItems.list;
 
     assert.equal(items.length, 3, "Component constructed for each todo");
-    assert.equal(items[0].text, "Write some code", "Correct text for first todo");
+    assert.equal(items[0].value.text, "Write some code", "Correct text for first todo");
 });

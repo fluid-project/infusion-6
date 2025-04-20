@@ -94,14 +94,14 @@ const fluidViewScope = function (fluid) {
     fluid.parseModifiers = (raw) => {
         let modifiers;
         raw = raw.replace(modifierRE, (_, m) => {
-            ;(modifiers || (modifiers = {}))[m] = true
-            return ''
-        })
-        return {event: raw, modifiers}
+            (modifiers || (modifiers = {}))[m] = true;
+            return "";
+        });
+        return {event: raw, modifiers};
     };
 
     const hyphenateRE = /\B([A-Z])/g;
-    const modifierRE = /\.([\w-]+)/g
+    const modifierRE = /\.([\w-]+)/g;
 
     fluid.hyphenate = str => str.replace(hyphenateRE, "-$1").toLowerCase();
 
@@ -205,7 +205,7 @@ const fluidViewScope = function (fluid) {
             // we'd prefer to reuse whatever is in the DOM without tearing it down.
             fluid.allocateVNodeEffect(vnode, vnode => {
                 const disposable = function () {
-                    fluid.pushPotentia(self.shadow, value, [{layerType: "template"}]);
+                    fluid.pushPotentia(self.shadow, value, [{mergeRecordType: "template"}]);
                 };
                 disposable.$variety = "$component";
                 // Cheapest way to signal to fluid.patchChildren that it should not attempt to recurse on child nodes
@@ -214,6 +214,7 @@ const fluidViewScope = function (fluid) {
                 const templateRecord = {
                     layerType: "template",
                     layer: {
+                        $layers: "fluid.viewComponent",
                         container: vnode.elementSignal
                     }
                 };
@@ -292,10 +293,6 @@ const fluidViewScope = function (fluid) {
             vnode.elementSignal.value = element;
         }
     };
-
-    fluid.def("fluid.viewComponent", {
-        $layers: "fluid.component"
-    });
 
     /**
      * Creates a DOM node from a virtual node (VNode), either a text node or an element node.
@@ -410,13 +407,38 @@ const fluidViewScope = function (fluid) {
         fluid.patchChildren(shadow, useTree, container);
     };
 
-    fluid.def("fluid.templateViewComponent", {
-        $layers: "fluid.viewComponent",
+    fluid.def("fluid.viewComponent", {
+        $layers: "fluid.component",
         elideParent: false,
-        templateDOM: "$compute:fluid.parseDOM({self}.template)",
-        vTree: "$compute:fluid.parseTemplate({self}.templateDOM, {self})",
         container: "$compute:fluid.unavailable(Container not specified)",
         render: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree, {self}.elideParent)"
+    });
+
+    fluid.coOccurrenceRegistry.push({
+        inputNames: ["fluid.viewComponent", "fluid.componentList"],
+        outputNames: ["fluid.viewComponentList"]
+    });
+
+    fluid.def("fluid.viewComponentList", {
+        $layers: "fluid.viewComponent",
+        elideParent: true,
+        vtree: "@compute:fluid.listViewTree({self})"
+    });
+
+    fluid.listViewTree = function (self) {
+        return fluid.computed(componentList => {
+            const childTrees = componentList.map(entry => entry.value.vTree.value);
+            return {
+                tag: "template",
+                children: childTrees
+            };
+        }, [self.componentList]);
+    };
+
+    fluid.def("fluid.templateViewComponent", {
+        $layers: "fluid.viewComponent",
+        templateDOM: "$compute:fluid.parseDOM({self}.template)",
+        vTree: "$compute:fluid.parseTemplate({self}.templateDOM, {self})"
     });
 
 };

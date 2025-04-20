@@ -856,11 +856,22 @@ const fluidILScope = function (fluid) {
         return togo;
     };
 
+    /**
+     * Pushes the potentia (potential definition) for a subcomponent into the system by constructing
+     * a `subcomponent` layer record and invoking `fluid.pushPotentia`. This supports instantiating
+     * nested subcomponents from within a parent component's definition.
+     *
+     * @param {Shadow} shadow - The shadow record representing the parent component into which the subcomponent is being added.
+     * @param {String} memberName - The member name of the subcomponent within the parent component.
+     * @param {Object} expanded - The expanded component definition for the subcomponent, expected to contain a `$layers` field.
+     * @param {ScopeRecord} [scope] - The scope record tracking references and their resolution priorities during expansion.
+     * @return {ComponentComputer} The result of invoking `fluid.pushPotentia`, representing the effect or pending instantiation of the subcomponent.
+     */
     fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, scope) {
         const subLayerRecord = {
-            layerType: "subcomponent",
+            mergeRecordType: "subcomponent",
             // TODO: Eventually will allow nesting deeper on path
-            layerName: `subcomponent:${memberName}`,
+            mergeRecordName: `subcomponent:${memberName}`,
             layer: expanded
         };
         // TODO: detect injected reference and take direct path to instantiator
@@ -874,22 +885,19 @@ const fluidILScope = function (fluid) {
      * @param {FuncRecord} record - The component-style function record to be expanded. Expected to contain `func`, `funcName`, and/or `args`, along with `$layers`.
      * @param {Shadow} shadow - The parent component's shadow record under which the subcomponent will be allocated.
      * @param {String} key - The member name at which the subcomponent will be instantiated.
-     * @param {String[]} segs - The path segments at which the component record is sited within its component
      * @return {ComponentComputer} A reactive signal representing the component instance.
      */
-    fluid.expandComponentRecord = function (record, shadow, key, segs) {
+    fluid.expandComponentRecord = function (record, shadow, key) {
         const expanded = fluid.readerExpandLayer(record);
         const sourceRecord = expanded.$for;
         if (sourceRecord) {
             const sourceSignal = fluid.fetchContextReference(sourceRecord.source, shadow);
-            fluid.markSignalised(shadow.shadowMap, segs, 0);
-            const prefix = key + "|";
-            const togo = fluid.computed(source => {
+            let listShadow;
+            const componentList = fluid.computed(source => {
                 const allKeys = [];
 
                 const pushSubcomponentPotentia = function (value, subKey) {
-                    const fullKey = prefix + subKey;
-                    allKeys.push(fullKey);
+                    allKeys.push("" + subKey);
                     const scope = {};
                     if (sourceRecord.value !== undefined) {
                         scope[sourceRecord.value] = {value: value, source: sourceSignal, sourcePath: subKey};
@@ -897,7 +905,7 @@ const fluidILScope = function (fluid) {
                     if (sourceRecord.key !== undefined) {
                         scope[sourceRecord.key] = {value: subKey, source: sourceSignal, sourcePath: subKey};
                     }
-                    return fluid.pushSubcomponentPotentia(shadow, fullKey, expanded, scope);
+                    return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, scope);
                 };
 
                 let togo;
@@ -908,15 +916,21 @@ const fluidILScope = function (fluid) {
                 }
 
                 // Destroy components which no longer have matching entries
-                const goneKeys = Object.keys(shadow.childComponents)
-                    .filter(k => k.startsWith(prefix) && !allKeys.includes(k));
+                const goneKeys = Object.keys(listShadow.childComponents).filter(k => !allKeys.includes(k));
                 const goneShadows = goneKeys.map(k => shadow.childComponents[k]);
                 goneShadows.forEach(shadow => shadow.potentia.value = fluid.emptyPotentia);
 
                 return togo;
             }, [sourceSignal]);
-            togo.$variety = "$componentStructure";
-            return togo;
+            componentList.$variety = "$componentList";
+            const listLayer = {
+                $layers: ["fluid.componentList"],
+                list: componentList,
+                length: fluid.getThroughSignals(componentList, ["length"])
+            };
+            const listComputer = fluid.pushSubcomponentPotentia(shadow, key, listLayer);
+            listShadow = listComputer.shadow;
+            return listComputer;
         } else {
             return fluid.pushSubcomponentPotentia(shadow, key, expanded);
         }
@@ -1060,13 +1074,12 @@ const fluidILScope = function (fluid) {
      * the presence of signal-bearing content further down the path.
      * @param {Object} shadowMap - The root of the shadow map structure to annotate.
      * @param {String[]} segs - The sequence of path segments to follow and mark.
-     * @param {Integer} [uncess=1] - The number of trailing segments to exclude from marking as signal-bearing parents.
      */
-    fluid.markSignalised = function (shadowMap, segs, uncess = 1) {
+    fluid.markSignalised = function (shadowMap, segs) {
         for (let i = 0; i < segs.length; ++i) {
             const seg = segs[i];
             const rec = fluid.getRecInsist(shadowMap, [seg, $m]);
-            if (i < segs.length - uncess) {
+            if (i < segs.length - 1) {
                 // This is a signal to flattenSignals and the proxy to indicate that it should clone and expand
                 // since this path is in the interior of the mat
                 rec.hasSignalChild = true;
@@ -1094,42 +1107,51 @@ const fluidILScope = function (fluid) {
         });
     };
 
+    /**
+     * Performs a flattened resolution of the merged hierarchy for a component, optionally constructing
+     * a synthetic layer if multiple layer names are provided.
+     *
+     * @param {fluid.HierarchyResolver} resolver - The resolver used to store and resolve layered definitions.
+     * @param {String[]} layerNames - An array of layer names to be merged and resolved.
+     * @param {String} memberName - The member name used to generate a unique layer name if needed.
+     * @return {any} The resolved merged definition for the computed instance, or an "unavailable" marker if resolution fails.
+     */
+    fluid.flatMergedRound = function (resolver, layerNames, memberName) {
+        let instanceLayerName;
+        if (layerNames.length > 1) {
+            // TODO: These layer names should be economised on when they coincide, perhaps could just be guids/hashes of their constituents
+            // TODO: Broken branch - currently disused
+            instanceLayerName = parent[$m].path + "-" + memberName;
+            // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
+            fluid.rawLayer(instanceLayerName, {$layers: layerNames});
+        } else if (layerNames.length === 1) {
+            instanceLayerName = layerNames[0];
+        }
+        let resolved;
+        if (instanceLayerName) {
+            resolver.storeLayer(instanceLayerName);
+            resolved = resolver.resolve(instanceLayerName).value; // <= EXTRA DEPENDENCE ON LAYER REGISTRY COMES HERE
+        } else {
+            resolved = fluid.unavailable({message: "Component has been destroyed"});
+        }
+        return resolved;
+    };
+
     fluid.flatMergedComputer = function (shadow) {
         return computed(function flatMergedComputer() {
             const {layerNames, mergeRecords} = shadow.potentia.value;
             const memberName = shadow.memberName;
 
-            const resolver = fluid.hierarchyResolver();
-            let instanceLayerName;
-            if (layerNames.length > 1) {
-                // TODO: These layer names should be economised on when they coincide, perhaps could just be guids/hashes of their constituents
-                instanceLayerName = parent[$m].path + "-" + memberName;
-                // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
-                fluid.rawLayer(instanceLayerName, {$layers: layerNames});
-            } else if (layerNames.length === 1) {
-                instanceLayerName = layerNames[0];
-            }
-            let resolved;
-            if (instanceLayerName) {
-                resolver.storeLayer(instanceLayerName);
-                resolved = resolver.resolve(instanceLayerName).value; // <= EXTRA DEPENDENCE ON LAYER REGISTRY COMES HERE
-            } else {
-                resolved = fluid.unavailable({message: "Component has been destroyed"});
-            }
+            const resolver = new fluid.HierarchyResolver();
+            const resolved = fluid.flatMergedRound(resolver, layerNames, memberName); // <= WILL READ LAYER REGISTRY
 
             if (fluid.isUnavailable(resolved)) {
                 return resolved;
             } else {
-
-                // layers themselves need to be stored somewhere - recall the return should be a signal not a component
-                // the merged result is actual a signal with respect to the supplied layers - fresh layers can arise or old ones can be removed
-                // OK - so how will we REMOVE properties in the case we need to unmerge? This is what implies that the entire top level
-                // of properties needs to be signalised? Or does the "instance" become a factory and we just construct a completely fresh
-                // component instance if there is a change in top-level properties?
-                // If we signalise the whole top layer then at least we don't need to ever discard the root reference.
-                // And also - if anyone wants a "flattened" component, this naturally can't agree with the old root reference.
-                // Does this commit us to "public zebras"?
-                const layers = resolved.mergeRecords.concat(mergeRecords).concat({layerType: "live", layer: shadow.liveLayer});
+                const layers = resolved.mergeRecords.concat(mergeRecords).concat({
+                    mergeRecordType: "live",
+                    layer: shadow.liveLayer
+                });
 
                 const flatMerged = fluid.makeLayer("flatMerged", shadow);
                 shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
@@ -1214,8 +1236,8 @@ const fluidILScope = function (fluid) {
         if (existing) {
             const shadow = existing;
             const oldPotentia = shadow.potentia.peek(); // Avoid creating a read dependency
-            const writtenLayers = new Set(mergeRecords.map(mergeRecord => mergeRecord.layerType));
-            const filteredRecords = oldPotentia.mergeRecords.filter(mergeRecord => !writtenLayers.has(mergeRecord.layerType));
+            const writtenLayers = new Set(mergeRecords.map(mergeRecord => mergeRecord.mergeRecordType));
+            const filteredRecords = oldPotentia.mergeRecords.filter(mergeRecord => !writtenLayers.has(mergeRecord.mergeRecordType));
             const newMergeRecords = filteredRecords.concat(mergeRecords.filter(mergeRecord => mergeRecord.layer));
             const newLayerNames = oldPotentia.layerNames || layerNames;
 
@@ -1321,8 +1343,6 @@ const fluidILScope = function (fluid) {
                         const upcoming = fluid.deSignal(next);
                         // Problem here if material goes away or changes - proxies bound to old material will still be out there,
                         // although we do reevaluate our signal target
-                        // We need to arrange that any signal at a particular path stays there, which implies we need
-                        // rebindable computables
                         // If it is unavailable, we need to ensure that user does not try to dereference into it by next property access
                         // If it is another component, hand off to fresh lineage of proxy
                         return fluid.isUnavailable(upcoming) ? fluid.unavailableProxy(upcoming) :
@@ -1435,6 +1455,9 @@ const fluidILScope = function (fluid) {
         destroy: "$method:fluid.destroyComponent({self})"
     });
 
+    fluid.def("fluid.componentList", {
+        $layers: "fluid.component"
+    });
 
     // The grade supplied to components which will be resolvable from all parts of the component tree
     fluid.def("fluid.resolveRoot", {$layers: "fluid.component"});
