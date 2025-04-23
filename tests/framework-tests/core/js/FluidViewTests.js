@@ -15,6 +15,7 @@ fluid.def("fluid.tests.basicRender", {
 });
 
 const qs = (sel, parent) => (parent || document).querySelector(sel);
+const qsa = (sel, parent) => [...(parent || document).querySelectorAll(sel)];
 
 QUnit.test("Basic static rendering test", function (assert) {
     const container = qs(".container");
@@ -229,7 +230,7 @@ fluid.tests.todos = [
     },
     {
         "text": "Eat some food",
-        "completed": false
+        "completed": true
     },
     {
         "text": "Sleep",
@@ -239,13 +240,17 @@ fluid.tests.todos = [
 
 fluid.def("fluid.tests.todoItem", {
     $layers: "fluid.templateViewComponent",
-    template: '<span class="todo tag is-large">@text<button class="delete is-small"></button></span>'
+    template:
+        `<span class="todo tag is-large" @class="completed:@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
+            @{text}<button class="delete is-small" @onclick="{todoList}.deleteItem({itemIndex})"></button>
+        </span>`
 });
 
-fluid.def("fluid.tests.forTodo", {
+fluid.def("fluid.tests.todoList", {
     $layers: "fluid.templateViewComponent",
     todos: fluid.tests.todos,
-    template: `<div id="main">
+    template:
+    `<div id="main">
         <section class="hero is-dark">
             <h1 class="title">Todo List</h1>
             <h2 class="subtitle">Get in charge of your life</h2>
@@ -258,21 +263,52 @@ fluid.def("fluid.tests.forTodo", {
         $component: {
             $layers: "fluid.tests.todoItem",
             $for: {
-                source: "{forTodo}.todos",
+                source: "{todoList}.todos",
                 value: "todo",
-                key: "todoIndex"
+                key: "itemIndex"
             },
-            text: "{todo}.text"
+            text: "{todo}.text",
+            completed: "{todo}.completed"
+        }
+    },
+    toggleItem: {
+        $method: {
+            func: (todos, itemIndex) => {
+                todos[itemIndex].completed = !todos[itemIndex].completed;
+            },
+            args: ["{self}.todos", "{0}:itemIndex"]
+        }
+    },
+    deleteItem: {
+        $method: {
+            func: (todos, itemIndex) => {
+                todos = todos.splice(itemIndex, 1);
+            },
+            args: ["{self}.todos", "{0}:itemIndex"]
         }
     }
+
 });
 
 QUnit.test("For rendering test", function (assert) {
     const container = qs(".container");
-    const that = fluid.tests.forTodo({container});
+    const that = fluid.tests.todoList({container});
 
     const items = that.todoItems.list;
 
     assert.equal(items.length, 3, "Component constructed for each todo");
-    assert.equal(items[0].value.text, "Write some code", "Correct text for first todo");
+    const modelTexts = fluid.tests.todos.map(todo => todo.text);
+    const treeTexts = items.map(item => item.text);
+    assert.deepEqual(treeTexts, modelTexts, "Correct texts for component tree items");
+    const renderedTexts = qsa(".todo", container).map(element => element.innerText);
+    assert.deepEqual(renderedTexts, modelTexts, "Correct texts for markup rendered items");
+
+    const modelCompleted = fluid.tests.todos.map(todo => todo.completed);
+    const treeCompleted = items.map(item => item.completed);
+
+    assert.deepEqual(treeCompleted, modelCompleted, "Correct states for component tree items");
+
+    const renderedCompleted = qsa(".todo", container).map(element => element.classList.contains("completed"));
+    assert.deepEqual(renderedCompleted, modelCompleted, "Correct states for markup tree items");
+
 });

@@ -929,6 +929,7 @@ const fluidILScope = function (fluid) {
                 length: fluid.getThroughSignals(componentList, ["length"])
             };
             const listComputer = fluid.pushSubcomponentPotentia(shadow, key, listLayer);
+            // This gets pushed into the componentList computed scope above
             listShadow = listComputer.shadow;
             return listComputer;
         } else {
@@ -1074,12 +1075,13 @@ const fluidILScope = function (fluid) {
      * the presence of signal-bearing content further down the path.
      * @param {Object} shadowMap - The root of the shadow map structure to annotate.
      * @param {String[]} segs - The sequence of path segments to follow and mark.
+     * @param {Integer} [uncess=1] - The number of trailing segments to exclude from marking as signal-bearing parents.
      */
-    fluid.markSignalised = function (shadowMap, segs) {
+    fluid.markSignalised = function (shadowMap, segs, uncess = 1) {
         for (let i = 0; i < segs.length; ++i) {
             const seg = segs[i];
             const rec = fluid.getRecInsist(shadowMap, [seg, $m]);
-            if (i < segs.length - 1) {
+            if (i < segs.length - uncess) {
                 // This is a signal to flattenSignals and the proxy to indicate that it should clone and expand
                 // since this path is in the interior of the mat
                 rec.hasSignalChild = true;
@@ -1100,7 +1102,9 @@ const fluidILScope = function (fluid) {
             } else {
                 target[key] = expanded;
                 if (fluid.isSignal(expanded)) {
-                    fluid.markSignalised(shadow.shadowMap, segs);
+                    // TODO: Currently don't have any plain $list in the system
+                    const uncess = expanded.$variety === "$componentList" || expanded.$variety === "$list" ? 0 : 1;
+                    fluid.markSignalised(shadow.shadowMap, segs, uncess);
                 }
             }
             segs.pop();
@@ -1113,37 +1117,26 @@ const fluidILScope = function (fluid) {
      *
      * @param {fluid.HierarchyResolver} resolver - The resolver used to store and resolve layered definitions.
      * @param {String[]} layerNames - An array of layer names to be merged and resolved.
-     * @param {String} memberName - The member name used to generate a unique layer name if needed.
      * @return {any} The resolved merged definition for the computed instance, or an "unavailable" marker if resolution fails.
      */
-    fluid.flatMergedRound = function (resolver, layerNames, memberName) {
-        let instanceLayerName;
-        if (layerNames.length > 1) {
-            // TODO: These layer names should be economised on when they coincide, perhaps could just be guids/hashes of their constituents
-            // TODO: Broken branch - currently disused
-            instanceLayerName = parent[$m].path + "-" + memberName;
-            // Create fictitious "nonce type" if user has supplied direct parents - remember we need to clean this up after the instance is gone
-            fluid.rawLayer(instanceLayerName, {$layers: layerNames});
-        } else if (layerNames.length === 1) {
-            instanceLayerName = layerNames[0];
-        }
-        let resolved;
-        if (instanceLayerName) {
-            resolver.storeLayer(instanceLayerName);
-            resolved = resolver.resolve(instanceLayerName).value; // <= EXTRA DEPENDENCE ON LAYER REGISTRY COMES HERE
+    fluid.flatMergedRound = function (resolver, layerNames) {
+        if (layerNames.length > 0) {
+            layerNames.forEach(layerName => resolver.storeLayer(layerName));
+            return resolver.resolve(layerNames);
         } else {
-            resolved = fluid.unavailable({message: "Component has been destroyed"});
+            return fluid.unavailable({message: "Component has no layers"});
         }
-        return resolved;
     };
 
     fluid.flatMergedComputer = function (shadow) {
         return computed(function flatMergedComputer() {
             const {layerNames, mergeRecords} = shadow.potentia.value;
-            const memberName = shadow.memberName;
+
+            const mergeRecordLayers = mergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat();
+            const allLayers = [...layerNames, ...mergeRecordLayers].reverse();
 
             const resolver = new fluid.HierarchyResolver();
-            const resolved = fluid.flatMergedRound(resolver, layerNames, memberName); // <= WILL READ LAYER REGISTRY
+            const resolved = fluid.flatMergedRound(resolver, allLayers); // <= WILL READ LAYER REGISTRY
 
             if (fluid.isUnavailable(resolved)) {
                 return resolved;
@@ -1349,6 +1342,9 @@ const fluidILScope = function (fluid) {
                             next.$variety === "$component" ? fluid.proxyMat(next, next.shadow, []) :
                                 fluid.isPrimitive(upcoming) || !upSignals ? upcoming :
                                     fluid.proxyMat(next, shadow, nextSegs);
+                    } else if (Array.isArray(deTarget) && typeof(next) === "function") {
+                        const unwrapped = deTarget.map((element, key) => getHandler(target, key));
+                        return Array.prototype[prop].bind(unwrapped);
                     } else {
                         return next;
                     }
@@ -1395,7 +1391,7 @@ const fluidILScope = function (fluid) {
         const ourLayerNames = [componentName].concat(fluid.makeArray(argLayer.$layers));
 
         const userLayerRecord = {
-            layerType: "user",
+            mergeRecordType: "user",
             layer: {
                 ...argLayer
             }

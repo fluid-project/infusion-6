@@ -1791,7 +1791,7 @@ const fluidJSScope = function (fluid) {
 
             res.push(cand);
             for (let seq of nonemptyseqs) {
-                if (seq[0] === cand) {
+                while (seq[0] === cand) { // AMB fix if -> while to deal with duplicates in sequence
                     seq.shift(); // remove cand
                 }
             }
@@ -1802,11 +1802,11 @@ const fluidJSScope = function (fluid) {
      * Computes C3 precedence of the parent layers of the supplied layer
      * @param {String} C - The name of the layer whose parent precedence is required
      * @param {Object<String, Object>} defs - A layer definition registry
-     * @param {Set<String>} [visited=new Set()] - A set to keep track of visited classes to detect circular hierarchy.
+     * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
      * @return {String[]} - The parent precedence list
      * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
      */
-    fluid.C3_precedence = function (C, defs, visited = new Set()) {
+    fluid.C3_precedence = function (C, defs, visited) {
         if (visited.has(C)) {
             fluid.fail(`Circular hierarchy detected - layer ${C} has already been visited`);
         }
@@ -1822,6 +1822,20 @@ const fluidJSScope = function (fluid) {
         const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
 
         visited.delete(C);
+        return merged;
+    };
+
+    /**
+     * Computes C3 precedence of the parent layers of the supplied layer
+     * @param {String[]} parents - The name of the layer whose parent precedence is required
+     * @param {Object<String, Object>} defs - A layer definition registry
+     * @return {String[]} - The parent precedence list
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
+     */
+    fluid.C3_precedence_parents = function (parents, defs) {
+        const visited = new Set();
+        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const merged = fluid.C3_merge(precLists);
         return merged;
     };
 
@@ -1892,6 +1906,7 @@ const fluidJSScope = function (fluid) {
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
     // Do we actually need this in this role?
+    // TODO: Called from expandComponentRecord and storeLayer, and now computeInstance does its own expansion - can axe?
     fluid.readerExpandLayer = function (layer) {
         // TODO: Create links between old and new data so that we can route errors back
         return {...layer, $layers: fluid.makeArray(layer.$layers)};
@@ -1900,12 +1915,12 @@ const fluidJSScope = function (fluid) {
     // The types of merge record the system supports, with the weakest records first
     fluid.mergeRecordTypes = {
         def: 1000, // and below, for resolved parents in hierarchy
-        defParents: 900, // layer holding resolved $layers member through hierarchy
         subcomponent: 700, // and above - wrt. nesting depth
         user: 600, // supplied as constructor arguments
-        distribution: 200, // and above
-        template: 100, // layer entries synthesized out of template
-        live: 0
+        distribution: 300, // and above
+        template: 200, // layer entries synthesized out of template
+        live: 100,
+        defParents: 0 // layer holding resolved $layers member through hierarchy - must beat all others since it is computed from them
     };
 
     /**
@@ -1980,6 +1995,10 @@ const fluidJSScope = function (fluid) {
         return layerMap;
     };
 
+    fluid.arrayConcatPolicy = function (target, source) {
+        return fluid.makeArray(target).concat(fluid.makeArray(source));
+    };
+
     /**
      * @typedef {Object} MergeRecord
      * @property {String} mergeRecordType - The type of the merge record (e.g., "def", "defParents").
@@ -2006,6 +2025,13 @@ const fluidJSScope = function (fluid) {
     /** @type {LayerLinkageRecord[]} An array of co-occurrence rules describing how input component types should be transformed into output types. */
     fluid.coOccurrenceRegistry = [];
 
+    fluid.concatPolicy =
+
+    fluid.staticMergePolicy = {
+        $layers: {
+            [$m]: fluid.arrayConcatPolicy
+        }
+    };
 
     /**
      * Determine and return any new layer names that should be derived by co-occurrence rules from the supplied set of layer names.
@@ -2032,67 +2058,6 @@ const fluidJSScope = function (fluid) {
         }
 
         return togo;
-    };
-
-    /**
-     * Perform one round of resolving co-occurring layer types within a layer hierarchy.
-     * Adds any new derived layers found by co-occurrence rules to the hierarchy resolver.
-     *
-     * @param {fluid.hierarchyResolver} hierarchyResolver - The resolver responsible for managing and caching layer definitions.
-     * @param {String[]} layerHierarchy - The current array of layer names in the hierarchy.
-     * @return {Boolean} `true` if new co-occurring layers were found and added, `false` otherwise.
-     */
-    fluid.resolveHierarchyRound = function (hierarchyResolver, layerHierarchy) {
-        const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy);
-        newCoOccurrences.map(layerName => hierarchyResolver.storeLayer(layerName));
-        return newCoOccurrences.length > 0;
-    };
-
-    /**
-     * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map,
-     * computing precedence, and producing merge records and a layer map suitable for instantiating the component.
-     *
-     * @param {String} layerName - The name of the top-level layer to resolve.
-     * @param {Object<String, Signal>} flatDefs - A map of layer names to signals containing raw layer definitions.
-     * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`, `merged`, and `layerMap`,
-     *     or an `unavailable` signal if resolution could not be completed.
-     */
-    fluid.resolveHierarchy = function (layerName, flatDefs) {
-        while (true) {
-            // First prime the cache by evaluating all signals at tip
-            fluid.each(flatDefs, def => def.value);
-            // Second check if any layers are unavailable
-            const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
-            if (unavailable) {
-                return unavailable;
-            } else {
-                // Finally flatten cache into pure values ready for resolution
-                const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
-                const order = fluid.C3_precedence(layerName, veryFlatDefs).reverse();
-                if (fluid.resolveHierarchyRound(order)) {
-                    continue;
-                }
-                const mergeRecords = order.map((oneLayerName, i) => ({
-                    mergeRecordType: "def",
-                    mergeRecordName: oneLayerName,
-                    // Towards the right here, stronger records
-                    priority: fluid.mergeRecordTypes.def - i,
-                    layer: veryFlatDefs[oneLayerName]
-                })).concat({
-                    // Definition just holding the resolved $layers member, overriding all previous entries
-                    mergeRecordType: "defParents",
-                    mergeRecordName: `defParents:${layerName}`,
-                    priority: fluid.mergeRecordTypes.defParents,
-                    layer: {$layers: order}
-                });
-                const merged = {};
-                return {
-                    // Note merged is currently only read by fluid.readDef
-                    mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
-                };
-            }
-
-        }
     };
 
     /**
@@ -2160,18 +2125,68 @@ const fluidJSScope = function (fluid) {
         }
 
         /**
-         * Resolves the full hierarchy of a component definition from its layer name by computing its mergeRecords,
-         * merged contents, and layerMap. This is computed lazily and reacts to signals within the definitions.
+         * Perform one round of resolving co-occurring layer types within a layer hierarchy.
+         * Adds any new derived layers found by co-occurrence rules to the hierarchy resolver.
          *
-         * @param {String} layerName - The name of the top-level layer whose hierarchy is to be resolved.
-         * @return {Computed<MergedHierarchyResolution>} A computed signal whose value is a fully resolved merged component definition.
+         * @param {String[]} layerHierarchy - The current array of layer names in the hierarchy.
+         * @param {String[]} layerNames - Currently resolving layerNames - WILL BE MODIFIED by pushing co-occurring layers to the end
+         * @return {Boolean} `true` if new co-occurring layers were found and added, `false` otherwise.
          */
-        resolve(layerName) {
-            const resolveLayers = function () {
-                return fluid.resolveHierarchy(layerName, this.flatDefs);
-            }.bind(this);
-            return computed(resolveLayers);
-        }
+        resolveHierarchyRound = function (layerHierarchy, layerNames) {
+            const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy);
+            newCoOccurrences.map(layerName => this.storeLayer(layerName));
+            // Highest precedence (most derived, lowest down) class is at left of list in this ordering
+            layerNames.unshift(...newCoOccurrences);
+            return newCoOccurrences.length > 0;
+        };
+
+        /**
+         * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map,
+         * computing precedence, and producing merge records and a layer map suitable for instantiating the component.
+         *
+         * @param {String[]} layerNames - The names of the top-level layer to resolve.
+         * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`, `merged`, and `layerMap`,
+         *     or an `unavailable` signal if resolution could not be completed.
+         */
+        resolve(layerNames) {
+            /** @type {Object<String, Signal>} flatDefs - A map of layer names to signals containing raw layer definitions. **/
+            const flatDefs = this.flatDefs;
+            while (true) {
+                // First prime the cache by evaluating all signals at tip
+                fluid.each(flatDefs, def => def.value);
+                // Second check if any layers are unavailable
+                const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
+                if (unavailable) {
+                    return unavailable;
+                } else {
+                    // Finally flatten cache into pure values ready for resolution
+                    const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
+                    const order = fluid.C3_precedence_parents(layerNames, veryFlatDefs).reverse();
+                    if (this.resolveHierarchyRound(order, layerNames)) {
+                        continue;
+                    }
+                    const mergeRecords = order.map((oneLayerName, i) => ({
+                        mergeRecordType: "def",
+                        mergeRecordName: oneLayerName,
+                        // Towards the right here, stronger records
+                        priority: fluid.mergeRecordTypes.def - i,
+                        layer: veryFlatDefs[oneLayerName]
+                    })).concat({
+                        // Definition just holding the resolved $layers member, overriding all previous entries
+                        mergeRecordType: "defParents",
+                        mergeRecordName: "defParents",
+                        priority: fluid.mergeRecordTypes.defParents,
+                        layer: {$layers: order}
+                    });
+                    const merged = {};
+                    return {
+                        // Note merged is currently only read by fluid.readDef
+                        mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
+                    };
+                }
+
+            }
+        };
     }
 
     fluid.HierarchyResolver = HierarchyResolver;
@@ -2187,6 +2202,7 @@ const fluidJSScope = function (fluid) {
         return layer.$layers && layer.$layers.includes(layerName);
     };
 
+    // Not really a general-purpose utility, used in test cases
     /**
      * Retrieves a layer's merged configuration
      * @param {String} layerName - The name of the grade whose options are to be read or written
@@ -2195,8 +2211,10 @@ const fluidJSScope = function (fluid) {
     fluid.readMergedDef = function (layerName) {
         // TODO: economise on these in the "giant mat"
         const resolver = new fluid.HierarchyResolver();
-        resolver.storeLayer(layerName);
-        const resolved = resolver.resolve(layerName);
+        const resolved = computed( () => {
+            resolver.storeLayer(layerName);
+            return resolver.resolve([layerName]);
+        });
         return fluid.getThroughSignals(resolved, ["merged"]);
     };
 
@@ -2384,11 +2402,11 @@ const fluidJSScope = function (fluid) {
     const tagRE = /@\{((?:.)+?)\}/g;
 
     /**
-     * Simple moustache-style string template system.  Takes a template string containing tokens in the form of "{{value}}" or
-     * "{{deep.path.to.value}}". Returns an array of token segments which are either plain strings or object {key} holding
+     * Takes a template string containing tokens in the form of "@{value}" or
+     * "@{deep.path.to.value}". Returns an array of token segments which are either plain strings or object {key} holding
      * the parsed token paths.
      *
-     * @param {String} template - A string that contains placeholders for tokens of the form `%token` embedded into it.
+     * @param {String} template - A string that contains placeholders for tokens of the form `@{token}` embedded into it.
      * @return {Array<String|Object>} An array of token values
      */
     fluid.parseStringTemplate = function (template) {

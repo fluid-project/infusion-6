@@ -1,4 +1,4 @@
-/* global signal */
+/* global signal, computed */
 
 "use strict";
 
@@ -212,7 +212,7 @@ const fluidViewScope = function (fluid) {
                 // by itself:
                 delete vnode.children;
                 const templateRecord = {
-                    layerType: "template",
+                    mergeRecordType: "template",
                     layer: {
                         $layers: "fluid.viewComponent",
                         container: vnode.elementSignal
@@ -222,6 +222,17 @@ const fluidViewScope = function (fluid) {
                 fluid.pushPotentia(self.shadow, value, [templateRecord]);
                 return disposable;
             });
+        } else if (key === "@class") {
+            const parts = value.split(",").map(part => part.trim());
+            const clazz = Object.fromEntries(parts.map(part => {
+                const [key, ref] = part.split(":");
+                const tokens = fluid.parseStringTemplate(ref);
+                const rendered = fluid.renderStringTemplate(tokens, self);
+                // Unwrap the primitive token so it is more principled to check for falsy during parseTemplate
+                const renderedPrim = fluid.isSignal(rendered) ? rendered.$tokens[0] : rendered;
+                return [key, renderedPrim];
+            }));
+            vnode["class"] = clazz;
         }
     };
 
@@ -256,13 +267,25 @@ const fluidViewScope = function (fluid) {
                             fluid.processAttributeDirective(vnode, value, key, self);
                         }
                         delete vnode.attrs[key];
-                    } else {
+                    } else if (key !== "class") {
                         const tokens = fluid.parseStringTemplate(value);
                         const rendered = fluid.renderStringTemplate(tokens, self);
-                        fluid.bindDomTokens(vnode, rendered, (node, text) => node.setAttribute(key, text));
-                        vnode.attrs[key] = fluid.renderStringTemplate(tokens, self);
+                        if (fluid.isSignal(rendered)) {
+                            fluid.bindDomTokens(vnode, rendered, (node, text) => node.setAttribute(key, text));
+                            vnode.attrs[key] = rendered; // Mark to reconciler that it is a signal so it should ignore it
+                        }
                     }
                 });
+                if (vnode["class"]) {
+                    const allClass = computed( () => {
+                        const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
+                            .filter(([, value]) => value)
+                            .map(([key]) => key);
+                        return (vnode.attrs["class"] || "") + " " + classes;
+                    });
+                    fluid.bindDomTokens(vnode, allClass, (node, text) => node.setAttribute("class", text));
+                    vnode.attrs["class"] = allClass;
+                }
                 if (vnode.children !== undefined) {
                     vnode.children = vnode.children.map(processVNode);
                 }
@@ -337,7 +360,7 @@ const fluidViewScope = function (fluid) {
             }
         }
         for (const [key, value] of Object.entries(vnode.attrs)) {
-            if (element.getAttribute(key) !== value) {
+            if (!fluid.isSignal(value) && element.getAttribute(key) !== value) {
                 element.setAttribute(key, value);
             }
         }
@@ -411,6 +434,7 @@ const fluidViewScope = function (fluid) {
         $layers: "fluid.component",
         elideParent: false,
         container: "$compute:fluid.unavailable(Container not specified)",
+        // Some syntax for determining there should be a vTree? An unavailable value that nonetheless has a shape?
         render: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree, {self}.elideParent)"
     });
 
@@ -422,17 +446,17 @@ const fluidViewScope = function (fluid) {
     fluid.def("fluid.viewComponentList", {
         $layers: "fluid.viewComponent",
         elideParent: true,
-        vtree: "@compute:fluid.listViewTree({self})"
+        vTree: "$compute:fluid.listViewTree({self}.list)"
     });
 
-    fluid.listViewTree = function (self) {
+    fluid.listViewTree = function (list) {
         return fluid.computed(componentList => {
             const childTrees = componentList.map(entry => entry.value.vTree.value);
             return {
                 tag: "template",
                 children: childTrees
             };
-        }, [self.componentList]);
+        }, [list]);
     };
 
     fluid.def("fluid.templateViewComponent", {
