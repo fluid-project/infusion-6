@@ -11,6 +11,9 @@ const copyJobs = [{
 }, {
     src: "demo",
     dest: "docs/demo"
+}, {
+    src: "src",
+    dest: "docs/src"
 }];
 
 

@@ -1,0 +1,34 @@
+<html>
+<head>
+    <title>Infusion Todo List</title>
+
+    <link rel="stylesheet" media="screen" href="../css/bulma.css" />
+    <link rel="stylesheet" media="screen" href="../css/todo-list.css" />
+
+    <script src="../../../src/lib/preact-signals/preact-signals-core.js"></script>
+
+    <script src="../../../src/framework/core/js/Fluid.js"></script>
+    <script src="../../../src/framework/core/js/FluidIL.js"></script>
+    <script src="../../../src/framework/core/js/FluidView.js"></script>
+
+</head>
+<body>
+<div id="main">
+    <section class="hero is-dark">
+        <div class="hero-body">
+            <div class="container">
+                <h1 class="title">Todo List</h1>
+                <h2 class="subtitle">Get in charge of your life</h2>
+            </div>
+        </div>
+    </section>
+    <section class="section">
+        <div class="content">
+            <input class="input is-rounded" id="newTodo" type="text" placeholder="New todo">
+            <div id="todos" class="section"></div>
+        </div>
+    </section>
+</div>
+<script src="../js/todo-list.js"></script>
+</body>
+</html>

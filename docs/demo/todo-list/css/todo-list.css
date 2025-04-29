@@ -1,0 +1,17 @@
+body {
+    text-align: center;
+}
+
+body input {
+    width: 25em !important;
+    text-align: center;
+}
+
+.todo {
+    margin: 5px;
+    cursor: pointer;
+}
+
+.todo.completed {
+    text-decoration: line-through;
+}

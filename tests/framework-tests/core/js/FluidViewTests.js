@@ -202,7 +202,7 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
 fluid.def("fluid.tests.bindClick", {
     $layers: "fluid.templateViewComponent",
     value: 0,
-    template: `<div><button @onclick="{self}.increment"/></div>`,
+    template: `<div><button @onclick="{self}.increment()"/></div>`,
     increment: {
         $method: {
             args: "{self}",
@@ -241,14 +241,25 @@ fluid.tests.todos = [
 fluid.def("fluid.tests.todoItem", {
     $layers: "fluid.templateViewComponent",
     template:
-        `<span class="todo tag is-large" @class="completed:@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
-            @{text}<button class="delete is-small" @onclick="{todoList}.deleteItem({itemIndex})"></button>
+        `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
+            @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
         </span>`
 });
 
+fluid.tests.todoKeyUp = function (e, todos) {
+    if (e.key === "Enter") {
+        const input = e.target;
+        const newTodo = {text: input.value, completed: false};
+        todos.push(newTodo);
+        input.value = "";
+    }
+};
+
 fluid.def("fluid.tests.todoList", {
     $layers: "fluid.templateViewComponent",
-    todos: fluid.tests.todos,
+    todos: {
+        $deepReactive: fluid.tests.todos
+    },
     template:
     `<div id="main">
         <section class="hero is-dark">
@@ -256,6 +267,7 @@ fluid.def("fluid.tests.todoList", {
             <h2 class="subtitle">Get in charge of your life</h2>
         </section>
         <section class="section">
+            <input class="input is-rounded" @onkeyup="fluid.tests.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
             <div @id="todoItems" class="section"></div>
         </section>
     </div>`,
@@ -287,28 +299,134 @@ fluid.def("fluid.tests.todoList", {
             args: ["{self}.todos", "{0}:itemIndex"]
         }
     }
-
 });
 
-QUnit.test("For rendering test", function (assert) {
-    const container = qs(".container");
-    const that = fluid.tests.todoList({container});
-
+fluid.tests.checkTodoRendering = function (assert, that, container, model) {
     const items = that.todoItems.list;
+    assert.equal(items.length, model.length, "Correct component count");
 
-    assert.equal(items.length, 3, "Component constructed for each todo");
-    const modelTexts = fluid.tests.todos.map(todo => todo.text);
+    const modelTexts = items.map(todo => todo.text);
+
     const treeTexts = items.map(item => item.text);
     assert.deepEqual(treeTexts, modelTexts, "Correct texts for component tree items");
+
     const renderedTexts = qsa(".todo", container).map(element => element.innerText);
     assert.deepEqual(renderedTexts, modelTexts, "Correct texts for markup rendered items");
 
-    const modelCompleted = fluid.tests.todos.map(todo => todo.completed);
+    const modelCompleted = model.map(todo => todo.completed);
     const treeCompleted = items.map(item => item.completed);
 
     assert.deepEqual(treeCompleted, modelCompleted, "Correct states for component tree items");
 
     const renderedCompleted = qsa(".todo", container).map(element => element.classList.contains("completed"));
-    assert.deepEqual(renderedCompleted, modelCompleted, "Correct states for markup tree items");
+    assert.deepEqual(renderedCompleted, modelCompleted, "Correct completed states for markup tree items");
 
+    const negCompleted = modelCompleted.map(state => !state);
+    const renderedInfo = qsa(".todo", container).map(element => element.classList.contains("is-info"));
+    assert.deepEqual(renderedInfo, negCompleted, "Correct is-info states for markup tree items");
+};
+
+QUnit.test("For rendering test", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.todoList({container});
+
+    fluid.tests.checkTodoRendering(assert, that, container, fluid.tests.todos);
+
+    const newTodos = fluid.tests.todos.concat([{
+        text: "Think about something",
+        completed: false
+    }]);
+
+    that.todos = newTodos;
+    fluid.tests.checkTodoRendering(assert, that, container, newTodos);
+
+    const twoDos = newTodos.slice(2, 4);
+
+    that.todos = twoDos;
+    fluid.tests.checkTodoRendering(assert, that, container, twoDos);
+
+    that.todos = [];
+    fluid.tests.checkTodoRendering(assert, that, container, []);
+
+    const oneDo = [twoDos[1]];
+
+    that.todos = oneDo;
+    fluid.tests.checkTodoRendering(assert, that, container, oneDo);
+});
+
+QUnit.test("Event triggering and user reactivity test - delete array element", function (assert) {
+    const origTodos = fluid.copy(fluid.tests.todos);
+    const container = qs(".container");
+    const that = fluid.tests.todoList({container});
+
+    const buttons = qsa("button", container);
+    buttons[0].dispatchEvent(new MouseEvent("click"));
+
+    assert.deepEqual(fluid.tests.todos, origTodos, "Original data uncorrupted");
+
+    const twoDos = fluid.tests.todos.slice(1);
+
+    fluid.tests.checkTodoRendering(assert, that, container, twoDos);
+});
+
+fluid.tests.checkDeepMutate = function (assert, index) {
+    const origTodos = fluid.copy(fluid.tests.todos);
+    const container = qs(".container");
+    const that = fluid.tests.todoList({container});
+
+    const rows = qsa("span", container);
+    rows[index].dispatchEvent(new MouseEvent("click"));
+
+    assert.deepEqual(fluid.tests.todos, origTodos, "Original data uncorrupted");
+
+    const toggled = fluid.copy(fluid.tests.todos);
+    toggled[index].completed = !toggled[index].completed;
+
+    fluid.tests.checkTodoRendering(assert, that, container, toggled);
+
+    rows[index].dispatchEvent(new MouseEvent("click"));
+
+    fluid.tests.checkTodoRendering(assert, that, container, fluid.tests.todos);
+
+    rows[index].dispatchEvent(new MouseEvent("click"));
+
+    fluid.tests.checkTodoRendering(assert, that, container, toggled);
+};
+
+QUnit.test("Event triggering and user reactivity test - deep mutate array element 0", function (assert) {
+    fluid.tests.checkDeepMutate(assert, 0);
+});
+
+QUnit.test("Event triggering and user reactivity test - deep mutate array element 1", function (assert) {
+    fluid.tests.checkDeepMutate(assert, 1);
+});
+
+QUnit.test("Event triggering and user reactivity test - deep mutate different", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.todoList({container});
+    const toggled = fluid.copy(fluid.tests.todos);
+    toggled[0].completed = !toggled[0].completed;
+    toggled[1].completed = !toggled[1].completed;
+
+    const rows = qsa("span", container);
+    rows[0].dispatchEvent(new MouseEvent("click"));
+    rows[1].dispatchEvent(new MouseEvent("click"));
+
+    fluid.tests.checkTodoRendering(assert, that, container, toggled);
+});
+
+QUnit.test("Event triggering and user reactivity test - insert array element", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.todoList({container});
+    const input = qs("input", container);
+    input.value = "New item";
+    input.dispatchEvent(new KeyboardEvent("keyup", {
+        key: "Enter"
+    }));
+    const updated = fluid.tests.todos.concat([{
+        text: "New item",
+        completed: false
+    }]);
+
+    fluid.tests.checkTodoRendering(assert, that, container, updated);
 });
