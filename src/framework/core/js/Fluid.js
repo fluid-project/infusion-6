@@ -463,7 +463,10 @@ const fluidJSScope = function (fluid) {
         if (source) {
             const togo = {};
             for (const key in source) {
-                togo[key] = func(source[key], key);
+                const ret = func(source[key], key);
+                if (ret !== fluid.NoValue) {
+                    togo[key] = ret;
+                }
             }
             return togo;
         } else {
@@ -653,7 +656,6 @@ const fluidJSScope = function (fluid) {
      * signalling using the value "undefined" is not possible - e.g. the return value from a "strategy"). This
      * is intended for "ephemeral use", i.e. returned directly from strategies and transforms and should not be
      * stored in data structures */
-    // TODO: No longer currently consumed by fluid.transform but maybe we want it back
     fluid.NoValue = fluid.makeMarker("No Value");
 
     /**
@@ -697,9 +699,13 @@ const fluidJSScope = function (fluid) {
      * The marker is mutable.
      *
      * @param {Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
+     * @param {String} [variety="error"] - The variety of unavailable value:
+     * * "error" indicates a syntax issue that needs design intervention.
+     * * "config" indicates configuration designed to short-circuit evaluation which is not required.
+     * * "I/O" indicates pending I/O
      * @return {fluid.marker} A marker of type "Unavailable".
      */
-    fluid.unavailable = (cause = {}) => fluid.makeMarker("Unavailable", {
+    fluid.unavailable = (cause = {}, variety = "error") => fluid.makeMarker("Unavailable", {
         causes: fluid.makeArray(cause).map(oneCause => {
             if (typeof(oneCause) === "string") {
                 oneCause = {message: oneCause};
@@ -708,7 +714,8 @@ const fluidJSScope = function (fluid) {
                 oneCause.type = "Unavailable";
             }
             return oneCause;
-        })
+        }),
+        variety
     }, true);
 
     fluid.formatUnavailable = function (unavailable) {
@@ -743,7 +750,7 @@ const fluidJSScope = function (fluid) {
      * @param {...*} args - The arguments providing details about the error.
      * @return {fluid.marker} A marker of type "Error".
      */
-    fluid.error = (...args) => fluid.makeMarker("Unavailable", {causes: [{type: "Error", message: args}]}, true);
+    fluid.error = (...args) => fluid.makeMarker("Unavailable", {causes: [{variety: "error", message: args}]}, true);
 
     /**
      * Check if an object is a marker of type "Unavailable"
@@ -795,6 +802,8 @@ const fluidJSScope = function (fluid) {
         flattenArg: fluid.deSignal
     };
 
+    fluid.OldValue = fluid.makeMarker("Old Computed Value");
+
     /**
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects
      * and identifying and coalescing "unavailable" values if present.
@@ -802,24 +811,27 @@ const fluidJSScope = function (fluid) {
      * @param {Array} args - The array of arguments to process.
      *     Arguments may include `preactSignalsCore.Signal` instances or plain values.
      * @param {Object} [options] - Additional specifications for processing arguments (optional).
+     * @param {any} [oldValue] - If these are arguments to a "computed", the previous value of the computed is supplied here
      * @return {Object} An object with the following properties:
      *     - `designalArgs` (Array): The array of arguments with `Signal` values replaced by their unwrapped values.
      *     - `unavailable` (Object|undefined): The most "unavailable" value (if any) based on priority,
      *       or `undefined` if no unavailable values are found.
      */
-    fluid.processSignalArgs = function (args, options) {
+    fluid.processSignalArgs = function (args, options, oldValue) {
         let unavailable = undefined;
         const designalArgs = [];
         const flattenArg = options?.flattenArg;
         for (let i = 0; i < args.length; ++i) {
             const arg = args[i];
-            if (arg instanceof preactSignalsCore.Signal) {
+            if (arg === fluid.OldValue) {
+                designalArgs.push(oldValue);
+            } else if (arg instanceof preactSignalsCore.Signal) {
                 const deref = arg.value;
                 const value = flattenArg ? flattenArg(deref, i) : deref;
-                designalArgs.push(value);
                 if (fluid.isUnavailable(value)) {
                     unavailable = fluid.mergeUnavailable(unavailable, value);
                 }
+                designalArgs.push(value);
             } else {
                 designalArgs.push(arg);
             }
@@ -836,8 +848,8 @@ const fluidJSScope = function (fluid) {
      * @return {Object} A computed value that resolves the function's result, or an "unavailable" marker if any argument is unavailable.
      */
     fluid.computed = function (funcSignal, argSignals, options) {
-        return computed(function fluidComputed() {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions);
+        return computed(function fluidComputed(oldValue) {
+            const {designalArgs, unavailable} = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
             const func = fluid.deSignal(funcSignal);
             return unavailable ? unavailable : fluid.isUnavailable(func) ? func : func.apply(null, designalArgs);
         });
@@ -871,6 +883,26 @@ const fluidJSScope = function (fluid) {
         } else {
             Object.values(effectStructure).forEach(value => fluid.disposeEffects(value));
         }
+    };
+
+    /**
+     * Creates a single source effect that listens to changes in a computed signal and invokes a callback
+     * with the old and new values whenever the computed signal changes.
+     *
+     * @param {Computed} aComputed - The computed signal to observe.
+     * @param {Function} fn - A callback function with the signature (oldValue, newValue).
+     * @return {Effect} The created effect.
+     */
+    fluid.singleSourceEffect = function (aComputed, fn) {
+        let oldValue = aComputed.value; // Initialize with the current value of the computed signal.
+
+        return effect(() => {
+            const newValue = aComputed.value; // Get the updated value of the computed signal.
+            if (oldValue !== newValue) {
+                fn(oldValue, newValue); // Notify the callback with old and new values.
+                oldValue = newValue; // Update the old value for the next change.
+            }
+        });
     };
 
     fluid.sampleComputed = computed(() => {});
@@ -1066,7 +1098,6 @@ const fluidJSScope = function (fluid) {
                 }
                 move = fluid.deSignal(move[seg]);
             }
-            console.log("Rerun fluid.getThroughSignals for segs ", segs, " returning ", move);
             return move;
         });
         togo.$variety = "$ref";
@@ -1912,7 +1943,22 @@ const fluidJSScope = function (fluid) {
 
     // Lookup of layer names to signal<{raw: layer}>
     // where "raw" has not yet been readerExpanded
-    fluid.layerStore = {};
+    fluid.layerStore = signal({});
+
+    fluid.layerHistory = [];
+
+    /**
+     * Creates a new layer in the `fluid.layerStore` and updates the layer history.
+     * This function immutably adds a new layer to the existing store and records the operation in the history.
+     * @param {String} layerName - The name of the new layer to be added.
+     * @param {Object} layerValue - The value associated with the new layer.
+     */
+    fluid.newLayer = function (layerName, layerValue) {
+        const store = fluid.layerStore.value;
+        const newStore = {...store, [layerName]: signal(layerValue)};
+        fluid.layerStore.value = newStore;
+        fluid.layerHistory.push({type: "newLayer", store: newStore, newLayer: layerName});
+    };
 
     /**
      * Retrieve a layer by its name from the layer store.
@@ -1922,7 +1968,7 @@ const fluidJSScope = function (fluid) {
      * @return {signal<RawLayer>} The layer signal if it exists, or an "unavailable" marker if the layer is not defined.
      */
     fluid.readLayer = function (layerName) {
-        const layerSig = fluid.layerStore[layerName];
+        const layerSig = fluid.layerStore.value[layerName];
         if (layerSig) {
             return layerSig;
         } else {
@@ -1943,18 +1989,28 @@ const fluidJSScope = function (fluid) {
      * @param {Object} layer - The layer data to store.
      */
     fluid.writeLayer = function (layerName, layer) {
-        const layerSig = fluid.layerStore[layerName];
+        const store = fluid.layerStore.value;
+        const layerSig = store[layerName];
+        const layerValue = {raw: layer};
         if (layerSig) {
-            layerSig.value = {raw: layer};
+            layerSig.value = layerValue;
         } else {
-            fluid.layerStore[layerName] = signal({
-                raw: layer
-            });
+            fluid.newLayer(layerName, layerValue);
         }
     };
 
+    /**
+     * Removes a layer from the `fluid.layerStore` immutably.
+     * This function creates a new object excluding the specified layer and updates the signal.
+     *
+     * @param {String} layerName - The name of the layer to delete.
+     */
     fluid.deleteLayer = function (layerName) {
-        delete fluid.layerStore[layerName];
+        const currentStore = fluid.layerStore.value;
+        const newStore = { ...currentStore };
+        delete newStore[layerName];
+        fluid.layerStore.value = newStore;
+        fluid.layerHistory.push({type: "deleteLayer", store: newStore, deleteLayer: layerName});
     };
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
@@ -2027,8 +2083,8 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Extract policy information (currently just any $deepReactive markers) from a merging layer structure and populate the corresponding layer map.
-     * This needs to happen before merging since a $deepReactive marker which is merged over by a live or other layer will still
+     * Extract policy information (currently just any $reactiveRoot markers) from a merging layer structure and populate the corresponding layer map.
+     * This needs to happen before merging since a $reactiveRoot marker which is merged over by a live or other layer will still
      * need to be honoured.
      * @param {Object|Array<any>} layer - The layer to traverse for policy markers.
      * @param {Object} layerMap - The layer map to populate with extracted policy information.
@@ -2042,10 +2098,10 @@ const fluidJSScope = function (fluid) {
         };
         if (fluid.isPlainObject(layer, true)) {
             const allKeys = Object.keys(layer);
-            if ("$deepReactive" in layer) {
+            if ("$reactiveRoot" in layer) {
                 fluid.set(layerMap, [...segs, $m, "reactiveRoot"], true);
                 if (allKeys.length !== 1) {
-                    fluid.fail("Unexpected extra keys together with $deepReactive: " + allKeys.join(", "));
+                    fluid.fail("Unexpected extra keys together with $reactiveRoot: " + allKeys.join(", "));
                 }
             } else {
                 fluid.transform(layer, recurse);

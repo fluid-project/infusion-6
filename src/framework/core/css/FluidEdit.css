@@ -1,0 +1,26 @@
+/* Adopted with thanks from Codestrates
+  https://github.com/Webstrates/WebstrateComponents/blob/master/edgedocker-component/scss/main.scss
+ */
+
+.fl-docking-area-resizer {
+    flex: 0 0 auto;
+    min-height: 1px;
+    min-width: 1px;
+    cursor: ew-resize;
+    position: relative;
+    margin: -4px;
+    border: 4px solid transparent;
+    contain: none;
+    overflow: visible;
+    z-index: 5;
+}
+
+.fl-docking-area-resizer:before {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(128, 128, 128, 0.5);
+    content: "";
+}

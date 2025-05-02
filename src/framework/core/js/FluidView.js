@@ -4,12 +4,13 @@
 
 const fluidViewScope = function (fluid) {
 
+    const $m = fluid.metadataSymbol;
     const $t = fluid.proxySymbol;
 
     /**
      * @typedef {Object} VNode
-     * @property {String} tag - The tag name of the element (e.g., 'div', 'span').
-     * @property {Object<String, String>} attrs - A key-value map of the element's attributes.
+     * @property {String} [tag] - The tag name of the element (e.g., 'div', 'span').
+     * @property {Object<String, String>} [attrs] - A key-value map of the element's attributes.
      * @property {VNode[]} [children] - An array of child virtual nodes.
      * @property {String} [text] - The text content in the case this VNode represents a DOM TextNode.
      * @property {Shadow} [shadow] - The shadow for a component for which this vnode is the template root
@@ -27,6 +28,178 @@ const fluidViewScope = function (fluid) {
     fluid.parseDOM = function (template) {
         const fragment = document.createRange().createContextualFragment(template);
         return fragment.firstElementChild;
+    };
+
+    fluid.importUrlResource = function (layerName, relPath) {
+        return {
+            url: fluid.importMap[layerName].urlBase + relPath,
+            variety: "importUrlResource"
+        };
+    };
+
+    // Regular expression to parse the first argument to `fluid.def` and the body up to the first instance of "\n})"
+    const parseDefRegex = /fluid\.def\("([^"]+)",\s*({[\s\S]*?\n})\)/;
+
+    // A convenient global to receive the parsed definition
+    // noinspection ES6ConvertVarToLetConst
+    fluid.$fluidParsedDef = null;
+    /**
+     * Loads a Single File Component (SFC) from a given URL and wraps its content in an `<sfc>` tag.
+     * The function fetches the text content of the SFC, processes it into a DOM element, and returns a signal
+     * containing the parsed DOM element.
+     *
+     * @param {String} layerName - The name of the layer associated with the SFC (currently unused in this function).
+     * @param {String} url - The URL from which to fetch the SFC content.
+     * @return {Signal<any>} A signal containing the parsed DOM element wrapped in an `<sfc>` tag.
+     */
+    fluid.parseSFC = function (layerName, url) {
+        const textSignal = fluid.fetchText(url);
+        return fluid.mapSignal(textSignal, text => {
+            const sfc = fluid.parseDOM("<sfc>" + text + "</sfc>");
+            // For some reason we don't get this parsed into nodes but actually we don't want them anyway, they will parse fine the next time round
+            const template = sfc.querySelector("template")?.innerHTML;
+            const script = sfc.querySelector("script")?.innerText;
+            const css = sfc.querySelector("style")?.innerText;
+
+            const match = script.match(parseDefRegex);
+            const layerName = match[1];
+            const defBody = match[2];
+            // Use the "indirect eval" strategy that is widely recommended to avoid inappropriate access to local scope - as if we care
+            // eslint-disable-next-line no-eval
+            eval?.("fluid.$fluidParsedDef = " + defBody);
+            const def = fluid.$fluidParsedDef;
+            def.template = template;
+            def.css = css;
+            return {layerName, def};
+        });
+    };
+
+    /**
+     * Creates an effect that registers a component definition (`def`) under the specified `layerName`.
+     * This function listens to updates in the provided signal and applies the definition to the framework.
+     * @param {Signal<Object>} defSignal - A signal containing the component definition, including the layer name and definition object.
+     * @return {Effect} An effect that registers the component definition when the signal updates.
+     */
+    fluid.defEffect = function (defSignal) {
+        return fluid.effect(({layerName, def}) => {
+            fluid.def(layerName, def);
+        }, [defSignal]);
+    };
+
+    /**
+     * Loads a Single File Component (SFC) from a given URL and registers its definition.
+     * This function parses the SFC content, extracts its definition, and creates an effect
+     * that registers the component definition under the specified layer name.
+     * @param {String} layerName - The name of the layer associated with the SFC.
+     * @param {String} url - The URL from which to fetch the SFC content.
+     * @return {Effect} An effect that registers the parsed SFC definition when the signal updates.
+     */
+    fluid.loadSFC = function (layerName, url) {
+        return fluid.defEffect(fluid.parseSFC(layerName, url));
+    };
+
+    /**
+     * Create a live `Signal` that tracks elements matching a CSS selector within a DOM subtree.
+     * The signal updates whenever matching elements are added or removed.
+     * @param {String} selector - The CSS selector to match elements.
+     * @param {Element|null} [root=null] - The root element to observe; defaults to `document` if `null`.
+     * @return {Signal<Array<Element>>} A signal containing the current list of matching elements.
+     */
+    fluid.liveQuery = function (selector, root = null) {
+        const togo = signal([]);
+        const context = root || document;
+
+        const updateMatches = () => {
+            togo.value = Array.from(context.querySelectorAll(selector));
+        };
+
+        const observer = new MutationObserver(() => {
+            console.log("Observer update");
+            // TODO: Could do better, I guess, by observing updates in a finegrained way but this is just fine for now
+            updateMatches();
+        });
+
+        const init = () => {
+            observer.observe(context, {
+                childList: true,
+                subtree: true
+            });
+            updateMatches();
+        };
+
+        // Despite widespread explanations to the contrary, MutationObserver will not register correctly before document is loaded
+        if (document.readyState === "complete") {
+            init();
+        } else {
+            document.addEventListener("DOMContentLoaded", init);
+        }
+
+        // TODO: Go with our wierd "Effect" contract for now, need to make a general "disposable" contract
+        togo._dispose = () => observer.disconnect();
+        return togo;
+    };
+
+    /**
+     * Create a computed `Signal` that tracks the first element matching a CSS selector within a DOM subtree.
+     * If no element matches, the signal yields an "unavailable" placeholder.
+     * @param {String} selector - The CSS selector to match a single element.
+     * @param {Element|null} [root=null] - The root element to observe; defaults to `document` if `null`.
+     * @return {Signal<Element|Object>} A signal containing the first matching element or an "unavailable" placeholder.
+     */
+    fluid.liveQueryOne = function (selector, root = null) {
+        const noElement = fluid.unavailable({cause: "No element matches selector " + selector, variety: "I/O"});
+        const query = fluid.liveQuery(selector, root);
+        const togo = computed( () => query.value.length === 0 ? noElement : query.value[0]);
+        togo._dispose = query._dispose();
+        return togo;
+    };
+
+    /**
+     * Inserts a new element into the DOM based on the provided template, ensuring no duplicate
+     * element with the same `data-fl-key` exists within the parent node. If a duplicate is found,
+     * the existing element is returned instead of inserting a new one. It's assumed that reconciliation of the
+     * remainder of the template will be done later via fluid.patchChildren or similar.
+     *
+     * The function supports four strategies for insertion:
+     * - `first`: Inserts the new element as the first child of the parent node.
+     * - `last`: Appends the new element as the last child of the parent node.
+     * - `before`: Inserts the new element before the reference node.
+     * - `after`: Inserts the new element after the reference node.
+     *
+     * @param {String} strategy - The insertion strategy, either "first", "last", "before", or "after".
+     * @param {String} key - A unique key to identify the element. If a child with the same key exists, it will be reused.
+     * @param {String} template - A template string of HTML from which the root tag will be extracted.
+     * @param {Element} parentNode - The parent DOM node in which to insert the new node.
+     * @param {Element} [referenceNode] - The node relative to which the new node will be inserted (used with "before" and "after").
+     * @return {Element} The newly created or existing DOM element.
+     */
+    fluid.insertChildContainer = function (strategy, key, template, parentNode, referenceNode) {
+        const tagMatch = template.match(/^\s*<(\S+)/);
+        const tagName = tagMatch ? tagMatch[1] : null;
+
+        if (!tagName) {
+            return fluid.unavailable({cause: "Invalid template: Unable to determine tag name from " + template});
+        }
+
+        if (key) {
+            const child = [...parentNode.children].find(child => child.getAttribute("data-fl-transient-key") === key);
+            if (child) {
+                return child;
+            }
+        }
+
+        const newNode = document.createElement(tagName);
+        if (strategy === "first") {
+            parentNode.insertBefore(newNode, parentNode.firstChild);
+        } else if (strategy === "last") {
+            parentNode.appendChild(newNode);
+        } else if (strategy === "before") {
+            parentNode.insertBefore(newNode, referenceNode);
+        } else if (strategy === "after") {
+            parentNode.insertBefore(newNode, referenceNode.nextSibling);
+        }
+        newNode.setAttribute("data-fl-transient-key", key);
+        return newNode;
     };
 
     /**
@@ -56,17 +229,20 @@ const fluidViewScope = function (fluid) {
      */
     fluid.domToVDom = function (node) {
         if (node.nodeType === Node.TEXT_NODE) {
-            return {text: node.nodeValue.trim()};
+            const text = node.nodeValue.trim();
+            return text === "" ? null : {text};
         }
         if (node.nodeType === Node.ELEMENT_NODE) {
             const togo = fluid.elementToVNode(node);
 
             const children = [];
             for (let i = 0; i < node.childNodes.length; ++i) {
-                children.push(fluid.domToVDom(node.childNodes[i]));
+                const child = fluid.domToVDom(node.childNodes[i]);
+                if (child !== null) {
+                    children.push(child);
+                }
             }
             togo.children = children;
-
             return togo;
         }
         return null; // Ignore other node types (comments, etc.)
@@ -125,7 +301,7 @@ const fluidViewScope = function (fluid) {
     fluid.applyOn = (segs, shadow, el, onKey, onValue) => {
         let {event, modifiers} = fluid.parseModifiers(onKey);
 
-        const parsed = fluid.compactStringToRec(onValue);
+        const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
         const method = fluid.expandMethodRecord(parsed, shadow, null, segs);
 
         // map modifiers
@@ -189,6 +365,7 @@ const fluidViewScope = function (fluid) {
                     applyFunc(element, text);
                 }, [vnode.elementSignal, rendered]);
                 togo.$variety = "bindDomTokens";
+                togo.$vnode = vnode;
                 return togo;
             });
             templateEffects.push(templateEffect);
@@ -369,12 +546,15 @@ const fluidViewScope = function (fluid) {
      * @return {Node} - A newly created DOM node corresponding to the VNode.
      */
     fluid.nodeFromVNode = function (vnode) {
-        if (vnode.text) {
+        if (typeof(vnode) === "string") {
+            return document.createTextNode(vnode);
+        } else if (vnode.text) {
             return document.createTextNode(vnode.text);
         } else {
             return document.createElement(vnode.tag);
         }
     };
+
 
     /**
      * Checks whether a DOM node matches a given virtual node (VNode).
@@ -384,7 +564,7 @@ const fluidViewScope = function (fluid) {
      * @return {Boolean} - `true` if the node matches the vnode, otherwise `false`.
      */
     fluid.matchNodeToVNode = function (node, vnode) {
-        if (vnode.text) {
+        if (typeof(vnode) === "string" || vnode.text) {
             return node.nodeType === Node.TEXT_NODE;
         } else {
             return node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() === vnode.tag;
@@ -400,7 +580,7 @@ const fluidViewScope = function (fluid) {
     fluid.patchAttrs = function (vnode, element) {
         for (let i = element.attributes.length - 1; i >= 0; i--) {
             const attrName = element.attributes[i].name;
-            if (!(attrName in vnode.attrs)) {
+            if (!(attrName in vnode.attrs) && !attrName.startsWith("data-fl-transient")) {
                 element.removeAttribute(attrName);
             }
         }
@@ -412,7 +592,7 @@ const fluidViewScope = function (fluid) {
     };
 
     fluid.vnodeToSegs = function (vnode) {
-        // TODO: Extract path to root
+        // TODO: Extract path to root of template
         return ["$template", vnode.tag];
     };
 
@@ -425,14 +605,19 @@ const fluidViewScope = function (fluid) {
      *
      * @param {VNode} vnode - The virtual node representing the desired DOM structure.
      * @param {Node} element - The actual DOM element to be patched.
+     * @param {Boolean} [maybeFreshRoot] - The DOM node may be a fresh container that could need events bound
      */
-    fluid.patchChildren = function (vnode, element) {
+    fluid.patchChildren = function (vnode, element, maybeFreshRoot) {
         fluid.bindDom(vnode, element);
         if (vnode.text !== undefined) {
             element.textContent = vnode.text;
         }
         if (vnode.attrs !== undefined) {
             fluid.patchAttrs(vnode, element);
+        }
+        if (maybeFreshRoot && !element.dataset.fluidEventsBound) {
+            fluid.applyOns(fluid.vnodeToSegs(vnode), vnode.shadow, element, vnode.on);
+            element.dataset.fluidEventsBound = true;
         }
         // It may be undefined because this is a joint to a subcomponent as applied in fluid.processAttributeDirective
         if (vnode.children !== undefined) {
@@ -459,6 +644,19 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Converts a virtual DOM node (VNode) into a real DOM node and applies its children.
+     * This function creates the root DOM node from the given VNode and then recursively
+     * patches its children to ensure the DOM structure matches the virtual DOM tree.
+     * @param {VNode} vnode - The virtual DOM node to convert into a real DOM node.
+     * @return {Node} The root DOM node corresponding to the VNode.
+     */
+    fluid.vNodeToDom = function (vnode) {
+        const root = fluid.nodeFromVNode(vnode);
+        fluid.patchChildren(vnode, root);
+        return root;
+    };
+
+    /**
      * Renders a virtual DOM tree (VNode) into a container element.
      *
      * This function updates the container's contents to match the provided virtual tree.
@@ -475,15 +673,81 @@ const fluidViewScope = function (fluid) {
             useTree = fluid.elementToVNode(container);
             useTree.children = [vTree];
         }
-        fluid.patchChildren(useTree, container);
+        fluid.patchChildren(useTree, container, elideParent);
     };
+
+    // Shared structure to store watchers of per-layer CSS (effects)
+    const layerCssWatchers = {};
+
+    fluid.cssInjectionStyles = {
+        literal: {
+            construct: () => ({
+                tag: "style",
+                attrs: {type: "text/css"},
+                children: [""]
+            }),
+            update: (node, rec) => {
+                node.firstChild.nodeValue = rec;
+            }
+        },
+        link: {
+            construct: () => ({
+                tag: "link",
+                attrs: {
+                    rel: "stylesheet",
+                    type: "text/css"
+                }
+            }),
+            update: (node, rec) => {
+                // It must be a fluid.importUrlResource
+                node.setAttribute("href", rec.url);
+            }
+        }
+    };
+
+    fluid.injectCss = function (css, layerCssId) {
+        const injStyle = typeof(css) === "string" ? "literal" : "link";
+        const injRec = fluid.cssInjectionStyles[injStyle];
+        let existing = document.getElementById(layerCssId);
+        if (!existing) {
+            existing = fluid.vNodeToDom(injRec.construct());
+            existing.id = layerCssId;
+            document.head.appendChild(existing);
+        }
+        injRec.update(existing, css);
+    };
+
+    fluid.renderCSS = function (self, css, cssPath) {
+        const shadow = self[$t].shadow;
+        const segs = fluid.pathToSegs(cssPath);
+        // Look into our layer map to find the provenance of the css value
+        const layerName = fluid.get(shadow.layerMap, [...segs, $m, "source"]);
+        if (!layerCssWatchers[layerName]) {
+            const layerCssId = "fl-css-" + layerName;
+            const layerSig = fluid.readLayer(layerName);
+            if (layerSig) {
+                // Create just one watcher per layer, using our own css signal as an exemplar
+                const cssSignal = fluid.get(shadow.that, segs);
+                const watcher = fluid.effect((css) => {
+                    fluid.injectCss(css, layerCssId);
+                }, [cssSignal]);
+                layerCssWatchers[layerName] = watcher;
+                // In theory we would clear these up if the layer is destroyed and/or the last component referencing it is destroyed
+            } else { // It is not from a layer, simply watch this individual component's CSS
+                fluid.injectCss(css, layerCssId);
+            }
+        }
+    };
+
 
     fluid.def("fluid.viewComponent", {
         $layers: "fluid.component",
         elideParent: false,
         container: "$compute:fluid.unavailable(Container not specified)",
-        // Some syntax for determining there should be a vTree? An unavailable value that nonetheless has a shape?
-        render: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree, {self}.elideParent)"
+        css: "$compute:fluid.unavailable(No CSS is configured)",
+        vTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
+        renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree, {self}.elideParent)",
+        renderCSS: "$effect:fluid.renderCSS({self}, {self}.css, css)"
     });
 
     fluid.coOccurrenceRegistry.push({

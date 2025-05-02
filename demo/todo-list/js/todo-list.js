@@ -37,7 +37,7 @@ fluid.demos.todoKeyUp = function (e, todos) {
 fluid.def("fluid.demos.todoList", {
     $layers: "fluid.templateViewComponent",
     todos: {
-        $deepReactive: todos
+        $reactiveRoot: todos
     },
     template:
         `<div id="main">

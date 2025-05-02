@@ -418,7 +418,7 @@
         try {
             prepareSources(this);
             evalContext = this;
-            var value = this._fn();
+            var value = this._fn(this._value); // AMB PATCH: Supply old value to computed
             if (this._flags & HAS_ERROR ||
                 this._value !== value ||
                 this._version === 0) {

@@ -28,6 +28,9 @@
         ],
         "scss": [
             "./src/framework/**/*.scss"
+        ],
+        "vue": [
+            "./src/**/*.vue"
         ]
     },
     "eslint": {
@@ -78,7 +81,8 @@
             "./build/**/*.css",
             "./dist/**/*.css",
             "./src/lib/**/*.css",
-            "./tests/**/lib/**/*.css"
+            "./tests/**/lib/**/*.css",
+            "./tests/manual-tests/**/*.css"
         ]
     }
 }

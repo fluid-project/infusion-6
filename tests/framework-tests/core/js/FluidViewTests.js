@@ -258,7 +258,7 @@ fluid.tests.todoKeyUp = function (e, todos) {
 fluid.def("fluid.tests.todoList", {
     $layers: "fluid.templateViewComponent",
     todos: {
-        $deepReactive: fluid.tests.todos
+        $reactiveRoot: fluid.tests.todos
     },
     template:
     `<div id="main">
@@ -429,4 +429,22 @@ QUnit.test("Event triggering and user reactivity test - insert array element", f
     }]);
 
     fluid.tests.checkTodoRendering(assert, that, container, updated);
+});
+
+fluid.def("fluid.tests.fullPageEditor", {
+    $layers: "fluid.viewComponent",
+    editButton: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
+            container: "$compute:fluid.insertBefore({self}.template, {fullPageEditor}.container)"
+        }
+    }
+});
+
+QUnit.test("Reference up through rendering effect", function (assert) {
+    const container = qs(".container");
+    fluid.tests.fullPageEditor({container});
+    const button = qs("button", container);
+    assert.ok(button, "Button has been rendered through effect");
 });

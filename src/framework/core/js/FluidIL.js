@@ -504,7 +504,7 @@ const fluidILScope = function (fluid) {
         } else if (type === "$method" || type === "$compute") {
             return {funcName: string};
         } else { // TODO: pass in cursor and produce unavailable value there
-            fluid.fail("Unrecognised compact record with type ", type);
+            fluid.fail("Unrecognised compact record " + string + " with no arguments with type ", type);
         }
         return string;
     };
@@ -566,6 +566,8 @@ const fluidILScope = function (fluid) {
                 return shadow.that;
             } else if (context === "/") {
                 return shadow.instantiator.rootComponent;
+            } else if (context === "$oldValue") {
+                return fluid.OldValue;
             } else {
                 const local = resolver ? resolver(context) : fluid.NoValue;
                 if (local === fluid.NoValue) {
@@ -643,7 +645,6 @@ const fluidILScope = function (fluid) {
     fluid.fetchContextReference = function (ref, shadow, resolver) {
         const parsed = fluid.isPrimitive(ref) ? fluid.parseContextReference(ref) : ref;
         const refComputer = computed( function fetchContextReference() {
-            console.log("Rerunning $contextRef for ", ref);
             // TODO: Need to cache these per site
             const target = fluid.resolveContext(parsed.context, shadow, resolver).value;
             return fluid.isUnavailable(target) ? fluid.mergeUnavailable(fluid.unavailable({
@@ -665,7 +666,9 @@ const fluidILScope = function (fluid) {
      * @return {String|Signal<string>} A computed signal representing the resolved string.
      */
     fluid.renderStringTemplate = function (tokens, shadow) {
-        if (tokens.length === 1 && typeof(tokens[0]) === "string") {
+        if (tokens.length === 0) {
+            return "";
+        } else if (tokens.length === 1 && typeof(tokens[0]) === "string") {
             return tokens[0];
         } else {
             const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.fetchContextReference(token.parsed, shadow));
@@ -873,6 +876,8 @@ const fluidILScope = function (fluid) {
      * @param {FuncRecord} record - The method record to expand. It contains a `func` (the function to call) and optional `args`
      * that define the arguments to be resolved for the method.
      * @param {Shadow} shadow - The shadow context in which the method is being expanded, providing access to the component and its state.
+     * @param {String} key - The member name at which the subcomponent will be instantiated.
+     * @param {String[]} segs - The path where this method record appears in its component
      * @return {Function} A function that can be invoked with arguments, dispatching the resolved method with the provided arguments.
      */
     fluid.expandMethodRecord = function (record, shadow, key, segs) {
@@ -950,7 +955,7 @@ const fluidILScope = function (fluid) {
         const togo = typeof(record) === "string" ?
             fluid.fetchContextReference(record, shadow) : signal(record);
         // This is otherwise a no-op since marking the shadowMap is done in fluid.transferShadowMap
-        togo.$variety = "$deepReactive";
+        togo.$variety = "$reactiveRoot";
         return togo;
     };
 
@@ -1062,7 +1067,7 @@ const fluidILScope = function (fluid) {
         handler: fluid.expandEffectRecord,
         isEffect: true
     }, {
-        key: "$deepReactive",
+        key: "$reactiveRoot",
         handler: fluid.expandReactiveRecord
     }, {
         key: "$component",
@@ -1346,6 +1351,21 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    fluid.effectGuardDepth = 0;
+    fluid.scheduleEffectsQueue = [];
+
+    fluid.queueScheduleEffects = function (shadow) {
+        fluid.scheduleEffectsQueue.push(shadow);
+        if (fluid.effectGuardDepth === 0) {
+            const active = fluid.scheduleEffectsQueue.reverse();
+            fluid.scheduleEffectsQueue = [];
+            active.forEach(shadow => {
+                shadow.effectScheduler = effect( () => fluid.scheduleEffects(shadow, shadow.computer.value));
+                shadow.effectScheduler.$variety = "effectScheduler";
+            });
+        }
+    };
+
     /**
      * Computes an instance for a given potentia and returns the associated component computer signal.
      * @param {Potentia} potentia - The potentia (potential component configuration).
@@ -1391,12 +1411,17 @@ const fluidILScope = function (fluid) {
         shadow.computer = computer;
         computer.shadow = shadow;
 
-        // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
-        instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
-        fluid.applyScope(shadow.variableScope, variableScope);
+        try {
+            ++fluid.effectGuardDepth;
 
-        shadow.effectScheduler = effect( () => fluid.scheduleEffects(shadow, computer.value));
-        shadow.effectScheduler.$variety = "effectScheduler";
+            // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
+            instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
+            fluid.applyScope(shadow.variableScope, variableScope);
+        } finally {
+            --fluid.effectGuardDepth;
+        }
+
+        fluid.queueScheduleEffects(shadow);
 
         return computer;
     };
@@ -1585,7 +1610,37 @@ const fluidILScope = function (fluid) {
 
     fluid.constructRootComponents(fluid.globalInstantiator); // currently a singleton - in future, alternative instantiators might come back
 
-    // Utilities for working with requests, components and signals
+    /**
+     * Fetches data from a given URL and processes the response using a provided strategy function.
+     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
+     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
+     *
+     * @param {String} url - The URL to fetch data from.
+     * @param {RequestInit} [options] - Optional fetch configuration options.
+     * @param {Function} strategy - An async function to process the response.
+     * @return {signal<any>} A signal containing the processed data or an "unavailable" state.
+     */
+    fluid.fetch = function (url, options, strategy) {
+        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
+        fetch(url, options)
+            .then(response => strategy(response))
+            .then(data => togo.value = data)
+            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
+        return togo;
+    };
+
+    /**
+     * Fetches text data from a given URL and stores the result in a signal.
+     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
+     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
+     *
+     * @param {String} url - The URL to fetch text data from.
+     * @param {RequestInit} [options] - Optional fetch configuration options.
+     * @return {signal<String>} A signal containing the fetched text data or an "unavailable" state.
+     */
+    fluid.fetchText = function (url, options) {
+        return fluid.fetch(url, options, async response => response.text());
+    };
 
     /**
      * Fetches JSON data from a given URL and stores the result in a signal.
@@ -1594,15 +1649,10 @@ const fluidILScope = function (fluid) {
      *
      * @param {String} url - The URL to fetch JSON data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<any>} A signal containing the fetched JSON data or an "unavailable" state.
+     * @return {signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
      */
     fluid.fetchJSON = function (url, options) {
-        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`}));
-        fetch(url, options)
-            .then(response => response.json())
-            .then(json => togo.value = json)
-            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`}));
-        return togo;
+        return fluid.fetch(url, options, async response => response.json());
     };
 
     /**
@@ -1623,6 +1673,7 @@ const fluidILScope = function (fluid) {
         });
     };
 
+    fluid.importMap = {};
 };
 
 if (typeof(fluid) !== "undefined") {

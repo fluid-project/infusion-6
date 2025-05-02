@@ -57,6 +57,7 @@
         "eslint-config-fluid": "2.1.1",
         "fluid-lint-all": "1.2.10",
         "eslint-plugin-jsdoc": "39.6.2",
+        "eslint-plugin-vue": "10.1.0",
         "minimist": "1.2.6",
         "npm-run-all2": "6.2.0",
         "rimraf": "3.0.2",
