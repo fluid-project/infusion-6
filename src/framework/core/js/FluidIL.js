@@ -166,12 +166,12 @@ const fluidILScope = function (fluid) {
     };
 
     fluid.cacheLayerScopes = function (parentShadow, shadow) {
-        shadow.ownScope = Object.create(parentShadow ? parentShadow.childrenScope : null);
+        shadow.childrenScope = Object.create(parentShadow ? parentShadow.variableScope : null);
+        shadow.childrenScope[$m] = "childrenScope-" + shadow.path;
+        shadow.ownScope = Object.create(shadow.childrenScope);
         shadow.ownScope[$m] = "ownScope-" + shadow.path;
         shadow.variableScope = Object.create(shadow.ownScope);
         shadow.variableScope[$m] = "variableScope-" + shadow.path;
-        shadow.childrenScope = Object.create(shadow.variableScope);
-        shadow.childrenScope[$m] = "childrenScope-" + shadow.path;
 
         return effect(function scopeEffect() {
             const layers = shadow.computer?.value?.$layers || [];
@@ -510,37 +510,6 @@ const fluidILScope = function (fluid) {
     };
 
     /**
-     * @typedef {Object} ParsedContext
-     * @property {String} context - The context portion of the reference
-     * @property {String} path - The path portion of the reference
-     * @property {String} [name] - An optional colon-delimited name parsed from the reference
-     */
-
-    /**
-     * Parse the string form of a contextualised IL reference into an object.
-     *
-     * @param {String} reference - The reference to be parsed.
-     * @param {Number} [index] - Optional, index within the string to start parsing
-     * @return {ParsedContext} A structure holding the parsed structure
-     */
-    fluid.parseContextReference = function (reference, index) {
-        index = index || 0;
-        const endcpos = reference.indexOf("}", index + 1);
-        const context = reference.substring(index + 1, endcpos);
-        const colpos = reference.indexOf(":");
-        let name;
-        if (colpos !== -1) {
-            name = reference.substring(colpos + 1);
-            reference = reference.substring(0, colpos);
-        }
-        let path = reference.substring(endcpos + 1, reference.length);
-        if (path.charAt(0) === ".") {
-            path = path.substring(1);
-        }
-        return {context, path, name};
-    };
-
-    /**
      * Resolves a given context string to its corresponding component or scope within the component tree.
      *
      * @param {String} context - The context name to resolve. Special values:
@@ -660,12 +629,12 @@ const fluidILScope = function (fluid) {
      * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
      * string concatenated.
      *
-     * @param {Array<string|{key: string}>} tokens - An array of tokens, where each token is either a string
+     * @param {Array<string|ParsedContext>} tokens - An array of tokens, where each token is either a string
      *        or an object with a `key` property indicating a path in the source.
      * @param {Shadow} shadow - The shadow record of the component where the reference is held
      * @return {String|Signal<string>} A computed signal representing the resolved string.
      */
-    fluid.renderStringTemplate = function (tokens, shadow) {
+    fluid.renderComputedStringTemplate = function (tokens, shadow) {
         if (tokens.length === 0) {
             return "";
         } else if (tokens.length === 1 && typeof(tokens[0]) === "string") {
@@ -832,7 +801,6 @@ const fluidILScope = function (fluid) {
         }
     };
 
-    // eslint-disable-next-line jsdoc/require-returns-check
     /**
      * Resolve material intended for compute and method arguments - this only expands {} references, possibly into
      * a local context
@@ -848,6 +816,8 @@ const fluidILScope = function (fluid) {
             return material.map(member => fluid.resolveArgMaterial(member, shadow, resolver));
         } else if (fluid.isPlainObject(material, true)) {
             return fluid.transform(material, member => fluid.resolveArgMaterial(member, shadow, resolver));
+        } else {
+            return material;
         }
     };
 
@@ -935,6 +905,7 @@ const fluidILScope = function (fluid) {
      * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
      */
     fluid.expandEffectRecord = function (record, shadow) {
+        console.log("ExpandEffectRecord for " + record.funcName + " at " + shadow.memberName);
         const func = fluid.resolveFuncRecord(record, shadow);
         const args = fluid.makeArray(record.args);
         const resolvedArgs = fluid.resolveArgMaterial(args, shadow);
@@ -1015,7 +986,7 @@ const fluidILScope = function (fluid) {
                 if (fluid.isArrayable(source)) {
                     togo = source.map(pushSubcomponentPotentia);
                 } else {
-                    togo = fluid.transform(source, pushSubcomponentPotentia);
+                    togo = Object.entries(source).map(([key, value]) => pushSubcomponentPotentia(value, key));
                 }
 
                 // Destroy components which no longer have matching entries
@@ -1270,7 +1241,8 @@ const fluidILScope = function (fluid) {
         fluid.forEachDeep(shadow.shadowMap, (newRecord, segs) => {
             if (newRecord?.handlerRecord?.isEffect) {
                 const oldRecord = fluid.get(shadow.oldShadowMap, segs)?.[$m];
-                if (!oldRecord || newRecord.signalRecord !== oldRecord.signalRecord) {
+                // Last branch: Deal with funny race where we managed to update instance before we ever allocate effects - look in to how this happens
+                if (!oldRecord || newRecord.signalRecord !== oldRecord.signalRecord || !oldRecord.signalProduct) {
                     expandEffect(newRecord, segs);
                 }
             }
@@ -1432,6 +1404,15 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    fluid.getPenThroughSignals = function (target, segs) {
+        let it = fluid.deSignal(target);
+        for (let i = 0; i < segs.length - 1; ++i) {
+            const move = it[segs[i]];
+            it = fluid.deSignal(move);
+        }
+        return it;
+    };
+
     fluid.mutatingArrayMethods = Object.fromEntries(["copyWithin", "fill", "pop", "push",
         "reverse", "shift", "sort", "splice", "unshift"].map(key => [key, true]));
 
@@ -1500,6 +1481,18 @@ const fluidILScope = function (fluid) {
             const setHandler = function (target, prop, value) {
                 fluid.expectLiveAccess(shadow, prop);
                 const nextSegs = [...segs, prop];
+                if (fluid.isSignal(target) && target.$variety === "$contextRef") {
+                    const resolvedRec = shadow.variableScope[target.parsed.context];
+                    let innerContext = target.parsed.context,
+                        innerPath = target.parsed.path;
+                    if (resolvedRec.source) {
+                        const innerRef = resolvedRec.source;
+                        innerContext = innerRef.parsed.context;
+                        innerPath = fluid.composePath(innerRef.parsed.path, resolvedRec.sourcePath);
+                    }
+                    const resolved = fluid.resolveContext(shadow, innerContext);
+                    const innerNext = fluid.getPenThroughSignals(resolved, innerPath);
+                }
                 fluid.setForComponent(shadow.that, nextSegs, value);
                 return true;
             };

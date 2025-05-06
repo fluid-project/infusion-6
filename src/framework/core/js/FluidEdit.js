@@ -8,7 +8,7 @@ fluid.importMap["fluid.fullPageEditor"] = {
     urlBase: fluid.devUrlBase
 };
 
-fluid.importMap["fluid.fluidEditor"] = {
+fluid.importMap["fluid.editor"] = {
     loadStyle: "sfc",
     urlBase: fluid.devUrlBase,
     relPath: "sfc/FluidEditor.vue"
@@ -23,7 +23,7 @@ const fluidEditScope = function (fluid) {
             $component: {
                 $layers: "fluid.templateViewComponent",
                 elideParent: true,
-                template: `<button @onclick="{fullPageEditor}.toggleEditorVisible()" style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
+                template: `<button @onclick="{fullPageEditor}.editorVisible = true" style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
                 container: "$compute:fluid.insertChildContainer(last, editButton, {self}.template, {fullPageEditor}.container)"
             }
         },
@@ -37,8 +37,9 @@ const fluidEditScope = function (fluid) {
         },
         editor: {
             $component: {
-                $layers: "fluid.fluidEditor",
+                $layers: "fluid.editor",
                 container: "$compute:fluid.insertChildContainer(last, editor, {self}.template, {fullPageEditor}.html)",
+                elideParent: true,
                 editorVisible: "{fullPageEditor}.editorVisible"
             }
         },
@@ -73,4 +74,7 @@ if (typeof(fluid) !== "undefined") {
 // TODO: This will be declaratively encoded in the document
 fluid.injectEditor(document);
 
-fluid.loadSFC("fluid.fluidEditor", ("../../../src/framework/core/sfc/FluidEditor.vue"));
+fluid.loadSFC("fluid.editor", ("../../../src/framework/core/sfc/FluidEditor.vue"));
+fluid.loadSFC("fluid.editor.layerList", ("../../../src/framework/core/sfc/FluidEditorLayerList.vue"));
+fluid.loadSFC("fluid.editor.menu", ("../../../src/framework/core/sfc/FluidEditorMenu.vue"));
+fluid.loadSFC("fluid.editor.editorsPane", ("../../../src/framework/core/sfc/FluidEditorsPane.vue"));

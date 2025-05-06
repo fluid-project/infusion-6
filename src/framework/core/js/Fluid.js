@@ -411,7 +411,7 @@ const fluidJSScope = function (fluid) {
         if (fluid.isUncopyable(tocopy)) {
             return tocopy;
         } else if (Array.isArray(tocopy)) {
-            return tocopy.map( (value, key) => copyMember(value, key));
+            return tocopy.map((value, key) => copyMember(value, key));
         } else {
             return fluid.transform(tocopy, copyMember);
         }
@@ -826,8 +826,8 @@ const fluidJSScope = function (fluid) {
             if (arg === fluid.OldValue) {
                 designalArgs.push(oldValue);
             } else if (arg instanceof preactSignalsCore.Signal) {
-                const deref = arg.value;
-                const value = flattenArg ? flattenArg(deref, i) : deref;
+                // const deref = arg.value;
+                const value = flattenArg ? flattenArg(arg, i) : arg.value;
                 if (fluid.isUnavailable(value)) {
                     unavailable = fluid.mergeUnavailable(unavailable, value);
                 }
@@ -849,7 +849,10 @@ const fluidJSScope = function (fluid) {
      */
     fluid.computed = function (funcSignal, argSignals, options) {
         return computed(function fluidComputed(oldValue) {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
+            const {
+                designalArgs,
+                unavailable
+            } = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
             const func = fluid.deSignal(funcSignal);
             return unavailable ? unavailable : fluid.isUnavailable(func) ? func : func.apply(null, designalArgs);
         });
@@ -905,14 +908,15 @@ const fluidJSScope = function (fluid) {
         });
     };
 
-    fluid.sampleComputed = computed(() => {});
+    fluid.sampleComputed = computed(() => {
+    });
     const computedPrototype = Object.getPrototypeOf(fluid.sampleComputed);
     const computedPrototypeDescriptor = Object.getOwnPropertyDescriptor(computedPrototype, "value");
 
     fluid.delegateUnavailable = fluid.unavailable({message: "No written value for delegated signal"});
 
     fluid.DelegatedSignal = function (outerSignal, onWrite, onReset) {
-        const computer = computed( () => {
+        const computer = computed(() => {
             const targetValue = computer._target.value;
             return fluid.isUnavailable(targetValue) ? computer._outerSignal.value : targetValue;
         });
@@ -1096,7 +1100,10 @@ const fluidJSScope = function (fluid) {
                     move = fluid.unavailable({messageKey: "NoMember", memberName: seg, layer: root});
                     break;
                 }
-                move = fluid.deSignal(move[seg]);
+                move = move[seg];
+                if (j < segs.length - 1) {
+                    move = fluid.deSignal(move);
+                }
             }
             return move;
         });
@@ -1131,7 +1138,7 @@ const fluidJSScope = function (fluid) {
      * @return {Object|Array} A shallow copy.
      */
     fluid.shallowCopy = function (source) {
-        return Array.isArray(source) ? source.slice() : { ...source };
+        return Array.isArray(source) ? source.slice() : {...source};
     };
 
     /**
@@ -1214,7 +1221,10 @@ const fluidJSScope = function (fluid) {
      */
     fluid.getGlobalValue = path => {
         const value = fluid.get(fluid.global, path);
-        return value === undefined ? fluid.unavailable({message: "Global value " + path + " is not defined", path}) : value;
+        return value === undefined ? fluid.unavailable({
+            message: "Global value " + path + " is not defined",
+            path
+        }) : value;
     };
 
     // eslint-disable-next-line jsdoc/require-returns-check
@@ -1494,7 +1504,8 @@ const fluidJSScope = function (fluid) {
     };
 
     // A function to tag the type of a Fluid event firer (primarily to mark it uncopyable)
-    fluid.event.firer = function () {};
+    fluid.event.firer = function () {
+    };
 
     /** Construct an "event firer" object which can be used to register and deregister
      * listeners, to which "events" can be fired. These events consist of an arbitrary
@@ -1974,7 +1985,8 @@ const fluidJSScope = function (fluid) {
         } else {
             // TODO: These unavailable signals perhaps could be stored in a WeakMap so they could be GCed if no pending instances
             // are relying on them
-            return fluid.layerStore[layerName] = signal(fluid.unavailable({
+            // Is it worth updating store + history for this?
+            return fluid.layerStore.value[layerName] = signal(fluid.unavailable({
                 message: "Layer " + layerName + " is not defined",
                 path: ["layer", layerName]
             }));
@@ -2007,7 +2019,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.deleteLayer = function (layerName) {
         const currentStore = fluid.layerStore.value;
-        const newStore = { ...currentStore };
+        const newStore = {...currentStore};
         delete newStore[layerName];
         fluid.layerStore.value = newStore;
         fluid.layerHistory.push({type: "deleteLayer", store: newStore, deleteLayer: layerName});
@@ -2061,10 +2073,10 @@ const fluidJSScope = function (fluid) {
             let last, newTarget;
             let lastIndex = -1;
             for (let i = 0; i < clayers; ++i) {
-                const value = layers?.[i]?.[key];
-                if (value !== undefined) {
+                const layer = layers[i];
+                if (layer !== undefined && key in layer) {
                     ++count;
-                    last = value;
+                    last = layer[key];
                     lastIndex = i;
                 }
             }
@@ -2173,7 +2185,7 @@ const fluidJSScope = function (fluid) {
         const existing = new Set(layerNames);
 
         for (const record of fluid.coOccurrenceRegistry) {
-            const { inputNames, outputNames } = record;
+            const {inputNames, outputNames} = record;
             const allPresent = inputNames.every(name => existing.has(name));
             if (allPresent) {
                 for (const outputName of outputNames) {
@@ -2338,7 +2350,7 @@ const fluidJSScope = function (fluid) {
     fluid.readMergedDef = function (layerName) {
         // TODO: economise on these in the "giant mat"
         const resolver = new fluid.HierarchyResolver();
-        const resolved = computed( () => {
+        const resolved = computed(() => {
             resolver.storeLayer(layerName);
             return resolver.resolve([layerName]);
         });
@@ -2499,66 +2511,91 @@ const fluidJSScope = function (fluid) {
         return togo;
     };
 
-    // Message resolution and templating
-
-    /**
-     * Simple string template system.  Takes a template string containing tokens in the form of "%value" or
-     * "%deep.path.to.value".  Returns a new string with the tokens replaced by the specified values.  Keys and values
-     * can be of any data type that can be coerced into a string.
-     *
-     * @param {String} template - A string that contains placeholders for tokens of the form `%token` embedded into it.
-     * @param {Object.<String.String>} values - A map of token names to the values which should be interpolated.
-     * @return {String} The text of `template` whose tokens have been interpolated with values.
-     */
-    fluid.stringTemplate = function (template, values) {
-        let keys = Object.keys(values);
-        keys = keys.sort((keya, keyb) => keyb.length - keya.length);
-        for (let i = 0; i < keys.length; ++i) {
-            const key = keys[i];
-            const templatePlaceholder = "%" + key;
-            const replacementValue = values[key];
-
-            let indexOfPlaceHolder = -1;
-            while ((indexOfPlaceHolder = template.indexOf(templatePlaceholder)) !== -1) {
-                template = template.slice(0, indexOfPlaceHolder) + replacementValue + template.slice(indexOfPlaceHolder + templatePlaceholder.length);
-            }
-        }
-        return template;
-    };
+    // Reference parsing and templating
 
     const tagRE = /@\{((?:.)+?)\}/g;
 
     /**
-     * Takes a template string containing tokens in the form of "@{value}" or
-     * "@{deep.path.to.value}". Returns an array of token segments which are either plain strings or object {key} holding
-     * the parsed token paths.
+     * @typedef {Object} ParsedContext
+     * @property {String} context - The context portion of the reference
+     * @property {String} path - The path portion of the reference
+     * @property {String} [name] - An optional colon-delimited name parsed from the reference
+     */
+
+    /**
+     * Parse the string form of a contextualised IL reference into an object.
+     *
+     * @param {String} reference - The reference to be parsed.
+     * @param {Number} [index] - Optional, index within the string to start parsing
+     * @return {ParsedContext} A structure holding the parsed structure
+     */
+    fluid.parseContextReference = function (reference, index) {
+        index = index || 0;
+        const endcpos = reference.indexOf("}", index + 1);
+        const context = reference.substring(index + 1, endcpos);
+        const colpos = reference.indexOf(":");
+        let name;
+        if (colpos !== -1) {
+            name = reference.substring(colpos + 1);
+            reference = reference.substring(0, colpos);
+        }
+        let path = reference.substring(endcpos + 1, reference.length);
+        if (path.charAt(0) === ".") {
+            path = path.substring(1);
+        }
+        return {context, path, name};
+    };
+
+    /**
+     * Takes a template string containing tokens in the form of "@{value}", "@{deep.path.to.value}",
+     * or "@{{layerRec}.layerName}". Returns an array of token segments which are either plain strings
+     * or objects holding the parsed token paths. For tokens of the form "@{{layerRec}.layerName}",
+     * the full body is sent to `fluid.parseContextReference`.
      *
      * @param {String} template - A string that contains placeholders for tokens of the form `@{token}` embedded into it.
-     * @return {Array<String|Object>} An array of token values
+     * @return {Array<String|Object>} An array of token values.
      */
     fluid.parseStringTemplate = function (template) {
         const tokens = [];
-        let lastIndex = tagRE.lastIndex = 0;
-        let match, index;
+        let lastIndex = 0;
+        let match;
 
-        // TODO: support full references, etc.
+        // Helper to parse simple keys
         const parseKey = key => ({context: "self", path: key});
 
         while ((match = tagRE.exec(template))) {
-            index = match.index;
-            // push text token
+            const index = match.index;
+            // Push text token
             if (index > lastIndex) {
                 tokens.push(template.slice(lastIndex, index));
             }
-            // interpolated token
+            // Interpolated token
             const exp = match[1].trim();
-            tokens.push({ key: exp, parsed: parseKey(exp)});
-            lastIndex = index + match[0].length;
+            if (exp.startsWith("{")) {
+                // Handle tokens of the form "@{{context}.path}"
+                const endIndex = template.indexOf("}", tagRE.lastIndex);
+                if (endIndex === -1) {
+                    throw new Error("Unmatched '{' in template: " + template);
+                }
+                const fullBody = template.slice(index + 2, endIndex); // Include the full body
+                tokens.push({raw: fullBody, parsed: fluid.parseContextReference(fullBody)});
+                tagRE.lastIndex = endIndex + 1; // Move past the closing "}"
+            } else {
+                // Handle tokens of the form "@{value}" or "@{deep.path.to.value}"
+                tokens.push({raw: exp, parsed: parseKey(exp)});
+            }
+            lastIndex = tagRE.lastIndex;
         }
         if (lastIndex < template.length) {
             tokens.push(template.slice(lastIndex));
         }
         return tokens;
+    };
+
+    fluid.stringTemplate = function (template, model) {
+        const tokens = fluid.parseStringTemplate(template);
+        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(token.path, model));
+        return segs.join("");
     };
 
 };

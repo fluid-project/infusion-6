@@ -465,10 +465,10 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
         userDbUrl: {
             $compute: {
                 funcName: "fluid.stringTemplate",
-                args:     ["http://localhost:%port/%userDbName", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
+                args:     ["http://localhost:@{port}/@{userDbName}", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
             }
             /** Perhaps a DSL could write:
-             * $compute(fluid.stringTemplate(http://localhost:%port/%userDbName, {
+             * $compute(fluid.stringTemplate(http://localhost:@{port}/@{userDbName}, {
              *     port: $self.couch.port,
              *     userDbName: $self.couch.userDbName
              * })
@@ -486,7 +486,7 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
 fluid.def("fluid.tests.FLUID4930.verify.resend", {
     $layers: "fluid.component",
     urls: {
-        read: "$compute:fluid.stringTemplate(%userDbUrl/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
+        read: "$compute:fluid.stringTemplate(@{userDbUrl}/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
     }
 });
 
@@ -539,10 +539,12 @@ fluid.def("fluid.tests.FLUID7000scope", {
             sibling: {
                 $component: {
                     $layers: "fluid.component",
+                    value: "sibling",
                     joinedResolution: "{joined}.value" // "child"
                 }
             },
-            joinedResolution: "{joined}.value" // "root"
+            joinedResolution: "{joined}.value", // "root"
+            siblingResolution: "{sibling}.value" // "sibling"
         }
     }
 });
@@ -550,8 +552,11 @@ fluid.def("fluid.tests.FLUID7000scope", {
 QUnit.test("FLUID-7000 scoping test", function (assert) {
     const that = fluid.tests.FLUID7000scope();
     assert.equal(that.joined.joinedResolution, "root", "Same-named scope resolved to root in its own material");
-    assert.equal(that.joined.sibling.joinedResolution, "child", "Same-named scope resolved by sibling component to child");
+    // Can't actually support this for FLUID-7000 without stopping scope chain from being a chain - would need to
+    // traverse manually which likely degrade performance a lot. See diagram from 6/5/25
+    // assert.equal(that.joined.sibling.joinedResolution, "child", "Same-named scope resolved by sibling component to child");
     assert.equal(that.joined.joined.joinedResolution, "child", "Same-named scope resolved to child in double nesting");
+    assert.equal(that.joined.siblingResolution, "sibling", "Resolved to sibling in own parent");
 });
 
 // Async computation test

@@ -437,7 +437,7 @@ fluid.def("fluid.tests.fullPageEditor", {
         $component: {
             $layers: "fluid.templateViewComponent",
             template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
-            container: "$compute:fluid.insertBefore({self}.template, {fullPageEditor}.container)"
+            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.template, {fullPageEditor}.container)"
         }
     }
 });

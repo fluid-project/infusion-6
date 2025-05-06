@@ -48,28 +48,45 @@ const fluidViewScope = function (fluid) {
      * The function fetches the text content of the SFC, processes it into a DOM element, and returns a signal
      * containing the parsed DOM element.
      *
-     * @param {String} layerName - The name of the layer associated with the SFC (currently unused in this function).
+     * @param {String} layerName - The name of the layer associated with the SFC
      * @param {String} url - The URL from which to fetch the SFC content.
      * @return {Signal<any>} A signal containing the parsed DOM element wrapped in an `<sfc>` tag.
      */
     fluid.parseSFC = function (layerName, url) {
         const textSignal = fluid.fetchText(url);
+        const applyValue = (target, key, value) => {
+            if (value) {
+                const trimmed = value.trim();
+                if (trimmed) {
+                    target[key] = trimmed;
+                }
+            }
+        };
         return fluid.mapSignal(textSignal, text => {
             const sfc = fluid.parseDOM("<sfc>" + text + "</sfc>");
             // For some reason we don't get this parsed into nodes but actually we don't want them anyway, they will parse fine the next time round
             const template = sfc.querySelector("template")?.innerHTML;
-            const script = sfc.querySelector("script")?.innerText;
+            const scriptNode = sfc.querySelector("script");
+            if (!scriptNode) {
+                return {layerName, def: fluid.unavailable("No script node found in SFC for layer " + layerName)};
+            }
+            // Only the first script is matched up with template/css from the SFC. The rest are just collateral scripts put there for bundling.
+            // Think of some more principled way to package tiny definitions, perhaps as a $def member of a real component?
+            const script = scriptNode.innerText;
             const css = sfc.querySelector("style")?.innerText;
 
             const match = script.match(parseDefRegex);
-            const layerName = match[1];
+            const foundLayerName = match[1];
             const defBody = match[2];
+            if (foundLayerName !== layerName) {
+                return {layerName, def: fluid.unavailable(`Error in SFC: Expected definition for layer ${layerName} but found ${foundLayerName} instead`)};
+            }
             // Use the "indirect eval" strategy that is widely recommended to avoid inappropriate access to local scope - as if we care
             // eslint-disable-next-line no-eval
             eval?.("fluid.$fluidParsedDef = " + defBody);
             const def = fluid.$fluidParsedDef;
-            def.template = template;
-            def.css = css;
+            applyValue(def, "template", template);
+            applyValue(def, "css", css);
             return {layerName, def};
         });
     };
@@ -301,8 +318,23 @@ const fluidViewScope = function (fluid) {
     fluid.applyOn = (segs, shadow, el, onKey, onValue) => {
         let {event, modifiers} = fluid.parseModifiers(onKey);
 
-        const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
-        const method = fluid.expandMethodRecord(parsed, shadow, null, segs);
+        let handler;
+
+        // TODO: Should implement some recognisable kind of parser here to ensure that = is at some kind of syntactic top level
+        if (onValue.includes("=")) {
+            const parts = onValue.split("=").map(part => part.trim());
+            if (parts.length !== 2) {
+                fluid.fail("Unrecognised event assignment binding without lefthand and righthand " + onValue);
+            }
+            const [lh, rh] = parts;
+            const parsedLH = fluid.parseContextReference(lh);
+            const target = fluid.resolveContext(parsedLH.context, shadow);
+            const rvalue = fluid.coerceToPrimitive(rh);
+            handler = () => fluid.setForComponent(target.value, parsedLH.path, rvalue);
+        } else {
+            const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
+            handler = fluid.expandMethodRecord(parsed, shadow, null, segs);
+        }
 
         // map modifiers
         if (event === "click") {
@@ -314,7 +346,7 @@ const fluidViewScope = function (fluid) {
             }
         }
 
-        const handler = e => {
+        const rawHandler = e => {
             if (modifiers) {
                 if ("key" in e && !(fluid.hyphenate(e.key) in modifiers)) {
                     return;
@@ -326,15 +358,14 @@ const fluidViewScope = function (fluid) {
                     }
                 }
             }
-            return method(e);
+            return handler(e);
         };
 
-        el.addEventListener(event, handler, modifiers);
+        el.addEventListener(event, rawHandler, modifiers);
     };
 
 
     fluid.unavailableElement = fluid.unavailable("DOM element not available");
-
 
     fluid.allocateVNodeEffect = function (vnode, effectMaker) {
         vnode.elementSignal ||= signal(fluid.unavailableElement);
@@ -427,7 +458,7 @@ const fluidViewScope = function (fluid) {
                 const negate = ref.startsWith("!");
                 const effRef = negate ? ref.substring(1) : ref;
                 const tokens = fluid.parseStringTemplate(effRef);
-                const rendered = fluid.renderStringTemplate(tokens, shadow);
+                const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
                 const negMap = fluid.liftNegate(negate);
                 // Unwrap the primitive token so it is more principled to check for falsy during parseTemplate
                 const renderedPrim = fluid.isSignal(rendered) ? fluid.mapSignal(rendered.$tokens[0], negMap) : negMap(rendered);
@@ -463,7 +494,7 @@ const fluidViewScope = function (fluid) {
             vnode.shadow = shadow;
             if (vnode.text !== undefined) {
                 const tokens = fluid.parseStringTemplate(vnode.text);
-                const rendered = fluid.renderStringTemplate(tokens, shadow);
+                const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
                 fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
                 return Object.assign(vnode, {text: rendered});
             } else {
@@ -479,7 +510,7 @@ const fluidViewScope = function (fluid) {
                         delete vnode.attrs[key];
                     } else if (key !== "class") {
                         const tokens = fluid.parseStringTemplate(value);
-                        const rendered = fluid.renderStringTemplate(tokens, shadow);
+                        const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
                         if (fluid.isSignal(rendered)) {
                             rendered.$source = value;
                             fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.setAttribute(key, text));
@@ -615,9 +646,9 @@ const fluidViewScope = function (fluid) {
         if (vnode.attrs !== undefined) {
             fluid.patchAttrs(vnode, element);
         }
-        if (maybeFreshRoot && !element.dataset.fluidEventsBound) {
+        if (maybeFreshRoot && !element.dataset.flTransientEventsBound) {
             fluid.applyOns(fluid.vnodeToSegs(vnode), vnode.shadow, element, vnode.on);
-            element.dataset.fluidEventsBound = true;
+            element.dataset.flTransientEventsBound = true;
         }
         // It may be undefined because this is a joint to a subcomponent as applied in fluid.processAttributeDirective
         if (vnode.children !== undefined) {
@@ -742,7 +773,7 @@ const fluidViewScope = function (fluid) {
 
     fluid.def("fluid.viewComponent", {
         $layers: "fluid.component",
-        elideParent: false,
+        elideParent: true,
         container: "$compute:fluid.unavailable(Container not specified)",
         css: "$compute:fluid.unavailable(No CSS is configured)",
         vTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
