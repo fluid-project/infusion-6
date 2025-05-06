@@ -464,11 +464,11 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
         userDbName: "users",
         userDbUrl: {
             $compute: {
-                funcName: "fluid.stringTemplate",
-                args:     ["http://localhost:@{port}/@{userDbName}", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
+                funcName: "fluid.oldStringTemplate",
+                args:     ["http://localhost:%port/%userDbName", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
             }
             /** Perhaps a DSL could write:
-             * $compute(fluid.stringTemplate(http://localhost:@{port}/@{userDbName}, {
+             * $compute(fluid.stringTemplate(http://localhost:%port/%userDbName, {
              *     port: $self.couch.port,
              *     userDbName: $self.couch.userDbName
              * })
@@ -486,7 +486,7 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
 fluid.def("fluid.tests.FLUID4930.verify.resend", {
     $layers: "fluid.component",
     urls: {
-        read: "$compute:fluid.stringTemplate(@{userDbUrl}/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
+        read: "$compute:fluid.oldStringTemplate(%userDbUrl/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
     }
 });
 

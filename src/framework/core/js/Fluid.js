@@ -826,7 +826,6 @@ const fluidJSScope = function (fluid) {
             if (arg === fluid.OldValue) {
                 designalArgs.push(oldValue);
             } else if (arg instanceof preactSignalsCore.Signal) {
-                // const deref = arg.value;
                 const value = flattenArg ? flattenArg(arg, i) : arg.value;
                 if (fluid.isUnavailable(value)) {
                     unavailable = fluid.mergeUnavailable(unavailable, value);
@@ -1100,10 +1099,13 @@ const fluidJSScope = function (fluid) {
                     move = fluid.unavailable({messageKey: "NoMember", memberName: seg, layer: root});
                     break;
                 }
-                move = move[seg];
-                if (j < segs.length - 1) {
-                    move = fluid.deSignal(move);
-                }
+                move = fluid.deSignal(move[seg]);
+                // This is from the explore-retrunking branch - we should sometimes try to leave a terminal signal
+                // exposed to support tracing provenance but this breaks most effects currently
+                // move = move[seg];
+                // if (j < segs.length - 1) {
+                //    move = fluid.deSignal(move);
+                // }
             }
             return move;
         });
@@ -2512,6 +2514,31 @@ const fluidJSScope = function (fluid) {
     };
 
     // Reference parsing and templating
+
+    /**
+     * Simple string template system.  Takes a template string containing tokens in the form of "%value" or
+     * "%deep.path.to.value".  Returns a new string with the tokens replaced by the specified values.  Keys and values
+     * can be of any data type that can be coerced into a string.
+     *
+     * @param {String} template - A string that contains placeholders for tokens of the form `%token` embedded into it.
+     * @param {Object.<String.String>} values - A map of token names to the values which should be interpolated.
+     * @return {String} The text of `template` whose tokens have been interpolated with values.
+     */
+    fluid.oldStringTemplate = function (template, values) {
+        let keys = Object.keys(values);
+        keys = keys.sort((keya, keyb) => keyb.length - keya.length);
+        for (let i = 0; i < keys.length; ++i) {
+            const key = keys[i];
+            const templatePlaceholder = "%" + key;
+            const replacementValue = values[key];
+
+            let indexOfPlaceHolder = -1;
+            while ((indexOfPlaceHolder = template.indexOf(templatePlaceholder)) !== -1) {
+                template = template.slice(0, indexOfPlaceHolder) + replacementValue + template.slice(indexOfPlaceHolder + templatePlaceholder.length);
+            }
+        }
+        return template;
+    };
 
     const tagRE = /@\{((?:.)+?)\}/g;
 

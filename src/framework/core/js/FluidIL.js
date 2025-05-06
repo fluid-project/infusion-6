@@ -571,7 +571,7 @@ const fluidILScope = function (fluid) {
     fluid.pathToLive = function (component, path) {
         const segs = fluid.pathToSegs(path),
             shadow = component[$m];
-        const oldValue = fluid.getForComponent(component, path).value;
+        const oldValue = fluid.deSignal(fluid.getForComponent(component, path).value);
         const valueSignal = signal(oldValue);
         fluid.set(shadow.liveLayer, segs, valueSignal);
         // Remerge to take account that this top-level prop is now drawn from signal layer -

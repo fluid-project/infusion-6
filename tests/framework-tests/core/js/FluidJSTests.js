@@ -679,12 +679,12 @@ fluid.tests.c3tests.forEach(fixture => {
         if (fixture.expected) {
             Object.keys(defs).forEach(key => {
                 const message = "Linearization of layer " + key;
-                const lin = fluid.C3_precedence(key, defs);
+                const lin = fluid.C3_precedence_parents([key], defs);
                 assert.deepEqual(lin, fixture.expected[key], message);
             });
         } else {
             const last = Object.keys(defs).reverse()[0];
-            assert.expectFluidError("Expected failure", () => fluid.C3_precedence(last, defs), fixture.error);
+            assert.expectFluidError("Expected failure", () => fluid.C3_precedence_parents([last], defs), fixture.error);
         }
     });
 });

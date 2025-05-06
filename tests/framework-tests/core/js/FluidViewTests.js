@@ -25,7 +25,7 @@ QUnit.test("Basic static rendering test", function (assert) {
         $textContent: "Initial value"
     };
 
-    assert.assertNode(container.firstElementChild, expected, "Initial render correct");
+    assert.assertNode(container, expected, "Initial render correct");
     that.destroy();
 });
 
@@ -48,13 +48,13 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
             $textContent: "Initial value"
         }
     };
-    const root = container.firstElementChild;
+    const root = container;
     const inner = root.firstElementChild;
     assert.assertNode(root, expected, "Initial render correct");
     that.text = "Updated value";
 
     assert.equal(inner.textContent, "Updated value", "Updated text content rendered");
-    assert.equal(container.firstElementChild, root, "Rendered root undisturbed");
+    assert.equal(container, root, "Rendered root undisturbed");
     assert.equal(root.firstElementChild, inner, "Inner node undisturbed");
     that.destroy();
 });
@@ -77,19 +77,19 @@ QUnit.test("Dynamic attribute test", function (assert) {
             "value": "Initial value"
         }
     };
-    const root = container.firstElementChild;
+    const root = container;
     const inner = root.firstElementChild;
     assert.assertNode(root, expected, "Initial render correct");
     that.text = "Updated value";
 
     assert.equal(inner.getAttribute("value"), "Updated value", "Updated text content rendered");
-    assert.equal(container.firstElementChild, root, "Rendered root undisturbed");
+    assert.equal(container, root, "Rendered root undisturbed");
     assert.equal(root.firstElementChild, inner, "Inner node undisturbed");
     that.destroy();
     assert.equal(inner.getAttribute("value"), "Updated value", "Updated text content rendered");
 });
 
-// Nested render test, one componenht within another
+// Nested render test, one component within another
 
 fluid.def("fluid.tests.nestedOuter", {
     $layers: "fluid.templateViewComponent",
@@ -103,6 +103,7 @@ fluid.def("fluid.tests.nestedOuter", {
 
 fluid.def("fluid.tests.nestedInner", {
     $layers: "fluid.templateViewComponent",
+    elideParent: false,
     template: `<div class="inner">Text from inner</div>`
 });
 
@@ -150,7 +151,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.nestedOuter({container});
 
-    const root = container.firstElementChild;
+    const root = container;
     assert.assertNode(root, fluid.tests.nestedExpect, "Initial render correct");
 
     const nodes1 = fluid.tests.getNodeParents(container, ".inner");
@@ -158,6 +159,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
     // Update the inner layer definition to include a new template
     const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.nestedInner", {
         $layers: "fluid.templateViewComponent",
+        elideParent: false,
         template: `<div class="inner">New brush</div>`
     });
 
@@ -177,7 +179,7 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.nestedOuter({container});
 
-    const root = container.firstElementChild;
+    const root = container;
     assert.assertNode(root, fluid.tests.nestedExpect, "Initial render correct");
 
     const nodes1 = fluid.tests.getNodeParents(container, ".inner");
