@@ -1,17 +1,24 @@
 "use strict";
 
 // TODO: Make import system reactive so we don't need to register the import map before instantiating the component
-fluid.devUrlBase = "../../../src/framework/core/";
+fluid.editUrlBase = "../../../src/framework/edit/";
+fluid.libUrlBase = "../../../src/lib/";
 
 fluid.importMap["fluid.fullPageEditor"] = {
     loadStyle: "code",
-    urlBase: fluid.devUrlBase
+    urlBase: fluid.editUrlBase
 };
 
 fluid.importMap["fluid.editor"] = {
     loadStyle: "sfc",
-    urlBase: fluid.devUrlBase,
+    urlBase: fluid.editUrlBase,
     relPath: "sfc/FluidEditor.vue"
+};
+
+fluid.importMap["fluid.codemirror"] = {
+    loadStyle: "code",
+    urlBase: fluid.libUrlBase,
+    relPath: "codemirror/"
 };
 
 const fluidEditScope = function (fluid) {
@@ -35,10 +42,10 @@ const fluidEditScope = function (fluid) {
                 container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.template, {fullPageEditor}.html, {fullPageEditor}.container)"
             }
         },
-        editor: {
+        editorRoot: {
             $component: {
-                $layers: "fluid.editor",
-                container: "$compute:fluid.insertChildContainer(last, editor, {self}.template, {fullPageEditor}.html)",
+                $layers: "fluid.editorRoot",
+                container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.template, {fullPageEditor}.html)",
                 elideParent: true,
                 editorVisible: "{fullPageEditor}.editorVisible"
             }
@@ -74,7 +81,10 @@ if (typeof(fluid) !== "undefined") {
 // TODO: This will be declaratively encoded in the document
 fluid.injectEditor(document);
 
-fluid.loadSFC("fluid.editor", ("../../../src/framework/core/sfc/FluidEditor.vue"));
-fluid.loadSFC("fluid.editor.layerList", ("../../../src/framework/core/sfc/FluidEditorLayerList.vue"));
-fluid.loadSFC("fluid.editor.menu", ("../../../src/framework/core/sfc/FluidEditorMenu.vue"));
-fluid.loadSFC("fluid.editor.editorsPane", ("../../../src/framework/core/sfc/FluidEditorsPane.vue"));
+
+fluid.loadSFC("fluid.editorRoot", ("../../../src/framework/edit/sfc/EditorRoot.vue"));
+fluid.loadSFC("fluid.editor.layerList", ("../../../src/framework/edit/sfc/EditorLayerList.vue"));
+fluid.loadSFC("fluid.editor.menu", ("../../../src/framework/edit/sfc/EditorMenu.vue"));
+fluid.loadSFC("fluid.editor.editorsPane", ("../../../src/framework/edit/sfc/EditorsPane.vue"));
+fluid.loadSFC("fluid.editor.viewEditor", ("../../../src/framework/edit/sfc/ViewEditor.vue"));
+fluid.loadSFC("fluid.codemirror", ("../../../src/framework/edit/sfc/Codemirror.vue"));

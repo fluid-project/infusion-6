@@ -145,14 +145,30 @@ const fluidJSScope = function (fluid) {
         fluid.logActivity(activity);
     };
 
+    fluid.renderCause = function (cause) {
+        let message = cause.message;
+        if (cause.path) {
+            message += " at path " + cause.path;
+        }
+        if (cause.site) {
+            message += fluid.dumpComponentAndPath(cause.site.that);
+        }
+        return message;
+    };
+
+    fluid.renderUnavailable = function (unavailable) {
+        return ["Causes:", ...unavailable.causes.map(cause => fluid.renderCause(cause))].join("\n");
+    };
+
     fluid.renderLoggingArg = function (arg) {
-        return arg === undefined ? "undefined" : fluid.isPrimitive(arg) || !fluid.isPlainObject(arg) ? arg : JSON.stringify(arg);
+        return arg === undefined ? "undefined" : fluid.isUnavailable(arg) ? fluid.renderUnavailable(arg) :
+            fluid.isPrimitive(arg) || !fluid.isPlainObject(arg) ? arg : JSON.stringify(arg);
     };
 
     // The framework's built-in "fail" failure handler - this throws an exception of type <code>fluid.FluidError</code>
     fluid.builtinFail = function (args /*, activity*/) {
         const message = args.map(fluid.renderLoggingArg).join(" ");
-        throw new fluid.FluidError("Assertion failure - check console for more details: " + message);
+        throw new fluid.FluidError("Assertion failure - check console for more details:\n" + message);
     };
 
     /**
@@ -417,20 +433,17 @@ const fluidJSScope = function (fluid) {
         }
     };
 
-    /* Corrected version of jQuery makeArray that returns an empty array on undefined rather than crashing.
-     * We don't deal with as many pathological cases as jQuery */
+    /**
+     * Converts the given argument into an array or shallow copies it.
+     * - If the argument is `null` or `undefined`, returns an empty array.
+     * - If the argument is a primitive value or not iterable, wraps it in a single-element array.
+     * - If the argument is iterable, converts it into an array using the spread operator.
+     * @param {any} arg - The value to be converted into an array.
+     * @return {Array} An array representation of the input value.
+     */
     fluid.makeArray = function (arg) {
-        const togo = [];
-        if (arg !== null && arg !== undefined) {
-            if (fluid.isPrimitive(arg) || fluid.isPlainObject(arg, true) || typeof(arg.length) !== "number") {
-                togo.push(arg);
-            } else {
-                for (let i = 0; i < arg.length; ++i) {
-                    togo[i] = arg[i];
-                }
-            }
-        }
-        return togo;
+        return arg === null || arg === undefined ? [] :
+            fluid.isPrimitive(arg) || typeof arg[Symbol.iterator] !== "function" ? [arg] : [...arg];
     };
 
     /**
@@ -775,7 +788,7 @@ const fluidJSScope = function (fluid) {
     /*** SIGNAL PROCESSING ***/
 
     fluid.coerceToPrimitive = function (string) {
-        return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{\w/.test(string) ? JSON.parse(string) : string;
+        return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{[\w|\${]/.test(string) ? JSON.parse(string) : string;
     };
 
     /**
@@ -802,6 +815,7 @@ const fluidJSScope = function (fluid) {
         flattenArg: fluid.deSignal
     };
 
+    // TODO: Probably needs to be made available as a context name
     fluid.OldValue = fluid.makeMarker("Old Computed Value");
 
     /**
@@ -822,18 +836,17 @@ const fluidJSScope = function (fluid) {
         const designalArgs = [];
         const flattenArg = options?.flattenArg;
         for (let i = 0; i < args.length; ++i) {
-            const arg = args[i];
-            if (arg === fluid.OldValue) {
-                designalArgs.push(oldValue);
-            } else if (arg instanceof preactSignalsCore.Signal) {
-                const value = flattenArg ? flattenArg(arg, i) : arg.value;
-                if (fluid.isUnavailable(value)) {
-                    unavailable = fluid.mergeUnavailable(unavailable, value);
-                }
-                designalArgs.push(value);
-            } else {
-                designalArgs.push(arg);
+            let arg = args[i];
+            if (arg instanceof preactSignalsCore.Signal) {
+                arg = flattenArg ? flattenArg(arg, i) : arg.value;
             }
+            if (arg === fluid.OldValue) {
+                arg = fluid.isUnavailable(oldValue) ? null : oldValue; // User doesn't want a short-circuit
+            }
+            if (fluid.isUnavailable(arg)) {
+                unavailable = fluid.mergeUnavailable(unavailable, arg);
+            }
+            designalArgs.push(arg);
         }
         return {designalArgs, unavailable};
     };
@@ -1981,14 +1994,15 @@ const fluidJSScope = function (fluid) {
      * @return {signal<RawLayer>} The layer signal if it exists, or an "unavailable" marker if the layer is not defined.
      */
     fluid.readLayer = function (layerName) {
-        const layerSig = fluid.layerStore.value[layerName];
+        const store = fluid.layerStore.peek();
+        const layerSig = store[layerName];
         if (layerSig) {
             return layerSig;
         } else {
             // TODO: These unavailable signals perhaps could be stored in a WeakMap so they could be GCed if no pending instances
             // are relying on them
             // Is it worth updating store + history for this?
-            return fluid.layerStore.value[layerName] = signal(fluid.unavailable({
+            return store[layerName] = signal(fluid.unavailable({
                 message: "Layer " + layerName + " is not defined",
                 path: ["layer", layerName]
             }));
@@ -2003,7 +2017,7 @@ const fluidJSScope = function (fluid) {
      * @param {Object} layer - The layer data to store.
      */
     fluid.writeLayer = function (layerName, layer) {
-        const store = fluid.layerStore.value;
+        const store = fluid.layerStore.peek()
         const layerSig = store[layerName];
         const layerValue = {raw: layer};
         if (layerSig) {
@@ -2068,6 +2082,7 @@ const fluidJSScope = function (fluid) {
                 Object.keys(layer).forEach(key => allKeysRec[key] = true);
             }
         });
+        delete allKeysRec["$variety"]; // Delete any keys which represent local policies
         const allKeys = Object.keys(allKeysRec);
 
         allKeys.forEach(key => {
@@ -2076,7 +2091,7 @@ const fluidJSScope = function (fluid) {
             let lastIndex = -1;
             for (let i = 0; i < clayers; ++i) {
                 const layer = layers[i];
-                if (layer !== undefined && key in layer) {
+                if (fluid.isPlainObject(layer) && key in layer) {
                     ++count;
                     last = layer[key];
                     lastIndex = i;
@@ -2621,7 +2636,7 @@ const fluidJSScope = function (fluid) {
 
     fluid.stringTemplate = function (template, model) {
         const tokens = fluid.parseStringTemplate(template);
-        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(token.path, model));
+        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path));
         return segs.join("");
     };
 

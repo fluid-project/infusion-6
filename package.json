@@ -64,7 +64,7 @@
         "npm-run-all2": "6.2.0",
         "rimraf": "3.0.2",
         "serve": "13.0.2",
-        "terser": "5.9.0",
+        "terser": "5.39.0",
         "qunit": "2.21.0",
         "xhr-mock": "2.5.1"
     }

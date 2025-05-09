@@ -1,12 +1,12 @@
 <script>
 fluid.def("fluid.editor.layerList", {
-    $layers: "fluid.templateViewComponent",
     layerList: {
         $compute: {
             func: store =>
                 Object.entries(store).map( ([layerName, rec]) => ({
                     layerName,
-                    layerDef: rec.value.raw
+                    layerDef: rec.value.raw,
+                    sfcDef: fluid.readSFC(layerName).textSignal
                 })),
             args: [fluid.layerStore]
         }
@@ -16,7 +16,7 @@ fluid.def("fluid.editor.layerList", {
         $component: {
             $layers: "fluid.templateViewComponent",
             layerName: "{layerRec}.layerName",
-            template: `<div class="fl-layer fl-clickable" @ondblclick="{fluid.editor}.openLayerTab({self}.layerName})">@{layerName}</div>`,
+            template: `<div class="fl-layer fl-clickable" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)">@{layerName}</div>`,
             $for: {
                 source: "{layerList}.layerList",
                 value: "layerRec"
@@ -38,6 +38,7 @@ fluid.def("fluid.editor.layerList", {
     white-space: nowrap;
     overflow: hidden !important;
     text-overflow: ellipsis;
+    padding: 0px 4px;
 }
 
 

@@ -1,0 +1,29 @@
+<html>
+<head>
+    <title>Infusion Todo List</title>
+
+    <script src="../../src/lib/preact-signals/preact-signals-core.js"></script>
+
+    <script src="../../src/framework/core/js/Fluid.js"></script>
+    <script src="../../src/framework/core/js/FluidIL.js"></script>
+    <script src="../../src/framework/core/js/FluidView.js"></script>
+
+    <fluid-url-base id="todoUrlBase" src="./"></fluid-url-base>
+
+    <fluid-import layer="fluid.demos.todoApp" src="@{todoUrlBase}/sfc/todo-app.vue"></fluid-import>
+    <fluid-import layer="fluid.demos.todoList" src="@{todoUrlBase}/sfc/todo-list.vue"></fluid-import>
+    <fluid-import layer="fluid.demos.todoItem" src="@{todoUrlBase}/sfc/todo-item.vue"></fluid-import>
+
+    <fluid-url-base id="editUrlBase" src="../../src/framework/edit"></fluid-url-base>
+    <fluid-url-base id="libUrlBase" src="../../src/lib"></fluid-url-base>
+
+    <!-- Just add this import to make the app editable -->
+    <fluid-import layer="fluid.fullPageEditor" src="@{editUrlBase}/sfc/FluidEdit.vue"></fluid-import>
+
+</head>
+<body>
+    <!-- Instantiate the app on this div -->
+    <div fluid-layers="fluid.demos.todoApp">
+    </div>
+</body>
+</html>

@@ -1,0 +1,72 @@
+/* Adopted with thanks from Codestrates
+  https://github.com/Webstrates/WebstrateComponents/blob/master/edgedocker-component/scss/main.scss
+ */
+
+html[fl-docking-area-mode~="edge"] {
+    overflow: hidden;
+    display: flex;
+}
+
+html[fl-docking-area-mode~="edge"] > *:not(.fl-docking-area--ignore) {
+    flex: 1 1 auto;
+    overflow: auto;
+    contain: paint;
+}
+
+.fl-docking-area-resizer:hover:before {
+    margin: -1px;
+    border: 1px solid rgba(128, 128, 128, 0.1);
+}
+
+.fl-docking-area-resizer:before {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(128, 128, 128, 0.5);
+    content: "";
+}
+
+html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer {
+    flex: 0 0 auto;
+    min-height: 1px;
+    min-width: 1px;
+    cursor: ew-resize;
+    position: relative;
+    margin: -4px;
+    border: 4px solid transparent;
+    contain: none;
+    overflow: visible;
+    z-index: 5;
+}
+
+html[fl-docking-area-mode~="minimized"] > .fl-docking-area-resizer {
+    display: none;
+}
+
+html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
+    margin: -0.5em;
+    border: 0.5em solid transparent;
+}
+
+/* Shared definitions */
+
+/** Chrome greys:
+ * #eeeeee
+ * #c0c3c8
+ * #a9acb1
+ */
+
+.fl-clickable {
+    cursor: default;
+    user-select: none;
+}
+
+.fl-clickable:hover {
+    background-color: #eeeeee;
+}
+
+.fl-clickable.fl-active {
+    background-color: #c0c3c8;
+}

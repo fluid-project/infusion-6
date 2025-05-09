@@ -122,9 +122,9 @@ QUnit.test("Effects resolution II - read/write and dispose via signals API", fun
     log.length = 0;
 
     // Get the real, signalised component instance from behind the proxy
-    const that = proxy[fluid.proxySymbol].value;
+    const that = fluid.unProxy(proxy).value;
     // Upgrade the "count" property from a definition layer computed signal to a live writeable signal
-    const countSignal = fluid.pathToLive(that, "count");
+    const countSignal = fluid.pathToLive(that[fluid.metadataSymbol], "count");
 
     // Update the count via the signals API - more efficient than using the proxy
     countSignal.value++;
@@ -164,7 +164,7 @@ fluid.def("fluid.tests.selfUpdate", {
         $compute: {
             args: "{self}",
             func: (self) => {
-                console.log("Received update with ", self);
+                console.log("Received computed update with ", self);
                 return ++globalHolder.computedCount;
             }
         }
