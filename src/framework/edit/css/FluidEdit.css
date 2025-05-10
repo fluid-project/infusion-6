@@ -45,6 +45,10 @@ html[fl-docking-area-mode~="minimized"] > .fl-docking-area-resizer {
     display: none;
 }
 
+html[fl-docking-area-mode~="minimized"] > .fl-docking-area-component {
+    display: none;
+}
+
 html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
     margin: -0.5em;
     border: 0.5em solid transparent;

@@ -52,7 +52,7 @@ fluid.def("fluid.editorRoot", {
 </script>
 
 <template>
-    <div class="fl-editor-root" data-fl-key="editorRoot" style="width: 600px">
+    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="width: 600px">
         <link rel="stylesheet" href="https://cdn.materialdesignicons.com/2.0.46/css/materialdesignicons.min.css">
         <div @id="menu">
         </div>
