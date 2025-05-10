@@ -305,7 +305,7 @@ const fluidViewScope = function (fluid) {
                 // Evaluate the def so that we can patch it for the other SFC values. In future we will be able to parse it out directly.
                 // Use the "indirect eval" strategy that is widely recommended to avoid inappropriate access to local scope - as if we care
                 // eslint-disable-next-line no-eval
-                eval?.(`fluid.$fluidParsedDef = ${defBody}\n//# sourceURL=${absUrl}`);
+                eval?.(`fluid.$fluidParsedDef = ${defBody}\n//# sourceURL=${absUrl}-def`);
                 def = fluid.$fluidParsedDef;
                 const template = sfc.querySelector("template")?.innerHTML;
                 applyValue(def, "template", template);
@@ -1089,16 +1089,21 @@ const fluidViewScope = function (fluid) {
         container: document,
         clicked: 0,
         register: {
-            $effect: (self) => {
-                self.container.addEventListener("click", (e) => {
-                    const noDismiss = e.closest(".fl-no-dismiss");
-                    if (!noDismiss) {
-                        self.clicked = self.clicked.peek() + 1;
-                    }
-                });
+            $effect: {
+                func: (self) => {
+                    self.container.addEventListener("click", (e) => {
+                        const noDismiss = e.target.closest(".fl-no-dismiss");
+                        if (!noDismiss) {
+                            ++self.clicked;
+                        }
+                    });
+                },
+                args: "{self}"
             }
         }
     });
+
+    fluid.globalDismissalInstance = fluid.globalDismissal();
 };
 
 if (typeof(fluid) !== "undefined") {

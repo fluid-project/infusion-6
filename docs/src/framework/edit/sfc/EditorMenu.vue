@@ -23,7 +23,7 @@ fluid.def("fluid.editor.menu", {
     clickDismiss: {
         $effect: {
             func: self => self.menuOpen = null,
-            args: ["{fluid.globalDismissal}.clicked"]
+            args: ["{self}", "{fluid.globalDismissal}.clicked"]
         }
     },
     menuItems: {
@@ -42,7 +42,7 @@ fluid.def("fluid.editor.menu", {
             },
             template: `
             <div class="fl-menu-item-holder">
-                <div class="fl-menu-item fl-clickable"
+                <div class="fl-menu-item fl-clickable fl-no-dismiss"
                     @onclick="{menu}.menuOpen = {itemName}"
                     @onmouseover="fluid.editor.menu.mouseOver({menu}, {itemName})">@{{itemName}}
                 </div>

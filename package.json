@@ -54,6 +54,7 @@
         "browserslist-config-fluid": "0.1.0",
         "cpy": "8.1.2",
         "cpy-cli": "3.1.1",
+        "linkedom": "0.18.10",
         "eslint": "8.57.0",
         "eslint-config-fluid": "2.1.1",
         "fluid-lint-all": "1.2.10",

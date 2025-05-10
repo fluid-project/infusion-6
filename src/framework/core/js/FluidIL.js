@@ -165,6 +165,7 @@ const fluidILScope = function (fluid) {
     };
 
     fluid.cacheLayerScopes = function (parentShadow, shadow) {
+        const rootComponent = shadow.instantiator.rootComponent;
         shadow.childrenScope = Object.create(parentShadow ? parentShadow.variableScope : null);
         shadow.childrenScope[$m] = "childrenScope-" + shadow.path;
         shadow.ownScope = Object.create(shadow.childrenScope);
@@ -179,8 +180,12 @@ const fluidILScope = function (fluid) {
             // This is filtered out again in recordComponent
             fluid.applyToScope(shadow.ownScope, shadow.memberName, shadow, fluid.memberName);
             fluid.each(shadow.ownScope, function (rec, context) {
-                if (shadow.parentShadow && shadow.parentShadow.that !== fluid.rootComponent) {
+                if (shadow.parentShadow && shadow.parentShadow.that !== rootComponent) {
                     fluid.applyToScope(shadow.parentShadow.childrenScope, context, rec.value, rec.priority);
+                }
+                if (shadow.ownScope["fluid.resolveRoot"]) {
+                    fluid.applyToScope(rootComponent[$m].childrenScope, context, rec.value, rec.priority);
+                    // TODO: Remember to delete these again when clearing
                 }
             });
         });
@@ -410,7 +415,7 @@ const fluidILScope = function (fluid) {
                 });
             }
         };
-        return Object.assign(fluid.freshComponent(), that);
+        return Object.assign(that, fluid.freshComponent());
     };
 
     fluid.globalInstantiator = fluid.instantiator();
@@ -424,10 +429,9 @@ const fluidILScope = function (fluid) {
         instantiator.resolveRootComponent = instantiator.allocateSimpleComponent(rootShadow,
             "resolveRootComponent", {$layers: ["fluid.resolveRootComponent"]});
 
+        // TODO: need to revisit root component logic
         // obliterate resolveRoot's scope objects and replace by the real root scope - which is unused by its own children
-
-        rootShadow.childrenScope = {};
-        rootShadow.contextHash = {};
+        // rootShadow.childrenScope = {};
         const resolveRootShadow = instantiator.resolveRootComponent[$m];
         resolveRootShadow.childrenScope = rootShadow.childrenScope;
 

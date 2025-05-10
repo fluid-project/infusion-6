@@ -3,7 +3,7 @@
 "use strict";
 
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
-var {signal, effect, computed} = preactSignalsCore;
+var {signal, effect, computed, untracked} = preactSignalsCore;
 
 const fluidJSScope = function (fluid) {
 
@@ -882,7 +882,7 @@ const fluidJSScope = function (fluid) {
         const togo = effect(function fluidEffect() {
             const {designalArgs, unavailable} = fluid.processSignalArgs(args, options || fluid.defaultSignalOptions);
             if (!unavailable) {
-                func.apply(this, designalArgs);
+                untracked( () =>func.apply(this, designalArgs));
             }
         });
         togo.$func = func;

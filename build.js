@@ -2,15 +2,29 @@
 "use strict";
 
 const glob = require("glob"),
-    fs = require("fs-extra");
+    fs = require("fs-extra"),
+    linkedom = require("linkedom");
+
 const path = require("path");
 const terser = require("terser");
+
+const parseDocument = function (path) {
+    const resolved = path;
+    const stats = fs.statSync(resolved);
+    console.log("Read " + stats.size + " bytes from " + resolved);
+    const text = fs.readFileSync(resolved, "utf8");
+    const now = Date.now();
+    const togo = linkedom.parseHTML(text).document;
+    console.log("Parsed in " + (Date.now() - now) + " ms");
+    return togo;
+};
+
 
 const buildIndex = {
     coreSource: [
         "src/framework/core/js/Fluid.js",
         "src/framework/core/js/FluidIL.js",
-        "src/framework/core/js/FluidView.js",
+        "src/framework/core/js/FluidView.js"
     ],
 
     copy: [{
@@ -41,34 +55,53 @@ const buildIndex = {
         src: "src/lib/codemirror",
         dest: "docs/codemirror"
     }, {
-        src: "demo",
-        dest: "docs/demo"
+        src: "demo/**",
+        dest: "docs/"
     }, {
         src: "src",
         dest: "docs/src"
     }]
 };
 
+const writeFile = function (filename, data) {
+    fs.writeFileSync(filename, data, "utf8");
+    const stats = fs.statSync(filename);
+    console.log("Written " + stats.size + " bytes to " + filename);
+};
+
+const rewriteUrlBase = function (source, destination, importMap) {
+    const parsed = parseDocument(source);
+    if (importMap) {
+        const imports = [...parsed.querySelectorAll("fluid-url-base")];
+        console.log("Got imports ", imports.map(jmport => jmport.getAttribute("id")).join(", "));
+        // TODO: Currently noop, not required yet
+    }
+    const outMarkup = "<!DOCTYPE html>" + parsed.documentElement.outerHTML;
+    writeFile(destination, outMarkup);
+};
 
 // These two taken from reknit.js
 
-const copyGlob = function (sourcePattern, targetDir) {
+const copyGlob = function (sourcePattern, targetDir, importMap = {}) {
     console.log("copyGlob ", sourcePattern);
-    const fileNames = glob.sync(sourcePattern);
+    const fileNames = glob.sync(sourcePattern, {nodir: true});
     console.log("Got files ", fileNames);
     fileNames.forEach(filePath => {
-        const fileName = path.basename(filePath);
-        const destinationPath = path.join(targetDir, fileName);
+        const destinationPath = path.join(targetDir, filePath);
 
         fs.ensureDirSync(path.dirname(destinationPath));
-        fs.copyFileSync(filePath, destinationPath);
-        console.log(`Copied file: ${fileName}`);
+        if (filePath.endsWith(".html")) {
+            rewriteUrlBase(filePath, destinationPath, importMap);
+        } else {
+            fs.copyFileSync(filePath, destinationPath);
+        }
+        console.log(`Copied file: ${filePath} to ${destinationPath}`);
     });
 };
 
 /** Copy dependencies into docs directory for GitHub pages **/
 
-const copyDep = function (source, target, replaceSource, replaceTarget) {
+const copyDep = function (source, target, options = {}) {
     /*
     const targetPath = fluid.module.resolvePath(target);
     const sourceModule = fluid.module.refToModuleName(source);
@@ -79,13 +112,13 @@ const copyDep = function (source, target, replaceSource, replaceTarget) {
     */
     const sourcePath = source;
     const targetPath = target;
-    if (replaceSource) {
+    if (options.replaceSource) {
         const text = fs.readFileSync(sourcePath, "utf8");
-        const replaced = text.replace(replaceSource, replaceTarget);
+        const replaced = text.replace(options.replaceSource, options.replaceTarget);
         fs.writeFileSync(targetPath, replaced, "utf8");
         console.log(`Copied file: ${targetPath}`);
     } else if (sourcePath.includes("*")) {
-        copyGlob(sourcePath, targetPath);
+        copyGlob(sourcePath, targetPath, options.importMap);
     } else {
         fs.ensureDirSync(path.dirname(targetPath));
         fs.copySync(sourcePath, targetPath);
@@ -117,13 +150,14 @@ const minify = async function (hash, filename) {
 };
 
 const doBuild = async function (buildIndex) {
+    fs.rmSync("docs", { recursive: true });
 
     buildIndex.copy.forEach(function (oneCopy) {
         copyDep(oneCopy.src, oneCopy.dest);
     });
 
     const coreJsHash = filesToContentHash(buildIndex.coreSource, ".js");
-    console.log("newCoreFiles ", buildIndex.newCoreSource);
+    console.log("coreFiles ", buildIndex.coreSource);
     const coreJs = await minify(coreJsHash, "fluid.core.min.js");
 
     fs.writeFileSync("dist/fluid.core.min.js", coreJs.code, "utf8");
