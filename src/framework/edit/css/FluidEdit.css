@@ -7,18 +7,18 @@ html[fl-docking-area-mode~="edge"] {
     display: flex;
 }
 
-html[fl-docking-area-mode~="edge"] > *:not(.fl-docking-area--ignore) {
+html[fl-docking-area-mode~="edge"] > *:not(.fl-resizer) {
     flex: 1 1 auto;
     overflow: auto;
     contain: paint;
 }
 
-.fl-docking-area-resizer:hover:before {
+.fl-resizer:hover:before {
     margin: -1px;
     border: 1px solid rgba(128, 128, 128, 0.1);
 }
 
-.fl-docking-area-resizer:before {
+.fl-resizer:before {
     position: absolute;
     top: 0;
     left: 0;
@@ -28,7 +28,7 @@ html[fl-docking-area-mode~="edge"] > *:not(.fl-docking-area--ignore) {
     content: "";
 }
 
-html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer {
+.fl-resizer {
     flex: 0 0 auto;
     min-height: 1px;
     min-width: 1px;
@@ -41,7 +41,7 @@ html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer {
     z-index: 5;
 }
 
-html[fl-docking-area-mode~="minimized"] > .fl-docking-area-resizer {
+html[fl-docking-area-mode~="minimized"] > .fl-resizer {
     display: none;
 }
 
@@ -49,10 +49,13 @@ html[fl-docking-area-mode~="minimized"] > .fl-docking-area-component {
     display: none;
 }
 
+/* Just causes layout to jank on hover
 html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
     margin: -0.5em;
     border: 0.5em solid transparent;
 }
+*/
+
 
 /* Shared definitions */
 
@@ -67,10 +70,19 @@ html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
     user-select: none;
 }
 
+.fl-clickable.fl-for-layer:hover {
+    box-shadow: inset 0 0 0 10em rgba(255, 255, 255, 0.3);
+}
+
 .fl-clickable:hover {
     background-color: #eeeeee;
 }
 
 .fl-clickable.fl-active {
     background-color: #c0c3c8;
+}
+
+.fl-inline-svg {
+    height: 0px;
+    position: absolute;
 }

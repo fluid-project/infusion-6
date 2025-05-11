@@ -16,7 +16,8 @@ fluid.def("fluid.codemirror", {
             func: instance => instance.refresh(),
             args: ["{self}.instance", "{viewEditor}.isActive"]
         }
-    }
+    },
+    $variety: "frameworkAux"
 });
 
 fluid.codemirror.construct = function (self, container, oldInstance) {

@@ -14,7 +14,7 @@ fluid.def("fluid.fullPageEditor", {
         $component: {
             $layers: "fluid.templateViewComponent",
             elideParent: true,
-            template: `<div class="fl-docking-area-resizer"></div>`,
+            template: `<div class="fl-resizer"></div>`,
             container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.template, {fullPageEditor}.html, {fullPageEditor}.container)"
         }
     },
@@ -39,7 +39,9 @@ fluid.def("fluid.fullPageEditor", {
         }
     },
     // Override this definition from viewComponent so we don't obliterate the document
-    renderView: "$effect:fluid.identity({self}.vTree)"
+    renderView: "$effect:fluid.identity({self}.vTree)",
+    $variety: "frameworkAux"
+
 });
 
 fluid.injectEditor = function (dokkument = document) {
@@ -49,6 +51,7 @@ fluid.injectEditor = function (dokkument = document) {
 
 // Perhaps could be parameterised somehow but hard to see how
 fluid.injectEditor(document);
+
 </script>
 
 <template>
@@ -60,6 +63,8 @@ fluid.injectEditor(document);
         <fluid-import layer="fluid.editor.menu" src="@{editUrlBase}/sfc/EditorMenu.vue"></fluid-import>
         <fluid-import layer="fluid.editor.editorsPane" src="@{editUrlBase}/sfc/EditorsPane.vue"></fluid-import>
         <fluid-import layer="fluid.editor.viewEditor" src="@{editUrlBase}/sfc/ViewEditor.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.historyPane" src="@{editUrlBase}/sfc/HistoryPane.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.substratePane" src="@{editUrlBase}/sfc/SubstratePane.vue"></fluid-import>
 
         <fluid-import layer="fluid.codemirror" src="@{editUrlBase}/sfc/Codemirror.vue"></fluid-import>
     </div>

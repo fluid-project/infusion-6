@@ -8,6 +8,7 @@ fluid.def("fluid.editor.editorsPane", {
                 value: "layerRec"
             },
             layerName: "{layerRec}.layerName",
+            colour: "{layerRec}.colour",
             isActive: {
                 $compute: {
                     func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
@@ -15,7 +16,9 @@ fluid.def("fluid.editor.editorsPane", {
                 }
             },
             template: `
-<div class="fl-editor-layer-tab fl-clickable" @class="active:@{isActive}" @onclick="{editorRoot}.selectedLayerTab = {self}.layerName">@{layerName}
+<div class="fl-editor-layer-tab fl-clickable" @class="active:@{isActive}"
+    @onclick="{editorRoot}.selectedLayerTab = {self}.layerName"
+    style="background-color: @{colour}">@{layerName}
         <span class="fl-editor-close fl-clickable" @onclick.stop="{editorRoot}.closeLayerTab({self}.layerName)">
             <span class="mdi mdi-close"></span>
         </span>
@@ -31,7 +34,8 @@ fluid.def("fluid.editor.editorsPane", {
             },
             layerRec: "{layerRec}"
         }
-    }
+    },
+    $variety: "frameworkAux"
 });
 </script>
 

@@ -138,9 +138,15 @@ const fluidILScope = function (fluid) {
         fluid.clear(targetScope);
         fluid.each(layerNames, function (layerName) {
             if (!fluid.isReferenceOrExpander(layerName)) {
-                const rec = {value: shadow, priority: fluid.contextName};
-                targetScope[layerName] = rec;
-                targetScope[fluid.computeNickName(layerName)] = rec;
+                const def = fluid.readLayer(layerName).peek().raw;
+                if (def.$variety !== "framework") {
+                    const rec = {value: shadow, priority: fluid.contextName};
+                    targetScope[layerName] = rec;
+                    targetScope[fluid.computeNickName(layerName)] = rec;
+                }
+                if (layerName === "fluid.resolveRoot") {
+                    shadow.resolveRoot = true;
+                }
             }
         });
         return targetScope;
@@ -174,16 +180,21 @@ const fluidILScope = function (fluid) {
         shadow.variableScope[$m] = "variableScope-" + shadow.path;
 
         return effect(function scopeEffect() {
+            const childOfRoot = !shadow.parentShadow || shadow.parentShadow.that === rootComponent;
             const layers = shadow.computer?.value?.$layers || [];
             fluid.layerNamesToScope(shadow.ownScope, layers, shadow);
 
             // This is filtered out again in recordComponent
-            fluid.applyToScope(shadow.ownScope, shadow.memberName, shadow, fluid.memberName);
-            fluid.each(shadow.ownScope, function (rec, context) {
-                if (shadow.parentShadow && shadow.parentShadow.that !== rootComponent) {
+            if (typeof(shadow.memberName) === "string" && !childOfRoot) {
+                fluid.applyToScope(shadow.ownScope, shadow.memberName, shadow, fluid.memberName);
+            }
+            const ownScope = Object.getOwnPropertyNames(shadow.ownScope);
+            ownScope.forEach(context => {
+                const rec = shadow.ownScope[context];
+                if (shadow.parentShadow && !childOfRoot) {
                     fluid.applyToScope(shadow.parentShadow.childrenScope, context, rec.value, rec.priority);
                 }
-                if (shadow.ownScope["fluid.resolveRoot"]) {
+                if (shadow.resolveRoot) {
                     fluid.applyToScope(rootComponent[$m].childrenScope, context, rec.value, rec.priority);
                     // TODO: Remember to delete these again when clearing
                 }
@@ -192,7 +203,8 @@ const fluidILScope = function (fluid) {
     };
 
     fluid.clearScope = function (parentShadow, child, childShadow) {
-        fluid.each(childShadow.ownScope, (rec, context) => {
+        const ownScope = Object.getOwnPropertyNames(childShadow.ownScope);
+        ownScope.forEach(context => {
             if (parentShadow.childrenScope[context].value === child) {
                 delete parentShadow.childrenScope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
             }
@@ -276,26 +288,6 @@ const fluidILScope = function (fluid) {
     //     contextHash {String to Boolean} Map of context names which this component matches
     //     scope: A hash of names to components which are in scope from this component - populated in cacheShadowGrades
     //     childComponents: Hash of key names to subcomponents - both injected and concrete
-
-    // From old framework:
-
-    //     mergePolicy, mergeOptions: Machinery for last phase of options merging
-    //     localRecord: The "local record" of special contexts for local resolution, e.g. {arguments}, {source}, etc.
-    //     invokerStrategy, eventStrategyBlock, memberStrategy, getConfig: Junk required to operate the accessor
-    //     listeners: Listeners registered during this component's construction, to be cleared during clearListeners
-    //     distributions, collectedClearer: Managing options distributions
-    //     outDistributions: A list of distributions registered from this component, signalling from distributeOptions to clearDistributions
-
-    //     potentia: The original potentia record as supplied to registerPotentia - populated in fluid.processComponentShell
-    //     createdTransactionId: The tree transaction id in which this component was created - populated in fluid.processComponentShell
-
-    //     lightMergeComponents, lightMergeDynamicComponents: signalling between fluid.processComponentShell and fluid.concludeComponentObservation
-    //     modelSourcedDynamicComponents: signalling between fluid.processComponentShell and fluid.initModel
-    // From the DataBinding side:
-    //     modelRelayEstablished: anticorruption check in fluid.establishModelRelay
-    //     modelComplete: self-guard in notifyInitModelWorkflow
-    //     initTransactionId: signalling from fluid.operateInitialTransaction to fluid.enlistModelComponent
-    //     materialisedPaths: self-guard in fluid.materialiseModelPath
 
     fluid.instantiator = function () {
         const that = {
@@ -1251,15 +1243,32 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    fluid.upgradeDynamicLayers = function (resolvedMergeRecords, dynamicMergeRecord) {
+        const dynamicLayers = dynamicMergeRecord.layer.$layers;
+        if (dynamicLayers) {
+            resolvedMergeRecords.forEach(mergeRecord => {
+                if (mergeRecord.mergeRecordType === "def" && dynamicLayers.includes(mergeRecord.mergeRecordName)) {
+                    mergeRecord.mergeRecordType = "dynamicLayers";
+                    mergeRecord.priority = fluid.mergeRecordTypes.dynamicLayers;
+                }
+            });
+        }
+    };
+
     fluid.flatMergedComputer = function (shadow) {
         return computed(function flatMergedComputer() {
             const {layerNames, mergeRecords} = shadow.potentia.value;
+            const dynamicMergeRecord = shadow.dynamicMergeRecord.value;
+            const allMergeRecords = [...mergeRecords, dynamicMergeRecord];
 
-            const mergeRecordLayerNames = mergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat();
+            const mergeRecordLayerNames = allMergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat();
             const allLayerNames = [...layerNames, ...mergeRecordLayerNames].reverse();
 
+            const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
+            shadow.dynamicLayerNames = [...new Set(dynamicNames)];
+
             const resolver = new fluid.HierarchyResolver();
-            const resolved = fluid.flatMergedRound(shadow, resolver, allLayerNames); // <= WILL READ LAYER REGISTRY
+            const resolved = fluid.flatMergedRound(shadow, resolver, staticNames); // <= WILL READ LAYER REGISTRY
 
             if (fluid.isUnavailable(resolved)) {
                 return resolved;
@@ -1269,6 +1278,7 @@ const fluidILScope = function (fluid) {
                     mergeRecordName: "live",
                     layer: shadow.liveLayer
                 });
+                fluid.upgradeDynamicLayers(layers, dynamicMergeRecord);
 
                 const flatMerged = fluid.makeLayer("flatMerged", shadow);
                 shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
@@ -1278,6 +1288,16 @@ const fluidILScope = function (fluid) {
     };
 
     fluid.scheduleEffects = function (shadow) {
+        if (shadow.dynamicLayerNames.length > 0 && !shadow.dynamicLayersDone) {
+            shadow.dynamicMergeRecord.value = {
+                mergeRecordType: "dynamicLayers",
+                layer: {
+                    $layers: shadow.dynamicLayerNames.map(ref =>
+                        fluid.deSignal(fluid.fetchContextReference(ref, shadow))).filter(name => name)
+                }
+            };
+            shadow.dynamicLayersDone = true;
+        }
         const expandEffect = (newRecord, segs) => {
             newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow);
             fluid.siteSignal(newRecord.signalProduct, shadow, segs);
@@ -1306,7 +1326,7 @@ const fluidILScope = function (fluid) {
         fluid.forEachDeep(shadow.oldShadowMap, (oldRecord, segs) => {
             const newRecord = fluid.get(shadow.shadowMap, segs)?.[$m];
             if (oldRecord.handlerRecord?.isEffect && (!newRecord || newRecord.signalRecord !== oldRecord.signalRecord)) {
-                oldRecord.signalProduct._dispose(); // dispose old effects that are not configured after adaptation
+                oldRecord?.signalProduct?._dispose(); // dispose old effects that are not configured after adaptation
             }
         });
     };
@@ -1401,6 +1421,11 @@ const fluidILScope = function (fluid) {
         shadow.potentia = signal(potentia);
         shadow.liveLayer = Object.create(null);
         shadow.shadowMap = Object.create(null);
+
+        shadow.dynamicMergeRecord = signal({
+            mergeRecordType: "dynamicLayers",
+            layer: {}
+        });
 
         shadow.instanceId = 0;
         shadow.flatMerged = fluid.flatMergedComputer(shadow);

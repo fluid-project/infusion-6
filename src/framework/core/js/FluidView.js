@@ -1100,7 +1100,8 @@ const fluidViewScope = function (fluid) {
                 },
                 args: "{self}"
             }
-        }
+        },
+        $variety: "frameworkAux"
     });
 
     fluid.globalDismissalInstance = fluid.globalDismissal();

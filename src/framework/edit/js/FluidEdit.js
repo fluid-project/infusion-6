@@ -1,5 +1,7 @@
 "use strict";
 
+// Old-style driver now replaced by FluidEdit.vue, still exercised in old todo-list app
+
 // TODO: Make import system reactive so we don't need to register the import map before instantiating the component
 fluid.editUrlBase = "../../../src/framework/edit/";
 fluid.libUrlBase = "../../../src/lib/";

@@ -2,12 +2,15 @@
 fluid.def("fluid.editor.menu", {
     menuItemsData: {
         File: [{
-            text: "Export ..."
+            text: "Export..."
         }, {
-            text: "Export Read-only ..."
+            text: "Export without editing..."
+        }, {
+            text: "Export packed build..."
         }],
         Settings: [{
-            text: "Filter framework layers"
+            text: "Filter framework layers",
+            layers: "fluid.editor.menu.filterLayers"
         }]
     },
     menuOpen: null,
@@ -52,14 +55,31 @@ fluid.def("fluid.editor.menu", {
             </div>`,
             menuBodyItems: {
                 $component: {
-                    $layers: "fluid.templateViewComponent",
+                    $layers: ["fluid.templateViewComponent", "{menuRecord}.layers"],
                     $for: {
                         source: "{menuRecords}",
                         value: "menuRecord"
+
                     },
                     template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({menuRecord})">@{{menuRecord}.text}</div>`
                 }
             }
+        }
+    },
+    $variety: "frameworkAux"
+});
+
+fluid.def("fluid.editor.menu.filterLayers", {
+    layers: "fluid.templateViewComponent",
+    value: "{layerList}.frameworkOnly",
+    template: `<div class="fl-menu-body-inner"><input type="checkbox" checked="@{value}" @onchange="{self}.updateChecked({0})"/>Filter framework layers</div>`,
+    $variety: "frameworkAux",
+    updateChecked: {
+        $method: {
+            func: (layerList, e) => {
+                layerList.frameworkOnly = e.target.checked
+            },
+            args: ["{layerList}", "{0}:e"]
         }
     }
 });
@@ -71,6 +91,7 @@ fluid.editor.menu.mouseOver = function (menu, itemName) {
 };
 
 </script>
+
 <template>
     <div class="fl-menubar">
         <div class="fl-menu-items" @id="menuItems"></div>
@@ -113,7 +134,11 @@ fluid.editor.menu.mouseOver = function (menu, itemName) {
     position: absolute;
     background: white;
     border: 1px solid #ccc;
-    padding: 2px;
+    padding: 2px 4px;
+}
+
+.fl-menu-body input {
+    margin: 0 4px 0 2px;
 }
 
 .fl-menu-body.active {

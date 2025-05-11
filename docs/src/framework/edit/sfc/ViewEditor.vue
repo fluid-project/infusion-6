@@ -12,8 +12,8 @@ fluid.def("fluid.editor.viewEditor", {
             func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
             args: ["{self}.layerRec.layerName", "{fluid.editorRoot}.selectedLayerTab"]
         }
-    }
-
+    },
+    $variety: "frameworkAux"
 });
 
 </script>

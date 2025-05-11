@@ -59,6 +59,8 @@ fluid.demos.todoKeyUp = function (e, todos) {
     </div>
 </template>
 
+<style src="@{todoUrlBase}/css/bulma.css"></style>
+
 <style>
     section input {
         width: 25em !important;
@@ -68,6 +70,10 @@ fluid.demos.todoKeyUp = function (e, todos) {
     section {
         text-align: center;
     }
+
+    html {
+        overflow-y: auto;
+    }
 </style>
 
-<style src="@{todoUrlBase}/css/bulma.css"></style>
+

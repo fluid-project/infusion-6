@@ -594,6 +594,27 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * Partitions an array into two groups based on a filtering function.
+     *
+     * @param {Array} array - The array to be partitioned.
+     * @param {Function} filter - A predicate function that determines the partitioning.
+     *   - The function is called with three arguments:
+     *     - `e` (any): The current element being processed.
+     *     - `idx` (number): The index of the current element.
+     *     - `arr` (Array): The array being traversed.
+     *   - If the function returns `true`, the element is added to the "pass" group.
+     *   - If the function returns `false`, the element is added to the "fail" group.
+     * @return {Array[]} - A two-element array:
+     *   - The first element is an array of elements that passed the filter.
+     *   - The second element is an array of elements that failed the filter.
+     */
+    fluid.partition = function (array, filter) {
+        let pass = [], fail = [];
+        array.forEach((e, idx, arr) => (filter(e, idx, arr) ? pass : fail).push(e));
+        return [pass, fail];
+    };
+
+    /**
      * @typedef {Number} Integer
      * An integer number (whole number without fractional part).
      * This is a semantic alias indicating the expected value should be an integer.
@@ -900,6 +921,7 @@ const fluidJSScope = function (fluid) {
         }
     };
 
+    // Currently disused - was part of the old layer-based system for injecting CSS etc. but may come back
     /**
      * Creates a single source effect that listens to changes in a computed signal and invokes a callback
      * with the old and new values whenever the computed signal changes.
@@ -2017,7 +2039,7 @@ const fluidJSScope = function (fluid) {
      * @param {Object} layer - The layer data to store.
      */
     fluid.writeLayer = function (layerName, layer) {
-        const store = fluid.layerStore.peek()
+        const store = fluid.layerStore.peek();
         const layerSig = store[layerName];
         const layerValue = {raw: layer};
         if (layerSig) {
@@ -2056,6 +2078,7 @@ const fluidJSScope = function (fluid) {
         user: 600, // supplied as constructor arguments
         distribution: 300, // and above
         template: 200, // layer entries synthesized out of template
+        dynamicLayers: 150, // need to take priority over anything literal
         live: 100,
         defParents: 0 // layer holding resolved $layers member through hierarchy - must beat all others since it is computed from them
     };
@@ -2418,7 +2441,7 @@ const fluidJSScope = function (fluid) {
 
     // The base system grade definitions
 
-    fluid.def("fluid.function", {});
+    fluid.def("fluid.function", {$variety: "framework"});
 
     /**
      * Invoke a global function by name and named arguments. A courtesy to allow declaratively encoded function calls

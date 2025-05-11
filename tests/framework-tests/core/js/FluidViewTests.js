@@ -450,3 +450,29 @@ QUnit.test("Reference up through rendering effect", function (assert) {
     const button = qs("button", container);
     assert.ok(button, "Button has been rendered through effect");
 });
+
+fluid.def("fluid.tests.dynamicChild", {
+    $layers: "fluid.templateViewComponent",
+    template: `<div class="dynamic">Dynamic template</div>`
+});
+
+fluid.def("fluid.tests.dynamicLayerName", {
+    $layers: "fluid.templateViewComponent",
+    dynamicLayerName: "fluid.tests.dynamicChild",
+    template: `<div @id="child"></div>`,
+    elideParent: false,
+    child: {
+        $component: {
+            $layers: ["fluid.templateViewComponent", "{self}.dynamicLayerName"],
+            dynamicLayerName: "{dynamicLayerName}.dynamicLayerName",
+            template: `<div>Static template</div>`
+        }
+    }
+});
+
+QUnit.test("Rendering content from dynamic layer", function (assert) {
+    const container = qs(".container");
+    fluid.tests.dynamicLayerName({container});
+    const dynamic = qs(".dynamic", container);
+    assert.ok(dynamic, "Dynamic content has been rendered");
+});
