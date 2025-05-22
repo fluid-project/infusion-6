@@ -447,6 +447,18 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * Compares two arrays for equality by checking if they have the same length
+     * and if all elements at corresponding indices are strictly equal.
+     *
+     * @param {Array} array1 - The first array to compare.
+     * @param {Array} array2 - The second array to compare.
+     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
+     */
+    fluid.arrayEqual = function (array1, array2) {
+        return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
+    };
+
+    /**
      * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
      * not already allocated.
      * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
@@ -481,6 +493,31 @@ const fluidJSScope = function (fluid) {
                     togo[key] = ret;
                 }
             }
+            return togo;
+        } else {
+            return source;
+        }
+    };
+
+    /**
+     * Maps the elements of an array by applying a provided function to each item.
+     * If the function returns `fluid.NoValue`, the item is excluded from the resulting array.
+     *
+     * @param {Array|any} source - The array to transform. For a non-array value, the function returns the input as-is.
+     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
+     *   - `value` (any): The value of the current element.
+     *   - `index` (Number): The index of the current element.
+     * @return {Array} A new array with transformed values, excluding those where the function returns `fluid.NoValue`.
+     */
+    fluid.map = function (source, func) {
+        if (Array.isArray(source)) {
+            const togo = [];
+            source.forEach((value, index) => {
+                const ret = func(value, index);
+                if (ret !== fluid.NoValue) {
+                    togo.push(ret);
+                }
+            });
             return togo;
         } else {
             return source;
@@ -728,6 +765,12 @@ const fluidJSScope = function (fluid) {
 
     fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
 
+    fluid.unavailablePriority = {
+        "I/O": 1,
+        "config": 2,
+        "error": 3
+    };
+
     /**
      * Create a marker representing an "Unavailable" state with an associated waitset.
      * The marker is mutable.
@@ -739,18 +782,24 @@ const fluidJSScope = function (fluid) {
      * * "I/O" indicates pending I/O
      * @return {fluid.marker} A marker of type "Unavailable".
      */
-    fluid.unavailable = (cause = {}, variety = "error") => fluid.makeMarker("Unavailable", {
-        causes: fluid.makeArray(cause).map(oneCause => {
-            if (typeof(oneCause) === "string") {
-                oneCause = {message: oneCause};
-            }
-            if (!oneCause.type) {
-                oneCause.type = "Unavailable";
-            }
-            return oneCause;
-        }),
-        variety
-    }, true);
+    fluid.unavailable = (cause = {}, variety = "error") => {
+        const togo = fluid.makeMarker("Unavailable", {
+            causes: fluid.makeArray(cause).map(oneCause => {
+                if (typeof(oneCause) === "string") {
+                    oneCause = {message: oneCause};
+                }
+                if (!oneCause.variety) {
+                    oneCause.variety = variety;
+                }
+                return oneCause;
+            })
+        }, true);
+        togo.variety = togo.causes.reduce((acc, {variety}) => {
+            const priority = fluid.unavailablePriority[variety];
+            return priority > acc.priority ? {variety, priority} : acc;
+        }, {priority: -1}).variety;
+        return togo;
+    };
 
     fluid.formatUnavailable = function (unavailable) {
         return "Value is unavailable: causes are " + unavailable.causes.map(cause => cause.message).join("\n");
@@ -778,21 +827,14 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Create a marker representing an "Error" state with associated arguments.
-     * The marker is mutable.
-     *
-     * @param {...*} args - The arguments providing details about the error.
-     * @return {fluid.marker} A marker of type "Error".
-     */
-    fluid.error = (...args) => fluid.makeMarker("Unavailable", {causes: [{variety: "error", message: args}]}, true);
-
-    /**
      * Check if an object is a marker of type "Unavailable"
      *
      * @param {Object} totest - The object to test.
      * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
      */
     fluid.isUnavailable = totest => totest instanceof fluid.marker && totest.type === "Unavailable";
+
+    fluid.isErrorUnavailable = totest => fluid.isUnavailable(totest) && totest.variety === "error";
 
     /**
      * Merge two "unavailable" markers into a single marker, combining their causes.
@@ -843,7 +885,7 @@ const fluidJSScope = function (fluid) {
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects
      * and identifying and coalescing "unavailable" values if present.
      *
-     * @param {Array} args - The array of arguments to process.
+     * @param {Array|any} args - The array of arguments or single argument to process.
      *     Arguments may include `preactSignalsCore.Signal` instances or plain values.
      * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @param {any} [oldValue] - If these are arguments to a "computed", the previous value of the computed is supplied here
@@ -855,6 +897,9 @@ const fluidJSScope = function (fluid) {
     fluid.processSignalArgs = function (args, options, oldValue) {
         let unavailable = undefined;
         const designalArgs = [];
+        if (!Array.isArray(args)) {
+            args = [args];
+        }
         const flattenArg = options?.flattenArg;
         for (let i = 0; i < args.length; ++i) {
             let arg = args[i];
@@ -873,21 +918,44 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * Appends a site to the `site` array of the last element in the `causes` array of the given "unavailable" marker.
+     * If the `site` array does not exist, it is allocated.
+     * @param {fluid.unavailable} unavailable - The "unavailable" marker containing the `causes` array.
+     * @param {Site} [site] - The site to append to the `site` array of the last cause.
+     * @return {fluid.unavailable} The supplied unavailable value with a cause site filled in
+     */
+    fluid.accumulateUnavailableSite = function (unavailable, site) {
+        // TODO: Causes should actually form independent chains rather than being in a linear array - can't guarantee
+        // right now that the last cause is not an irrelevant failure
+        if (site) {
+            const lastCause = unavailable.causes[0];
+            if (!Array.isArray(lastCause.site)) {
+                lastCause.site = fluid.makeArray(lastCause.site);
+            }
+            if (!lastCause.site.includes(site)) {
+                lastCause.site.push(site);
+            }
+        }
+        return unavailable;
+    };
+
+    /**
      * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
      *
      * @param {Function|Signal<Function>} funcSignal - The function to compute the value
-     * @param {Array} argSignals - The arguments to pass to the function. These may include signals, which will be resolved.
+     * @param {Array|any} argSignals - The arguments or argument to pass to the function. These may include signals, which will be resolved.
      * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @return {Object} A computed value that resolves the function's result, or an "unavailable" marker if any argument is unavailable.
      */
     fluid.computed = function (funcSignal, argSignals, options) {
         return computed(function fluidComputed(oldValue) {
+            const acc = u => fluid.accumulateUnavailableSite(u, this.site);
             const {
                 designalArgs,
                 unavailable
             } = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
             const func = fluid.deSignal(funcSignal);
-            return unavailable ? unavailable : fluid.isUnavailable(func) ? func : func.apply(null, designalArgs);
+            return unavailable ? acc(unavailable) : fluid.isUnavailable(func) ? acc(func) : func.apply(null, designalArgs);
         });
     };
 
@@ -895,19 +963,33 @@ const fluidJSScope = function (fluid) {
      * Create an effect that executes a function with resolved arguments, resolving any signals and handling unavailability.
      *
      * @param {Function} func - The function to execute
-     * @param {Array} args - The arguments to pass to the function. These may include signals, which will be resolved.
+     * @param {Array|any} args - The arguments or argument to pass to the function. These may include signals, which will be resolved.
      * @param {Object} [options] - Additional specifications for processing arguments (optional).
      * @return {Object} An effect that executes the function if all arguments are available, or does nothing if any argument is unavailable.
      */
     fluid.effect = function (func, args, options) {
         const togo = effect(function fluidEffect() {
             const {designalArgs, unavailable} = fluid.processSignalArgs(args, options || fluid.defaultSignalOptions);
-            if (!unavailable) {
-                untracked( () =>func.apply(this, designalArgs));
+            if (!unavailable || options?.free) {
+                return untracked( () => func.apply(this, designalArgs));
             }
         });
         togo.$func = func;
+        togo.$args = args;
+        togo.dispose = () => {
+            options.onDispose && options.onDispose();
+            togo._dispose();
+        };
         return togo;
+    };
+
+    fluid.catch = function (source, func) {
+        return effect( () => {
+            const result = source.value;
+            if (fluid.isErrorUnavailable(result)) {
+                func(result);
+            }
+        });
     };
 
     fluid.disposeEffects = function (effectStructure) {
@@ -1082,10 +1164,10 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Compose a set of path segments supplied as arguments into a single escaped EL expression.
+     * Compose a set of path segments supplied as arguments into a single escaped IL expression.
      * Each segment is concatenated with a period (.) separator and special characters are escaped as needed.
      * @param {String[]} segments - The individual segments to compose.
-     * @return {String} The fully composed and escaped EL expression.
+     * @return {String} The fully composed and escaped IL expression.
      */
     fluid.composeSegments = function (segments) {
         let path = "";
@@ -1118,10 +1200,11 @@ const fluidJSScope = function (fluid) {
      *
      * @param {any} root - The root object to begin traversal from.
      * @param {String[]} segs - An array of segment names representing the path to traverse.
+     * @param {Object} extra - Metadata to be assigned to the returned signal, including a $variety element
      * @return {Computed<any>} A computed value that resolves the path through any `Signal` encountered, a plain value if
      * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
      */
-    fluid.getThroughSignals = function (root, segs) {
+    fluid.getThroughSignals = function (root, segs, extra) {
         const togo = computed(function getThroughSignals() {
             let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
@@ -1144,7 +1227,7 @@ const fluidJSScope = function (fluid) {
             }
             return move;
         });
-        togo.$variety = "$ref";
+        Object.assign(togo, extra);
         return togo;
     };
 
@@ -1321,7 +1404,7 @@ const fluidJSScope = function (fluid) {
 
     fluid.fluidInstance = fluid_prefix;
 
-    let fluid_guid = 1;
+    let fluid_id = 1;
 
     /** Allocate a string value that will be unique within this Infusion instance (frame or process), and
      * globally unique with high probability (50% chance of collision after a million trials)
@@ -1329,7 +1412,11 @@ const fluidJSScope = function (fluid) {
      */
 
     fluid.allocateGuid = function () {
-        return fluid_prefix + (fluid_guid++);
+        return fluid_prefix + (fluid_id++);
+    };
+
+    fluid.allocateId = function () {
+        return fluid_id++;
     };
 
     /*** The Fluid Priority system. ***/
@@ -1993,7 +2080,57 @@ const fluidJSScope = function (fluid) {
     // where "raw" has not yet been readerExpanded
     fluid.layerStore = signal({});
 
-    fluid.layerHistory = [];
+    fluid.layerHistory = signal([]);
+
+    fluid.layerHistoryIndex = signal(0);
+
+    fluid.pushHistory = function (record) {
+        if ((record.layerName.startsWith("{") || fluid.isUserLayer(record.layerName)) && !fluid.historyPush) {
+            const index = fluid.layerHistoryIndex.value;
+            fluid.layerHistory.value = [...fluid.layerHistory.peek().slice(0, index), record];
+            fluid.layerHistoryIndex.value = index + 1;
+        }
+    };
+
+    fluid.applyLiveHistory = function (rec, key) {
+        const site = fluid.parseSite(rec.layerName);
+        // TODO: source tracking for changes
+        fluid.historyPush = true;
+        fluid.setForComponent(site.shadow.that, site.path, rec[key]);
+        fluid.historyPush = false;
+    };
+
+    fluid.historyBack = function () {
+        const index = fluid.layerHistoryIndex.value;
+        if (index > 0) {
+            const newIndex = index - 1;
+            const backRec = fluid.layerHistory.value[newIndex];
+            if (backRec.type === "updateLayer") {
+                if (backRec.layerName.startsWith("{")) {
+                    fluid.applyLiveHistory(backRec, "oldValue");
+                } else {
+                    // Update layer registry
+                }
+            }
+            fluid.layerHistoryIndex.value = newIndex;
+        }
+    };
+
+    fluid.historyForward = function () {
+        const index = fluid.layerHistoryIndex.value;
+        if (index < fluid.layerHistory.value.length) {
+            const newIndex = index + 1;
+            const foreRec = fluid.layerHistory.value[index];
+            if (foreRec.type === "updateLayer") {
+                if (foreRec.layerName.startsWith("{")) {
+                    fluid.applyLiveHistory(foreRec, "newValue");
+                } else {
+                    // Update layer registry
+                }
+            }
+            fluid.layerHistoryIndex.value = newIndex;
+        }
+    };
 
     /**
      * Creates a new layer in the `fluid.layerStore` and updates the layer history.
@@ -2005,7 +2142,7 @@ const fluidJSScope = function (fluid) {
         const store = fluid.layerStore.value;
         const newStore = {...store, [layerName]: signal(layerValue)};
         fluid.layerStore.value = newStore;
-        fluid.layerHistory.push({type: "newLayer", store: newStore, newLayer: layerName});
+        fluid.pushHistory({type: "newLayer", newStore, oldStore: store, layerName});
     };
 
     /**
@@ -2013,9 +2150,10 @@ const fluidJSScope = function (fluid) {
      * If the layer does not exist, returns an "unavailable" marker with an appropriate message and path.
      *
      * @param {String} layerName - The name of the layer to retrieve.
+     * @param {Boolean} demand - Whether the layer is being demanded by an implementation
      * @return {signal<RawLayer>} The layer signal if it exists, or an "unavailable" marker if the layer is not defined.
      */
-    fluid.readLayer = function (layerName) {
+    fluid.readLayer = function (layerName, demand = false) {
         const store = fluid.layerStore.peek();
         const layerSig = store[layerName];
         if (layerSig) {
@@ -2024,10 +2162,15 @@ const fluidJSScope = function (fluid) {
             // TODO: These unavailable signals perhaps could be stored in a WeakMap so they could be GCed if no pending instances
             // are relying on them
             // Is it worth updating store + history for this?
-            return store[layerName] = signal(fluid.unavailable({
+            const togo = store[layerName] = signal(fluid.unavailable({
                 message: "Layer " + layerName + " is not defined",
                 path: ["layer", layerName]
             }));
+            if (demand) {
+                // TODO: Initiate fetch at this point if it is in importMap
+                togo.demanded = true;
+            }
+            return togo;
         }
     };
 
@@ -2043,7 +2186,9 @@ const fluidJSScope = function (fluid) {
         const layerSig = store[layerName];
         const layerValue = {raw: layer};
         if (layerSig) {
+            const oldValue = layerSig.peek();
             layerSig.value = layerValue;
+            fluid.pushHistory({type: "updateLayer", oldValue, newValue: layerValue, layerName});
         } else {
             fluid.newLayer(layerName, layerValue);
         }
@@ -2060,7 +2205,7 @@ const fluidJSScope = function (fluid) {
         const newStore = {...currentStore};
         delete newStore[layerName];
         fluid.layerStore.value = newStore;
-        fluid.layerHistory.push({type: "deleteLayer", store: newStore, deleteLayer: layerName});
+        fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
     };
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
@@ -2069,6 +2214,18 @@ const fluidJSScope = function (fluid) {
     fluid.readerExpandLayer = function (layer) {
         // TODO: Create links between old and new data so that we can route errors back
         return {...layer, $layers: fluid.makeArray(layer.$layers)};
+    };
+
+    fluid.layerFrameworkStatus = function (layerDef) {
+        const variety = layerDef.$variety;
+        return !variety ? 0 :
+            variety === "frameworkAux" ? 1 :
+                variety === "framework" ? 2 : -1;
+    };
+
+    fluid.isUserLayer = function (layerName) {
+        const layerDef = fluid.readLayer(layerName).peek().raw;
+        return layerDef && !fluid.isUnavailable(layerDef) && fluid.layerFrameworkStatus(layerDef) === 0;
     };
 
     // The types of merge record the system supports, with the weakest records first
@@ -2288,7 +2445,7 @@ const fluidJSScope = function (fluid) {
                 // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
                 this.flatDefs[layerName] = "in progress";
                 this.flatDefs[layerName] = layerComputer = computed(() => {
-                    const layer = fluid.readLayer(layerName).value;
+                    const layer = fluid.readLayer(layerName, true).value;
                     if (fluid.isUnavailable(layer)) {
                         return layer;
                     } else {
@@ -2394,13 +2551,13 @@ const fluidJSScope = function (fluid) {
             resolver.storeLayer(layerName);
             return resolver.resolve([layerName]);
         });
-        return fluid.getThroughSignals(resolved, ["merged"]);
+        return fluid.getThroughSignals(resolved, ["merged"], {$variety: "mergedDef"});
     };
 
     // Must be defined before we construct any components
     fluid.makeComponentCreator = function (componentName) {
         const creator = function () {
-            return fluid.initFreeComponent(componentName, arguments);
+            return fluid.initFreeComponent(componentName, ...arguments);
         };
         // Allow use of creator functions as namespaces - assign any existing members onto the freshly created function
         const existing = fluid.getGlobalValue(componentName);
@@ -2416,6 +2573,12 @@ const fluidJSScope = function (fluid) {
         fluid.makeComponentCreator(layerName);
     };
 
+    fluid.deferredDef = function (layerName, layer) {
+        fluid.writeLayer(layerName, fluid.unavailable({cause: "Layer definition is deferred", variety: "I/O"}));
+        fluid.makeComponentCreator(layerName);
+        fluid.invokeLater( () => fluid.writeLayer(layerName, layer));
+    };
+
     /**
      * Retrieves and stores a layer's configuration centrally.
      *
@@ -2426,7 +2589,6 @@ const fluidJSScope = function (fluid) {
      */
     fluid.def = function (layerName, layer) {
         if (layer === undefined) {
-            //
             return fluid.readLayer(layerName).value.raw;
         } else {
             fluid.writeDef(layerName, layer);
@@ -2661,6 +2823,80 @@ const fluidJSScope = function (fluid) {
         const tokens = fluid.parseStringTemplate(template);
         const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path));
         return segs.join("");
+    };
+
+
+    /**
+     * Fetches data from a given URL and processes the response using a provided strategy function.
+     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
+     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
+     *
+     * @param {String} url - The URL to fetch data from.
+     * @param {RequestInit} [options] - Optional fetch configuration options.
+     * @param {Function} strategy - An async function to process the response.
+     * @return {signal<any>} A signal containing the processed data or an "unavailable" state.
+     */
+    fluid.fetch = function (url, options, strategy) {
+        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
+        fetch(url, options)
+            .then(response => {
+                if (!response.ok) {
+                    togo.value = fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"});
+                } else {
+                    return strategy(response);
+                }
+            })
+            .then(data => {
+                if (!fluid.isErrorUnavailable(togo.peek())) { // Fetch API provides an undefined response in the case response is not OK
+                    togo.value = data;
+                }
+            })
+            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
+        return togo;
+    };
+
+    /**
+     * Fetches text data from a given URL and stores the result in a signal.
+     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
+     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
+     *
+     * @param {String} url - The URL to fetch text data from.
+     * @param {RequestInit} [options] - Optional fetch configuration options.
+     * @return {signal<String>} A signal containing the fetched text data or an "unavailable" state.
+     */
+    fluid.fetchText = function (url, options) {
+        return fluid.fetch(url, options, async response => response.text());
+    };
+
+    /**
+     * Fetches JSON data from a given URL and stores the result in a signal.
+     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
+     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
+     *
+     * @param {String} url - The URL to fetch JSON data from.
+     * @param {RequestInit} [options] - Optional fetch configuration options.
+     * @return {signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
+     */
+    fluid.fetchJSON = function (url, options) {
+        return fluid.fetch(url, options, async response => response.json());
+    };
+
+    /**
+     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value to an
+     * available value.
+     *
+     * @param {Component} component - The component containing the signal.
+     * @param {String|String[]} path - The path within the component where the signal is located.
+     * @return {Promise<any>} A Promise that resolves with the value of the signal when it updates.
+     */
+    fluid.toPromise = function (component, path) {
+        const pathSignal = fluid.getForComponent(component[$m], path);
+        return new Promise( (resolve) => {
+            const effect = fluid.effect(function (pathValue) {
+                resolve(pathValue);
+                effect._dispose();
+            }, [pathSignal]);
+        });
     };
 
 };

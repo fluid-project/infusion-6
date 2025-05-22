@@ -26,7 +26,12 @@ fluid.def("fluid.editor.menu", {
     clickDismiss: {
         $effect: {
             func: self => self.menuOpen = null,
-            args: ["{self}", "{fluid.globalDismissal}.clicked"]
+            args: ["{self}", fluid.globalDismissalSignal]
+        }
+    },
+    inspect: {
+        $component: {
+            $layers: "fluid.editor.menu.inspect"
         }
     },
     menuItems: {
@@ -69,24 +74,61 @@ fluid.def("fluid.editor.menu", {
     $variety: "frameworkAux"
 });
 
+fluid.editor.menu.mouseOver = function (menu, itemName) {
+    if (itemName && menu.menuOpen && itemName !== menu.menuOpen) {
+        menu.menuOpen = itemName;
+    }
+};
+
 fluid.def("fluid.editor.menu.filterLayers", {
-    layers: "fluid.templateViewComponent",
-    value: "{layerList}.frameworkOnly",
+    $layers: "fluid.templateViewComponent",
+    value: "{editorRoot}.showUserLayersOnly",
     template: `<div class="fl-menu-body-inner"><input type="checkbox" checked="@{value}" @onchange="{self}.updateChecked({0})"/>Filter framework layers</div>`,
     $variety: "frameworkAux",
     updateChecked: {
         $method: {
-            func: (layerList, e) => {
-                layerList.frameworkOnly = e.target.checked
+            func: (editorRoot, e) => {
+                // TODO: Follow fish upstream
+                editorRoot.showUserLayersOnly = e.target.checked
             },
-            args: ["{layerList}", "{0}:e"]
+            args: ["{editorRoot}", "{0}:event"]
         }
     }
 });
 
-fluid.editor.menu.mouseOver = function (menu, itemName) {
-    if (itemName && menu.menuOpen && itemName !== menu.menuOpen) {
-        menu.menuOpen = itemName;
+fluid.def("fluid.editor.menu.inspect", {
+    $layers: "fluid.templateViewComponent",
+    inspecting: false,
+    template: `
+
+<div class="fl-inspect" @class="fl-inspecting:@{inspecting}" @onclick="{self}.inspecting = !{self}.inspecting" title="Select an element on the page to inspect it">
+    <svg viewBox="146 124 16 16" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+        <g fill="none">
+            <path d="M146 124h16v16h-16z" opacity=".5"/>
+            <path d="M152 138h-2.5c-1 0-1.5-.5-1.5-1.5v-9c0-1 .5-1.5 1.5-1.5h9c1.5 0 1.5 1.468 1.5 1.5v2.5h-1v-3h-10v10h3zm9-5l-3 2 3 3-1 1-3-3-2 3-2-8z" fill="currentcolor" shape-rendering="geometricPrecision"/>
+        </g>
+</div>`,
+    inspectEffect: "$effect:fluid.inspect.effect({self}, {self}.inspecting)",
+    mouseMove: "$method:fluid.inspect.mouseMove({self}, {0}:event, {editorRoot})",
+
+    $variety: "frameworkAux"
+});
+
+fluid.registerNamespace("fluid.inspect");
+
+fluid.inspect.mouseMove = function (self, event, editorRoot) {
+    const shadow = fluid.findViewComponentContainer(event);
+    const useShadow = shadow && (!editorRoot.showUserLayersOnly || fluid.shadowHasUserLayer(shadow)) ? shadow : null;
+    editorRoot.inspectingSite = useShadow ? {shadow: useShadow} : null;
+};
+
+fluid.inspect.effect = function (self, inspecting) {
+    const listener = self.mouseMove;
+    if (inspecting) {
+        document.addEventListener("mousemove", listener);
+    } else {
+        self.inspectTarget = null;
+        document.removeEventListener("mousemove", listener);
     }
 };
 
@@ -94,6 +136,7 @@ fluid.editor.menu.mouseOver = function (menu, itemName) {
 
 <template>
     <div class="fl-menubar">
+        <div @id="inspect"></div>
         <div class="fl-menu-items" @id="menuItems"></div>
         <div class="fl-editor-close fl-clickable" @onclick="{fullPageEditor}.editorVisible = false">
             <span class="mdi mdi-close"></span>
@@ -103,9 +146,26 @@ fluid.editor.menu.mouseOver = function (menu, itemName) {
 
 <style>
 
+.fl-inspect {
+    color: #888;
+    display: flex;
+    align-items: center;
+    margin-left: 4px;
+}
+
+.fl-inspect:hover {
+    color: #000;
+}
+
+.fl-inspect.fl-inspecting {
+    color: #1a73e8
+}
+
 .fl-editor-close {
     font-size: 20px;
     border-radius: 10px;
+    display: flex;
+    align-items: center;
 }
 
 .fl-menubar {
@@ -121,6 +181,7 @@ fluid.editor.menu.mouseOver = function (menu, itemName) {
 
 .fl-menu-items {
     display: flex;
+    margin-right: auto;
 }
 
 .fl-menu-item {

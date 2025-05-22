@@ -27,6 +27,10 @@ const buildIndex = {
         "src/framework/core/js/FluidView.js"
     ],
 
+    acornSource: [
+        "src/lib/acorn/acorn.js"
+    ],
+
     copy: [{
         src: "node_modules/codemirror/lib/codemirror.js",
         dest: "src/lib/codemirror/js/codemirror.js"
@@ -46,14 +50,56 @@ const buildIndex = {
         src: "node_modules/codemirror/mode/markdown/markdown.js",
         dest: "src/lib/codemirror/js/markdown.js"
     }, {
+        src: "node_modules/codemirror/addon/mode/overlay.js",
+        dest: "src/lib/codemirror/js/overlay.js"
+    }, {
         src: "node_modules/codemirror/mode/vue/vue.js",
         dest: "src/lib/codemirror/js/vue.js"
+    }, {
+        src: "node_modules/codemirror/mode/htmlmixed/htmlmixed.js",
+        dest: "src/lib/codemirror/js/htmlmixed.js"
+    }, {
+        src: "node_modules/codemirror/addon/lint/lint.js",
+        dest: "src/lib/codemirror/js/lint.js"
+    }, {
+        src: "node_modules/codemirror/addon/lint/lint.css",
+        dest: "src/lib/codemirror/css/lint.css"
+    }, {
+        src: "node_modules/codemirror/addon/lint/javascript-lint.js",
+        dest: "src/lib/codemirror/js/javascript-lint.js"
+    }, {
+        src: "node_modules/codemirror/addon/lint/json-lint.js",
+        dest: "src/lib/codemirror/js/json-lint.js"
+    }, {
+        src: "node_modules/codemirror/addon/lint/css-lint.js",
+        dest: "src/lib/codemirror/js/css-lint.js"
+    }, {
+        src: "node_modules/jshint/dist/jshint.js",
+        dest: "src/lib/codemirror/js/jshint.js"
+    }, {
+        src: "node_modules/jsonlint/web/jsonlint.js",
+        dest: "src/lib/codemirror/js/jsonlint.js"
+    }, {
+        src: "node_modules/csslint/dist/csslint.js",
+        dest: "src/lib/codemirror/js/csslint.js"
+    }, {
+        src: "node_modules/acorn-loose/dist/acorn-loose.js",
+        dest: "src/lib/acorn-loose/acorn-loose.js"
+    }, {
+        src: "node_modules/acorn/dist/acorn.js",
+        dest: "src/lib/acorn/acorn.js"
     }, {
         src: "src/lib/pell",
         dest: "docs/pell"
     }, {
         src: "src/lib/codemirror",
         dest: "docs/codemirror"
+    }, {
+        src: "src/lib/acorn-loose",
+        dest: "docs/acorn-loose"
+    }, {
+        src: "src/lib/acorn",
+        dest: "docs/acorn"
     }, {
         src: "demo/**",
         dest: "docs/"
@@ -149,6 +195,15 @@ const minify = async function (hash, filename) {
     });
 };
 
+const makeJSBundle = async function (buildIndex, key, fileName) {
+    const jsHash = filesToContentHash(buildIndex[key], ".js");
+    console.log(key + " ", buildIndex[key]);
+    const minBundle = await minify(jsHash, fileName);
+
+    fs.writeFileSync(`dist/${fileName}`, minBundle.code, "utf8");
+    fs.writeFileSync(`dist/${fileName}.map`, minBundle.map);
+};
+
 const doBuild = async function (buildIndex) {
     fs.rmSync("docs", { recursive: true });
 
@@ -156,12 +211,8 @@ const doBuild = async function (buildIndex) {
         copyDep(oneCopy.src, oneCopy.dest);
     });
 
-    const coreJsHash = filesToContentHash(buildIndex.coreSource, ".js");
-    console.log("coreFiles ", buildIndex.coreSource);
-    const coreJs = await minify(coreJsHash, "fluid.core.min.js");
-
-    fs.writeFileSync("dist/fluid.core.min.js", coreJs.code, "utf8");
-    fs.writeFileSync("dist/fluid.core.min.js.map", coreJs.map);
+    await makeJSBundle(buildIndex, "coreSource", "fluid.core.min.js");
+    await makeJSBundle(buildIndex, "acornSource", "acorn.min.js");
 };
 
 doBuild(buildIndex).then(null, function (error) {

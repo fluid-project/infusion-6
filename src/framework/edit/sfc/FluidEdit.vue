@@ -10,6 +10,13 @@ fluid.def("fluid.fullPageEditor", {
             container: "$compute:fluid.insertChildContainer(last, editButton, {self}.template, {fullPageEditor}.container)"
         }
     },
+    inspectOverlay: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div id="fl-inspect-overlay" class="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()"><div class="fl-inspect-layer"></div></div>`,
+            container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.template, {fullPageEditor}.container)"
+        }
+    },
     resizeBar: {
         $component: {
             $layers: "fluid.templateViewComponent",
@@ -62,7 +69,7 @@ fluid.injectEditor(document);
         <fluid-import layer="fluid.editor.layerList" src="@{editUrlBase}/sfc/EditorLayerList.vue"></fluid-import>
         <fluid-import layer="fluid.editor.menu" src="@{editUrlBase}/sfc/EditorMenu.vue"></fluid-import>
         <fluid-import layer="fluid.editor.editorsPane" src="@{editUrlBase}/sfc/EditorsPane.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.viewEditor" src="@{editUrlBase}/sfc/ViewEditor.vue"></fluid-import>
+        <fluid-import layer="fluid.editor" src="@{editUrlBase}/sfc/Editor.vue"></fluid-import>
         <fluid-import layer="fluid.editor.historyPane" src="@{editUrlBase}/sfc/HistoryPane.vue"></fluid-import>
         <fluid-import layer="fluid.editor.substratePane" src="@{editUrlBase}/sfc/SubstratePane.vue"></fluid-import>
 

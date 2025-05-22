@@ -464,7 +464,7 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
         userDbName: "users",
         userDbUrl: {
             $compute: {
-                funcName: "fluid.oldStringTemplate",
+                func: "fluid.oldStringTemplate",
                 args:     ["http://localhost:%port/%userDbName", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
             }
             /** Perhaps a DSL could write:

@@ -5,7 +5,7 @@
 const fluidILScope = function (fluid) {
 
     // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
-    var {signal, computed, effect} = preactSignalsCore;
+    var {signal, computed, effect, untracked} = preactSignalsCore;
 
     const $m = fluid.metadataSymbol;
     const $t = fluid.proxySymbol;
@@ -211,6 +211,25 @@ const fluidILScope = function (fluid) {
         });
     };
 
+    class ArrayWithTick {
+        constructor() {
+            this.array = [];
+            this.tick = 0;
+            this.doneAt = 0;
+        }
+
+        update(newArray) {
+            if (!fluid.arrayEqual(this.array, newArray)) {
+                this.array = newArray;
+                this.tick++;
+            }
+        }
+    };
+
+    // About the SHADOW
+    // This holds a record of IL information for each instantiated component.
+    // It is allocated at: instantiator's "recordComponent"
+    // It is destroyed at: instantiator's "clearConcreteComponent"
     /**
      * @typedef {Object} Shadow
      * @property {Object} that - The component for which this shadow is held
@@ -224,6 +243,7 @@ const fluidILScope = function (fluid) {
      * @property {fluid.instantiator} instantiator - The instantiator which allocated this component/shadow
      * @property {Object} frameworkEffects - A possibly deep structure of effects allocated by the framework which
      * which need to be disposed when the component is destroyed. Any user effects are disposed as layers come and go.
+     * @property {ArrayWithTick} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
      */
 
     /**
@@ -278,20 +298,20 @@ const fluidILScope = function (fluid) {
         fluid.fireEvent(child, "afterDestroy", [child, destroyRec.name, destroyRec.shadow.that]);
     };
 
-    // About the SHADOW
-    // This holds a record of IL information for each instantiated component.
-    // It is allocated at: instantiator's "recordComponent"
-    // It is destroyed at: instantiator's "clearConcreteComponent"
-    // Contents:
-    //     path {String} Principal allocated path (point of construction) in tree
-    //     (value) {Component} The component itself
-    //     contextHash {String to Boolean} Map of context names which this component matches
-    //     scope: A hash of names to components which are in scope from this component - populated in cacheShadowGrades
-    //     childComponents: Hash of key names to subcomponents - both injected and concrete
+    fluid.rapidDispose = function (shadow) {
+        shadow.oldShadowMap = shadow.shadowMap;
+        shadow.shadowMap = Object.create(null);
+        fluid.disposeLayerEffects(shadow);
+    };
 
     fluid.instantiator = function () {
         const that = {
-            // Unnecessary but we like this for debugging
+            /**
+             * A map that associates component paths with their corresponding shadow records.
+             * Each key is a string representing the fully qualified path of a component in the component tree,
+             * and each value is a `Shadow` object containing metadata and state for the component.
+             * @type {Object<String, Shadow>}
+             */
             pathToComponent: {}
         };
 
@@ -310,6 +330,7 @@ const fluidILScope = function (fluid) {
             if (created) {
                 shadow.path = path;
                 shadow.memberName = name;
+                shadow.dynamicLayerNames = new ArrayWithTick();
                 shadow.parentShadow = parentShadow;
                 shadow.childComponents = {};
                 shadow.frameworkEffects = {};
@@ -388,6 +409,8 @@ const fluidILScope = function (fluid) {
                 // All effects, proxies etc. nullified at this point
                 childShadow.lifecycleStatus = "destroying";
                 fluid.disposeEffects(childShadow.frameworkEffects);
+                childShadow.effectScheduler._dispose();
+                fluid.rapidDispose(childShadow);
                 fluid.each(childShadow.childComponents, (gchildShadow, memberName) =>
                     that.clearComponent(childShadow, memberName, gchildShadow, destroyRecs, true)
                 );
@@ -419,7 +442,7 @@ const fluidILScope = function (fluid) {
 
         // The component which for convenience holds injected instances of all components with fluid.resolveRoot grade
         instantiator.resolveRootComponent = instantiator.allocateSimpleComponent(rootShadow,
-            "resolveRootComponent", {$layers: ["fluid.resolveRootComponent"]});
+            "resolveRootComponent", {$layers: ["fluid.component"]});
 
         // TODO: need to revisit root component logic
         // obliterate resolveRoot's scope objects and replace by the real root scope - which is unused by its own children
@@ -471,7 +494,7 @@ const fluidILScope = function (fluid) {
     fluid.upgradePrimitiveFunc = function (rec, key) {
         if (rec && fluid.isPrimitive(rec)) {
             const togo = {};
-            togo[key || (typeof(rec) === "string" && rec.charAt(0) !== "{" ? "funcName" : "func")] = rec;
+            togo[key || "func"] = rec;
             togo.args = fluid.NO_ARGUMENTS; // TODO currently undefined and unused
             return togo;
         } else {
@@ -497,7 +520,7 @@ const fluidILScope = function (fluid) {
             togo.args = args;
             return togo;
         } else if (type === "$method" || type === "$compute") {
-            return {funcName: string};
+            return {func: string};
         } else { // TODO: pass in cursor and produce unavailable value there
             fluid.fail("Unrecognised compact record " + string + " with no arguments with type ", type);
         }
@@ -521,8 +544,8 @@ const fluidILScope = function (fluid) {
      */
     fluid.resolveContext = function (context, shadow, resolver) {
         const contextUnavailable = () => fluid.unavailable({
-            message: "Cannot resolve context " + context + " from component at path " + shadow.path,
-            site: shadow
+            message: "Cannot resolve context " + context,
+            errorSite: {shadow}
         });
         return computed( () => {
             if (context === "self") {
@@ -555,8 +578,7 @@ const fluidILScope = function (fluid) {
             return shadow.computer;
         } else {
             // TODO: We should store these references in the signalMap since they are transparent - unless unavailable
-            const getter = fluid.getThroughSignals(shadow.computer, segs);
-            return Object.assign(getter, {site: shadow, segs, $variety: "$ref"});
+            return fluid.getThroughSignals(shadow.computer, segs, {site: {shadow, segs}, $variety: "$ref"});
         }
     };
 
@@ -592,11 +614,48 @@ const fluidILScope = function (fluid) {
         const reactiveSegs = fluid.findReactiveRoot(shadow.shadowMap, segs);
 
         const existing = fluid.pathToLive(shadow, reactiveSegs || segs);
+        const existingValue = existing.peek();
 
         const surplusSegs = reactiveSegs && segs.slice(reactiveSegs.length, segs.length);
-        const updated = reactiveSegs ? fluid.setImmutable(existing.value, surplusSegs, value) : value;
-        existing.value = updated;
+        const updated = reactiveSegs ? fluid.setImmutable(existingValue, surplusSegs, value) : value;
+        if (updated !== existingValue) {
+            existing.value = updated;
+            if (reactiveSegs) {
+                // We'd like this to be asynchronous but then source tracking breaks down
+                //fluid.invokeLater(() => {
+                const layerName = fluid.renderSite({shadow, segs: reactiveSegs});
+                fluid.pushHistory({type: "updateLayer", oldValue: existingValue, newValue: updated, layerName});
+                //});
+            }
+        }
         return existing;
+    };
+
+    /**
+     * Creates a writable live signal for a given reference within a component.
+     * The signal dynamically tracks the value located at the specified path and allows updates to it.
+     *
+     * @param {String} ref - A context reference string
+     * @return {Signal<any>} A writable, disposable signal representing the resolved value.
+     */
+    fluid.fetchWriteableLiveSignal = function (ref) {
+        const site = fluid.parseSite(ref);
+        const getter = fluid.getForComponent(site.shadow, site.path);
+        const togo = signal(fluid.unavailable("Not initialised"));
+        togo.write = (value) => {
+            const oldValue = getter.peek();
+            if (value !== oldValue) {
+                fluid.setForComponent(site.shadow.that, site.path, value);
+            }
+        };
+        togo.reader = effect( () => togo.value = getter.value);
+        //  TODO: writer effect currently can't be used since we can't resolve raw signals through the proxy
+        togo.writer = fluid.effect(togo.write, [togo.value]);
+        togo.dispose = () => {
+            togo.reader.dispose();
+            togo.writer.dispose();
+        };
+        return togo;
     };
 
     /**
@@ -664,12 +723,12 @@ const fluidILScope = function (fluid) {
         while (fluid.isSignal(ref)) {
             // It's a $ref return from fluid.getForComponent - use it to locate a shadow map around the referenced site
             if (ref.$variety === "$ref") {
-                const shadowMap = ref.site.shadowMap;
+                const shadowMap = ref.site.shadow.shadowMap;
                 shadowCursor = {
                     ref: ref,
-                    shadow: ref.site,
-                    segs: ref.segs,
-                    shadowRec: fluid.get(shadowMap, ref.segs)
+                    shadow: ref.site.shadow,
+                    segs: ref.site.segs,
+                    shadowRec: fluid.get(shadowMap, ref.site.segs)
                 };
             } else if (ref.$variety === "$component" && !fluid.isUnavailable(ref.value)) {
                 shadowCursor = {
@@ -828,9 +887,16 @@ const fluidILScope = function (fluid) {
      * @return {Function} A function that can be invoked with arguments, dispatching the resolved method with the provided arguments.
      */
     fluid.expandMethodRecord = function (record, shadow, key, segs) {
-        // Old fluid.makeInvoker used to have:
-        // func = func || (invokerec.funcName ? fluid.getGlobalValueNonComponent(invokerec.funcName, "an invoker") : fluid.expandImmediate(invokerec.func, that));
-        const func = fluid.resolveFuncReference(record, shadow);
+        const funcSignal = fluid.resolveFuncReference(record, shadow);
+        const capSegs = [...segs]; // Copy this since it is mutable during iteration
+        // TODO: turn this into a computed of funcSignal to deal with the rare case it gets rebound
+        const resolveFunc = () => {
+            const resolvedFunc = fluid.deSignal(funcSignal);
+            if (fluid.isUnavailable(resolvedFunc)) {
+                fluid.fail("Couldn't invoke method at path ", capSegs, " of component ", shadow, resolvedFunc);
+            }
+            return resolvedFunc;
+        };
         let togo;
         if (record.args) {
             const resolver = fluid.makeArgResolver();
@@ -839,17 +905,13 @@ const fluidILScope = function (fluid) {
                 resolver.backing = args;
                 const resolvedArgs = fluid.resolveArgMaterial(argRecs, shadow, resolver.resolve);
                 const flatArgs = resolvedArgs.map(methodFlattener);
-                const resolvedFunc = fluid.deSignal(func);
-                if (fluid.isUnavailable(resolvedFunc)) {
-                    fluid.fail("Couldn't invoke method at path ", segs, " of component ", shadow, resolvedFunc);
-                }
-                return resolvedFunc.apply(shadow, flatArgs);
+
+                return resolveFunc().apply(shadow, flatArgs);
             };
         } else { // Fast path just directly dispatches args
             togo = function applyDirectMethod(...args) {
-                const resolvedFunc = fluid.deSignal(func);
                 // TODO: Should it instead dispatch with shadow.shadowMap[$m].proxy?
-                return resolvedFunc.apply(shadow.that, [shadow.that, ...args]);
+                return resolveFunc().apply(shadow.that, [shadow.that, ...args]);
             };
         }
         return togo;
@@ -857,8 +919,8 @@ const fluidILScope = function (fluid) {
 
     /**
      * @typedef {Object} FuncRecord
-     * @property {String} [funcName] - A global function name to be resolved via `fluid.getGlobalValue`. One of funcName or func should be set.
-     * @property {String|any} [func] - A reference to a function, either as an Infusion context reference string or as a direct function value.
+     * @property {String|any} [func] - A reference to a function, as an Infusion context reference string a global
+     * function name to be resolved via `fluid.getGlobalValue` or as a direct function value.
      * @property {Array<any>} [args] - Optional arguments to be passed to the function. These may include context references or values.
      */
 
@@ -870,21 +932,22 @@ const fluidILScope = function (fluid) {
      * @return {Signal<Function>|Function} Signal or value for the resolved function.
      */
     fluid.resolveFuncReference = function (rec, shadow) {
-        return rec.funcName ? fluid.getGlobalValue(rec.funcName) :
-            fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow) : rec.func;
+        let func = typeof(rec.func) === "string" ?
+            fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow) :
+                fluid.getGlobalValue(rec.func) :
+            rec.func;
+        if (!func) {
+            func = fluid.unavailable(`Unable to resolve reference to function from ${rec.func || rec}`);
+        }
+        return func;
     };
 
     fluid.resolveFuncRecord = function (rec, shadow) {
         const func = fluid.resolveFuncReference(rec, shadow);
         const args = fluid.makeArray(rec.args);
         const resolvedArgs = fluid.resolveArgMaterial(args, shadow);
-        let unavailable;
-        if (!func) {
-            unavailable = fluid.unavailable(`Unable to resolve reference to function from entries ${rec.func} or ${rec.funcName}`);
-        } else if (fluid.isUnavailable(func)) {
-            unavailable = func;
-        }
-        return {func, resolvedArgs, unavailable};
+
+        return {func, resolvedArgs};
     };
 
     /**
@@ -897,18 +960,14 @@ const fluidILScope = function (fluid) {
      *     Includes a `$variety` property set to `"$compute"`.
      */
     fluid.expandComputeRecord = function (record, shadow) {
-        const {func, resolvedArgs, unavailable} = fluid.resolveFuncRecord(record, shadow);
-        if (unavailable) {
-            return unavailable;
-        } else {
-            const togo = fluid.computed(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
-            togo.$variety = "$compute";
-            return togo;
-        }
+        const {func, resolvedArgs} = fluid.resolveFuncRecord(record, shadow);
+        const togo = fluid.computed(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
+        togo.$variety = "$compute";
+        return togo;
     };
 
     /**
-     * Expands a compute-style function record into a computed signal, which will eagerly evaluate its value.
+     * Expands a compute-style function record into a computed signal, which will eagerly evaluate its value, whether it is demanded or not.
      * The function and its arguments are resolved from the record, and a signal is returned that tracks their computed value.
      *
      * @param {FuncRecord} record - The record describing the compute-style function. Must include either `func` or `funcName`, and optionally `args`.
@@ -918,13 +977,11 @@ const fluidILScope = function (fluid) {
      */
     fluid.expandEagerComputeRecord = function (record, shadow) {
         const togo = fluid.expandComputeRecord(record, shadow);
-        if (fluid.isUnavailable(togo)) {
-            return togo;
-        } else {
-            togo.$variety = "$eagerCompute";
-            return togo;
-        }
+        togo.$variety = "$eagerCompute";
+        return togo;
     };
+
+    let effectId = 1;
 
     /**
      * Expands an effect-style function record into a reactive effect.
@@ -935,13 +992,14 @@ const fluidILScope = function (fluid) {
      * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
      */
     fluid.expandEffectRecord = function (record, shadow) {
-        console.log("ExpandEffectRecord for " + record.funcName + " at " + shadow.memberName);
-        const {func, resolvedArgs, unavailable} = fluid.resolveFuncRecord(record, shadow);
-        if (unavailable) {
-            return unavailable;
+        const {func: funcSignal, resolvedArgs} = fluid.resolveFuncRecord(record, shadow);
+        const func = fluid.deSignal(funcSignal);
+        if (fluid.isUnavailable(func)) {
+            return func;
         } else {
             const togo = fluid.effect(func, resolvedArgs, {flattenArg: effectFlattener});
             togo.$variety = "$effect";
+            togo.effectId = effectId++;
             return togo;
         }
     };
@@ -971,13 +1029,14 @@ const fluidILScope = function (fluid) {
      * @param {String} memberName - The member name of the subcomponent within the parent component.
      * @param {Object} expanded - The expanded component definition for the subcomponent, expected to contain a `$layers` field.
      * @param {ScopeRecord} [scope] - The scope record tracking references and their resolution priorities during expansion.
+     * @param {String} [source] - The layer name in which this subcomponent definition appeared
      * @return {ComponentComputer} The result of invoking `fluid.pushPotentia`, representing the effect or pending instantiation of the subcomponent.
      */
-    fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, scope) {
+    fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, scope, source) {
         const subLayerRecord = {
             mergeRecordType: "subcomponent",
             // TODO: Eventually will allow nesting deeper on path
-            mergeRecordName: `subcomponent:${memberName}`,
+            mergeRecordName: `subcomponent:${source}`,
             layer: expanded
         };
         // TODO: detect injected reference and take direct path to instantiator
@@ -991,10 +1050,12 @@ const fluidILScope = function (fluid) {
      * @param {FuncRecord} record - The component-style function record to be expanded. Expected to contain `func`, `funcName`, and/or `args`, along with `$layers`.
      * @param {Shadow} shadow - The parent component's shadow record under which the subcomponent will be allocated.
      * @param {String} key - The member name at which the subcomponent will be instantiated.
+     * @param {String[]} segs - The path in the parent shadow holding this record
      * @return {ComponentComputer} A reactive signal representing the component instance.
      */
-    fluid.expandComponentRecord = function (record, shadow, key) {
+    fluid.expandComponentRecord = function (record, shadow, key, segs) {
         const expanded = fluid.readerExpandLayer(record);
+        const sourceLayer = fluid.get(shadow.layerMap, [...segs, $m, "source"]);
         const sourceRecord = expanded.$for;
         if (sourceRecord) {
             const sourceSignal = fluid.fetchContextReference(sourceRecord.source, shadow);
@@ -1011,14 +1072,18 @@ const fluidILScope = function (fluid) {
                     if (sourceRecord.key !== undefined) {
                         scope[sourceRecord.key] = {value: subKey, source: sourceSignal, sourcePath: subKey};
                     }
-                    return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, scope);
+                    return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, scope, sourceLayer);
                 };
 
                 let togo;
                 if (fluid.isArrayable(source)) {
                     togo = source.map(pushSubcomponentPotentia);
-                } else {
+                } else if (fluid.isPlainObject(source)) {
                     togo = Object.entries(source).map(([key, value]) => pushSubcomponentPotentia(value, key));
+                } else if (fluid.isUnavailable(source)) {
+                    return source;
+                } else {
+                    return fluid.unavailable({cause: "Unable to iterate over object ${source} to produce a ComponentList", errorSite: sourceSignal.site});
                 }
 
                 // Destroy components which no longer have matching entries
@@ -1032,15 +1097,14 @@ const fluidILScope = function (fluid) {
             componentList.$source = sourceSignal;
             const listLayer = {
                 $layers: ["fluid.componentList"],
-                list: componentList,
-                length: fluid.getThroughSignals(componentList, ["length"])
+                list: componentList
             };
             const listComputer = fluid.pushSubcomponentPotentia(shadow, key, listLayer);
             // This gets pushed into the componentList computed scope above
             listShadow = listComputer.shadow;
             return listComputer;
         } else {
-            return fluid.pushSubcomponentPotentia(shadow, key, expanded);
+            return fluid.pushSubcomponentPotentia(shadow, key, expanded, null, sourceLayer);
         }
     };
 
@@ -1084,6 +1148,21 @@ const fluidILScope = function (fluid) {
     }].map(rec => Object.assign(Object.create(fluid.elementExpanderRecord.prototype), rec));
 
     /**
+     * @typedef {Object} Site
+     * @property {Shadow} shadow - The shadow record associated with the site.
+     * @property {String[]} [segs] - The path segments within the shadow's layer map.
+     */
+
+    /**
+     * Retrieves the layer associated with a specific site in the component tree.
+     * The site is defined by a shadow record and a set of path segments.
+     *
+     * @param {Site} site - The site object containing the shadow and path segments.
+     * @return {String} The layer associated with the specified site, or `undefined` if not found.
+     */
+    fluid.layerForSite = site => fluid.get(site.shadow.layerMap, site.segs)?.[$m]?.source;
+
+    /**
      * Apply a site address to a signalised product in the form of members `site, segs`
      * @param {signal|computed|effect} signal - A signalised product to be assigned a site address
      * @param {Shadow} shadow - The shadow for the component where the signal is sited
@@ -1091,9 +1170,37 @@ const fluidILScope = function (fluid) {
      * @return {signal|computed|effect} The now sited signal
      */
     fluid.siteSignal = function (signal, shadow, segs) {
-        signal.site = shadow;
-        signal.segs = [...segs];
+        const site = {shadow, segs: [...segs]};
+        if (fluid.isUnavailable(signal)) {
+            signal.causes.forEach(cause => cause.site = site);
+        } else {
+            signal.site = site;
+        }
         return signal;
+    };
+
+    /**
+     * Converts a site locator into a unique string identifier.
+     * The identifier is constructed by combining the shadow's path and the composed segments of the site's path.
+     * @param {Site} site - The site object to convert.
+     * @return {String} A unique string identifier for the site in the format `{shadow.path}.segments`.
+     */
+    fluid.renderSite = function (site) {
+        const path = site.segs ? "." + fluid.composeSegments(site.segs) : "";
+        return `{${site.shadow.path}}${path}`;
+    };
+
+    /**
+     * Parses a site identifier into its corresponding shadow and path within the component tree.
+     * The site identifier is expected to be a context reference string that includes a context and an optional path.
+     *
+     * @param {String} id - The site identifier to parse. It should be a context reference string.
+     * @return {Site} The resolved site
+     */
+    fluid.parseSite = function (id) {
+        const ref = fluid.parseContextReference(id);
+        const shadow = fluid.globalInstantiator.pathToComponent[ref.context];
+        return {shadow, path: ref.path};
     };
 
     /**
@@ -1204,12 +1311,16 @@ const fluidILScope = function (fluid) {
         }
     };
 
+    fluid.isUnexpandablePath = function (segs) {
+        return segs[0] === "$for";
+    };
+
     fluid.expandLayer = function (target, flatMerged, shadow, segs) {
         fluid.each(flatMerged, function expandOneLayer(value, key) {
             segs.push(key);
             const uncompact = fluid.expandCompactElement(value);
             const expanded = fluid.expandElement(shadow, uncompact || value, segs);
-            if (fluid.isPlainObject(expanded, true)) {
+            if (fluid.isPlainObject(expanded, true) && !fluid.isUnexpandablePath(segs)) {
                 const expandedInner = {}; // TODO: Make these lazy and only construct a fresh object if there is an expansion
                 fluid.expandLayer(expandedInner, value, shadow, segs);
                 target[key] = expandedInner;
@@ -1239,10 +1350,12 @@ const fluidILScope = function (fluid) {
             layerNames.forEach(layerName => resolver.storeLayer(layerName));
             return resolver.resolve(layerNames);
         } else {
-            return fluid.unavailable({message: "Component has no layers", site: shadow});
+            return fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}});
         }
     };
 
+    // The user will be expecting the priority of any layers supplied dynamically to be high, and in particular to beat
+    // any definitions arriving as a result of a subcomponent declaration
     fluid.upgradeDynamicLayers = function (resolvedMergeRecords, dynamicMergeRecord) {
         const dynamicLayers = dynamicMergeRecord.layer.$layers;
         if (dynamicLayers) {
@@ -1260,12 +1373,13 @@ const fluidILScope = function (fluid) {
             const {layerNames, mergeRecords} = shadow.potentia.value;
             const dynamicMergeRecord = shadow.dynamicMergeRecord.value;
             const allMergeRecords = [...mergeRecords, dynamicMergeRecord];
+            shadow.mergeRecords = allMergeRecords; // Put this in early so we can resolve container if there is an error
 
             const mergeRecordLayerNames = allMergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat();
             const allLayerNames = [...layerNames, ...mergeRecordLayerNames].reverse();
 
             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
-            shadow.dynamicLayerNames = [...new Set(dynamicNames)];
+            shadow.dynamicLayerNames.update([...new Set(dynamicNames)]);
 
             const resolver = new fluid.HierarchyResolver();
             const resolved = fluid.flatMergedRound(shadow, resolver, staticNames); // <= WILL READ LAYER REGISTRY
@@ -1279,6 +1393,7 @@ const fluidILScope = function (fluid) {
                     layer: shadow.liveLayer
                 });
                 fluid.upgradeDynamicLayers(layers, dynamicMergeRecord);
+                shadow.mergeRecords = layers;
 
                 const flatMerged = fluid.makeLayer("flatMerged", shadow);
                 shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
@@ -1287,17 +1402,22 @@ const fluidILScope = function (fluid) {
         });
     };
 
+    fluid.possiblyRenderError = x => x;
+
     fluid.scheduleEffects = function (shadow) {
-        if (shadow.dynamicLayerNames.length > 0 && !shadow.dynamicLayersDone) {
+        if (shadow.dynamicLayerNames.doneAt < shadow.dynamicLayerNames.tick) {
             shadow.dynamicMergeRecord.value = {
                 mergeRecordType: "dynamicLayers",
                 layer: {
-                    $layers: shadow.dynamicLayerNames.map(ref =>
+                    $layers: shadow.dynamicLayerNames.array.map(ref =>
                         fluid.deSignal(fluid.fetchContextReference(ref, shadow))).filter(name => name)
                 }
             };
-            shadow.dynamicLayersDone = true;
+            shadow.dynamicLayerNames.doneAt = shadow.dynamicLayerNames.tick;
         }
+
+        fluid.possiblyRenderError(shadow); // Callout to FluidView.js
+
         const expandEffect = (newRecord, segs) => {
             newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow);
             fluid.siteSignal(newRecord.signalProduct, shadow, segs);
@@ -1314,20 +1434,21 @@ const fluidILScope = function (fluid) {
                 newRecord.signalProduct.value;
             }
         });
-        delete shadow.oldShadowMap;
-        // TODO: entangled here - clearComponent is old-world, does stuff like deleting scopes - can be more reactive, and should
-        // probably occur whenever instance becomes invalid.
+
+        // probably occurs whenever instance becomes invalid.
         if (fluid.isEmptyPotentia(shadow.potentia.peek())) {
             shadow.instantiator.clearComponent(shadow.parentShadow, shadow.memberName, shadow);
         }
     };
 
+    // called from computeInstance just before the Sheba gap
     fluid.disposeLayerEffects = function (shadow) {
         fluid.forEachDeep(shadow.oldShadowMap, (oldRecord, segs) => {
             const newRecord = fluid.get(shadow.shadowMap, segs)?.[$m];
             if (oldRecord.handlerRecord?.isEffect && (!newRecord || newRecord.signalRecord !== oldRecord.signalRecord)) {
                 oldRecord?.signalProduct?._dispose(); // dispose old effects that are not configured after adaptation
             }
+            // Fresh effect will be allocated in fluid.scheduleEffects
         });
     };
 
@@ -1399,7 +1520,13 @@ const fluidILScope = function (fluid) {
             const active = fluid.scheduleEffectsQueue.reverse();
             fluid.scheduleEffectsQueue = [];
             active.forEach(shadow => {
-                shadow.effectScheduler = effect( () => fluid.scheduleEffects(shadow, shadow.computer.value));
+                // Produce fake dependence on computed component so that we schedule effect allocation whenever it refreshes
+                shadow.effectScheduler = effect( () => {
+                    const computer = shadow.computer.value;
+                    untracked( () => { // God knows what scheduleEffects touches but we don't care
+                        fluid.scheduleEffects(shadow, computer);
+                    });
+                });
                 shadow.effectScheduler.$variety = "effectScheduler";
             });
         }
@@ -1525,10 +1652,16 @@ const fluidILScope = function (fluid) {
                             const liveSignal = fluid.pathToLive(shadow, segs);
                             // For any mutating array methods, assemble a shallow copy of the current live layer value,
                             // apply the mutation to that, and after it is done, write it back into the live layer
-                            const forked = [...liveSignal.value];
+                            // TODO: pass this through fluid.setForComponent taking account of inReactive
+                            const oldValue = liveSignal.value;
+                            const forked = [...oldValue];
                             return function () {
                                 const togo = Array.prototype[prop].apply(forked, arguments);
                                 liveSignal.value = forked;
+                                fluid.invokeLater( () => {
+                                    const layerName = fluid.renderSite({shadow, segs: segs});
+                                    fluid.pushHistory({type: "updateLayer", oldValue, newValue: forked, layerName});
+                                });
                                 return togo;
                             };
                         } else {
@@ -1591,14 +1724,15 @@ const fluidILScope = function (fluid) {
         return target ? fluid.deSignal(target) : maybeProxy;
     };
 
-    fluid.initFreeComponent = function (componentName, initArgs) {
+    fluid.initFreeComponent = function (componentName, ...initArgs) {
         const instantiator = fluid.globalInstantiator;
         // TODO: Perhaps one day we will support a directive which allows the user to select a current component
         // root for free components other than the global root
 
-        const id = fluid.allocateGuid();
+        const id = fluid.allocateId();
         const instanceName = fluid.computeGlobalMemberName(componentName, id);
 
+        // Currently just a single initial argument is supported - perhaps one day we might revive "argMaps" looked up by componentName
         const argLayer = initArgs[0] || {};
         const ourLayerNames = [componentName].concat(fluid.makeArray(argLayer.$layers));
 
@@ -1676,72 +1810,6 @@ const fluidILScope = function (fluid) {
     fluid.def("fluid.resolveRootSingle", {$layers: "fluid.resolveRoot", $variety: "framework"});
 
     fluid.constructRootComponents(fluid.globalInstantiator); // currently a singleton - in future, alternative instantiators might come back
-
-    /**
-     * Fetches data from a given URL and processes the response using a provided strategy function.
-     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
-     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
-     *
-     * @param {String} url - The URL to fetch data from.
-     * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @param {Function} strategy - An async function to process the response.
-     * @return {signal<any>} A signal containing the processed data or an "unavailable" state.
-     */
-    fluid.fetch = function (url, options, strategy) {
-        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
-        fetch(url, options)
-            .then(response => strategy(response))
-            .then(data => {
-                console.log("Received data ", data);
-                togo.value = data;
-            })
-            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
-        return togo;
-    };
-
-    /**
-     * Fetches text data from a given URL and stores the result in a signal.
-     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
-     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
-     *
-     * @param {String} url - The URL to fetch text data from.
-     * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<String>} A signal containing the fetched text data or an "unavailable" state.
-     */
-    fluid.fetchText = function (url, options) {
-        return fluid.fetch(url, options, async response => response.text());
-    };
-
-    /**
-     * Fetches JSON data from a given URL and stores the result in a signal.
-     * Whilst the fetch is pending, the signal is set to an "unavailable" state.
-     * If the fetch fails, the signal is set to an "unavailable" state with an error message.
-     *
-     * @param {String} url - The URL to fetch JSON data from.
-     * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
-     */
-    fluid.fetchJSON = function (url, options) {
-        return fluid.fetch(url, options, async response => response.json());
-    };
-
-    /**
-     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value to an
-     * available value.
-     *
-     * @param {Component} component - The component containing the signal.
-     * @param {String|String[]} path - The path within the component where the signal is located.
-     * @return {Promise<any>} A Promise that resolves with the value of the signal when it updates.
-     */
-    fluid.toPromise = function (component, path) {
-        const pathSignal = fluid.getForComponent(component[$m], path);
-        return new Promise( (resolve) => {
-            const effect = fluid.effect(function (pathValue) {
-                resolve(pathValue);
-                effect._dispose();
-            }, [pathSignal]);
-        });
-    };
 
     fluid.importMap = {};
 };

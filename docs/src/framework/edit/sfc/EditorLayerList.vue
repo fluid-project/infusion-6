@@ -2,57 +2,73 @@
 fluid.def("fluid.editor.layerList", {
     layerList: {
         $compute: {
-            funcName: "fluid.editor.layerList.fromStore",
-            args: [fluid.layerStore, "{self}.frameworkOnly", "{colourManager}"]
+            func: "fluid.editor.layerList.fromStore",
+            args: [fluid.layerStore, "{editorRoot}.showUserLayersOnly", "{colourManager}"]
         }
     },
-    frameworkOnly: true,
     template: `<div @id="layers" class="fl-layerlist"></div>`,
     layers: {
         $component: {
             $layers: "fluid.templateViewComponent",
             layerName: "{layerRec}.layerName",
             template: `<div class="fl-layerlist-layer fl-clickable fl-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)"
-                style="background-color: @{{layerRec}.colour}">@{layerName}</div>`,
+                style="background-color: @{{layerRec}.colour}" title="@{layerName}">@{layerName}</div>`,
             $for: {
                 source: "{layerList}.layerList",
                 value: "layerRec"
             }
         }
     },
+    newLayer: "$method:fluid.editor.layerList.newLayer({self})",
     $variety: "frameworkAux"
 });
 
-fluid.editor.layerList.frameworkStatus = layerRec => {
-    const variety = layerRec.layerDef.$variety;
-    return !variety ? 0 :
-        variety === "frameworkAux" ? 1 :
-            variety === "framework" ? 2 : -1
+fluid.editor.layerList.newLayer = function (self) {
+    alert("New layer");
 };
 
-fluid.editor.layerList.fromStore = function (store, frameworkOnly, colourManager) {
-    const layers = Object.entries(store).map( ([layerName, recSignal]) => {
-        const rec = recSignal.value;
-        if (fluid.isUnavailable(rec)) {
-            return {
-                layerName,
-                layerDef: rec,
-                colour: colourManager.errorColour
-            }
+/**
+ * @typedef {Object} LayerRecord
+ * @property {String} layerName - The name of the layer.
+ * @property {Object} layerDef - The definition of the layer.
+ * @property {String} colour - The allocated color for the layer.
+ * @property {signal<String>} [sfcDef] - The signal containing the SFC definition text, if available.
+ */
+
+/**
+ * @param {Object} store - The layer store containing signals for each layer.
+ * @param {Boolean} userOnly - If true, filters the layers to include only user-defined layers.
+ * @param {Object} colourManager - An object responsible for managing and allocating colors for layers.
+ * @return {LayerRecord[]} An array of layer records.
+ */
+fluid.editor.layerList.fromStore = function (store, userOnly, colourManager) {
+    const layers = fluid.map(Object.entries(store), ([layerName, recSignal]) => {
+        if (!recSignal.demanded) {
+            return fluid.NoValue;
         } else {
-            const layerDef = rec.raw;
-            return {
-                layerName,
-                layerDef,
-                colour: colourManager.allocateColour(layerName, layerDef),
-                sfcDef: fluid.readSFC(layerName).textSignal
-            };
+            const rec = recSignal.value;
+            if (fluid.isUnavailable(rec) || fluid.isUnavailable(rec.raw)) {
+                return {
+                    layerName,
+                    layerDef: rec,
+                    colour: colourManager.errorColour
+                }
+            } else {
+                const layerDef = rec.raw;
+                return {
+                    layerName,
+                    layerDef,
+                    colour: colourManager.allocateColour(layerName, layerDef),
+                    editorModeLayer: "fluid.editor.sfc",
+                    sfcDef: fluid.readSFC(layerName).textSignal
+                };
+            }
         }
     });
 
-    const fs = fluid.editor.layerList.frameworkStatus;
+    const fs = layerRec => fluid.layerFrameworkStatus(layerRec.layerDef);
 
-    const filteredLayers = layers.filter(layer => frameworkOnly ? fs(layer) === 0 : true);
+    const filteredLayers = layers.filter(layer => userOnly ? fs(layer) === 0 : true);
 
     filteredLayers.sort((a, b) => {
         return fs(a) - fs(b);
@@ -64,6 +80,7 @@ fluid.editor.layerList.fromStore = function (store, frameworkOnly, colourManager
 </script>
 
 <style>
+
 .fl-layerlist {
     border: 1px solid #cccccc;
     margin: 0 0.55em;
@@ -77,6 +94,5 @@ fluid.editor.layerList.fromStore = function (store, frameworkOnly, colourManager
     text-overflow: ellipsis;
     padding: 0px 4px;
 }
-
 
 </style>

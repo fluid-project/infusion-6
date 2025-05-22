@@ -29,3 +29,9 @@ fluid.demos.fetchTodos = () => [
     <div @id="todoList">
     </div>
 </template>
+
+<style>
+html {
+    height: 100%;
+}
+</style>

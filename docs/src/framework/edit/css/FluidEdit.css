@@ -9,8 +9,8 @@ html[fl-docking-area-mode~="edge"] {
 
 html[fl-docking-area-mode~="edge"] > *:not(.fl-resizer) {
     flex: 1 1 auto;
-    overflow: auto;
     contain: paint;
+    height: 100%;
 }
 
 .fl-resizer:hover:before {
@@ -85,4 +85,21 @@ html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
 .fl-inline-svg {
     height: 0px;
     position: absolute;
+}
+
+.fl-error {
+    min-width: 300px;
+    min-height: 50px;
+
+    font-weight: 600;
+    text-shadow: 0 0 2px #fff;
+
+    background-image:
+        repeating-linear-gradient(45deg, #FCC 0, #FCC 1px, #FEE 1px, #FEE 7px ),
+        repeating-linear-gradient(315deg, #FCC 0, #FCC 4px, #FEE 4px, #FEE 7px );
+    background-blend-mode:lighten;
+    border: dashed 2px #F99;
+
+    margin: -2px;
+    padding: 0 2px;
 }

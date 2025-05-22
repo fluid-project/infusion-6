@@ -3,12 +3,17 @@ fluid.def("fluid.editorRoot", {
     openLayerTabs: {
         $reactiveRoot: []
     },
+    showUserLayersOnly: true,
+    selectedLayerTab: null,
+    inspectingSite: null,
+
+    animateInspectOverlay: "$effect:fluid.animateInspectOverlay({self}, {self}.inspectingSite, {colourManager}.layerColours)",
+
     colourManager: {
         $component: {
             $layers: "fluid.layerColourManager"
         }
     },
-    selectedLayerTab: null,
     menu: {
         $component: {
             $layers: "fluid.editor.menu"
@@ -34,15 +39,54 @@ fluid.def("fluid.editorRoot", {
             $layers: "fluid.editor.historyPane"
         }
     },
+    resolveLayerDef: {
+        $method: {
+            func: (layerList, layerColours, layerName) => {
+                return layerName.startsWith("{") ? {
+                    layerName,
+                    layerDef: fluid.fetchWriteableLiveSignal(layerName),
+                    colour: layerColours.$live,
+                    editorModeLayer: "fluid.editor.json"
+                } : layerList.find(layerRec => layerRec.layerName === layerName);
+            },
+            args: ["{layerList}.layerList", "{colourManager}.layerColours", "{0}:layerName"]
+        }
+    },
+    editorHolderForLayer: {
+        $method: {
+            func: (editorsPane, layerName) => {
+                const $m = fluid.metadataSymbol;
+                // TODO: ILCSS syntax for locating things
+                const children = Object.values(editorsPane.editorHolders[$m].childComponents);
+                const found = children.find(childShadow => childShadow.that.layerRec.value.layerName === layerName);
+                return found && found.shadowMap[$m].proxy;
+            },
+            args: ["{editorsPane}", "{0}:layerName"]
+        }
+    },
+    focusLayerEditor: {
+        $method: {
+            func: (self, layerName) => {
+                self.selectedLayerTab = layerName;
+                const holder = self.editorHolderForLayer(layerName);
+                holder.editor.instance.focus();
+            },
+            args: ["{self}", "{0}:layerName"]
+        }
+    },
     openLayerTab: {
         $method: {
             func: (self, layerName, layerList, openLayerTabs) => {
                 const isOpen = openLayerTabs.find(layerRec => layerRec.layerName === layerName);
                 if (!isOpen) {
-                    const rec = layerList.find(layerRec => layerRec.layerName === layerName);
+                    const rec = self.resolveLayerDef(layerName);
+                    if (!rec) {
+                        console.log("Received request for nonexistent layer " + layerName);
+                        return;
+                    }
                     openLayerTabs.push(rec);
                 }
-                self.selectedLayerTab = layerName;
+                self.focusLayerEditor(layerName);
             },
             args: ["{self}", "{0}:layerName", "{layerList}.layerList", "{self}.openLayerTabs"]
         }
@@ -63,29 +107,167 @@ fluid.def("fluid.editorRoot", {
             args: ["{self}", "{0}:layerName", "{self}.openLayerTabs"]
         }
     },
+    overlayClick: {
+        $method: {
+            func: (self) => {
+                if (self.inspectingSite) {
+                    const that = self.inspectingSite.shadow.that;
+                    const layerName = fluid.peek(that.$layers);
+                    self.menu.inspect.inspecting = false;
+                    self.inspectingSite = null;
+                    // In time go direct to part of definition
+                    self.openLayerTab(layerName);
+                }
+            },
+            args: ["{self}", "{self}.inspectingSite"]
+        }
+    },
     $variety: "frameworkAux"
 });
+
+fluid.shadowHasUserLayer = function (shadow) {
+    return fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
+};
+
+/**
+ * Calculates the clipped bounds of a target element by traversing all its ancestors
+ * up to the document root and ensuring the bounds lie within each ancestor's bounds.
+ * Only the top, left, width, and height properties are returned.
+ *
+ * @param {HTMLElement} target - The target element whose bounds are to be clipped.
+ * @return {Object} The clipped bounds containing top, left, width, and height.
+ */
+fluid.getClippedBounds = function (target) {
+    let { top, left, right, bottom } = target.getBoundingClientRect();
+    let current = target.parentNode;
+
+    while (current && current !== document) {
+        if (current instanceof HTMLElement) {
+            const parentRect = current.getBoundingClientRect();
+            top = Math.max(top, parentRect.top);
+            left = Math.max(left, parentRect.left);
+            right = Math.min(right, parentRect.right);
+            bottom = Math.min(bottom, parentRect.bottom);
+        }
+        current = current.parentNode;
+    }
+    return {top, left,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top)
+    };
+};
+
+fluid.applyOverlay = function (overlay, target, colour, relative) {
+    if (target && !fluid.isUnavailable(target)) {
+        const bounds = fluid.getClippedBounds(target);
+        let relLeft = 0;
+
+        if (relative) {
+            const relBounds = relative.getBoundingClientRect();
+            relLeft = relBounds.left + 2; // Somehow we are off by a little ....
+        }
+
+        overlay.style.top = `${bounds.top + window.scrollY}px`;
+        overlay.style.left = `${bounds.left + window.scrollX - relLeft}px`;
+        overlay.style.width = `${bounds.width}px`;
+        overlay.style.height = `${bounds.height}px`;
+
+        // Set the overlay's background color and border
+        overlay.style.backgroundColor = colour;
+        overlay.style.border = `1px solid ${fluid.darkenColour(colour)}`;
+        overlay.style.display = "block";
+    } else {
+        overlay.style.display = "none";
+    }
+}
+
+fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
+    const overlay = document.getElementById("fl-inspect-overlay");
+    let target, colour;
+    if (inspectingSite) {
+        const that = inspectingSite.shadow.that;
+        const layerName = fluid.peek(that.$layers);
+        colour = layerColours[layerName] || "transparent";
+        overlay.querySelector(".fl-inspect-layer").innerText = layerName;
+        target = fluid.deSignal(that.renderedContainer);
+    }
+    fluid.applyOverlay(overlay, target, colour);
+}
+
+// Hack this using pseudo-globals for now - in time we perhaps want some kind of auto-mount using live query?
+fluid.activeLayerLink = null;
+
+fluid.editorRoot.mouseOver = function (editorRoot) {
+    const layerElem = event.target.closest(".fl-layer-link");
+    if (layerElem) {
+        fluid.activeLayerLink = layerElem;
+        layerElem.addEventListener("click", () => {
+            console.log("Layer element clicked");
+        });
+        layerElem.classList.add("active");
+    }
+};
+
+fluid.editorRoot.mouseOut = function (editorRoot) {
+    const layerElem = event.target.closest(".fl-layer-link");
+    if (layerElem && fluid.activeLayerLink) {
+        fluid.activeLayerLink.classList.remove("active");
+        fluid.activeLayerLink = null;
+    }
+};
+
+fluid.editorRoot.click = function (editorRoot) {
+    const layerElem = event.target.closest(".fl-layer-link");
+    if (layerElem) {
+        editorRoot.openLayerTab(layerElem.getAttribute("data-fl-layer-name"));
+    }
+};
+
+document.addEventListener("keydown", function (evt) {
+    evt.stopImmediatePropagation();
+    console.log(evt);
+    if (evt.key === "z" && (evt.ctrlKey || evt.metaKey)) {
+        console.log("Undo");
+        fluid.historyBack();
+    } else if (evt.key === "y" && (evt.ctrlKey || evt.metaKey)) {
+        fluid.historyForward();
+    }
+});
+
 </script>
 
 <script src="@{editUrlBase}/js/layerColourManager.js"></script>
 
 <template>
     <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="width: 600px">
-        <link rel="stylesheet" href="https://cdn.materialdesignicons.com/2.0.46/css/materialdesignicons.min.css">
-        <svg class="fl-inline-svg">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@6.1.95/css/materialdesignicons.min.css">
+        <svg id="svg-defs">
             <defs>
-                <symbol id="command-pick" viewBox="0 0 16 16" fill="context-fill #0c0c0d">
-                    <path d="M3 3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2.6a1 1 0 1 1 0 2H3a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v2.6a1 1 0 1 1-2 0V4a1 1 0 0 0-1-1H3z"/>
-                    <path d="M12.87 14.6c.3.36.85.4 1.2.1.36-.31.4-.86.1-1.22l-1.82-2.13 2.42-1a.3.3 0 0 0 .01-.56L7.43 6.43a.3.3 0 0 0-.42.35l2.13 7.89a.3.3 0 0 0 .55.07l1.35-2.28 1.83 2.14z"/>
+                <symbol id="fl-recursion" viewBox="0 0 100 100" version="1.1" preserveAspectRatio="none">
+                    <g>
+                        <rect class="fl-recursion-outline" x="8" y="8" width="84" height="84" vector-effect="non-scaling-stroke"/>
+                        <rect class="fl-recursion-outline" x="13" y="13" width="74" height="74" vector-effect="non-scaling-stroke"/>
+                        <rect class="fl-recursion-outline" x="25" y="25" width="50" height="50" vector-effect="non-scaling-stroke"/>
+                        <rect class="fl-recursion-outline" x="41" y="41" width="19" height="19" vector-effect="non-scaling-stroke"/>
+                    </g>
                 </symbol>
             </defs>
         </svg>
         <div @id="menu">
         </div>
-        <div class="fl-editor-main-pane">
+        <div class="fl-editor-main-pane"
+             @onmouseover="fluid.editorRoot.mouseOver({self})"
+             @onmouseout="fluid.editorRoot.mouseOut({self})"
+             @onclick="fluid.editorRoot.click({self})"
+             @onkeydown="fluid.editorRoot.keydown({self})">
             <div class="fl-editor-pane-top">
                 <div class="fl-layer-browser">
-                    <div class="fl-layers-label">Layers</div>
+                    <div class="fl-layers-header">
+                        <div class="fl-layers-label fl-pane-label">Layers</div>
+                        <div class="fl-new-layer fl-clickable" @onclick="{layerList}.newLayer()">
+                            <span class="mdi mdi-plus"></span>
+                        </div>
+                    </div>
                     <div @id="layerList"></div>
                 </div>
                 <div class="fl-resizer"></div>
@@ -94,22 +276,44 @@ fluid.def("fluid.editorRoot", {
             </div>
             <div class="fl-editor-pane-bottom">
                 <div class="fl-substrate-browser">
-                    <div class="fl-layers-label">Substrate</div>
+                    <div class="fl-substrate-label fl-pane-label">Substrate</div>
                     <div @id="substratePane"></div>
                 </div>
                 <div class="fl-history-browser">
-                    <div class="fl-layers-label">History</div>
+                    <div class="fl-history-pane-top">
+                        <div class="fl-history-label fl-pane-label">History</div>
+                        <span class="mdi mdi-arrow-u-left-top fl-clickable" @onclick="fluid.historyBack()"></span>
+                        <span class="mdi mdi-arrow-u-right-top fl-clickable" @onclick="fluid.historyForward()"></span>
+                    </div>
                     <div @id="historyPane"></div>
                 </div>
             </div>
         </div>
+        <div id="fl-editor-inspect-overlay" class="fl-inspect-overlay"></div>
     </div>
 </template>
 
 <style>
 
-.fl-layers-label {
+
+.fl-pane-label {
+    font-size: 18px;
     margin: 4px;
+}
+
+.fl-layers-label {
+    flex-grow: 1;
+}
+
+.fl-new-layer {
+    font-size: 20px;
+    border-radius: 10px;
+    margin-right: 0.55em;
+}
+
+.fl-layers-header {
+    display: flex;
+    align-items: center;
 }
 
 .fl-editor-root {
@@ -130,14 +334,15 @@ fluid.def("fluid.editorRoot", {
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-height: 0;
 }
 
 .fl-layer-browser {
-    width: 25%;
+    width: 35%;
 }
 
 .fl-editors-pane {
-    width: 75%;
+    width: 65%;
     display: flex;
     flex-direction: column;
 }
@@ -154,8 +359,61 @@ fluid.def("fluid.editorRoot", {
 
 .fl-substrate-browser {
     width: 70%;
+    display: flex;
+    flex-direction: column;
 }
 
+.fl-history-browser {
+    width: 30%;
+    display: flex;
+    flex-direction: column;
+}
 
+.fl-history-pane-top {
+    display: flex;
+    align-items: center;
+    padding-right: 4px;
+}
+
+.fl-history-label {
+    flex-grow: 1;
+}
+
+.fl-inspect-overlay {
+    display: none;
+    opacity: 0.5;
+    position: absolute;
+    cursor: pointer;
+}
+
+#fl-editor-inspect-overlay {
+    pointer-events: none;
+    cursor: default;
+}
+
+.fl-inspect-layer {
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+}
+
+.fl-layer-link {
+    cursor: pointer;
+}
+
+.fl-layer-link.active {
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+}
+
+.fl-recursion-outline {
+    fill: none;
+    stroke: #545454;
+    stroke-width: 1;
+}
+
+#svg-defs {
+   height: 0;
+}
 
 </style>

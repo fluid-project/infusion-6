@@ -27,7 +27,7 @@ fluid.def("fluid.editor.editorsPane", {
     },
     editorHolders: {
         $component: {
-            $layers: "fluid.editor.viewEditor",
+            $layers: ["fluid.editor", "{self}.layerRec.editorModeLayer"],
             $for: {
                 source: "{fluid.editorRoot}.openLayerTabs",
                 value: "layerRec"
@@ -90,6 +90,6 @@ fluid.def("fluid.editor.editorsPane", {
     }
 
     .fl-editor-holder {
-        height: 100%;
+        min-height: 0;
     }
 </style>

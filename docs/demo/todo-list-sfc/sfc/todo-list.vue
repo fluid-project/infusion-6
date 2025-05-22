@@ -75,5 +75,3 @@ fluid.demos.todoKeyUp = function (e, todos) {
         overflow-y: auto;
     }
 </style>
-
-
