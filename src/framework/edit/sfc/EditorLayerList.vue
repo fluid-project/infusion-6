@@ -43,26 +43,24 @@ fluid.editor.layerList.newLayer = function (self) {
  */
 fluid.editor.layerList.fromStore = function (store, userOnly, colourManager) {
     const layers = fluid.map(Object.entries(store), ([layerName, recSignal]) => {
-        if (!recSignal.demanded) {
+        const rec = recSignal.value;
+        if (fluid.isUnavailable(rec) || fluid.isUnavailable(rec.raw)) {
+            return recSignal.demanded ? {
+                layerName,
+                layerDef: rec,
+                colour: colourManager.errorColour
+            } : fluid.NoValue;
+        } else if (!rec.demanded) {
             return fluid.NoValue;
         } else {
-            const rec = recSignal.value;
-            if (fluid.isUnavailable(rec) || fluid.isUnavailable(rec.raw)) {
-                return {
-                    layerName,
-                    layerDef: rec,
-                    colour: colourManager.errorColour
-                }
-            } else {
-                const layerDef = rec.raw;
-                return {
-                    layerName,
-                    layerDef,
-                    colour: colourManager.allocateColour(layerName, layerDef),
-                    editorModeLayer: "fluid.editor.sfc",
-                    sfcDef: fluid.readSFC(layerName).textSignal
-                };
-            }
+            const layerDef = rec.raw;
+            return {
+                layerName,
+                layerDef,
+                colour: colourManager.allocateColour(layerName, layerDef),
+                editorModeLayer: "fluid.editor.sfc",
+                sfcDef: fluid.readSFC(layerName).textSignal
+            };
         }
     });
 

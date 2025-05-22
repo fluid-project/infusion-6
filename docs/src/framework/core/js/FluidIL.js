@@ -620,7 +620,7 @@ const fluidILScope = function (fluid) {
         const updated = reactiveSegs ? fluid.setImmutable(existingValue, surplusSegs, value) : value;
         if (updated !== existingValue) {
             existing.value = updated;
-            if (reactiveSegs) {
+            if (reactiveSegs && fluid.isUserLayer(fluid.peek(component.$layers))) {
                 // We'd like this to be asynchronous but then source tracking breaks down
                 //fluid.invokeLater(() => {
                 const layerName = fluid.renderSite({shadow, segs: reactiveSegs});

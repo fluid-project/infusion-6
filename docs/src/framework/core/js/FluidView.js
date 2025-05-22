@@ -318,6 +318,7 @@ const fluidViewScope = function (fluid) {
                 console.log("Culling SFC injection effect since text has not changed");
                 return;
             }
+            console.log("**** Beginning to parse SFC for layer ", layerName);
             oldText = text;
             usedKeys.forEach(key => document.getElementById(key)?.remove());
             usedKeys.length = 0;
@@ -1032,11 +1033,11 @@ const fluidViewScope = function (fluid) {
     fluid.viewContainerRegistry = new WeakMap();
 
     /**
-     * Traverses the list of parent elements of a given DOM element until it finds the first parent
+     * Traverses the list of DOM elements lying at a point until it finds the first parent
      * that exists within `fluid.viewContainerRegistry`. Returns an object containing the container
      * and its associated shadow, or `null` if no such parent is found.
      *
-     * @param {HTMLElement} element - The DOM element whose parent hierarchy is to be traversed.
+     * @param {MouseEvent} mouseEvent - The mouse event at the point to be queried
      * @return {Shadow|null} The shadow, or `null` if not found.
      */
     fluid.findViewComponentContainer = function (mouseEvent) {
@@ -1045,20 +1046,7 @@ const fluidViewScope = function (fluid) {
             const shadow = fluid.viewContainerRegistry.get(element);
             return shadow && !/^fullPageEditor-\d+\.inspectOverlay$/.test(shadow.path) ? shadow : null;
         });
-        return container ? fluid.viewContainerRegistry.get(container) : null;d
-        /*
-        const hovered = [...document.querySelectorAll(":hover")].reverse();
-        const container = hovered.find(element => fluid.viewContainerRegistry.has(element));
         return container ? fluid.viewContainerRegistry.get(container) : null;
-
-        while (element) {
-            if (fluid.viewContainerRegistry.has(element)) {
-                const shadow = fluid.viewContainerRegistry.get(element);
-                return shadow;
-            }
-            element = element.parentElement;
-        }
-        return null;*/
     };
 
     const containerToRenderedVTree = new WeakMap();

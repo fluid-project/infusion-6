@@ -2157,6 +2157,14 @@ const fluidJSScope = function (fluid) {
         const store = fluid.layerStore.peek();
         const layerSig = store[layerName];
         if (layerSig) {
+            const layer = layerSig.peek();
+            if (fluid.isUnavailable(layer)) {
+                if (demand) {
+                    layerSig.demanded = true;
+                }
+            } else if ((demand || layerSig.demanded) && !layer.demanded) {
+                layerSig.value = {...layer, demanded: true};
+            }
             return layerSig;
         } else {
             // TODO: These unavailable signals perhaps could be stored in a WeakMap so they could be GCed if no pending instances
@@ -2184,7 +2192,7 @@ const fluidJSScope = function (fluid) {
     fluid.writeLayer = function (layerName, layer) {
         const store = fluid.layerStore.peek();
         const layerSig = store[layerName];
-        const layerValue = {raw: layer};
+        const layerValue = {raw: layer, demanded: layerSig?.demanded};
         if (layerSig) {
             const oldValue = layerSig.peek();
             layerSig.value = layerValue;
@@ -2848,7 +2856,11 @@ const fluidJSScope = function (fluid) {
             })
             .then(data => {
                 if (!fluid.isErrorUnavailable(togo.peek())) { // Fetch API provides an undefined response in the case response is not OK
-                    togo.value = data;
+                    if (options?.delay) {
+                        window.setTimeout(() => togo.value = data, options.delay);
+                    } else {
+                        togo.value = data;
+                    }
                 }
             })
             .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
