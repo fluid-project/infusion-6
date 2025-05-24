@@ -324,11 +324,10 @@ const fluidSubstrateScope = function (fluid) {
     };
 
     fluid.substrateTree.highlight = function (self, inspectingSite) {
-        const relative = document.querySelector(".fl-editor-root");
         const overlay = document.getElementById("fl-editor-inspect-overlay");
         const id = inspectingSite && fluid.renderSite(inspectingSite);
         const target = id && self.container.querySelector(`[data-row-id="${id}"]`);
-        fluid.applyOverlay(overlay, target, "hsl(0 0% 70%)", relative);
+        fluid.applyOverlay({selfOverlay: overlay}, target, "hsl(0 0% 70%)");
     };
 
     fluid.substrateTree.mouseover = function (e, editorRoot) {

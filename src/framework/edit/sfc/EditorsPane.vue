@@ -91,5 +91,6 @@ fluid.def("fluid.editor.editorsPane", {
 
     .fl-editor-holder {
         min-height: 0;
+        display: flex;
     }
 </style>

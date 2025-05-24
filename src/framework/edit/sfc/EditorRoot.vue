@@ -157,12 +157,16 @@ fluid.getClippedBounds = function (target) {
     };
 };
 
-fluid.applyOverlay = function (overlay, target, colour, relative) {
+fluid.applyOverlay = function (overlays, target, colour) {
     if (target && !fluid.isUnavailable(target)) {
         const bounds = fluid.getClippedBounds(target);
-        let relLeft = 0;
 
-        if (relative) {
+        const targetInBody = target.closest("body");
+        const overlay = targetInBody ? overlays.overlay : overlays.selfOverlay;
+
+        let relLeft = 0;
+        if (!targetInBody) {
+            const relative = document.querySelector(".fl-editor-root");
             const relBounds = relative.getBoundingClientRect();
             relLeft = relBounds.left + 2; // Somehow we are off by a little ....
         }
@@ -177,21 +181,25 @@ fluid.applyOverlay = function (overlay, target, colour, relative) {
         overlay.style.border = `1px solid ${fluid.darkenColour(colour)}`;
         overlay.style.display = "block";
     } else {
-        overlay.style.display = "none";
+        Object.values(overlays).map(overlay => overlay.style.display = "none");
     }
 }
 
 fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
-    const overlay = document.getElementById("fl-inspect-overlay");
+    // We need two overlays, one for the app, and another lying outside <body> for self-inspection of the IDE
+    const overlays = {
+        overlay: document.getElementById("fl-inspect-overlay"),
+        selfOverlay: document.getElementById("fl-self-inspect-overlay")
+    };
     let target, colour;
     if (inspectingSite) {
         const that = inspectingSite.shadow.that;
         const layerName = fluid.peek(that.$layers);
         colour = layerColours[layerName] || "transparent";
-        overlay.querySelector(".fl-inspect-layer").innerText = layerName;
+        Object.values(overlays).map(overlay => overlay.querySelector(".fl-inspect-layer").innerText = layerName);
         target = fluid.deSignal(that.renderedContainer);
     }
-    fluid.applyOverlay(overlay, target, colour);
+    fluid.applyOverlay(overlays, target, colour);
 }
 
 // Hack this using pseudo-globals for now - in time we perhaps want some kind of auto-mount using live query?
@@ -290,6 +298,7 @@ document.addEventListener("keydown", function (evt) {
             </div>
         </div>
         <div id="fl-editor-inspect-overlay" class="fl-inspect-overlay"></div>
+        <div id="fl-self-inspect-overlay" class="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()"><div class="fl-inspect-layer"></div></div>
     </div>
 </template>
 
