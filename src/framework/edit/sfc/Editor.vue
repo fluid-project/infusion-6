@@ -29,8 +29,20 @@ fluid.def("fluid.editor.sfc", {
             },
             args: ["{self}", "{0}:text", "{fluid.editor}.layerRec"]
         }
-    }
+    },
+
+    codemirrorOptions: {
+        lint: {
+            options: {
+                jshint: {
+                    esversion: 6
+                }
+            }
+        },
+        tooltips: true
+    },
 });
+
 
 fluid.def("fluid.editor.javascript", {
     mode: "text/javascript",
@@ -64,7 +76,8 @@ fluid.def("fluid.editor.json", {
     },
     text: "{self}.readText",
     codemirrorOptions: {
-        lint: true
+        lint: true,
+        tooltips: true
     },
     $variety: "frameworkAux"
 });

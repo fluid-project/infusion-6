@@ -233,7 +233,6 @@ fluid.editorRoot.click = function (editorRoot) {
 
 document.addEventListener("keydown", function (evt) {
     evt.stopImmediatePropagation();
-    console.log(evt);
     if (evt.key === "z" && (evt.ctrlKey || evt.metaKey)) {
         console.log("Undo");
         fluid.historyBack();
@@ -266,8 +265,7 @@ document.addEventListener("keydown", function (evt) {
         <div class="fl-editor-main-pane"
              @onmouseover="fluid.editorRoot.mouseOver({self})"
              @onmouseout="fluid.editorRoot.mouseOut({self})"
-             @onclick="fluid.editorRoot.click({self})"
-             @onkeydown="fluid.editorRoot.keydown({self})">
+             @onclick="fluid.editorRoot.click({self})">
             <div class="fl-editor-pane-top">
                 <div class="fl-layer-browser">
                     <div class="fl-layers-header">

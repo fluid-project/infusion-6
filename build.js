@@ -83,6 +83,9 @@ const buildIndex = {
         src: "node_modules/csslint/dist/csslint.js",
         dest: "src/lib/codemirror/js/csslint.js"
     }, {
+        src: "node_modules/htmlhint/dist/htmlhint.js",
+        dest: "src/lib/codemirror/js/htmlhint.js"
+    }, {
         src: "node_modules/acorn-loose/dist/acorn-loose.js",
         dest: "src/lib/acorn-loose/acorn-loose.js"
     }, {

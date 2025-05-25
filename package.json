@@ -49,6 +49,7 @@
         "codemirror": "5.65.19",
         "jshint": "2.13.2",
         "jsonlint": "1.6.3",
+        "htmlhint": "1.1.4",
         "csslint": "1.0.5",
         "acorn": "8.14.1",
         "acorn-loose": "8.5.0"

@@ -54,43 +54,6 @@ const htmlParserScope = function (fluid) {
      */
     const no = () => false;
 
-    // Material from https://github.com/vuejs/vue/blob/dev/src/compiler/parser/text-parser.js
-    const defaultTagRE = /\{\{((?:.|\r?\n)+?)\}\}/g;
-
-
-    fluid.parseText = function (text) {
-        const tagRE = defaultTagRE;
-        if (!tagRE.test(text)) {
-            return;
-        }
-        const tokens = [];
-        const rawTokens = [];
-        let lastIndex = tagRE.lastIndex = 0;
-        let match, index, tokenValue;
-        while ((match = tagRE.exec(text))) {
-            index = match.index;
-            // push text token
-            if (index > lastIndex) {
-                rawTokens.push(tokenValue = text.slice(lastIndex, index));
-                tokens.push(JSON.stringify(tokenValue));
-            }
-            // tag token
-            const exp = match[1].trim(); // Used to be parseFilters(match[1].trim())
-            tokens.push(`_s(${exp})`);
-            rawTokens.push({ "@binding": exp });
-            lastIndex = index + match[0].length;
-        }
-        if (lastIndex < text.length) {
-            rawTokens.push(tokenValue = text.slice(lastIndex));
-            tokens.push(JSON.stringify(tokenValue));
-        }
-        return {
-            expression: tokens.join("+"),
-            tokens: rawTokens
-        };
-    };
-
-
 
     // HTML5 tags https://html.spec.whatwg.org/multipage/indices.html#elements-3
     // Phrasing Content https://html.spec.whatwg.org/multipage/dom.html#phrasing-content
@@ -241,19 +204,26 @@ const htmlParserScope = function (fluid) {
             } else {
                 let endTagLength = 0;
                 const stackedTag = lastTag.toLowerCase();
-                const reStackedTag = reCache[stackedTag] || (reCache[stackedTag] = new RegExp("([\\s\\S]*?)(</" + stackedTag + "[^>]*>)", "i"));
-                const rest = html.replace(reStackedTag, function (all, text, endTag) {
+                const reStackedTag =
+                    reCache[stackedTag] ||
+                    (reCache[stackedTag] = new RegExp("([\\s\\S]*?)(</" + stackedTag + "[^>]*>)", "i"));
+                const rest = html.replace(reStackedTag, function (all, text, endTag, offset) {
                     endTagLength = endTag.length;
+
+                    const textStart = index + offset;
+                    const textEnd = textStart + text.length;
+
+                    let processedText = text;
                     if (!isPlainTextElement(stackedTag) && stackedTag !== "noscript") {
-                        text = text
-                            .replace(/<!\--([\s\S]*?)-->/g, "$1") // #7298
+                        processedText = processedText
+                            .replace(/<!\--([\s\S]*?)-->/g, "$1")
                             .replace(/<!\[CDATA\[([\s\S]*?)]]>/g, "$1");
                     }
-                    if (shouldIgnoreFirstNewline(stackedTag, text)) {
-                        text = text.slice(1);
+                    if (shouldIgnoreFirstNewline(stackedTag, processedText)) {
+                        processedText = processedText.slice(1);
                     }
                     if (options.chars) {
-                        options.chars(text);
+                        options.chars(processedText, textStart, textEnd);
                     }
                     return "";
                 });
@@ -320,18 +290,12 @@ const htmlParserScope = function (fluid) {
             const unary = isUnaryTag(tagName) || !!unarySlash;
 
             const l = match.attrs.length;
-            const attrs = new Array(l);
+            const attrs = {};
             for (let i = 0; i < l; i++) {
                 const args = match.attrs[i];
+                const name = args[1];
                 const value = args[3] || args[4] || args[5] || "";
-                attrs[i] = {
-                    name: args[1],
-                    value: decodeAttr(value)
-                };
-                if (NODE_ENV !== "production" && options.outputSourceRange) {
-                    attrs[i].start = args.start + args[0].match(/^\s*/).length;
-                    attrs[i].end = args.end;
-                }
+                attrs[name] = decodeAttr(value);
             }
 
             if (!unary) {
@@ -397,15 +361,19 @@ const htmlParserScope = function (fluid) {
         }
     };
 
-    fluid.createASTElement = function (tag, attrs, parent) {
-        return {tag, attrs, parent,
-            children: []
-        };
+    fluid.isWhitespace = function (text) {
+        return /^\s*$/.test(text);
     };
 
     fluid.parseHTMLToTree = function (html, options) {
         const stack = [];
+        let root;
         let currentParent;
+        if (options.fragment) {
+            root = {tag: "fragment", children: []};
+            stack.push(root);
+            currentParent = root;
+        }
 
         const closeElement = element => {
             if (currentParent) {
@@ -418,6 +386,9 @@ const htmlParserScope = function (fluid) {
             start: (tag, attrs, unary, start, end) => {
                 let element = {tag, attrs, parent: currentParent, children: [], start, end};
                 if (!unary) {
+                    if (!root) {
+                        root = element;
+                    }
                     stack.push(element);
                     currentParent = element;
                 } else {
@@ -431,31 +402,22 @@ const htmlParserScope = function (fluid) {
                 closeElement(element);
             },
             chars: (text, start, end) => {
-                const children = currentParent.children;
+                const children = currentParent?.children;
 
-                if (text) {
-                    let res;
-                    let child;
-                    if (text !== " " && (res = fluid.parseText(text))) {
-                        child = {
-                            type: 2,
-                            expression: res.expression,
-                            tokens: res.tokens,
-                            text
-                        };
-                    } else if (
-                        text !== " " ||
-                        !children.length ||
-                        children[children.length - 1].text !== " "
-                    ) {
-                        child = {
-                            type: 3,
-                            text
-                        };
+                if (text && children) {
+                    const isWhitespace = fluid.isWhitespace(text);
+                    if (options.skipWhitespace && isWhitespace) {
+                        return;
                     }
-                    if (child) {
-                        child.start = start;
-                        child.end = end;
+                    const prev = children[children.length - 1];
+
+                    if (!isWhitespace || !children.length || !fluid.isWhitespace(prev?.text)) {
+                        const child = {
+                            type: 3,
+                            text,
+                            start,
+                            end
+                        };
                         children.push(child);
                     }
                 }
@@ -475,7 +437,7 @@ const htmlParserScope = function (fluid) {
 
         }, options);
         fluid.parseHTMLToStream(html, innerOptions);
-        return stack[0];
+        return root;
     };
 
 };

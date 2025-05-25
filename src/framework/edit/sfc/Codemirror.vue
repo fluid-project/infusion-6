@@ -22,13 +22,15 @@ fluid.def("fluid.codemirror", {
         $effect: {
             func: (text, instance) => {
                 console.log("Codemirror readText update ", text);
-                if (!instance.inWrite) {
+                // Appalling kludge to avoid updating on our own writes - thankfully currently there is no other source of them
+                if (!instance.selfWrite) {
                     instance.inReadUpdate = true;
                     instance.setValue(text);
                     instance.inReadUpdate = false;
                     // CodeMirror 5 is a bit rubbish: https://stackoverflow.com/questions/8349571/codemirror-editor-is-not-loading-content-until-clicked
                     fluid.invokeLater(() => instance.refresh());
                 }
+                instance.selfWrite = false;
             },
             args: ["{self}.text", "{self}.instance"]
         }
@@ -42,14 +44,19 @@ fluid.codemirror.construct = function (self, container, oldInstance) {
     if (oldInstance) {
         return oldInstance;
     } else {
-        const options = {...self.codemirrorOptions, mode: self.mode};
+        const validText = signal(fluid.unavailable("Text not validated"));
+        const options = {...self.codemirrorOptions, mode: self.mode, validText, tooltipRoot: ".fl-editor-root"};
         const instance = CodeMirror.fromTextArea(container, options);
+        instance.firstValid = false; // Ignore the first validation update from initial editor contents
         console.log("Constructing from textArea ", container, " ", container.innerText);
-        instance.on("change", () => {
-            if (self.writeText && !instance.inReadUpdate) {
-                self.writeText(instance.getValue());
+        instance.writeEffect = fluid.effect(validText => {
+            if (instance.firstValid && self.writeText && !instance.inReadUpdate) {
+                instance.selfWrite = true;
+                self.writeText(validText);
             }
-        });
+            instance.firstValid = true;
+        }, [validText]);
+        validText.$variety = "codeMirror-validText";
         fluid.disableRendering(self);
         return instance;
     }
@@ -65,14 +72,18 @@ fluid.codemirror.construct = function (self, container, oldInstance) {
 <script src="@{libUrlBase}/codemirror/js/htmlmixed.js"></script>
 <script src="@{libUrlBase}/codemirror/js/vue.js"></script>
 
+<!-- The core linting implementations -->
 <script src="@{libUrlBase}/codemirror/js/jshint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/jsonlint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/csslint.js"></script>
+<script src="@{libUrlBase}/codemirror/js/htmlhint.js"></script>
 
-<script src="@{libUrlBase}/codemirror/js/lint.js"></script>
+<script src="@{libUrlBase}/codemirror/js/forked-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/javascript-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/json-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/css-lint.js"></script>
+
+<script src="@{editUrlBase}/js/sfcHelper.js"></script>
 
 <style src="@{libUrlBase}/codemirror/css/codemirror.css"></style>
 <style src="@{libUrlBase}/codemirror/css/lint.css"></style>
@@ -83,4 +94,18 @@ fluid.codemirror.construct = function (self, container, oldInstance) {
     font-size: 12px;
     height: 100%;
 }
+
+.CodeMirror-lint-tooltip {
+    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    transition: opacity 0s;
+}
+
+.CodeMirror-lint-marker-error {
+    color: #bb0000;
+}
+
+.CodeMirror-lint-marker-warning {
+    color: #ffbb00;
+}
+
 </style>

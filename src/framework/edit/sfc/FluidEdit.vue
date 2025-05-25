@@ -62,7 +62,7 @@ fluid.injectEditor(document);
 </script>
 
 <template>
-    <!-- Upstream loader needs to define editUrlBase libUrlBase and editUrlbase -->
+    <!-- Upstream loader needs to define libUrlBase and editUrlbase -->
     <!-- <fluid-url-base id="libUrlBase" src="../../../src/lib"></fluid-url-base> -->
     <div>
         <fluid-import layer="fluid.editorRoot" src="@{editUrlBase}/sfc/EditorRoot.vue"></fluid-import>
