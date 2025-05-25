@@ -98,11 +98,8 @@ const buildIndex = {
         src: "src/lib/codemirror",
         dest: "docs/codemirror"
     }, {
-        src: "src/lib/acorn-loose",
-        dest: "docs/acorn-loose"
-    }, {
-        src: "src/lib/acorn",
-        dest: "docs/acorn"
+        src: "src/lib/lezer",
+        dest: "docs/lezer"
     }, {
         src: "demo/**",
         dest: "docs/"

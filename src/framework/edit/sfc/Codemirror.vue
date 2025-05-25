@@ -78,10 +78,13 @@ fluid.codemirror.construct = function (self, container, oldInstance) {
 <script src="@{libUrlBase}/codemirror/js/csslint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/htmlhint.js"></script>
 
+<!-- CodeMirror's integrations for linting modes -->
 <script src="@{libUrlBase}/codemirror/js/forked-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/javascript-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/json-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/css-lint.js"></script>
+
+<script src="@{libUrlBase}/lezer/lezer-javascript-browser.js"></script>
 
 <script src="@{editUrlBase}/js/sfcHelper.js"></script>
 
