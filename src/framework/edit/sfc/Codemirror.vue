@@ -11,7 +11,7 @@ fluid.def("fluid.codemirror", {
     text: "",
     elideParent: false,
     template: "<textarea>@{text}</textarea>",
-    instance: "$eagerCompute:fluid.codemirror.construct({self}, {self}.renderedContainer, {$oldValue})",
+    instance: "$eagerCompute:fluid.codemirror.construct({self}, {fluid.editor}, {self}.renderedContainer, {$oldValue})",
     refreshOnActive: {
         $effect: {
             func: instance => instance.refresh(),
@@ -39,20 +39,20 @@ fluid.def("fluid.codemirror", {
     $variety: "frameworkAux"
 });
 
-fluid.codemirror.construct = function (self, container, oldInstance) {
+fluid.codemirror.construct = function (self, holder, container, oldInstance) {
     // Ensure we just construct exactly one component on our first render, regardless of whether we re-render
     if (oldInstance) {
         return oldInstance;
     } else {
         const validText = signal(fluid.unavailable("Text not validated"));
-        const options = {...self.codemirrorOptions, mode: self.mode, validText, tooltipRoot: ".fl-editor-root"};
+        const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
         const instance = CodeMirror.fromTextArea(container, options);
         instance.firstValid = false; // Ignore the first validation update from initial editor contents
         console.log("Constructing from textArea ", container, " ", container.innerText);
         instance.writeEffect = fluid.effect(validText => {
-            if (instance.firstValid && self.writeText && !instance.inReadUpdate) {
+            if (instance.firstValid && holder.writeText && !instance.inReadUpdate) {
                 instance.selfWrite = true;
-                self.writeText(validText);
+                holder.writeText(validText);
             }
             instance.firstValid = true;
         }, [validText]);

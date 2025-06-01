@@ -247,7 +247,14 @@ const fluidSubstrateScope = function (fluid) {
 
         const col = styleForCol(self.colourForLayer(effLayer)); // For Memphis
 
-        entry.value = `<span class="fl-substrate-key" ${col}>${key}:!nbsp;</span>
+        let layerElemClass = "", layerElemRef = "";
+        if (layer && !reactiveRoot) {
+            layerElemClass = " fl-layer-link";
+            const layerRef = fluid.renderLayerRef(layer, segs);
+            layerElemRef = `data-fl-layer-element="${layerRef}"`;
+        }
+
+        entry.value = `<span class="fl-substrate-key${layerElemClass}" ${layerElemRef} ${col}>${key}</span><span ${col}>:!nbsp;</span>
              <span class="fl-substrate-value" ${col}>${valuePrefix}${entryValue}</span>`;
         return entry;
     };

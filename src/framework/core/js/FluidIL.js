@@ -1190,6 +1190,11 @@ const fluidILScope = function (fluid) {
         return `{${site.shadow.path}}${path}`;
     };
 
+    fluid.renderLayerRef = function (layerName, segs) {
+        const path = segs ? "." + fluid.composeSegments(segs) : "";
+        return `{${layerName}}${path}`;
+    };
+
     /**
      * Parses a site identifier into its corresponding shadow and path within the component tree.
      * The site identifier is expected to be a context reference string that includes a context and an optional path.
@@ -1380,9 +1385,12 @@ const fluidILScope = function (fluid) {
 
             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
             shadow.dynamicLayerNames.update([...new Set(dynamicNames)]);
+            // TODO: We notice layerNames now routinely duplicates mergedRecordLayerNames - C3 doesn't in fact make a problem of this
+            // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
+            const uniqueStaticNames = [...new Set(staticNames)];
 
             const resolver = new fluid.HierarchyResolver();
-            const resolved = fluid.flatMergedRound(shadow, resolver, staticNames); // <= WILL READ LAYER REGISTRY
+            const resolved = fluid.flatMergedRound(shadow, resolver, uniqueStaticNames); // <= WILL READ LAYER REGISTRY
 
             if (fluid.isUnavailable(resolved)) {
                 return resolved;

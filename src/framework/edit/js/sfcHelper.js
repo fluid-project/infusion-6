@@ -92,7 +92,7 @@ fluid.defMapsFromTree = function (token, state) {
         const value = token.children[2]; // Could be ObjectExpression, String, or any other RH
         state.segs.push(propDef.text);
         pushedSeg = true;
-        fluid.set(state, ["defMap", state.currentDef, ...state.segs, $m], {from: value.from, to: value.to});
+        fluid.set(state, ["defMap", state.currentDef, ...state.segs, $m], {from: value.from + state.offset, to: value.to + state.offset});
     }
     ++state.tokens;
     token.children.forEach(child => fluid.defMapsFromTree(child, state));
@@ -105,11 +105,12 @@ fluid.defMapsFromTree = function (token, state) {
 };
 
 
-fluid.parseDefMaps = function (text) {
+fluid.parseDefMaps = function (text, offset) {
     const lezerTree = LezerJS.parser.parse(text);
 
     const state = {
         tokens: 0,
+        offset,
         defMap: {},
         segs: [],
         currentDef: null
@@ -138,7 +139,7 @@ fluid.lintScriptNode = function (vnode, fullText, hints, options, cm) {
         return;
     } else {
         const text = vnode.children[0].text;
-        cm.defMaps = fluid.parseDefMaps(text);
+        cm.defMaps = fluid.parseDefMaps(text, vnode.start + "<script>".length);
         // eslint-disable-next-line new-cap
         JSHINT(text, options.jshint, options.globals);
         const offsetLine = cm.doc.posFromIndex(vnode.start).line;

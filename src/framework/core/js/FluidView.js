@@ -346,7 +346,7 @@ const fluidViewScope = function (fluid) {
                 const styleNodes = sfc.querySelectorAll("style");
                 fluid.applySFCStyles(styleNodes, layerName, usedKeys, absUrl);
 
-                def.$layers = ["fluid.templateViewComponent", ...fluid.makeArray(def.$layers)];
+                def.$layers = def.$layers || ["fluid.templateViewComponent"];
                 fluid.def(layerName, def);
                 if (trailingScript) {
                     const nodeId = `fl-script-${layerName}-trailingScript`;

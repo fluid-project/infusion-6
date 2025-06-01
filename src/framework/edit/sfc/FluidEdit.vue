@@ -1,6 +1,5 @@
 <script>
 fluid.def("fluid.fullPageEditor", {
-    $layers: "fluid.viewComponent",
     editorVisible: false,
     editButton: {
         $component: {

@@ -2,19 +2,38 @@
 fluid.def("fluid.editor", {
     editor: {
         $component: {
-            $layers: ["fluid.codemirror", "{fluid.editor}.layerRec.editorModeLayer"]
+            $layers: "fluid.codemirror",
+            text: "{fluid.editor}.text"
         }
     },
+    inWrite: false, // Currently disused
     isActive: {
+        // TODO: What on earth? Why does this reach upward into the editorRoot?
         $compute: {
             func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
             args: ["{self}.layerRec.layerName", "{fluid.editorRoot}.selectedLayerTab"]
         }
     },
+    // Perhaps better implemented on editor subcomponent?
+    goToRef: {
+        $method: {
+            func: (self, ref) => {
+                const segs = [ref.context, ...fluid.parsePath(ref.path), fluid.metadataSymbol];
+                const cm = self.editor.instance;
+                const range = fluid.get(cm.defMaps, segs);
+                if (range) {
+                    const doc = cm.getDoc();
+                    const pos = cm.posFromIndex(range.from);
+                    doc.setCursor(pos);
+                }
+            },
+            args: ["{self}", "{0}:ref"]
+        }
+    },
     $variety: "frameworkAux"
 });
 
-// An addon layer must be supplied to determine the editor mode:
+// An addon layer is supplied to fluid.editor in fluid.editor.editorsPane to determine the editor mode:
 
 fluid.def("fluid.editor.sfc", {
     mode: "text/x-vue",
@@ -23,9 +42,9 @@ fluid.def("fluid.editor.sfc", {
     writeText: {
         $method: {
             func: (self, text, layerRec) => {
-                self.instance.inWrite = true;
+                self.inWrite = true;
                 layerRec.sfcDef.value = text;
-                self.instance.inWrite = false;
+                self.inWrite = false;
             },
             args: ["{self}", "{0}:text", "{fluid.editor}.layerRec"]
         }
@@ -64,9 +83,9 @@ fluid.def("fluid.editor.json", {
                 try {
                     const parsed = JSON.parse(text);
                     // TODO: & syntax in arguments
-                    self.instance.inWrite = true;
+                    self.inWrite = true;
                     layerRec.layerDef.write(parsed);
-                    self.instance.inWrite = false;
+                    self.inWrite = false;
                 } catch (e) {
                     console.log("JSON parse failure ", e);
                 }
