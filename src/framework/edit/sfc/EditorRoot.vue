@@ -265,7 +265,7 @@ document.addEventListener("keydown", function (evt) {
 <script src="@{editUrlBase}/js/layerColourManager.js"></script>
 
 <template>
-    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="width: 600px">
+    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="width: 500px">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@6.1.95/css/materialdesignicons.min.css">
         <svg id="svg-defs">
             <defs>
