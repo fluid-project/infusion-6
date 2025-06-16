@@ -49,6 +49,19 @@ html[fl-docking-area-mode~="minimized"] > .fl-docking-area-component {
     display: none;
 }
 
+.fl-editor-edit {
+    position: fixed;
+    top: 1em;
+    right: 1em;
+    z-index: 9999;
+}
+
+.fl-editor-root li, .fl-editor-root ul {
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
 /* Just causes layout to jank on hover
 html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
     margin: -0.5em;

@@ -5,7 +5,7 @@ fluid.def("fluid.fullPageEditor", {
         $component: {
             $layers: "fluid.templateViewComponent",
             elideParent: true,
-            template: `<button @onclick="{fullPageEditor}.editorVisible = true" style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
+            template: `<button class="fl-editor-edit" @onclick="{fullPageEditor}.editorVisible = true">Edit</button>`,
             container: "$compute:fluid.insertChildContainer(last, editButton, {self}.template, {fullPageEditor}.container)"
         }
     },

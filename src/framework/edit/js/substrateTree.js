@@ -254,8 +254,8 @@ const fluidSubstrateScope = function (fluid) {
             layerElemRef = `data-fl-layer-element="${layerRef}"`;
         }
 
-        entry.value = `<span class="fl-substrate-key${layerElemClass}" ${layerElemRef} ${col}>${key}</span><span ${col}>:!nbsp;</span>
-             <span class="fl-substrate-value" ${col}>${valuePrefix}${entryValue}</span>`;
+        entry.value = `<span class="fl-substrate-key${layerElemClass}" ${layerElemRef} ${col}>${key}</span><span ${col}>:!nbsp;</span>` +
+             `<span class="fl-substrate-value" ${col}>${valuePrefix}${entryValue}</span>`;
         return entry;
     };
 

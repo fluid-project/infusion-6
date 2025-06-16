@@ -64,6 +64,17 @@ fluid.def("fluid.editorRoot", {
             args: ["{editorsPane}", "{0}:layerName"]
         }
     },
+    goToLayerRef: {
+        $method: {
+            func: (self, layerRef) => {
+                // TODO: At some point deal with the fact that one editor might handle more than one layer - in the case
+                // it is a multiplexed SFC - do we really want to support that?
+                const holder = self.editorHolderForLayer(layerRef.context);
+                holder.goToRef(layerRef);
+            }
+        },
+        args: ["{self}", "{0}:layerRef"]
+    },
     focusLayerEditor: {
         $method: {
             func: (self, layerName) => {
@@ -126,7 +137,7 @@ fluid.def("fluid.editorRoot", {
 });
 
 fluid.shadowHasUserLayer = function (shadow) {
-    return fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
+    return shadow.that && fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
 };
 
 /**
@@ -227,7 +238,15 @@ fluid.editorRoot.mouseOut = function (editorRoot) {
 fluid.editorRoot.click = function (editorRoot) {
     const layerElem = event.target.closest(".fl-layer-link");
     if (layerElem) {
-        editorRoot.openLayerTab(layerElem.getAttribute("data-fl-layer-name"));
+        const layerName = layerElem.getAttribute("data-fl-layer-name");
+        const layerRef = layerElem.getAttribute("data-fl-layer-element");
+        const parsedLayerRef = layerRef && fluid.parseContextReference(layerRef);
+
+        const openLayer = layerName || parsedLayerRef.context;
+        editorRoot.openLayerTab(openLayer);
+        if (parsedLayerRef) {
+            editorRoot.goToLayerRef(parsedLayerRef);
+        }
     }
 };
 
@@ -246,7 +265,7 @@ document.addEventListener("keydown", function (evt) {
 <script src="@{editUrlBase}/js/layerColourManager.js"></script>
 
 <template>
-    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="width: 600px">
+    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="max-width: 700px; min-width: 700px">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@6.1.95/css/materialdesignicons.min.css">
         <svg id="svg-defs">
             <defs>

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memoized Fibonacci with signal-polyfill</title>
+</head>
+<body>
+<h1>Memoized Fibonacci using signal-polyfill</h1>
+<div id="output"></div>
+
+<script type="module">
+    import { Signal } from "https://esm.sh/signal-polyfill";
+
+    const fibMemo = new Map();
+
+    function fib(n) {
+        if (fibMemo.has(n)) {
+            return fibMemo.get(n).get(); // force it
+        }
+
+        const comp = new Signal.Computed(() => {
+            if (n < 2) return n;
+            const a = fib(n - 1);
+            const b = fib(n - 2);
+            return a + b;
+        });
+
+        fibMemo.set(n, comp);
+        return comp.get(); // force it
+    }
+
+    const output = document.getElementById("output");
+    const n = 20;
+    const result = fib(n);
+    output.textContent = `fib(${n}) = ${result}`;
+</script>
+</body>
+</html>

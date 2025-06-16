@@ -35,6 +35,7 @@ fluid.def("fluid.editor.substratePane", {
 li.fl-substrate-row {
     margin-left: 16px;
     white-space: nowrap;
+    list-style-type: none;
 }
 
 .fl-substrate-string {

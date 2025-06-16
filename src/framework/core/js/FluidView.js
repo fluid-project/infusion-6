@@ -514,7 +514,7 @@ const fluidViewScope = function (fluid) {
      */
     fluid.domToVDom = function (node) {
         if (node.nodeType === Node.TEXT_NODE) {
-            const text = node.nodeValue.trim().replace("!nbsp;", "\u00a0");
+            const text = node.nodeValue.replace("!nbsp;", "\u00a0");
             return text === "" ? null : {text};
         }
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -683,8 +683,14 @@ const fluidViewScope = function (fluid) {
         if (fluid.isSignal(rendered)) {
             const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
                 const togo = fluid.effect( function (element, text) {
-                    applyFunc(element, text);
-                }, [vnode.elementSignal, rendered]);
+                    if (!fluid.isUnavailable(element)) {
+                        if (fluid.isUnavailable(text)) {
+                            fluid.renderError(element, text);
+                        } else {
+                            applyFunc(element, text);
+                        }
+                    }
+                }, [vnode.elementSignal, rendered], {free: true});
                 togo.$variety = "bindDomTokens";
                 togo.$vnode = vnode;
                 return togo;
@@ -931,7 +937,7 @@ const fluidViewScope = function (fluid) {
         if (typeof(vnode) === "string") {
             return document.createTextNode(vnode);
         } else if (vnode.text !== undefined) {
-            return document.createTextNode(vnode.text);
+            return document.createTextNode(fluid.isSignal(vnode.text) ? "" : vnode.text);
         } else {
             return fluid.svgTags.has(vnode.tag)
                 ? document.createElementNS("http://www.w3.org/2000/svg", vnode.tag)
@@ -994,8 +1000,8 @@ const fluidViewScope = function (fluid) {
      * @param {Node} element - The actual DOM element to be patched.
      */
     fluid.patchChildren = function (vnode, element) {
-        fluid.bindDom(vnode, element);
-        if (vnode.text !== undefined) {
+        fluid.bindDom(vnode, element); // Will assign to elementSignal and allocate binding effects
+        if (vnode.text !== undefined && !fluid.isSignal(vnode.text)) {
             element.nodeValue = vnode.text;
         }
         if (vnode.attrs !== undefined) {
@@ -1018,7 +1024,7 @@ const fluidViewScope = function (fluid) {
                     }
                     other = fresh;
                 }
-                fluid.patchChildren(vchild, other, null);
+                fluid.patchChildren(vchild, other);
             }
             for (let i = element.childNodes.length - 1; i >= vcount; --i) {
                 element.childNodes[i].remove();

@@ -137,7 +137,7 @@ fluid.def("fluid.editorRoot", {
 });
 
 fluid.shadowHasUserLayer = function (shadow) {
-    return fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
+    return shadow.that && fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
 };
 
 /**
@@ -265,7 +265,7 @@ document.addEventListener("keydown", function (evt) {
 <script src="@{editUrlBase}/js/layerColourManager.js"></script>
 
 <template>
-    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="width: 500px">
+    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="max-width: 700px; min-width: 700px">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@6.1.95/css/materialdesignicons.min.css">
         <svg id="svg-defs">
             <defs>

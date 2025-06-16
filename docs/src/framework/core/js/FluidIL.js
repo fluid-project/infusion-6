@@ -663,10 +663,11 @@ const fluidILScope = function (fluid) {
      *
      * @param {String|Object} ref - A context reference string or parsed reference object. If a String, it will be parsed via `fluid.parseContextReference`.
      * @param {Shadow} shadow - The shadow context of the component from which the reference is being resolved.
+     * @param {String[]} [segs] - Array of path segments where this reference appears in component configuration
      * @param {Function} [resolver] - An optional custom resolver function used for resolving context names.
      * @return {Signal<any>} A signal representing the resolved reference value. It includes metadata: the parsed reference, the resolving site, and a `$variety` tag.
      */
-    fluid.fetchContextReference = function (ref, shadow, resolver) {
+    fluid.fetchContextReference = function (ref, shadow, segs, resolver) {
         const parsed = fluid.isPrimitive(ref) ? fluid.parseContextReference(ref) : ref;
         const refComputer = computed( function fetchContextReference() {
             // TODO: Need to cache these per site
@@ -676,7 +677,7 @@ const fluidILScope = function (fluid) {
                 path: shadow.path
             }), target) : fluid.isComponent(target) ? fluid.getForComponent(target[$m], parsed.path) : fluid.get(target, parsed.path);
         });
-        return Object.assign(refComputer, {parsed, site: shadow, $variety: "$contextRef"});
+        return Object.assign(refComputer, {parsed, site: {shadow, segs}, $variety: "$contextRef"});
     };
 
     /**
@@ -842,16 +843,17 @@ const fluidILScope = function (fluid) {
      * a local context
      * @param {any} material - The material to be expanded
      * @param {Shadow} shadow - Component from whose point of view the material is to be expanded
+     * @param {String[]} segs - Path segments within shadow where material was found
      * @param {Function} [resolver] - A function dynamically resolving a context name to a local context
      * @return {any} The expanded material, with signals in place of any references discovered
      */
-    fluid.resolveArgMaterial = function (material, shadow, resolver) {
+    fluid.resolveArgMaterial = function (material, shadow, segs, resolver) {
         if (fluid.isPrimitive(material)) {
-            return fluid.isILReference(material) ? fluid.fetchContextReference(material, shadow, resolver) : material;
-        } else if (Array.isArray(material)) {
-            return material.map(member => fluid.resolveArgMaterial(member, shadow, resolver));
+            return fluid.isILReference(material) ? fluid.fetchContextReference(material, shadow, segs, resolver) : material;
+        } else if (Array.isArray(material)) { // TODO: Append keys to segs
+            return material.map(member => fluid.resolveArgMaterial(member, shadow, segs, resolver));
         } else if (fluid.isPlainObject(material, true)) {
-            return fluid.transform(material, member => fluid.resolveArgMaterial(member, shadow, resolver));
+            return fluid.transform(material, member => fluid.resolveArgMaterial(member, shadow, segs, resolver));
         } else {
             return material;
         }
@@ -903,7 +905,7 @@ const fluidILScope = function (fluid) {
             const argRecs = fluid.makeArray(record.args);
             togo = function applyMethod(...args) {
                 resolver.backing = args;
-                const resolvedArgs = fluid.resolveArgMaterial(argRecs, shadow, resolver.resolve);
+                const resolvedArgs = fluid.resolveArgMaterial(argRecs, shadow, segs, resolver.resolve);
                 const flatArgs = resolvedArgs.map(methodFlattener);
 
                 return resolveFunc().apply(shadow, flatArgs);
@@ -929,11 +931,12 @@ const fluidILScope = function (fluid) {
      *
      * @param {FuncRecord} rec - A function record containing one of `funcName` or `func` to resolve.
      * @param {Shadow} shadow - The shadow context used for resolving context references.
+     * @param {String[]} segs - The path where this reference appears in component configuration
      * @return {Signal<Function>|Function} Signal or value for the resolved function.
      */
-    fluid.resolveFuncReference = function (rec, shadow) {
+    fluid.resolveFuncReference = function (rec, shadow, segs) {
         let func = typeof(rec.func) === "string" ?
-            fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow) :
+            fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow, segs) :
                 fluid.getGlobalValue(rec.func) :
             rec.func;
         if (!func) {
@@ -942,10 +945,10 @@ const fluidILScope = function (fluid) {
         return func;
     };
 
-    fluid.resolveFuncRecord = function (rec, shadow) {
-        const func = fluid.resolveFuncReference(rec, shadow);
+    fluid.resolveFuncRecord = function (rec, shadow, segs) {
+        const func = fluid.resolveFuncReference(rec, shadow, segs);
         const args = fluid.makeArray(rec.args);
-        const resolvedArgs = fluid.resolveArgMaterial(args, shadow);
+        const resolvedArgs = fluid.resolveArgMaterial(args, shadow, segs);
 
         return {func, resolvedArgs};
     };
@@ -989,10 +992,11 @@ const fluidILScope = function (fluid) {
      *
      * @param {FuncRecord} record - The record describing the effect-style function. Must include either `func` or `funcName`, and optionally `args`.
      * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @param {String[]} segs - The path where this effect record appears in its component
      * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
      */
-    fluid.expandEffectRecord = function (record, shadow) {
-        const {func: funcSignal, resolvedArgs} = fluid.resolveFuncRecord(record, shadow);
+    fluid.expandEffectRecord = function (record, shadow, segs) {
+        const {func: funcSignal, resolvedArgs} = fluid.resolveFuncRecord(record, shadow, segs);
         const func = fluid.deSignal(funcSignal);
         if (fluid.isUnavailable(func)) {
             return func;
@@ -1010,11 +1014,12 @@ const fluidILScope = function (fluid) {
      *
      * @param {any|String} record - The data to be made reactive, or a context reference String.
      * @param {Shadow} shadow - The component's shadow record
+     * @param {String[]} segs - The path where this record appears in its component
      * @return {Signal<any>} A computed signal representing the reactive data for the specified record.
      */
-    fluid.expandReactiveRecord = function (record, shadow) {
+    fluid.expandReactiveRecord = function (record, shadow, segs) {
         const togo = typeof(record) === "string" ?
-            fluid.fetchContextReference(record, shadow) : signal(record);
+            fluid.fetchContextReference(record, shadow, segs) : signal(record);
         // This is otherwise a no-op since marking the shadowMap is done in fluid.transferShadowMap
         togo.$variety = "$reactiveRoot";
         return togo;
@@ -1049,11 +1054,11 @@ const fluidILScope = function (fluid) {
      *
      * @param {FuncRecord} record - The component-style function record to be expanded. Expected to contain `func`, `funcName`, and/or `args`, along with `$layers`.
      * @param {Shadow} shadow - The parent component's shadow record under which the subcomponent will be allocated.
-     * @param {String} key - The member name at which the subcomponent will be instantiated.
      * @param {String[]} segs - The path in the parent shadow holding this record
+     * @param {String} key - The member name at which the subcomponent will be instantiated.
      * @return {ComponentComputer} A reactive signal representing the component instance.
      */
-    fluid.expandComponentRecord = function (record, shadow, key, segs) {
+    fluid.expandComponentRecord = function (record, shadow, segs, key) {
         const expanded = fluid.readerExpandLayer(record);
         const sourceLayer = fluid.get(shadow.layerMap, [...segs, $m, "source"]);
         const sourceRecord = expanded.$for;
@@ -1190,6 +1195,11 @@ const fluidILScope = function (fluid) {
         return `{${site.shadow.path}}${path}`;
     };
 
+    fluid.renderLayerRef = function (layerName, segs) {
+        const path = segs ? "." + fluid.composeSegments(segs) : "";
+        return `{${layerName}}${path}`;
+    };
+
     /**
      * Parses a site identifier into its corresponding shadow and path within the component tree.
      * The site identifier is expected to be a context reference string that includes a context and an optional path.
@@ -1226,7 +1236,7 @@ const fluidILScope = function (fluid) {
         if (oldRec && oldRec.signalRecord === record) {
             return rec.signalProduct = oldRec.signalProduct;
         } else if (!handlerRecord.isEffect) {
-            const product = rec.signalProduct = handlerRecord.handler(record, shadow, fluid.peek(segs), segs);
+            const product = rec.signalProduct = handlerRecord.handler(record, shadow, segs, fluid.peek(segs));
             fluid.siteSignal(product, shadow, segs);
             return product;
         }
@@ -1242,8 +1252,8 @@ const fluidILScope = function (fluid) {
                 return element;
             }
         } else if (fluid.isILReference(element)) {
-            const togo = fluid.fetchContextReference(element, shadow);
-            fluid.siteSignal(togo, shadow, segs);
+            const togo = fluid.fetchContextReference(element, shadow, segs);
+            // fluid.siteSignal(togo, shadow, segs);
             return togo;
         } else {
             return element;
@@ -1375,14 +1385,21 @@ const fluidILScope = function (fluid) {
             const allMergeRecords = [...mergeRecords, dynamicMergeRecord];
             shadow.mergeRecords = allMergeRecords; // Put this in early so we can resolve container if there is an error
 
-            const mergeRecordLayerNames = allMergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat();
+            const mergeRecordLayerNames = allMergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers))
+                .flat().filter(name => name);
             const allLayerNames = [...layerNames, ...mergeRecordLayerNames].reverse();
 
             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
             shadow.dynamicLayerNames.update([...new Set(dynamicNames)]);
+            // TODO: We notice layerNames now routinely duplicates mergedRecordLayerNames - C3 doesn't in fact make a problem of this
+            // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
+            const uniqueStaticNames = [...new Set(staticNames)];
 
             const resolver = new fluid.HierarchyResolver();
-            const resolved = fluid.flatMergedRound(shadow, resolver, staticNames); // <= WILL READ LAYER REGISTRY
+            // Any dynamic layer name which doesn't resolve is going to be categorised as unavailable
+            // But we have a problem that we've lost the signal
+            const {designalArgs: resolvedStaticNames, unavailable} = fluid.processSignalArgs(uniqueStaticNames);
+            const resolved = unavailable || fluid.flatMergedRound(shadow, resolver, resolvedStaticNames); // <= WILL READ LAYER REGISTRY
 
             if (fluid.isUnavailable(resolved)) {
                 return resolved;
@@ -1405,21 +1422,26 @@ const fluidILScope = function (fluid) {
     fluid.possiblyRenderError = x => x;
 
     fluid.scheduleEffects = function (shadow) {
-        if (shadow.dynamicLayerNames.doneAt < shadow.dynamicLayerNames.tick) {
-            shadow.dynamicMergeRecord.value = {
-                mergeRecordType: "dynamicLayers",
-                layer: {
-                    $layers: shadow.dynamicLayerNames.array.map(ref =>
-                        fluid.deSignal(fluid.fetchContextReference(ref, shadow))).filter(name => name)
+        if (shadow.dynamicLayerNames.array.length > 0) {
+            shadow.frameworkEffects.dynamicLayerEffect = effect(() => {
+                if (shadow.dynamicLayerNames.doneAt < shadow.dynamicLayerNames.tick) {
+                    shadow.dynamicMergeRecord.value = {
+                        mergeRecordType: "dynamicLayers",
+                        layer: {
+                            $layers: shadow.dynamicLayerNames.array.map(function resolveDynamicLayers(ref) {
+                                return fluid.deSignal(fluid.fetchContextReference(ref, shadow, ["$layers"]));
+                            })
+                        }
+                    };
+                    shadow.dynamicLayerNames.doneAt = shadow.dynamicLayerNames.tick;
                 }
-            };
-            shadow.dynamicLayerNames.doneAt = shadow.dynamicLayerNames.tick;
+            });
         }
 
         fluid.possiblyRenderError(shadow); // Callout to FluidView.js
 
         const expandEffect = (newRecord, segs) => {
-            newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow);
+            newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow, segs);
             fluid.siteSignal(newRecord.signalProduct, shadow, segs);
         };
         // Instantiate any fresh effects
