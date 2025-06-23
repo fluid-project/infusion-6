@@ -706,8 +706,7 @@ const fluidJSScope = function (fluid) {
      * accepts or returns any of these values, and if so, what its semantic is  - most are of private
      * use internal to the framework
      */
-    fluid.marker = function () {
-    };
+    fluid.marker = function () {};
     /**
      * Create a marker object with a specific type and additional properties.
      * Markers are optionally mutable or immutable (frozen).
@@ -1978,9 +1977,9 @@ const fluidJSScope = function (fluid) {
      * @throws {Error} - Throws an error if the hierarchy is inconsistent.
      */
     fluid.C3_merge = function (seqs) {
-        fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
+        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
         let res = [];
-        let i = 0;
+        // let i = 0;
 
         while (true) {
             let nonemptyseqs = seqs.filter(seq => seq.length > 0);
@@ -1988,13 +1987,13 @@ const fluidJSScope = function (fluid) {
                 return res;
             }
 
-            i++;
-            fluid.log(`\n${i} round: candidates...`);
+            // i++;
+            // fluid.log(`\n${i} round: candidates...`);
 
             let cand = null;
             for (let seq of nonemptyseqs) {
                 cand = seq[0];
-                fluid.log(` ${cand}`);
+                // fluid.log(` ${cand}`);
                 // eslint-disable-next-line no-loop-func
                 let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
                 if (nothead.length > 0) {

@@ -22,7 +22,7 @@ fluid.def("fluid.editor.historyList", {
             args: [fluid.layerHistory, fluid.layerHistoryIndex, "{editorRoot}.showUserLayersOnly", "{colourManager}.layerColours"]
         }
     },
-    template: `<div @id="history" class="fl-history-pane"></div>`,
+    template: `<div class="fl-history-pane"><div @id="history"></div></div>`,
     history: {
         $component: {
             $layers: "fluid.templateViewComponent",

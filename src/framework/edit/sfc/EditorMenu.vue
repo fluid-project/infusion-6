@@ -1,5 +1,6 @@
 <script>
 fluid.def("fluid.editor.menu", {
+    elideParent: false,
     menuItemsData: {
         File: [{
             text: "Export..."
@@ -48,6 +49,7 @@ fluid.def("fluid.editor.menu", {
                     args: ["{itemName}", "{menu}.menuOpen"]
                 }
             },
+            elideParent: false,
             template: `
             <div class="fl-menu-item-holder">
                 <div class="fl-menu-item fl-clickable fl-no-dismiss"
@@ -66,6 +68,7 @@ fluid.def("fluid.editor.menu", {
                         value: "menuRecord"
 
                     },
+                    elideParent: false,
                     template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({menuRecord})">@{{menuRecord}.text}</div>`
                 }
             }
@@ -99,6 +102,7 @@ fluid.def("fluid.editor.menu.filterLayers", {
 fluid.def("fluid.editor.menu.inspect", {
     $layers: "fluid.templateViewComponent",
     inspecting: false,
+    elideParent: false,
     template: `
 
 <div class="fl-inspect" @class="fl-inspecting:@{inspecting}" @onclick="{self}.inspecting = !{self}.inspecting" title="Select an element on the page to inspect it">
@@ -137,7 +141,7 @@ fluid.inspect.effect = function (self, inspecting) {
 <template>
     <div class="fl-menubar">
         <div @id="inspect"></div>
-        <div class="fl-menu-items" @id="menuItems"></div>
+        <div class="fl-menu-items"><div @id="menuItems"></div></div>
         <div class="fl-editor-close fl-clickable" @onclick="{fullPageEditor}.editorVisible = false">
             <span class="mdi mdi-close"></span>
         </div>

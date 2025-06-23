@@ -112,12 +112,8 @@ fluid.tests.nestedExpect = {
     "class": "outer",
     $children: {
         $tagName: "div",
-        "class": "outerInner",
-        $children: {
-            $tagName: "div",
-            "class": "inner",
-            $textContent: "Text from inner"
-        }
+        "class": "outerInner inner",
+        $textContent: "Text from inner"
     }
 };
 
@@ -164,7 +160,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
     });
 
     const newExpected = fluid.copy(fluid.tests.nestedExpect);
-    newExpected.$children.$children.$textContent = "New brush";
+    newExpected.$children.$textContent = "New brush";
     assert.assertNode(root, newExpected, "Updated render correct");
 
     const nodes2 = fluid.tests.getNodeParents(container, ".inner");
@@ -190,7 +186,7 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
     });
 
     const newExpected = fluid.copy(fluid.tests.nestedExpect);
-    newExpected.$children["class"] = "newHandle";
+    newExpected.$children["class"] = "newHandle inner";
     assert.assertNode(root, newExpected, "Updated render correct");
 
     const nodes2 = fluid.tests.getNodeParents(container, ".inner");
@@ -242,6 +238,7 @@ fluid.tests.todos = [
 
 fluid.def("fluid.tests.todoItem", {
     $layers: "fluid.templateViewComponent",
+    elideParent: false,
     template:
         `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
             @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
@@ -270,7 +267,9 @@ fluid.def("fluid.tests.todoList", {
         </section>
         <section class="section">
             <input class="input is-rounded" @onkeyup="fluid.tests.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
-            <div @id="todoItems" class="section"></div>
+            <div class="section">
+                <div @id="todoItems"></div>
+            </div>
         </section>
     </div>`,
     todoItems: {
@@ -303,7 +302,24 @@ fluid.def("fluid.tests.todoList", {
     }
 });
 
+fluid.tests.todoStructure = count => ({
+    $tagName: "section",
+    "class": "section",
+    $children: [{
+        $tagName: "input",
+        "class": "input is-rounded",
+        type: "text",
+        placeholder: "New todo"
+    }, {
+        $tagName: "div",
+        "class": "section",
+        $children: Array(count).fill({$tagName: "span"})
+    }]
+});
+
 fluid.tests.checkTodoRendering = function (assert, that, container, model) {
+    const t = texts => texts.map(text => text.trim());
+
     const items = that.todoItems.list;
     assert.equal(items.length, model.length, "Correct component count");
 
@@ -312,8 +328,11 @@ fluid.tests.checkTodoRendering = function (assert, that, container, model) {
     const treeTexts = items.map(item => item.text);
     assert.deepEqual(treeTexts, modelTexts, "Correct texts for component tree items");
 
+    const section = qs("section.section", container);
+    assert.assertNode(section, fluid.tests.todoStructure(modelTexts.length), "Correct top-level markup structure");
+
     const renderedTexts = qsa(".todo", container).map(element => element.innerText);
-    assert.deepEqual(renderedTexts, modelTexts, "Correct texts for markup rendered items");
+    assert.deepEqual(t(renderedTexts), modelTexts, "Correct texts for markup rendered items");
 
     const modelCompleted = model.map(todo => todo.completed);
     const treeCompleted = items.map(item => item.completed);
@@ -453,6 +472,7 @@ QUnit.test("Reference up through rendering effect", function (assert) {
 
 fluid.def("fluid.tests.dynamicChild", {
     $layers: "fluid.templateViewComponent",
+    elideParent: false,
     template: `<div class="dynamic">Dynamic template</div>`
 });
 

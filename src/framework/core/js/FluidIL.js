@@ -178,6 +178,8 @@ const fluidILScope = function (fluid) {
         shadow.ownScope[$m] = "ownScope-" + shadow.path;
         shadow.variableScope = Object.create(shadow.ownScope);
         shadow.variableScope[$m] = "variableScope-" + shadow.path;
+        shadow.ownScopeTick = signal(0);
+        shadow.scopeTick = parentShadow ? computed( () => shadow.ownScopeTick.value + parentShadow.ownScopeTick.value) : shadow.ownScopeTick;
 
         return effect(function scopeEffect() {
             const childOfRoot = !shadow.parentShadow || shadow.parentShadow.that === rootComponent;
@@ -199,6 +201,7 @@ const fluidILScope = function (fluid) {
                     // TODO: Remember to delete these again when clearing
                 }
             });
+            shadow.ownScopeTick.value = shadow.ownScopeTick.peek() + 1;
         });
     };
 
@@ -209,6 +212,7 @@ const fluidILScope = function (fluid) {
                 delete parentShadow.childrenScope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
             }
         });
+        childShadow.ownScopeTick.value = childShadow.ownScopeTick.peek() + 1;
     };
 
     class ArrayWithTick {
@@ -330,7 +334,6 @@ const fluidILScope = function (fluid) {
             if (created) {
                 shadow.path = path;
                 shadow.memberName = name;
-                shadow.dynamicLayerNames = new ArrayWithTick();
                 shadow.parentShadow = parentShadow;
                 shadow.childComponents = {};
                 shadow.frameworkEffects = {};
@@ -558,6 +561,8 @@ const fluidILScope = function (fluid) {
             } else {
                 const local = resolver ? resolver(context) : fluid.NoValue;
                 if (local === fluid.NoValue) {
+                    // eslint-disable-next-line no-unused-vars
+                    const scopeTick = shadow.ownScopeTick.value; // Read the scope tick to cause a dependency
                     const resolvedRec = shadow.variableScope[context];
                     if (resolvedRec) {
                         const resolved = resolvedRec.value;
@@ -1390,14 +1395,17 @@ const fluidILScope = function (fluid) {
             const allLayerNames = [...layerNames, ...mergeRecordLayerNames].reverse();
 
             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
-            shadow.dynamicLayerNames.update([...new Set(dynamicNames)]);
+            const uniqueDynamicNames = [...new Set(dynamicNames)];
+            if (!fluid.arrayEqual(uniqueDynamicNames, shadow.dynamicLayerNames.peek())) {
+                shadow.dynamicLayerNames.value = uniqueDynamicNames;
+            }
+
             // TODO: We notice layerNames now routinely duplicates mergedRecordLayerNames - C3 doesn't in fact make a problem of this
             // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
             const uniqueStaticNames = [...new Set(staticNames)];
 
             const resolver = new fluid.HierarchyResolver();
             // Any dynamic layer name which doesn't resolve is going to be categorised as unavailable
-            // But we have a problem that we've lost the signal
             const {designalArgs: resolvedStaticNames, unavailable} = fluid.processSignalArgs(uniqueStaticNames);
             const resolved = unavailable || fluid.flatMergedRound(shadow, resolver, resolvedStaticNames); // <= WILL READ LAYER REGISTRY
 
@@ -1422,19 +1430,19 @@ const fluidILScope = function (fluid) {
     fluid.possiblyRenderError = x => x;
 
     fluid.scheduleEffects = function (shadow) {
-        if (shadow.dynamicLayerNames.array.length > 0) {
+        // We would like this effect to act later than scopeEffect which is why it is scheduled now
+        if (shadow.dynamicLayerNames.peek().length > 0 && !shadow.frameworkEffects.dynamicLayerEffect) {
             shadow.frameworkEffects.dynamicLayerEffect = effect(() => {
-                if (shadow.dynamicLayerNames.doneAt < shadow.dynamicLayerNames.tick) {
-                    shadow.dynamicMergeRecord.value = {
-                        mergeRecordType: "dynamicLayers",
-                        layer: {
-                            $layers: shadow.dynamicLayerNames.array.map(function resolveDynamicLayers(ref) {
-                                return fluid.deSignal(fluid.fetchContextReference(ref, shadow, ["$layers"]));
-                            })
-                        }
-                    };
-                    shadow.dynamicLayerNames.doneAt = shadow.dynamicLayerNames.tick;
-                }
+                const resolvedDynamicLayers = shadow.dynamicLayerNames.value.map((function resolveDynamicLayers(ref) {
+                    return fluid.deSignal(fluid.fetchContextReference(ref, shadow, ["$layers"]));
+                }));
+                // Pushes update to dynamicMergeRecord and hence renotifies flatMergedComputer
+                shadow.dynamicMergeRecord.value = {
+                    mergeRecordType: "dynamicLayers",
+                    layer: {
+                        $layers: resolvedDynamicLayers
+                    }
+                };
             });
         }
 
@@ -1532,8 +1540,12 @@ const fluidILScope = function (fluid) {
             return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName, variableScope);
         }
     };
+    fluid.busyUnavailable = fluid.unavailable("System is busy");
+
+    fluid.isIdle = signal(true);
 
     fluid.effectGuardDepth = 0;
+    // Shadow[] - list of allocated shadows that need effects queued
     fluid.scheduleEffectsQueue = [];
 
     fluid.queueScheduleEffects = function (shadow) {
@@ -1551,6 +1563,8 @@ const fluidILScope = function (fluid) {
                 });
                 shadow.effectScheduler.$variety = "effectScheduler";
             });
+            console.log("*** SETTING SYSTEM IDLE");
+            fluid.isIdle.value = true;
         }
     };
 
@@ -1563,7 +1577,7 @@ const fluidILScope = function (fluid) {
      * @return {ComponentComputer} - The computed instance as a signal with shadow and $variety properties.
      */
     fluid.computeInstance = function (potentia, parentShadow, memberName, variableScope) {
-        const instantiator = parentShadow.instantiator;
+        fluid.isIdle.value = fluid.busyUnavailable;
 
         const shadow = Object.create(fluid.shadow.prototype);
 
@@ -1575,6 +1589,7 @@ const fluidILScope = function (fluid) {
             mergeRecordType: "dynamicLayers",
             layer: {}
         });
+        shadow.dynamicLayerNames = signal([]);
 
         shadow.instanceId = 0;
         shadow.flatMerged = fluid.flatMergedComputer(shadow);
@@ -1608,6 +1623,7 @@ const fluidILScope = function (fluid) {
             ++fluid.effectGuardDepth;
 
             // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
+            const instantiator = parentShadow.instantiator;
             instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
             fluid.applyScope(shadow.variableScope, variableScope);
         } finally {

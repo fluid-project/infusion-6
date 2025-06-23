@@ -333,7 +333,7 @@ const fluidSubstrateScope = function (fluid) {
     fluid.substrateTree.highlight = function (self, inspectingSite) {
         const overlay = document.getElementById("fl-editor-inspect-overlay");
         const id = inspectingSite && fluid.renderSite(inspectingSite);
-        const target = id && self.container.querySelector(`[data-row-id="${id}"]`);
+        const target = id && self.renderedContainer.querySelector(`[data-row-id="${id}"]`);
         fluid.applyOverlay({selfOverlay: overlay}, target, "hsl(0 0% 70%)");
     };
 

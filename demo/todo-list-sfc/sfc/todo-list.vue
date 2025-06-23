@@ -54,7 +54,9 @@ fluid.demos.todoKeyUp = function (e, todos) {
         </section>
         <section class="section">
             <input class="input is-rounded" @onkeyup="fluid.demos.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
-            <div @id="todoItems" class="section"></div>
+            <div class="section">
+                <div @id="todoItems"></div>
+            </div>
         </section>
     </div>
 </template>

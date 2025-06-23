@@ -79,19 +79,25 @@ QUnit.assert.unavailable = function (value, message) {
     this.ok(fluid.isUnavailable(value), message);
 };
 
+fluid.isIgnorableNode = function (node) {
+    return node.nodeType === 3 && /^\s*$/.test(node.nodeValue); // Whitespace text node
+};
+
+const renderNodePath = segs => segs.length === 0 ? "<root>" : segs.join(".");
+
 
 /* Assert that one or more DOM nodes and possibly their descendents match a JSON specification
  */
-QUnit.assert.assertNode = function (node, expected, message) {
+QUnit.assert.assertNode = function (node, expected, message, segs = []) {
     if (!node.nodeType) { // Some types of DOM nodes (e.g. select) have a valid "length" property
         if (node.length === 1 && expected.length === undefined) {
             node = node[0];
         }
         else if (node.length !== undefined) {
             expected = fluid.makeArray(expected);
-            this.equal(node.length, expected.length, message + ": Expected number of nodes ");
+            this.equal(node.length, expected.length, `${message} - ${renderNodePath(segs)}: Expected number of nodes `);
             for (let i = 0; i < node.length; ++i) {
-                QUnit.assert.assertNode.call(this, node[i], expected[i], message + ": node " + i + ": ");
+                QUnit.assert.assertNode.call(this, node[i], expected[i], message, [...segs, `${i}(${node[i].tagName.toLowerCase()})`]);
             }
             return;
         }
@@ -113,10 +119,10 @@ QUnit.assert.assertNode = function (node, expected, message) {
         const evalue = expected[key];
         const pass = evalue === attr;
         if (key === "$children") {
-            const children = [...node.childNodes];
-            QUnit.assert.assertNode.call(this, children, evalue, "> " + message);
+            const children = [...node.childNodes].filter(node => !fluid.isIgnorableNode(node));
+            QUnit.assert.assertNode.call(this, children, evalue, "> " + message, segs);
         } else {
-            this.ok(pass, message + messageExt + " expected value: " + evalue + " actual: " + attr);
+            this.ok(pass, `${message} - ${renderNodePath(segs)} ${messageExt} expected value: ${evalue} actual: ${attr}`);
         }
     }
 };
