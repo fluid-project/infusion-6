@@ -241,15 +241,8 @@
             }
         });
     };
-    Signal.prototype.valueOf = function () {
-        return this.value;
-    };
-    Signal.prototype.toString = function () {
-        return this.value + "";
-    };
-    Signal.prototype.toJSON = function () {
-        return this.value;
-    };
+
+    /** AB patch: Remove hazardous conversion methods **/
     Signal.prototype.peek = function () {
         var prevContext = evalContext;
         evalContext = undefined;

@@ -173,11 +173,13 @@ fluid.inspect.effect = function (self, inspecting) {
     display: flex;
     justify-content: space-between;
     flex: 0 0 auto;
-}
-
-.fl-menubar {
     font-size: 18px;
 }
+
+.fl-menubar .fl-editor-close {
+    line-height: 1;
+}
+
 
 .fl-menu-items {
     display: flex;

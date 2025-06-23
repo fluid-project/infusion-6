@@ -194,7 +194,7 @@ fluid.applyOverlay = function (overlays, target, colour) {
     } else {
         Object.values(overlays).map(overlay => overlay.style.display = "none");
     }
-}
+};
 
 fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
     // We need two overlays, one for the app, and another lying outside <body> for self-inspection of the IDE
@@ -211,7 +211,7 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
         target = fluid.deSignal(that.renderedContainer);
     }
     fluid.applyOverlay(overlays, target, colour);
-}
+};
 
 // Hack this using pseudo-globals for now - in time we perhaps want some kind of auto-mount using live query?
 fluid.activeLayerLink = null;

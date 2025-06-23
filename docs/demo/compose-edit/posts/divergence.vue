@@ -34,15 +34,6 @@ fluid.def("fluid.demos.divergencePost", {
                             is the same thing as its execution.</p>
                     </blockquote>
                     <p>Subtext is thus a medium or <a href="../../term/substrate">substrate</a> in which divergence is minimised.</p>
-                    <p>However, it seems that a slight pun may emerge between these two notions of “execution” – one, the execution
-                        of the user’s intention, and the other, the execution of the program. I argue that by reframing the activity of
-                        substrates away from execution in the programming sense, there is better scope for the minimisation of divergence
-                        to bridge these gulfs, in the typical case where minimal or no computation is required.</p>
-                    <p>Instead of execution we focus on the correlation or organisation of state, in line with the responsibilities of an
-                        <a href="../../term/integration-domain">integration domain</a>. Computation, where necessary, is expressed in a dialect of
-                        <a href="../../term/a-good-function">good functions</a> in a syntax which will be familiar to users from grade school or spreadsheets.</p>
-
-                    <hr>
                 </article>
             </div>
         </div>

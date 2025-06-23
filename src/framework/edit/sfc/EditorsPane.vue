@@ -64,7 +64,6 @@ fluid.def("fluid.editor.editorsPane", {
         display: inline-block;
         width: 14px;
         height: 14px;
-        bottom: 1px;
         position: relative;
     }
 
@@ -72,6 +71,7 @@ fluid.def("fluid.editor.editorsPane", {
         display: inline-block;
         position: relative;
         left: 1px;
+        bottom: 1px;
     }
 
 

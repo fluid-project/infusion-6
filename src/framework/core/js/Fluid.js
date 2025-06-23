@@ -706,8 +706,7 @@ const fluidJSScope = function (fluid) {
      * accepts or returns any of these values, and if so, what its semantic is  - most are of private
      * use internal to the framework
      */
-    fluid.marker = function () {
-    };
+    fluid.marker = function () {};
     /**
      * Create a marker object with a specific type and additional properties.
      * Markers are optionally mutable or immutable (frozen).
@@ -959,6 +958,8 @@ const fluidJSScope = function (fluid) {
         });
     };
 
+    let effectId = 1;
+
     /**
      * Create an effect that executes a function with resolved arguments, resolving any signals and handling unavailability.
      *
@@ -976,9 +977,12 @@ const fluidJSScope = function (fluid) {
         });
         togo.$func = func;
         togo.$args = args;
+        togo.effectId = effectId++;
         togo.dispose = () => {
             options.onDispose && options.onDispose();
             togo._dispose();
+            togo.disposed = true;
+            console.log("Disposed effectId ", togo.effectId);
         };
         return togo;
     };
@@ -1978,9 +1982,9 @@ const fluidJSScope = function (fluid) {
      * @throws {Error} - Throws an error if the hierarchy is inconsistent.
      */
     fluid.C3_merge = function (seqs) {
-        fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
+        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
         let res = [];
-        let i = 0;
+        // let i = 0;
 
         while (true) {
             let nonemptyseqs = seqs.filter(seq => seq.length > 0);
@@ -1988,8 +1992,8 @@ const fluidJSScope = function (fluid) {
                 return res;
             }
 
-            i++;
-            fluid.log(`\n${i} round: candidates...`);
+            // i++;
+            // fluid.log(`\n${i} round: candidates...`);
 
             let cand = null;
             for (let seq of nonemptyseqs) {

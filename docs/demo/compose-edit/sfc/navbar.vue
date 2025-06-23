@@ -1,6 +1,6 @@
 <script>
 fluid.def("fluid.demos.navbar", {
-})
+});
 </script>
 <template>
 <nav class="navbar navbar-default navbar-fixed-top navbar-custom">
@@ -25,9 +25,6 @@ fluid.def("fluid.demos.navbar", {
                 </li>
                 <li>
                     <a title="About" href="../../page/about/">About</a>
-                </li>
-                <li>
-                    <a title="Communities" href="../../communities">Communities</a>
                 </li>
                 <li>
                     <a title="Projects" href="../../projects">Projects</a>

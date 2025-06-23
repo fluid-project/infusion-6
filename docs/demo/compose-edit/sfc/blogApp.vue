@@ -19,7 +19,7 @@ fluid.def("fluid.demos.blogApp", {
 })
 </script>
 <template>
-    <div class="fl-multipost">
-        <div @id="post" class="fl-post-outer"></div>
+    <div class="fl-blog-app">
+        <div @id="post" class="fl-multipost"></div>
     </div>
 </template>

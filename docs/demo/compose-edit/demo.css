@@ -15,6 +15,10 @@ body {
     flex: 1 1 0;
 }
 
+.fl-fullpost {
+    margin: 0px 15px;
+}
+
 #inline-svg {
     height: 0;
 }
@@ -218,7 +222,6 @@ custom .nav li a {
 }
 
 .intro-header {
-    margin: 80px 0 20px;
     position: relative;
 }
 
@@ -290,10 +293,6 @@ footer .theme-by {
 
     .navbar-toggle {
         display: none;
-    }
-
-    .intro-header {
-        margin-top: 100px;
     }
 
     .navbar-collapse {
