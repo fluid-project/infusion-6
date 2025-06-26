@@ -1,6 +1,6 @@
 <script>
 fluid.def("fluid.demos.todoList", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.sfcTemplateViewComponent",
     todos: {
         $reactiveRoot: []
     },

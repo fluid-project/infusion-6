@@ -22,7 +22,7 @@ QUnit.test("Basic static rendering test", function (assert) {
     const that = fluid.tests.basicRender({container});
     const expected = {
         $tagName: "div",
-        $textContent: "Initial value"
+        $nodeValue: "Initial value"
     };
 
     assert.assertNode(container, expected, "Initial render correct");
@@ -45,7 +45,7 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
         $children: {
             $tagName: "div",
             "class": "inner",
-            $textContent: "Initial value"
+            $nodeValue: "Initial value"
         }
     };
     const root = container;
@@ -53,7 +53,7 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
     assert.assertNode(root, expected, "Initial render correct");
     that.text = "Updated value";
 
-    assert.equal(inner.textContent, "Updated value", "Updated text content rendered");
+    assert.equal(inner.childNodes[0].nodeValue, "Updated value", "Updated text content rendered");
     assert.equal(container, root, "Rendered root undisturbed");
     assert.equal(root.firstElementChild, inner, "Inner node undisturbed");
     that.destroy();
@@ -116,7 +116,7 @@ fluid.tests.nestedExpect = {
         $children: {
             $tagName: "div",
             "class": "inner",
-            $textContent: "Text from inner"
+            $nodeValue: "Text from inner"
         }
     }
 };
@@ -164,7 +164,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
     });
 
     const newExpected = fluid.copy(fluid.tests.nestedExpect);
-    newExpected.$children.$children.$textContent = "New brush";
+    newExpected.$children.$children.$nodeValue = "New brush";
     assert.assertNode(root, newExpected, "Updated render correct");
 
     const nodes2 = fluid.tests.getNodeParents(container, ".inner");
@@ -312,7 +312,7 @@ fluid.tests.checkTodoRendering = function (assert, that, container, model) {
     const treeTexts = items.map(item => item.text);
     assert.deepEqual(treeTexts, modelTexts, "Correct texts for component tree items");
 
-    const renderedTexts = qsa(".todo", container).map(element => element.innerText);
+    const renderedTexts = qsa(".todo", container).map(element => element.childNodes[0].nodeValue.trim());
     assert.deepEqual(renderedTexts, modelTexts, "Correct texts for markup rendered items");
 
     const modelCompleted = model.map(todo => todo.completed);

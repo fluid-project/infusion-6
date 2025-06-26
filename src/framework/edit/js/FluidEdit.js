@@ -34,27 +34,27 @@ const fluidEditScope = function (fluid) {
             $component: {
                 $layers: "fluid.templateViewComponent",
                 template: `<button @onclick="{fullPageEditor}.editorVisible = true" style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
-                container: "$compute:fluid.insertChildContainer(last, editButton, {self}.template, {fullPageEditor}.container)"
+                container: "$compute:fluid.insertChildContainer(last, editButton, {self}.templateTree, {fullPageEditor}.container)"
             }
         },
         inspectOverlay: {
             $component: {
                 $layers: "fluid.templateViewComponent",
                 template: `<div id="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()"></div>`,
-                container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.template, {fullPageEditor}.container)"
+                container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.templateTree, {fullPageEditor}.container)"
             }
         },
         resizeBar: {
             $component: {
                 $layers: "fluid.templateViewComponent",
                 template: `<div class="fl-docking-area-resizer"></div>`,
-                container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.template, {fullPageEditor}.html, {fullPageEditor}.container)"
+                container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.templateTree, {fullPageEditor}.html, {fullPageEditor}.container)"
             }
         },
         editorRoot: {
             $component: {
                 $layers: "fluid.editorRoot",
-                container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.template, {fullPageEditor}.html)",
+                container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.templateTree, {fullPageEditor}.html)",
                 editorVisible: "{fullPageEditor}.editorVisible"
             }
         },

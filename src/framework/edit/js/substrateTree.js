@@ -101,7 +101,7 @@ const fluidSubstrateScope = function (fluid) {
 
             const displayLayer = displayLayers.find(layer => layers.includes(layer)).slice("fluid.".length);
             const filteredLayers = [...layers].filter(layer => self.userLayersOnly ? fluid.isUserLayer(layer) : true).reverse()
-                .map(layer => `<span class="fl-layer-link" data-fl-layer-name="${layer}">${layer}</span>`).join(",!nbsp;");
+                .map(layer => `<span class="fl-layer-link" data-fl-layer-name="${layer}">${layer}</span>`).join(", ;");
 
             let togo = {
                 id: `{${shadow.path}}`,
@@ -163,7 +163,7 @@ const fluidSubstrateScope = function (fluid) {
         if (key && funcRecords.includes(key)) {
             const srec = rec.signalRecord;
             value = renderRecordName(key) + renderRef(srec.func) + "(" +
-                fluid.makeArray(srec.args).map(renderRef).join(",!nbsp;") + ")";
+                fluid.makeArray(srec.args).map(renderRef).join(", ") + ")";
             return value;
         } else {
             return null;
@@ -203,7 +203,7 @@ const fluidSubstrateScope = function (fluid) {
             effLayer = layer === "live" ? "$live" : "$reactive";
             if (fluid.arrayEqual(reactiveRoot, segs)) {
                 const displayLayer = layer === "live" ? "Live" : "Live Unmodified";
-                valuePrefix = `<span class="fl-layer-link" data-fl-layer-name="${id}">${displayLayer}</span>!nbsp;`;
+                valuePrefix = `<span class="fl-layer-link" data-fl-layer-name="${id}">${displayLayer}</span> `;
             }
         }
 
@@ -233,7 +233,7 @@ const fluidSubstrateScope = function (fluid) {
                 // TODO: should really colour based on where specification came from rather than in their own colour
                 const colLayers = filtered.map(layer => ({layer, colour: self.colourForLayer(layer)})).map(
                     ({layer, colour}) => `<span ${styleForCol(colour)}>${layer}</span>`);
-                entryValue = `(${colLayers.join(",!nbsp;")})`;
+                entryValue = `(${colLayers.join(", ")})`;
             } else if (Array.isArray(value)) {
                 entryValue = `Array(${value.length})`;
                 entry.children = fluid.map(value, (subValue, key) => pushChild(key, subValue));
@@ -254,7 +254,7 @@ const fluidSubstrateScope = function (fluid) {
             layerElemRef = `data-fl-layer-element="${layerRef}"`;
         }
 
-        entry.value = `<span class="fl-substrate-key${layerElemClass}" ${layerElemRef} ${col}>${key}</span><span ${col}>:!nbsp;</span>` +
+        entry.value = `<span class="fl-substrate-key${layerElemClass}" ${layerElemRef} ${col}>${key}</span><span ${col}>: </span>` +
              `<span class="fl-substrate-value" ${col}>${valuePrefix}${entryValue}</span>`;
         return entry;
     };

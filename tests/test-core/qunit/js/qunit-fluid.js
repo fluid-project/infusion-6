@@ -109,8 +109,8 @@ QUnit.assert.assertNode = function (node, expected, message, segs = []) {
             attr = node.tagName.toLowerCase();
             messageExt = " - node name";
         }
-        else if (key === "$innerText") {
-            attr = node.innerText.trim();
+        else if (key === "$nodeValue") {
+            attr = node.childNodes[0].nodeValue;
         } else if (key === "$textContent") {
             attr = node.textContent;
         } else if (key === "$innerHTML") {

@@ -1558,7 +1558,7 @@ const fluidILScope = function (fluid) {
                 shadow.effectScheduler = effect( () => {
                     const instance = shadow.computer.value;
                     untracked(() => { // God knows what scheduleEffects touches but we don't care
-                        console.log("scheduleEffects executing for instanceId ", shadow.that?.instanceId, " path " + shadow.path);
+                        console.log("scheduleEffects executing for instanceId ", instance.instanceId, " path " + shadow.path);
                         fluid.scheduleEffects(shadow);
                     });
                 });

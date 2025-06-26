@@ -46,9 +46,10 @@ fluid.codemirror.construct = function (self, holder, container, oldInstance) {
     } else {
         const validText = signal(fluid.unavailable("Text not validated"));
         const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
-        const instance = CodeMirror.fromTextArea(container, options);
+        const textarea = container.firstElementChild;
+        const instance = CodeMirror.fromTextArea(textarea, options);
         instance.firstValid = false; // Ignore the first validation update from initial editor contents
-        console.log("Constructing from textArea ", container, " ", container.innerText);
+        console.log("Constructing from textArea ", textarea, " ", textarea.innerText);
         instance.writeEffect = fluid.effect(validText => {
             if (instance.firstValid && holder.writeText && !instance.inReadUpdate) {
                 instance.selfWrite = true;
@@ -84,9 +85,7 @@ fluid.codemirror.construct = function (self, holder, container, oldInstance) {
 <script src="@{libUrlBase}/codemirror/js/json-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/css-lint.js"></script>
 
-<script src="@{libUrlBase}/lezer/lezer-javascript-browser.js"></script>
-
-<script src="@{editUrlBase}/js/sfcHelper.js"></script>
+<script src="@{editUrlBase}/js/sfcLinter.js"></script>
 
 <style src="@{libUrlBase}/codemirror/css/codemirror.css"></style>
 <style src="@{libUrlBase}/codemirror/css/lint.css"></style>
