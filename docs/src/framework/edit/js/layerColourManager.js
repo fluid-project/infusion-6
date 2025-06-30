@@ -13,7 +13,9 @@ fluid.def("fluid.layerColourManager", {
     liveHue: 60,
     reactiveHue: 40,
 
-    layerColours: {},
+    layerColours: {
+        $reactiveRoot: {}
+    },
 
     isReservedHue: {
         $method: {

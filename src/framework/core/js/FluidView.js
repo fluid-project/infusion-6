@@ -11,6 +11,7 @@ const fluidViewScope = function (fluid) {
      * @typedef {Object} VNode
      * @property {String} [tag] - The tag name of the element (e.g., 'div', 'span').
      * @property {Object<String, String>} [attrs] - A key-value map of the element's attributes.
+     * @property {Object<String, Boolean>} [class] - A map of strings to `true` determining whether a CSS class name is present on the node
      * @property {VNode[]} [children] - An array of child virtual nodes.
      * @property {String} [text] - The text content in the case this VNode represents a DOM TextNode.
      * @property {Shadow} [shadow] - The shadow for a component for which this vnode is the template root
@@ -182,7 +183,7 @@ const fluidViewScope = function (fluid) {
                 children: [{text: ""}]
             }),
             update: (node, rec) => {
-                node.firstChild.nodeValue = rec;
+                node.firstChild.nodeValue = rec.text;
             }
         },
         link: {
@@ -208,7 +209,7 @@ const fluidViewScope = function (fluid) {
                 children: [{text: ""}]
             }),
             update: (node, rec) => {
-                node.firstChild.nodeValue = rec;
+                node.firstChild.nodeValue = rec.text;
             }
         },
         link: {
@@ -222,41 +223,48 @@ const fluidViewScope = function (fluid) {
             update: (node, rec) => {
                 // It must be a fluid.importUrlResource
                 node.setAttribute("src", rec.url);
+                node.async = false;
             }
         }
     };
 
-    fluid.injectCSS = function (css, layerCssId, url) {
-        const injStyle = typeof(css) === "string" ? "literal" : "link";
-        const injRec = fluid.cssInjectionStyles[injStyle];
-        let existing = document.getElementById(layerCssId);
-        if (!existing) {
-            existing = fluid.vNodeToDom(injRec.construct());
-            existing.id = layerCssId;
-            document.head.appendChild(existing);
-        }
-        if (injStyle === "literal") {
-            css += `\n/*# sourceURL=${url}*/`;
-        }
-        injRec.update(existing, css);
+    fluid.diffFields = function (rec1, rec2, fields) {
+        return fields.every(field => rec1[field] === rec2[field]);
     };
 
-    fluid.injectScript = function (script, scriptNodeId, url) {
-        const injStyle = typeof(script) === "string" ? "literal" : "link";
-        const injRec = fluid.scriptInjectionStyles[injStyle];
-        let existing = document.getElementById(scriptNodeId);
-        if (existing) {
-            existing.remove();
-        }
-        const fresh = fluid.vNodeToDom(injRec.construct());
-        fresh.id = scriptNodeId;
-        fresh.async = false;
-        injRec.update(fresh, script);
+    fluid.clearInjRec = function (nodeId) {
+        document.getElementById(nodeId)?.remove();
+    };
+
+    fluid.doInjectSFCElement = function (nodeId, injStyle, injRec, url) {
+        const fresh = fluid.vNodeToDom(injStyle.construct());
+        fresh.id = nodeId;
+        injStyle.update(fresh, injRec);
         try {
             document.head.appendChild(fresh);
         } catch (e) {
-            fluid.fail(`Syntax error in script at url ${url}: ${e.message}`, e);
+            fluid.fail(`Syntax error in SFC injection at url ${url}: ${e.message}`, e);
         }
+    };
+
+    fluid.injectSFCElement = function (injRec, nodeId, url, injRecs, injStyles) {
+        const diffFields = ["url", "text"];
+
+        const existing = injRecs[nodeId];
+        const shouldInject = !existing || !fluid.diffFields(existing, injRec, diffFields);
+
+        if (shouldInject) {
+            if (existing) {
+                fluid.clearInjRec(nodeId);
+            }
+            const injStyleKey = injRec.text ? "literal" : "link";
+            const injStyle = injStyles[injStyleKey];
+            fluid.doInjectSFCElement(nodeId, injStyle, injRec, url);
+
+            injRecs[nodeId] = injRec;
+        }
+
+        injRecs[nodeId].inDoc = true;
     };
 
     fluid.urlBaseRegistry = {};
@@ -343,13 +351,6 @@ const fluidViewScope = function (fluid) {
         removeAll(fluid.acquireImports(root));
     };
 
-    fluid.loadSFCScript = function (src, layerName, index, usedKeys) {
-        const nodeId = `fl-script-${layerName}-${index}`;
-        const url = fluid.templateBaseUrl(src);
-        fluid.injectScript({url}, layerName);
-        usedKeys.push(nodeId);
-    };
-
     /**
      * Represents the result of parsing a single `<script>` node in an SFC.
      *
@@ -357,7 +358,7 @@ const fluidViewScope = function (fluid) {
      * - Otherwise, the inline script is parsed to extract a `DefMap` and its original text.
      *
      * @typedef {Object} ScriptNodeInfo
-     * @property {String} [src] - The source URL if the script uses `src`.
+     * @property {String} [url] - The source URL if the script uses `src`.
      * @property {DefMap} [defMaps] - The parsed defMap for inline script content.
      * @property {String} [text] - The original text of the inline script.
      */
@@ -377,7 +378,7 @@ const fluidViewScope = function (fluid) {
         const defMapList = scriptNodes.map((scriptNode) => {
             const src = scriptNode.attrs?.src;
             if (src) {
-                return src;
+                return {url: src};
             } else {
                 const text = scriptNode.children[0]?.text;
                 const defMaps = fluid.parseDefMaps(text, 0);
@@ -427,21 +428,6 @@ const fluidViewScope = function (fluid) {
         return layerDefIndex;
     };
 
-    fluid.applySFCStyles = function (styleNodes, layerName, usedKeys, url) {
-        styleNodes.forEach((scriptNode, index) => {
-            let script = scriptNode.children[0]?.text;
-            const src = scriptNode.attrs.src;
-            if (src) {
-                script = {
-                    url: fluid.templateBaseUrl(src)
-                };
-            }
-            const nodeId = `fl-style-${layerName}-${index}`;
-            fluid.injectCSS(script, nodeId, url);
-            usedKeys.push(nodeId);
-        });
-    };
-
     /**
      * Resolves a given URL to an absolute URL. If the URL already has a protocol, it is returned as is.
      * Otherwise, it is resolved relative to the current document's location, taking into account relative paths.
@@ -451,9 +437,6 @@ const fluidViewScope = function (fluid) {
      */
     fluid.toAbsoluteUrl = url => /^\w+:\/\//.test(url) ? url : new URL(url, document.location.href).href;
 
-    // A convenient global to receive the parsed definition
-    // noinspection ES6ConvertVarToLetConst
-    fluid.$fluidParsedDef = null;
     /**
      * Parses a Single File Component (SFC) from a given text signal and processes its content.
      * This function extracts the template, scripts, and styles from the SFC, evaluates the script
@@ -466,8 +449,8 @@ const fluidViewScope = function (fluid) {
      * @return {effect<Object>} An effect that applies the parsed definition, including the template, CSS, and scripts.
      */
     fluid.parseSFC = function (rec, layerName, url) {
-        const usedKeys = [];
         let oldText;
+        const injRecs = {};
         return fluid.effect(text => {
             if (text === oldText) {
                 console.log("Culling SFC injection effect since text has not changed");
@@ -477,9 +460,6 @@ const fluidViewScope = function (fluid) {
             oldText = text;
             const vTree = rec.vTree = fluid.parseHTMLToTree(text);
 
-            usedKeys.forEach(key => document.getElementById(key)?.remove());
-            usedKeys.length = 0;
-            // For some reason we don't get this parsed into nodes but actually we don't want them anyway, they will parse fine the next time round
             const scriptNodes = fluid.querySelectorAll(vTree, "script");
             if (scriptNodes.length === 0) {
                 const unavailable = fluid.unavailable("Error in SFC: Expected definition for layer " + layerName +
@@ -511,7 +491,7 @@ const fluidViewScope = function (fluid) {
                     if (docTemplate) {
                         addLayers = ["fluid.sfcTemplateViewComponent"];
                         patchedText = fluid.patchDefMap(patchedText, ourDef, "layerForTemplate", layerName, "last");
-                        fluid.templateStore[layerName] = docTemplate;
+                        fluid.writeParsedTemplate(layerName, docTemplate);
                     }
 
                     // If no $layers was written in the definition, add one that will correctly resolve its template
@@ -522,20 +502,35 @@ const fluidViewScope = function (fluid) {
 
                     const absUrl = fluid.toAbsoluteUrl(url);
                     defMapList.forEach((sni, index) => {
-                        if (typeof(sni) === "string") {
-                            // TODO: Should clear out any old ones if the SFC reloads
-                            fluid.loadSFCScript(sni, layerName, index, usedKeys);
-                        } else {
-                            const nodeId = `fl-script-${layerName}`;
-                            fluid.injectScript(sni.text + `\n//# sourceURL=${absUrl}`, nodeId, absUrl);
-                            usedKeys.push(nodeId);
-                        }
+                        const nodeId = `fl-script-${layerName}-${index}`;
+                        const injRec = sni.url ?
+                            {url: fluid.templateBaseUrl(sni.url)} :
+                            // TODO: Should wrap script in closure so it doesn't pollute global namespace
+                            {text: sni.text + `\n//# sourceURL=${absUrl}`};
+                        fluid.injectSFCElement(injRec, nodeId, absUrl, injRecs, fluid.scriptInjectionStyles);
                     });
-                    const styleNodes = fluid.querySelectorAll(vTree, "style");
-                    fluid.applySFCStyles(styleNodes, layerName, usedKeys, absUrl);
-                }
 
+                    const styleNodes = fluid.querySelectorAll(vTree, "style");
+                    styleNodes.forEach((styleNode, index) => {
+                        const nodeId = `fl-style-${layerName}-${index}`;
+                        const src = styleNode.attrs?.src;
+                        const injRec = src ?
+                            {url: fluid.templateBaseUrl(src)} :
+                            {text: styleNode.children[0]?.text + `\n/*# sourceURL=${absUrl}*/`};
+
+                        fluid.injectSFCElement(injRec, nodeId, absUrl, injRecs, fluid.cssInjectionStyles);
+                    });
+                }
             }
+            // Clear out of the document anything previously injected which no longer matches, and reset records for next effect triggering
+            fluid.each(injRecs, (injRec, nodeId) => {
+                if (!injRec.inDoc) {
+                    fluid.clearInjRec(nodeId);
+                    delete injRecs[nodeId]; // consistent iteration is guaranteed https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-enumerate-object-properties
+                } else {
+                    injRec.inDoc = false; // Prepare for next effect triggering
+                }
+            });
         }, [rec.textSignal]);
     };
 
@@ -545,7 +540,16 @@ const fluidViewScope = function (fluid) {
     fluid.templateStore = {};
 
     fluid.fetchParsedTemplate = function (layerName) {
-        return fluid.templateStore[layerName];
+        return fluid.templateStore[layerName].value;
+    };
+
+    fluid.writeParsedTemplate = function (layerName, template) {
+        const existing = fluid.templateStore[layerName];
+        if (existing) {
+            existing.value = template;
+        } else {
+            fluid.templateStore[layerName] = signal(template);
+        }
     };
 
     /**
@@ -581,9 +585,11 @@ const fluidViewScope = function (fluid) {
      */
     fluid.loadSFC = function (layerName, url) {
         const rec = fluid.readSFC(layerName);
-        rec.parseEffect = fluid.parseSFC(rec, layerName, url);
-        rec.fetchSignal = fluid.fetchText(url);
-        rec.fetchEffect = effect( () => rec.textSignal.value = rec.fetchSignal.value);
+        if (!rec.parseEffect) {
+            rec.parseEffect = fluid.parseSFC(rec, layerName, url);
+            rec.fetchSignal = fluid.fetchText(url);
+            rec.fetchEffect = effect(() => rec.textSignal.value = rec.fetchSignal.value);
+        }
         return rec;
     };
 
@@ -695,6 +701,49 @@ const fluidViewScope = function (fluid) {
         return newNode;
     };
 
+    /**
+     * A registry that maps container elements to their associated component instances.
+     * This is used to track which component is responsible for rendering a specific container.
+     *
+     * @type {WeakMap<Element, Shadow>}
+     */
+    fluid.viewContainerRegistry = new WeakMap();
+
+    fluid.noteViewContainerRegistry = function (element, shadow) {
+        const existing = fluid.viewContainerRegistry.get(element);
+        if (!existing || existing.path.length < shadow.path.length) {
+            fluid.viewContainerRegistry.set(element, shadow);
+        }
+    };
+
+    fluid.shadowForElement = element => {
+        const shadow = fluid.viewContainerRegistry.get(element);
+        return shadow && !/^fullPageEditor-\d+\.inspectOverlay$/.test(shadow.path) ? shadow : null;
+    };
+
+    fluid.shadowForElementParent = element => {
+        while (element) {
+            const shadow = fluid.shadowForElement(element);
+            if (shadow) {
+                return {shadow, container: element};
+            }
+            element = element.parentElement;
+        }
+    };
+
+    /**
+     * Traverses the list of DOM elements lying at a point until it finds the first parent
+     * that exists within `fluid.viewContainerRegistry`. Returns an object containing the container
+     * and its associated shadow, or `null` if no such parent is found.
+     *
+     * @param {MouseEvent} mouseEvent - The mouse event at the point to be queried
+     * @return {Shadow|null} The shadow, or `null` if not found.
+     */
+    fluid.shadowForMouseEvent = function (mouseEvent) {
+        const elements = document.elementsFromPoint(mouseEvent.clientX, mouseEvent.clientY);
+        const container = elements.find(fluid.shadowForElement);
+        return container ? fluid.viewContainerRegistry.get(container) : null;
+    };
 
     // event "on" handling logic lithified with thanks from https://github.com/vuejs/petite-vue/blob/main/src/directives/on.ts (Licencs: MIT)
 
@@ -781,7 +830,7 @@ const fluidViewScope = function (fluid) {
             };
         } else {
             const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
-            handler = fluid.expandMethodRecord(parsed, shadow, null, fluid.vnodeToSegs(vnode));
+            handler = fluid.expandMethodRecord(parsed, shadow, fluid.vnodeToSegs(vnode));
         }
 
         // map modifiers
@@ -862,7 +911,7 @@ const fluidViewScope = function (fluid) {
     fluid.bindContainer = function (templateEffects, vnode, self) {
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
             const togo = fluid.effect(function (element) {
-                fluid.viewContainerRegistry.set(element, self[$m]);
+                fluid.noteViewContainerRegistry(element, self[$m]);
             }, [vnode.elementSignal]);
             togo.$variety = "bindContainer";
             togo.$vnode = vnode;
@@ -968,23 +1017,32 @@ const fluidViewScope = function (fluid) {
         return fluid.isSignal(ref) ? ref.$source : ref;
     };
 
+    fluid.editorRootRef = null;
+
+    fluid.effVTree = function (vTree, elideParent) {
+        return elideParent ? vTree.children[0] : vTree;
+    };
+
     /**
-     * Parses a DOM element and processes its virtual node tree to replace template strings with rendered content.
-     * It processes both text and attribute templates, binding the rendered values to the corresponding DOM elements.
-     * The function recursively processes the virtual node tree, rendering and binding content as needed.
+     * Process a vTree to parse text and attribute templates, creating effects to bind to markup during the later renderView stage.
      *
-     * @param {VNode} vtemplate - The VNode representing the template which will be parsed
+     * @param {VNode} vtemplate - The vTree representing the template which will be parsed
      * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
-     * @return {VNode} The processed VNode with rendered text and attributes.
+     * @return {VNode} The processed vTree with rendered text and attributes.
      */
     fluid.parseTemplate = function (vtemplate, self) {
+        const shadow = self[$m];
+        // Awful hack to get around surplus notification problem for now
+        const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.getForComponentSoft("fluid.editorRoot", ["selfEditing"], shadow));
+        const selfEditing = selfEditingRef.value;
+
         return untracked( () => {
-            const shadow = self[$m];
+
             const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
             /**
              * Recursively processes a VNode by rendering any template strings found in its text or attributes
              * @param {VNode} vnode - The virtual node (vNode) to be processed.
-             * @param {VNode} [parentNode] - The parent of this node
+             * @param {VNode|null} [parentNode] - The parent of this node
              * @return {VNode} The processed VNode with rendered content in text and attributes.
              */
             function processVNode(vnode, parentNode = null) {
@@ -1047,11 +1105,15 @@ const fluidViewScope = function (fluid) {
             }
 
             const tree = fluid.copy(vtemplate);
-            const useTree = self.elideParent ? tree.children[0] : tree;
-            const togo = parseTemplate(useTree);
+            const useTree = fluid.effVTree(tree, self.elideParent);
 
-            fluid.bindContainer(templateEffects, useTree, self);
-            return togo;
+            // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
+            const parsedTree = parseTemplate(useTree);
+
+            const filteredTree = selfEditing ? selfEditingRef.$component.filterForSelfEditing(parsedTree, self) : parsedTree;
+
+            fluid.bindContainer(templateEffects, filteredTree, self);
+            return filteredTree;
 
         });
     };
@@ -1116,11 +1178,11 @@ const fluidViewScope = function (fluid) {
      *
      * @param {VNode} vnode - The virtual node representing the desired DOM structure.
      * @param {Node} element - The actual DOM element to be patched.
-     * @param {Boolean} isRoot - `true` if this rendering is of a container root - if so, this will skip deleting mismatching attributes
+     * @param {Boolean} [isRoot] - `true` if this rendering is of a container root - if so, this will skip deleting mismatching attributes
      */
-    fluid.patchChildren = function (vnode, element, isRoot) {
+    fluid.patchChildren = function (vnode, element, isRoot = false) {
         fluid.bindDom(vnode, element); // Will assign to elementSignal and allocate binding effects
-        if (vnode.text !== undefined && !fluid.isSignal(vnode.text)) {
+        if (vnode.text !== undefined && !fluid.isSignal(vnode.text) && vnode.text !== element.nodeValue) {
             element.nodeValue = vnode.text;
         }
         if (vnode.attrs !== undefined) {
@@ -1151,29 +1213,6 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
-     * A registry that maps container elements to their associated component instances.
-     * This is used to track which component is responsible for rendering a specific container.
-     */
-    fluid.viewContainerRegistry = new WeakMap();
-
-    /**
-     * Traverses the list of DOM elements lying at a point until it finds the first parent
-     * that exists within `fluid.viewContainerRegistry`. Returns an object containing the container
-     * and its associated shadow, or `null` if no such parent is found.
-     *
-     * @param {MouseEvent} mouseEvent - The mouse event at the point to be queried
-     * @return {Shadow|null} The shadow, or `null` if not found.
-     */
-    fluid.findViewComponentContainer = function (mouseEvent) {
-        const elements = document.elementsFromPoint(mouseEvent.clientX, mouseEvent.clientY);
-        const container = elements.find(element => {
-            const shadow = fluid.viewContainerRegistry.get(element);
-            return shadow && !/^fullPageEditor-\d+\.inspectOverlay$/.test(shadow.path) ? shadow : null;
-        });
-        return container ? fluid.viewContainerRegistry.get(container) : null;
-    };
-
-    /**
      * Renders a virtual DOM tree (VNode) into a container element.
      *
      * This function updates the container's contents to match the provided virtual tree.
@@ -1182,9 +1221,8 @@ const fluidViewScope = function (fluid) {
      * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
      * @param {HTMLElement} container - The target DOM element where the virtual tree should be rendered.
      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
-     * @param {Boolean} [elideParent=false] - If true, renders `vTree` directly into the container.
      */
-    fluid.renderView = function (self, container, vTree, elideParent) {
+    fluid.renderView = function (self, container, vTree) {
         console.log(`renderView beginning for ${self[$m].memberName} with vTree ${vTree._id} container `, container.flDomId);
         fluid.patchChildren(vTree, container, true);
     };
@@ -1200,7 +1238,7 @@ const fluidViewScope = function (fluid) {
         renderedContainer: fluid.unavailable({cause: "Component not rendered", variety: "config"}),
         templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
         vTree: "$compute:fluid.parseTemplate({self}.templateTree, {self})",
-        renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree, {self}.elideParent)",
+        renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree)",
         css: fluid.unavailable({cause: "No CSS is configured", variety: "config"}),
         renderCSS: "$effect:fluid.renderCSS({self})",
         $variety: "framework"
@@ -1351,8 +1389,8 @@ const fluidViewScope = function (fluid) {
                     $layers: restLayers,
                     container: element
                 });
-                // Put this in early in case instantiation fails
-                fluid.viewContainerRegistry.set(element, instance);
+                // Put this in early in case instantiation fails - TODO standardise access to shadow
+                fluid.viewContainerRegistry.set(element, instance[$t].shadow);
             }
         });
     });

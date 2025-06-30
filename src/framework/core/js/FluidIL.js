@@ -198,6 +198,7 @@ const fluidILScope = function (fluid) {
                 }
                 if (shadow.resolveRoot) {
                     fluid.applyToScope(rootComponent[$m].childrenScope, context, rec.value, rec.priority);
+                    rootComponent[$m].ownScopeTick.value = rootComponent[$m].ownScopeTick.peek() + 1;
                     // TODO: Remember to delete these again when clearing
                 }
             });
@@ -530,6 +531,21 @@ const fluidILScope = function (fluid) {
         return string;
     };
 
+    fluid.getForComponentSoft = function (context, segs, shadow) {
+        const togo = signal();
+        effect(() => {
+            // eslint-disable-next-line no-unused-vars
+            const scopeTick = shadow.scopeTick.value; // Read the scope tick to cause a dependency
+            const targetShadow = shadow.variableScope[context]?.value;
+            const value = targetShadow && fluid.deSignal(fluid.getForComponent(targetShadow, segs));
+            if (!fluid.isUnavailable(value) && value !== togo.peek()) {
+                togo.value = value;
+                togo.$component = targetShadow.that;
+            }
+        });
+        return togo;
+    };
+
     /**
      * Resolves a given context string to its corresponding component or scope within the component tree.
      *
@@ -562,7 +578,7 @@ const fluidILScope = function (fluid) {
                 const local = resolver ? resolver(context) : fluid.NoValue;
                 if (local === fluid.NoValue) {
                     // eslint-disable-next-line no-unused-vars
-                    const scopeTick = shadow.ownScopeTick.value; // Read the scope tick to cause a dependency
+                    const scopeTick = shadow.scopeTick.value; // Read the scope tick to cause a dependency
                     const resolvedRec = shadow.variableScope[context];
                     if (resolvedRec) {
                         const resolved = resolvedRec.value;
@@ -889,12 +905,11 @@ const fluidILScope = function (fluid) {
      * @param {FuncRecord} record - The method record to expand. It contains a `func` (the function to call) and optional `args`
      * that define the arguments to be resolved for the method.
      * @param {Shadow} shadow - The shadow context in which the method is being expanded, providing access to the component and its state.
-     * @param {String} key - The member name at which the subcomponent will be instantiated.
      * @param {String[]} segs - The path where this method record appears in its component
      * @return {Function} A function that can be invoked with arguments, dispatching the resolved method with the provided arguments.
      */
-    fluid.expandMethodRecord = function (record, shadow, key, segs) {
-        const funcSignal = fluid.resolveFuncReference(record, shadow);
+    fluid.expandMethodRecord = function (record, shadow, segs) {
+        const funcSignal = fluid.resolveFuncReference(record, shadow, segs);
         const capSegs = [...segs]; // Copy this since it is mutable during iteration
         // TODO: turn this into a computed of funcSignal to deal with the rare case it gets rebound
         const resolveFunc = () => {
@@ -937,17 +952,17 @@ const fluidILScope = function (fluid) {
      * @param {FuncRecord} rec - A function record containing one of `funcName` or `func` to resolve.
      * @param {Shadow} shadow - The shadow context used for resolving context references.
      * @param {String[]} segs - The path where this reference appears in component configuration
-     * @return {Signal<Function>|Function} Signal or value for the resolved function.
+     * @return {Signal<Function>} Signal for the resolved function.
      */
     fluid.resolveFuncReference = function (rec, shadow, segs) {
-        let func = typeof(rec.func) === "string" ?
-            fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow, segs) :
-                fluid.getGlobalValue(rec.func) :
-            rec.func;
-        if (!func) {
-            func = fluid.unavailable(`Unable to resolve reference to function from ${rec.func || rec}`);
-        }
-        return func;
+        return fluid.isILReference(rec.func) ? fluid.fetchContextReference(rec.func, shadow, segs) :
+            computed( () => {
+                let func = rec.func;
+                if (typeof(func) === "string") {
+                    func = fluid.getGlobalValue(rec.func);
+                }
+                return func || fluid.unavailable(`Unable to resolve reference to function from ${rec.func || rec}`);
+            });
     };
 
     fluid.resolveFuncRecord = function (rec, shadow, segs) {
@@ -1043,8 +1058,7 @@ const fluidILScope = function (fluid) {
     fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, scope, source) {
         const subLayerRecord = {
             mergeRecordType: "subcomponent",
-            // TODO: Eventually will allow nesting deeper on path
-            mergeRecordName: `subcomponent:${source}`,
+            mergeRecordName: `${source}`,
             layer: expanded
         };
         // TODO: detect injected reference and take direct path to instantiator
@@ -1451,7 +1465,7 @@ const fluidILScope = function (fluid) {
             fluid.siteSignal(newRecord.signalProduct, shadow, segs);
         };
         // Instantiate any fresh effects
-        fluid.forEachDeep(shadow.shadowMap, (newRecord, segs) => {
+        fluid.forEachDeep(shadow.shadowMap, function allocateOneEffect(newRecord, segs) {
             if (newRecord.handlerRecord?.isEffect) {
                 const oldRecord = fluid.get(shadow.oldShadowMap, segs)?.[$m];
                 // !oldRecord.signalProdct: Deal with funny race where we managed to update instance before we ever allocate effects at all

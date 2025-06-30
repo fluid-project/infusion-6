@@ -2,7 +2,7 @@
 fluid.def("fluid.demos.substratePost", {
     $layers: "fluid.demos.post",
     name: "Substrate"
-})
+});
 </script>
 <template>
     <div role="main">

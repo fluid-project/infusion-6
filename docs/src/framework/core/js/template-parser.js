@@ -39,6 +39,11 @@ const htmlParserScope = function (fluid) {
         });
     }
 
+    function isTextTag(el) {
+        return el.tag === "script" || el.tag === "style";
+    };
+
+    // TODO: Resolve "he" decoder on the server or use linkedom or something similar
     let decoder;
 
     function decodeEntity(html) {
@@ -48,11 +53,6 @@ const htmlParserScope = function (fluid) {
     }
 
     const decodeHTMLCached = cached(decodeEntity);
-
-    /*
-     * Always return false.
-     */
-    const no = () => false;
 
 
     // HTML5 tags https://html.spec.whatwg.org/multipage/indices.html#elements-3
@@ -64,6 +64,12 @@ const htmlParserScope = function (fluid) {
         "optgroup,option,param,rp,rt,source,style,summary,tbody,td,tfoot,th,thead," +
         "title,tr,track"
     );
+
+    const isUnaryTag = makeMap("area,base,br,col,embed,frame,hr,img,input,isindex,keygen,link,meta,param,source,track,wbr");
+
+    // Elements that you can, intentionally, leave open
+    // (and which close themselves)
+    const canBeLeftOpenTag = makeMap("colgroup,dd,dt,li,options,p,td,tfoot,th,thead,tr,source");
 
     /**
      * unicode letters used for parsing html tags, component names and property paths.
@@ -112,8 +118,6 @@ const htmlParserScope = function (fluid) {
     fluid.parseHTMLToStream = function (html, options) {
         const stack = [];
         const expectHTML = options.expectHTML;
-        const isUnaryTag = options.isUnaryTag || no;
-        const canBeLeftOpenTag = options.canBeLeftOpenTag || no;
         let index = 0;
         let last, lastTag;
         while (html) {
@@ -365,7 +369,7 @@ const htmlParserScope = function (fluid) {
         return /^\s*$/.test(text);
     };
 
-    fluid.parseHTMLToTree = function (html, options) {
+    fluid.parseHTMLToTree = function (html, options = {fragment: true, skipWhitespace: true}) {
         const stack = [];
         let root;
         let currentParent;
@@ -378,13 +382,12 @@ const htmlParserScope = function (fluid) {
         const closeElement = element => {
             if (currentParent) {
                 currentParent.children.push(element);
-                element.parent = currentParent;
             }
         };
 
         const innerOptions = Object.assign({
             start: (tag, attrs, unary, start, end) => {
-                let element = {tag, attrs, parent: currentParent, children: [], start, end};
+                let element = {tag, attrs, children: [], start, end};
                 if (!unary) {
                     if (!root) {
                         root = element;
@@ -409,12 +412,13 @@ const htmlParserScope = function (fluid) {
                     if (options.skipWhitespace && isWhitespace) {
                         return;
                     }
+                    const decoded = isTextTag(currentParent) ? text : decodeHTMLCached(text);
                     const prev = children[children.length - 1];
 
                     if (!isWhitespace || !children.length || !fluid.isWhitespace(prev?.text)) {
                         const child = {
                             type: 3,
-                            text,
+                            text: decoded,
                             start,
                             end
                         };

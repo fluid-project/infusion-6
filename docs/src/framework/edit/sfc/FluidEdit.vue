@@ -1,19 +1,20 @@
 <script>
 fluid.def("fluid.fullPageEditor", {
+    $layers: "fluid.sfcTemplateViewComponent",
     editorVisible: false,
     editButton: {
         $component: {
             $layers: "fluid.templateViewComponent",
             elideParent: true,
             template: `<button class="fl-editor-edit" @onclick="{fullPageEditor}.editorVisible = true">Edit</button>`,
-            container: "$compute:fluid.insertChildContainer(last, editButton, {self}.template, {fullPageEditor}.container)"
+            container: "$compute:fluid.insertChildContainer(last, editButton, {self}.templateTree, {fullPageEditor}.container)"
         }
     },
     inspectOverlay: {
         $component: {
             $layers: "fluid.templateViewComponent",
             template: `<div id="fl-inspect-overlay" class="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()"><div class="fl-inspect-layer"></div></div>`,
-            container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.template, {fullPageEditor}.container)"
+            container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.templateTree, {fullPageEditor}.container)"
         }
     },
     resizeBar: {
@@ -21,13 +22,13 @@ fluid.def("fluid.fullPageEditor", {
             $layers: "fluid.templateViewComponent",
             elideParent: true,
             template: `<div class="fl-resizer"></div>`,
-            container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.template, {fullPageEditor}.html, {fullPageEditor}.container)"
+            container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.templateTree, {fullPageEditor}.html, {fullPageEditor}.container)"
         }
     },
     editorRoot: {
         $component: {
             $layers: "fluid.editorRoot",
-            container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.template, {fullPageEditor}.html)",
+            container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.templateTree, {fullPageEditor}.html)",
             elideParent: true,
             editorVisible: "{fullPageEditor}.editorVisible"
         }

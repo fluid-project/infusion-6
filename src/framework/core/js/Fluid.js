@@ -2248,6 +2248,17 @@ const fluidJSScope = function (fluid) {
         return {...layer, $layers: fluid.makeArray(layer.$layers)};
     };
 
+    /**
+     * Determines the framework status of a given layer definition based on its variety.
+     * The framework status is represented as an integer:
+     * - `0`: No variety specified (user-defined layer).
+     * - `1`: Auxiliary framework layer (`frameworkAux`).
+     * - `2`: Core framework layer (`framework`).
+     * - `-1`: Unknown or unsupported variety.
+     *
+     * @param {Object} layerDef - The layer definition object to evaluate.
+     * @return {Number} The framework status of the layer.
+     */
     fluid.layerFrameworkStatus = function (layerDef) {
         const variety = layerDef.$variety;
         return !variety ? 0 :
@@ -2255,6 +2266,12 @@ const fluidJSScope = function (fluid) {
                 variety === "framework" ? 2 : -1;
     };
 
+    /**
+     * Determines whether a given layer is a user-defined rather than a framework layer.
+     *
+     * @param {String} layerName - The name of the layer to check.
+     * @return {Boolean} `true` if the layer is a user-defined layer, `false` otherwise.
+     */
     fluid.isUserLayer = function (layerName) {
         const layerDef = fluid.readLayer(layerName).peek().raw;
         return layerDef && !fluid.isUnavailable(layerDef) && fluid.layerFrameworkStatus(layerDef) === 0;
@@ -2885,6 +2902,10 @@ const fluidJSScope = function (fluid) {
         return segs.join("");
     };
 
+    // TODO: Control this environmentally somehow
+    fluid.cacheOptions = {
+        cache: "no-cache"
+    };
 
     /**
      * Fetches data from a given URL and processes the response using a provided strategy function.
@@ -2898,7 +2919,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.fetch = function (url, options, strategy) {
         const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
-        fetch(url, options)
+        fetch(url, {...options, ...fluid.cacheOptions})
             .then(response => {
                 if (!response.ok) {
                     togo.value = fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"});

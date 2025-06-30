@@ -1,11 +1,13 @@
 <script>
 fluid.def("fluid.editorRoot", {
+    $layers: ["fluid.sfcTemplateViewComponent", "fluid.resolveRoot"],
     openLayerTabs: {
         $reactiveRoot: []
     },
     showUserLayersOnly: true,
     selectedLayerTab: null,
     inspectingSite: null,
+    selfEditing: false,
 
     animateInspectOverlay: "$effect:fluid.animateInspectOverlay({self}, {self}.inspectingSite, {colourManager}.layerColours)",
 
@@ -133,66 +135,69 @@ fluid.def("fluid.editorRoot", {
             args: ["{self}", "{self}.inspectingSite"]
         }
     },
+    filterForSelfEditing: {
+        $method: {
+            func: "fluid.filterForSelfEditing",
+            args: ["{0}:vTree", "{1}:component", "{self}", "{colourManager}.layerColours"]
+        }
+    },
+    editUpdateListener: {
+        $eagerCompute: {
+            func: "fluid.editorRoot.editUpdateListener",
+            args: ["{self}", "{$oldValue}"]
+        }
+    },
     $variety: "frameworkAux"
 });
 
-fluid.shadowHasUserLayer = function (shadow) {
-    return shadow.that && fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
-};
+// TODO: We have to list these here since otherwise they is not available when the layer loads - need some clear way
+// to inject code synchronously or else reactively.
 
-/**
- * Calculates the clipped bounds of a target element by traversing all its ancestors
- * up to the document root and ensuring the bounds lie within each ancestor's bounds.
- * Only the top, left, width, and height properties are returned.
- *
- * @param {HTMLElement} target - The target element whose bounds are to be clipped.
- * @return {Object} The clipped bounds containing top, left, width, and height.
- */
-fluid.getClippedBounds = function (target) {
-    let { top, left, right, bottom } = target.getBoundingClientRect();
-    let current = target.parentNode;
+fluid.editorRoot.editUpdateListener = function (editorRoot, oldInstance) {
 
-    while (current && current !== document) {
-        if (current instanceof HTMLElement) {
-            const parentRect = current.getBoundingClientRect();
-            top = Math.max(top, parentRect.top);
-            left = Math.max(left, parentRect.left);
-            right = Math.min(right, parentRect.right);
-            bottom = Math.min(bottom, parentRect.bottom);
-        }
-        current = current.parentNode;
-    }
-    return {top, left,
-        width: Math.max(0, right - left),
-        height: Math.max(0, bottom - top)
-    };
-};
-
-fluid.applyOverlay = function (overlays, target, colour) {
-    if (target && !fluid.isUnavailable(target)) {
-        const bounds = fluid.getClippedBounds(target);
-
-        const targetInBody = target.closest("body");
-        const overlay = targetInBody ? overlays.overlay : overlays.selfOverlay;
-
-        let relLeft = 0;
-        if (!targetInBody) {
-            const relative = document.querySelector(".fl-editor-root");
-            const relBounds = relative.getBoundingClientRect();
-            relLeft = relBounds.left + 2; // Somehow we are off by a little ....
-        }
-
-        overlay.style.top = `${bounds.top + window.scrollY}px`;
-        overlay.style.left = `${bounds.left + window.scrollX - relLeft}px`;
-        overlay.style.width = `${bounds.width}px`;
-        overlay.style.height = `${bounds.height}px`;
-
-        // Set the overlay's background color and border
-        overlay.style.backgroundColor = colour;
-        overlay.style.border = `1px solid ${fluid.darkenColour(colour)}`;
-        overlay.style.display = "block";
+    if (oldInstance) {
+        return oldInstance;
     } else {
-        Object.values(overlays).map(overlay => overlay.style.display = "none");
+        const observer = new MutationObserver((mutationList) => {
+            const targets = [...new Set(mutationList.map(m => m.target))];
+            targets.forEach(target => {
+                const searcher = target.nodeType === 1 ? target : target.parentElement;
+                const editRoot = searcher && searcher.closest(".fl-edit-root");
+                if (editRoot) {
+                    const {shadow, container} = fluid.shadowForElementParent(editRoot);
+                    console.log("Found mutation of target ", target, " within root ", editRoot, " within container ", container);
+                    const path = fluid.pathToNode(editRoot, container);
+                    console.log("Path from editRoot to parent ", path.join(""));
+                    const vTree = shadow.that.vTree.peek();
+                    const vNode = fluid.navigatePath(vTree, path);
+                    console.log("Found corresponding vNode ", vNode);
+                    if (fluid.textDiff(vNode, editRoot)) {
+                        console.log("Text content identical, skipping")
+                    } else {
+                        const templateLayer = vNode.attrs["fl-template-layer"];
+                        const sfcRec = fluid.sfcStore[templateLayer];
+                        const origText = sfcRec.textSignal.value;
+                        const from = vNode.children[0].start;
+                        const to = fluid.peek(vNode.children).end;
+                        const newText = origText.slice(0, from) + editRoot.innerHTML + origText.slice(to);
+                        console.log(`Proposing updating text from\n${origText} to \n${newText}`);
+                        sfcRec.textSignal.value = newText;
+                    }
+                }
+            });
+        });
+
+        observer.observe(document, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+
+        // TODO: Dispose not currently bound to anything
+        return {
+            observer,
+            _dispose: () => observer.disconnect()
+        };
     }
 };
 
@@ -213,55 +218,9 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
     fluid.applyOverlay(overlays, target, colour);
 };
 
-// Hack this using pseudo-globals for now - in time we perhaps want some kind of auto-mount using live query?
-fluid.activeLayerLink = null;
-
-fluid.editorRoot.mouseOver = function (editorRoot) {
-    const layerElem = event.target.closest(".fl-layer-link");
-    if (layerElem) {
-        fluid.activeLayerLink = layerElem;
-        layerElem.addEventListener("click", () => {
-            console.log("Layer element clicked");
-        });
-        layerElem.classList.add("active");
-    }
-};
-
-fluid.editorRoot.mouseOut = function (editorRoot) {
-    const layerElem = event.target.closest(".fl-layer-link");
-    if (layerElem && fluid.activeLayerLink) {
-        fluid.activeLayerLink.classList.remove("active");
-        fluid.activeLayerLink = null;
-    }
-};
-
-fluid.editorRoot.click = function (editorRoot) {
-    const layerElem = event.target.closest(".fl-layer-link");
-    if (layerElem) {
-        const layerName = layerElem.getAttribute("data-fl-layer-name");
-        const layerRef = layerElem.getAttribute("data-fl-layer-element");
-        const parsedLayerRef = layerRef && fluid.parseContextReference(layerRef);
-
-        const openLayer = layerName || parsedLayerRef.context;
-        editorRoot.openLayerTab(openLayer);
-        if (parsedLayerRef) {
-            editorRoot.goToLayerRef(parsedLayerRef);
-        }
-    }
-};
-
-document.addEventListener("keydown", function (evt) {
-    evt.stopImmediatePropagation();
-    if (evt.key === "z" && (evt.ctrlKey || evt.metaKey)) {
-        console.log("Undo");
-        fluid.historyBack();
-    } else if (evt.key === "y" && (evt.ctrlKey || evt.metaKey)) {
-        fluid.historyForward();
-    }
-});
-
 </script>
 
+<script src="@{editUrlBase}/js/editorRoot.js"></script>
 <script src="@{editUrlBase}/js/layerColourManager.js"></script>
 
 <template>
@@ -335,6 +294,7 @@ document.addEventListener("keydown", function (evt) {
     font-size: 20px;
     border-radius: 10px;
     margin-right: 0.55em;
+    line-height: 1;
 }
 
 .fl-layers-header {
@@ -349,6 +309,8 @@ document.addEventListener("keydown", function (evt) {
        "Fira Sans", "Droid Sans", "Helvetica Neue", "Helvetica", "Arial", sans-serif;
     display: flex;
     flex-direction: column;
+    position: sticky;
+    top: 0;
 }
 
 .fl-layer-browser {
@@ -436,6 +398,36 @@ document.addEventListener("keydown", function (evt) {
     fill: none;
     stroke: #545454;
     stroke-width: 1;
+}
+
+:root {
+    --fl-layer-colour: grey;
+}
+
+.fl-edit-root {
+    border-width: 1px;
+    border-style: solid;
+    border-color: transparent;
+    border-radius: 5px;
+
+    background-image: linear-gradient(90deg, var(--fl-layer-colour) 50%, transparent 50%),
+        linear-gradient(90deg, var(--fl-layer-colour) 50%, transparent 50%),
+        linear-gradient(0deg, var(--fl-layer-colour) 50%, transparent 50%),
+        linear-gradient(0deg, var(--fl-layer-colour) 50%, transparent 50%);
+    background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+    background-size: 10px 2px, 10px 2px, 2px 10px, 2px 10px;
+    background-position: left top, right bottom, left bottom, right top;
+    animation: border-dance 1s infinite linear;
+    padding: 5px;
+}
+
+@keyframes border-dance {
+    0% {
+        background-position: left top, right bottom, left bottom, right top;
+    }
+    100% {
+        background-position: left 10px top, right 10px bottom, left bottom 10px, right top 10px;
+    }
 }
 
 #svg-defs {

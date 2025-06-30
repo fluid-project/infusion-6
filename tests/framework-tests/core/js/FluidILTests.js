@@ -150,7 +150,7 @@ QUnit.test("Effects resolution II - no notification on unrelated update", functi
     log.length = 0;
 
     that.unrelated = 1;
-    assert.deepEqual(log, [], "No effect on unrelated upated destruction");
+    assert.deepEqual(log, [], "No effect on unrelated update");
 });
 
 const globalHolder = {
@@ -183,7 +183,7 @@ fluid.def("fluid.tests.selfUpdate", {
 QUnit.test("Computed arg sensitivity", function (assert) {
     const that = fluid.tests.selfUpdate();
     that.updated = 1;
-    assert.equal(globalHolder.effectCount, 1, "Just one updated to computed");
+    assert.equal(globalHolder.effectCount, 1, "Just one update to effect");
 });
 
 /** FLUID-4914 derived grade resolution tests **/

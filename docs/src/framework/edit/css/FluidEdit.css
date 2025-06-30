@@ -3,7 +3,6 @@
  */
 
 html[fl-docking-area-mode~="edge"] {
-    overflow: hidden;
     display: flex;
 }
 

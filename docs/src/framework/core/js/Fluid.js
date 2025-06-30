@@ -399,6 +399,8 @@ const fluidJSScope = function (fluid) {
         return fluid.isArrayable(tocopy) ? [] : {};
     };
 
+    fluid.strategyRecursionBailout = 128;
+
     /**
      * Determine whether the supplied object path exceeds the maximum strategy recursion depth of fluid.strategyRecursionBailout -
      * if it does, fluid.fail will be issued with a diagnostic
@@ -2196,13 +2198,31 @@ const fluidJSScope = function (fluid) {
     fluid.writeLayer = function (layerName, layer) {
         const store = fluid.layerStore.peek();
         const layerSig = store[layerName];
-        const layerValue = {raw: layer, demanded: layerSig?.demanded};
+        const layerValue = {raw: layer, demanded: layerSig?.demanded, tick: 0};
         if (layerSig) {
             const oldValue = layerSig.peek();
             layerSig.value = layerValue;
             fluid.pushHistory({type: "updateLayer", oldValue, newValue: layerValue, layerName});
         } else {
             fluid.newLayer(layerName, layerValue);
+        }
+    };
+
+    /**
+     * Invalidates a layer in the `fluid.layerStore` by incrementing its tick value.
+     * Typically called when a co-occurrence is registered or removed which references the layer, signalling that
+     * components depending on the layer should recompute.
+     *
+     * @param {String} layerName - The name of the layer to invalidate.
+     */
+    fluid.invalidateLayer = function (layerName) {
+        const store = fluid.layerStore.peek();
+        const layerSig = store[layerName];
+        if (layerSig) {
+            const oldValue = layerSig.peek();
+            if (!fluid.isUnavailable(oldValue)) {
+                layerSig.value = {...oldValue, tick: oldValue.tick + 1};
+            }
         }
     };
 
@@ -2228,6 +2248,17 @@ const fluidJSScope = function (fluid) {
         return {...layer, $layers: fluid.makeArray(layer.$layers)};
     };
 
+    /**
+     * Determines the framework status of a given layer definition based on its variety.
+     * The framework status is represented as an integer:
+     * - `0`: No variety specified (user-defined layer).
+     * - `1`: Auxiliary framework layer (`frameworkAux`).
+     * - `2`: Core framework layer (`framework`).
+     * - `-1`: Unknown or unsupported variety.
+     *
+     * @param {Object} layerDef - The layer definition object to evaluate.
+     * @return {Number} The framework status of the layer.
+     */
     fluid.layerFrameworkStatus = function (layerDef) {
         const variety = layerDef.$variety;
         return !variety ? 0 :
@@ -2235,6 +2266,12 @@ const fluidJSScope = function (fluid) {
                 variety === "framework" ? 2 : -1;
     };
 
+    /**
+     * Determines whether a given layer is a user-defined rather than a framework layer.
+     *
+     * @param {String} layerName - The name of the layer to check.
+     * @return {Boolean} `true` if the layer is a user-defined layer, `false` otherwise.
+     */
     fluid.isUserLayer = function (layerName) {
         const layerDef = fluid.readLayer(layerName).peek().raw;
         return layerDef && !fluid.isUnavailable(layerDef) && fluid.layerFrameworkStatus(layerDef) === 0;
@@ -2378,8 +2415,36 @@ const fluidJSScope = function (fluid) {
 
     // Lightweight version of
     // https://docs.fluidproject.org/infusion/development/IoCAPI#fluidmakegradelinkagelinkagename-inputnames-outputnames
-    /** @type {LayerLinkageRecord[]} An array of co-occurrence rules describing how input component types should be transformed into output types. */
-    fluid.coOccurrenceRegistry = [];
+    // Should really be materialised in a component
+    /** @type {Object.<String, LayerLinkageRecord>} A hash of co-occurrence names to rules rules describing how input layer names should give rise to output layer names */
+    fluid.coOccurrenceRegistry = {};
+
+    /**
+     * Registers a co-occurrence rule in the `fluid.coOccurrenceRegistry`.
+     * This rule specifies how certain input layer names should trigger the application of output layer names.
+     * After registration, the input layers are invalidated to signal that components depending on them should recompute.
+     *
+     * @param {String} coOcName - The name of the co-occurrence rule to register.
+     * @param {LayerLinkageRecord} record - The linkage record describing the input and output layer names.
+     */
+    fluid.registerCoOccurrence = function (coOcName, record) {
+        fluid.coOccurrenceRegistry[coOcName] = record;
+        // TODO: Could be more efficient by finding just those components matching co-occurrence
+        record.inputNames.forEach(fluid.invalidateLayer);
+    };
+
+    /**
+     * Deregisters a co-occurrence rule from the `fluid.coOccurrenceRegistry`.
+     * This function removes the specified co-occurrence rule and invalidates all input layers
+     * associated with the rule to signal that components depending on them should recompute.
+     *
+     * @param {String} coOcName - The name of the co-occurrence rule to deregister.
+     */
+    fluid.deregisterCoOccurrence = function (coOcName) {
+        const record = fluid.coOccurrenceRegistry[coOcName];
+        delete fluid.coOccurrenceRegistry[coOcName];
+        record.inputNames.forEach(fluid.invalidateLayer);
+    };
 
     /**
      * Determine and return any new layer names that should be derived by co-occurrence rules from the supplied set of layer names.
@@ -2393,7 +2458,7 @@ const fluidJSScope = function (fluid) {
         const togo = [];
         const existing = new Set(layerNames);
 
-        for (const record of fluid.coOccurrenceRegistry) {
+        Object.values(fluid.coOccurrenceRegistry).forEach(record => {
             const {inputNames, outputNames} = record;
             const allPresent = inputNames.every(name => existing.has(name));
             if (allPresent) {
@@ -2403,7 +2468,7 @@ const fluidJSScope = function (fluid) {
                     }
                 }
             }
-        }
+        });
 
         return togo;
     };
@@ -2837,6 +2902,10 @@ const fluidJSScope = function (fluid) {
         return segs.join("");
     };
 
+    // TODO: Control this environmentally somehow
+    fluid.cacheOptions = {
+        cache: "no-cache"
+    };
 
     /**
      * Fetches data from a given URL and processes the response using a provided strategy function.
@@ -2850,7 +2919,7 @@ const fluidJSScope = function (fluid) {
      */
     fluid.fetch = function (url, options, strategy) {
         const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
-        fetch(url, options)
+        fetch(url, {...options, ...fluid.cacheOptions})
             .then(response => {
                 if (!response.ok) {
                     togo.value = fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"});

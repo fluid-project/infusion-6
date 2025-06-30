@@ -23,7 +23,8 @@ const fluidSubstrateScope = function (fluid) {
             unfoldable: true
         },
         userLayersOnly: "{editorRoot}.showUserLayersOnly",
-        rootEntries: "$compute:fluid.substrateTree.rootEntries({self})",
+        // Fake dependency on colourManager so we don't try to render before it is ready - deep recursive imperative algorithm
+        rootEntries: "$compute:fluid.substrateTree.rootEntries({self}, {colourManager})",
         componentToEntry: "$method:fluid.substrateTree.componentToEntry({self}, {0}:shadow, {1}:layer)",
         valueToEntry: {
             $method: {
@@ -101,7 +102,7 @@ const fluidSubstrateScope = function (fluid) {
 
             const displayLayer = displayLayers.find(layer => layers.includes(layer)).slice("fluid.".length);
             const filteredLayers = [...layers].filter(layer => self.userLayersOnly ? fluid.isUserLayer(layer) : true).reverse()
-                .map(layer => `<span class="fl-layer-link" data-fl-layer-name="${layer}">${layer}</span>`).join(", ;");
+                .map(layer => `<span class="fl-layer-link" data-fl-layer-name="${layer}">${layer}</span>`).join(", ");
 
             let togo = {
                 id: `{${shadow.path}}`,
@@ -172,8 +173,14 @@ const fluidSubstrateScope = function (fluid) {
 
     const styleForCol = colour => `style="background-color: ${colour}"`;
 
+    // TODO: Quick hack to filter out this property created by the SFC parser since we can't be bothered to create a fresh
+    // layer for it just now
+    const censoredMap = {
+        "layerForTemplate": true
+    };
+
     fluid.substrateTree.valueToEntry = function (self, shadow, segs, valueSignal, inLayer, parent) {
-        if (segs.length > 3) {
+        if (segs.length > 3 || fluid.get(censoredMap, segs)) {
             return fluid.NoValue;
         }
         const id = fluid.renderSite({shadow, segs});
@@ -184,9 +191,6 @@ const fluidSubstrateScope = function (fluid) {
         const key = fluid.peek(segs);
         const value = fluid.deSignalLight(valueSignal); // TODO: More refined processing of signals and computed
 
-        if (layer && layer.startsWith("subcomponent:")) {
-            layer = layer.substring("subcomponent:".length);
-        }
         // if (key === "$layers") {
         //    layer = fluid.peek(value);
         //}
