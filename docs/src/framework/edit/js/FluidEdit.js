@@ -1,6 +1,6 @@
 "use strict";
 
-// Old-style driver now replaced by FluidEdit.vue, still exercised in old todo-list app
+// Old-style driver now replaced by FluidEdit.vue, still exercised in old todo-list app but not maintained, needs a massive update
 
 
 const fluidEditScope = function (fluid) {

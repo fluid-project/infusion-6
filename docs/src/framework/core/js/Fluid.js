@@ -2000,7 +2000,7 @@ const fluidJSScope = function (fluid) {
             let cand = null;
             for (let seq of nonemptyseqs) {
                 cand = seq[0];
-                fluid.log(` ${cand}`);
+                // fluid.log(` ${cand}`);
                 // eslint-disable-next-line no-loop-func
                 let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
                 if (nothead.length > 0) {
@@ -2395,7 +2395,7 @@ const fluidJSScope = function (fluid) {
     /**
      * @typedef {Object} MergeRecord
      * @property {String} mergeRecordType - The type of the merge record (e.g., "def", "defParents").
-     * @property {String} mergeRecordName - Name of the merge record holding a layer, expected to be unique
+     * @property {String} [mergeRecordName] - Name of the merge record holding a layer, expected to be unique
      * @property {Object} [layer] - The layer definition object to be merged.
      * @property {Number} [priority] - The priority of the layer, used for determining merge order.
      */
@@ -2409,8 +2409,8 @@ const fluidJSScope = function (fluid) {
 
     /**
      * @typedef {Object} LayerLinkageRecord
-     * @property {String[]} inputNames - An array of layer names that must be present together to trigger the linkage.
-     * @property {String[]} outputNames - An array of layer names that should be applied when the inputNames co-occur.
+     * @property {String[]} inputLayers - An array of layer names that must be present together to trigger the linkage.
+     * @property {String[]} outputLayers - An array of layer names that should be applied when the inputLayers co-occur.
      */
 
     // Lightweight version of
@@ -2430,7 +2430,7 @@ const fluidJSScope = function (fluid) {
     fluid.registerCoOccurrence = function (coOcName, record) {
         fluid.coOccurrenceRegistry[coOcName] = record;
         // TODO: Could be more efficient by finding just those components matching co-occurrence
-        record.inputNames.forEach(fluid.invalidateLayer);
+        record.inputLayers.forEach(fluid.invalidateLayer);
     };
 
     /**
@@ -2443,13 +2443,13 @@ const fluidJSScope = function (fluid) {
     fluid.deregisterCoOccurrence = function (coOcName) {
         const record = fluid.coOccurrenceRegistry[coOcName];
         delete fluid.coOccurrenceRegistry[coOcName];
-        record.inputNames.forEach(fluid.invalidateLayer);
+        record.inputLayers.forEach(fluid.invalidateLayer);
     };
 
     /**
      * Determine and return any new layer names that should be derived by co-occurrence rules from the supplied set of layer names.
-     * This scans the global `fluid.coOccurrenceRegistry` for entries whose `inputNames` are all present in `layerNames`,
-     * and returns the corresponding `outputNames` that are not already present in `layerNames`.
+     * This scans the global `fluid.coOccurrenceRegistry` for entries whose `inputLayers` are all present in `layerNames`,
+     * and returns the corresponding `outputLayers` that are not already present in `layerNames`.
      *
      * @param {String[]} layerNames - The current set of layer names in the hierarchy.
      * @return {String[]} An array of derived layer names that should be added based on co-occurrence rules.
@@ -2459,12 +2459,12 @@ const fluidJSScope = function (fluid) {
         const existing = new Set(layerNames);
 
         Object.values(fluid.coOccurrenceRegistry).forEach(record => {
-            const {inputNames, outputNames} = record;
-            const allPresent = inputNames.every(name => existing.has(name));
+            const {inputLayers, outputLayers} = record;
+            const allPresent = inputLayers.every(name => existing.has(name));
             if (allPresent) {
-                for (const outputName of outputNames) {
-                    if (!existing.has(outputName)) {
-                        togo.push(outputName);
+                for (const outputLayer of outputLayers) {
+                    if (!existing.has(outputLayer)) {
+                        togo.push(outputLayer);
                     }
                 }
             }
@@ -2714,6 +2714,12 @@ const fluidJSScope = function (fluid) {
     // period characters escaped in selectors
     const charStart = "(?:[\\w\\u00c0-\\uFFFF*_-";
 
+    /** @typedef {Object} SelectorParseStrategy
+     * @property {RegExp} regexp - A regular expression to match selector components.
+     * @property {Object<String, String>} charToTag - A mapping of prefix characters (e.g., ".", "#") to predicate types.
+     */
+
+    /** @type {SelectorParseStrategy} */
     fluid.simpleCSSMatcher = {
         regexp: new RegExp("([#.]?)(" + charStart + "]|\\\\.)+)", "g"),
         charToTag: {
@@ -2723,6 +2729,7 @@ const fluidJSScope = function (fluid) {
         }
     };
 
+    /** @type {SelectorParseStrategy} */
     fluid.ILSSMatcher = {
         regexp: new RegExp("([&#]?)(" + charStart + "]|\\.|\\/)+)", "g"),
         charToTag: {
@@ -2733,11 +2740,24 @@ const fluidJSScope = function (fluid) {
     };
 
     const childSeg = new RegExp("\\s*(>)?\\s*", "g");
-    // var whiteSpace = new RegExp("^\\w*$");
 
-    // Parses a selector expression into a data structure holding a list of predicates
-    // 2nd argument is a "strategy" structure, e.g.  fluid.simpleCSSMatcher or fluid.IoCSSMatcher
-    // unsupported, non-API function
+    /**
+     * @typedef {Object} ParsedSelector
+     * @property {String} tag - The type of the selector component (e.g., "tag", "id", "clazz").
+     * @property {String} value - The value of the selector component (e.g., "div", "class", "id").
+     * @property {Boolean} child - Whether the component is a direct child selector (">").
+     */
+
+
+    /**
+     * Parses a selector expression into a structured representation of predicates.
+     * This function processes a selector string and converts it into a list of predicates
+     * based on the provided matching strategy. Each predicate represents a part of the selector,
+     * such as a tag, class, or ID.
+     * @param {String} selstring - The selector string to parse (e.g., "div.class#id").
+     * @param {SelectorParseStrategy} strategy - The matching strategy to use for parsing.
+     * @return {ParsedSelector[]} An array of predicate objects representing the parsed selector.
+     */
     fluid.parseSelector = function (selstring, strategy) {
         const togo = [];
         selstring = selstring.trim();
@@ -2824,6 +2844,7 @@ const fluidJSScope = function (fluid) {
      * @property {String} context - The context portion of the reference
      * @property {String} path - The path portion of the reference
      * @property {String} [name] - An optional colon-delimited name parsed from the reference
+     * @property {Object} selector - An optional selector to query down the tree from the resolved context
      */
 
     /**
@@ -2836,7 +2857,7 @@ const fluidJSScope = function (fluid) {
     fluid.parseContextReference = function (reference, index) {
         index = index || 0;
         const endcpos = reference.indexOf("}", index + 1);
-        const context = reference.substring(index + 1, endcpos);
+        let context = reference.substring(index + 1, endcpos);
         const colpos = reference.indexOf(":");
         let name;
         if (colpos !== -1) {
@@ -2847,7 +2868,13 @@ const fluidJSScope = function (fluid) {
         if (path.charAt(0) === ".") {
             path = path.substring(1);
         }
-        return {context, path, name};
+        const cspace = context.indexOf(" ");
+        let selector;
+        if (cspace !== -1) {
+            selector = fluid.parseSelector(context.substring(cspace + 1), fluid.ILSSMatcher);
+            context = context.substring(0, cspace);
+        }
+        return {context, path, name, selector};
     };
 
     /**

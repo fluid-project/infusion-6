@@ -958,10 +958,12 @@ const fluidViewScope = function (fluid) {
      * Apply a transformation function to the value of a `Signal`, producing a new computed `Signal`. If the function is
      * `fluid.identity` the original signal is returned.
      * @param {Signal<any>} sig - The input signal to transform.
-     * @param {Function} fun - The transformation function to apply to the signal's value.
+     * @param {Function} func - The transformation function to apply to the signal's value.
      * @return {Signal<any>} A computed signal reflecting the transformed value.
      */
-    fluid.mapSignal = (sig, fun) => fun === fluid.identity ? sig : fluid.computed( value => fun(value), [sig]);
+    fluid.mapSignal = (sig, func) => func === fluid.identity ? sig : fluid.computed( value => func(value), [sig]);
+
+    fluid.filterObjKeys = (obj, func) => Object.fromEntries(Object.entries(obj).filter(([key]) => func(key)));
 
     /**
      * Processes an attribute directive found on a virtual node.
@@ -970,45 +972,38 @@ const fluidViewScope = function (fluid) {
      * @param {String} value - The attribute value, holding a directive through beginning with "v-"
      * @param {String} key - The name of the attribute.
      * @param {Shadow} shadow - The shadow for the component in whose context the attribute is processed.
+     * @param {Effect[]} templateEffects - An array of effects to contribute any allocated effects to
      */
-    fluid.processAttributeDirective = function (vnode, value, key, shadow) {
-        if (key === "@id") {
-            // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
-            // We likely don't want to use this in practice since a template update is going to update this live and
-            // we'd prefer to reuse whatever is in the DOM without tearing it down.
-            fluid.allocateVNodeEffect(vnode, vnode => {
-                const disposable = function () {
-                    fluid.pushPotentia(shadow, value, [{mergeRecordType: "template"}]);
-                };
-                disposable.$variety = "$component";
-                // Cheapest way to signal to fluid.patchChildren that it should not attempt to recurse on child nodes
-                // by itself:
-                delete vnode.children;
-                const templateRecord = {
-                    mergeRecordType: "template",
-                    layer: {
-                        $layers: "fluid.viewComponent",
-                        container: vnode.elementSignal
-                    }
-                };
-
-                fluid.pushPotentia(shadow, value, [templateRecord]);
-                return disposable;
-            });
-        } else if (key === "@class") {
-            const parts = value.split(",").map(part => part.trim());
-            const clazz = Object.fromEntries(parts.map(part => {
-                const [key, ref] = part.split(":");
-                const negate = ref.startsWith("!");
-                const effRef = negate ? ref.substring(1) : ref;
-                const tokens = fluid.parseStringTemplate(effRef);
-                const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
-                const negMap = fluid.liftNegate(negate);
-                // Unwrap the primitive token so it is more principled to check for falsy during parseTemplate
-                const renderedPrim = fluid.isSignal(rendered) ? fluid.mapSignal(rendered.$tokens[0], negMap) : negMap(rendered);
-                return [key, renderedPrim];
-            }));
-            vnode["class"] = clazz;
+    fluid.processVNodeAttribute = function (vnode, value, key, shadow, templateEffects) {
+        const firstChar = key.charCodeAt(0);
+        if (firstChar === 64) { // @
+            if (key.startsWith("@on")) {
+                fluid.pushArray(vnode, "on", {onKey: key.slice(3).toLowerCase(), onValue: value});
+                fluid.allocateEventBindingEffect(templateEffects, vnode);
+            } else if (key === "@class") {
+                const parts = value.split(",").map(part => part.trim());
+                const clazz = Object.fromEntries(parts.map(part => {
+                    const [key, ref] = part.split(":");
+                    const negate = ref.startsWith("!");
+                    const effRef = negate ? ref.substring(1) : ref;
+                    const tokens = fluid.parseStringTemplate(effRef);
+                    const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+                    const negMap = fluid.liftNegate(negate);
+                    // Unwrap the primitive token so it is more principled to check for falsy during parseTemplate
+                    const renderedPrim = fluid.isSignal(rendered) ? fluid.mapSignal(rendered.$tokens[0], negMap) : negMap(rendered);
+                    return [key, renderedPrim];
+                }));
+                vnode["class"] = clazz;
+            }
+            delete vnode.attrs[key];
+        } else if (key !== "class") {
+            const tokens = fluid.parseStringTemplate(value);
+            const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+            if (fluid.isSignal(rendered)) {
+                rendered.$source = value;
+                fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.setAttribute(key, text));
+                vnode.attrs[key] = rendered; // Mark to reconciler that it is a signal so it should ignore it
+            }
         }
     };
 
@@ -1042,12 +1037,10 @@ const fluidViewScope = function (fluid) {
             /**
              * Recursively processes a VNode by rendering any template strings found in its text or attributes
              * @param {VNode} vnode - The virtual node (vNode) to be processed.
-             * @param {VNode|null} [parentNode] - The parent of this node
              * @return {VNode} The processed VNode with rendered content in text and attributes.
              */
-            function processVNode(vnode, parentNode = null) {
+            function processVNode(vnode) {
                 vnode.shadow = shadow;
-                vnode.parentNode = parentNode;
                 vnode._id = vnode._id || vnode_id++;
                 if (vnode.text !== undefined) {
                     const tokens = fluid.parseStringTemplate(vnode.text);
@@ -1055,25 +1048,40 @@ const fluidViewScope = function (fluid) {
                     fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
                     return Object.assign(vnode, {text: rendered});
                 } else {
+                    // Process id attribute first since it may cause others to be slung to another component
+                    const idValue = vnode.attrs?.["@id"];
+                    if (idValue) {
+                        // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
+                        // We likely don't want to use this in practice since a template update is going to update this live and
+                        // we'd prefer to reuse whatever is in the DOM without tearing it down.
+                        fluid.allocateVNodeEffect(vnode, vnode => {
+                            const disposable = function () {
+                                fluid.pushPotentia(shadow, idValue, [{mergeRecordType: "template"}]);
+                            };
+                            disposable.$variety = "$component";
+                            const parentTemplate = signal({
+                                tag: vnode.tag,
+                                attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
+                                children: vnode.children
+                            });
+                            delete vnode.children;
+                            vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
+
+                            const templateRecord = {
+                                mergeRecordType: "template",
+                                layer: {
+                                    $layers: "fluid.viewComponent",
+                                    container: vnode.elementSignal,
+                                    parentTemplate
+                                }
+                            };
+
+                            fluid.pushPotentia(shadow, idValue, [templateRecord]);
+                            return disposable;
+                        });
+                    }
                     fluid.each(vnode.attrs, (value, key) => {
-                        const firstChar = key.charCodeAt(0);
-                        if (firstChar === 64) { // @
-                            if (key.startsWith("@on")) {
-                                fluid.pushArray(vnode, "on", {onKey: key.slice(3).toLowerCase(), onValue: value});
-                                fluid.allocateEventBindingEffect(templateEffects, vnode);
-                            } else {
-                                fluid.processAttributeDirective(vnode, value, key, shadow);
-                            }
-                            delete vnode.attrs[key];
-                        } else if (key !== "class") {
-                            const tokens = fluid.parseStringTemplate(value);
-                            const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
-                            if (fluid.isSignal(rendered)) {
-                                rendered.$source = value;
-                                fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.setAttribute(key, text));
-                                vnode.attrs[key] = rendered; // Mark to reconciler that it is a signal so it should ignore it
-                            }
-                        }
+                        fluid.processVNodeAttribute(vnode, value, key, shadow, templateEffects);
                     });
                     if (vnode["class"]) {
                         // Grab a reference to any static source of classes before this node was signalised
@@ -1244,6 +1252,13 @@ const fluidViewScope = function (fluid) {
         $variety: "framework"
     });
 
+    fluid.def("fluid.selfTemplate", {
+        $layers: "fluid.component",
+        templateTree: "{self}.parentTemplate",
+        elideParent: false,
+        $variety: "framework"
+    });
+
     fluid.renderSourceUrl = sourceUrl => ` written in <a class="fl-source-link" href="{sourceUrl}">${sourceUrl.split("/").pop()}</a>`;
 
     fluid.renderFullSite = site => {
@@ -1286,8 +1301,8 @@ const fluidViewScope = function (fluid) {
     };
 
     fluid.registerCoOccurrence("fluid.viewComponentList", {
-        inputNames: ["fluid.viewComponent", "fluid.componentList"],
-        outputNames: ["fluid.viewComponentList"]
+        inputLayers: ["fluid.viewComponent", "fluid.componentList"],
+        outputLayers: ["fluid.viewComponentList"]
     });
 
     fluid.def("fluid.viewComponentList", {

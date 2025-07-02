@@ -71,10 +71,31 @@ const fluidILScope = function (fluid) {
         return "component " + fluid.dumpThat(that) + " at path " + fluid.dumpComponentPath(that);
     };
 
-    // Currently disused - may reappear if we get distributions back
+    // A variant of fluid.visitComponentChildren that supplies the signature expected for fluid.matchILSelector
+    // this is: thatStack, contextHashes, memberNames, i - note, the supplied arrays are NOT writeable and shared through the iteration
+    fluid.visitComponentsForMatching = function (shadow, options, visitor) {
+        options = Object.assign({visited: {}}, options);
+        const shadowStack = [shadow];
+        // eslint-disable-next-line no-unused-vars
+        const scopeTick = shadow.scopeTick.value; // Read the scope tick to cause a dependency
+        const scopes = [shadow.ownScope];
+        const visitorWrapper = function (thisShadow, xName, segs) {
+            shadowStack.length = 1;
+            scopes.length = 1;
+            for (let i = 0; i < segs.length; ++i) {
+                const childShadow = shadowStack[i].childComponents[segs[i]];
+                shadowStack[i + 1] = childShadow;
+                // eslint-disable-next-line no-unused-vars
+                const scopeTick = childShadow.scopeTick.value; // Read the scope tick to cause a dependency
+                scopes[i + 1] = childShadow.ownScope;
+            }
+            return visitor(thisShadow, shadowStack, scopes, segs, segs.length);
+        };
+        fluid.visitComponentChildren(shadow, visitorWrapper, options, []);
+    };
+
     /**
      * Visit the child components of a given component, applying a visitor function to each.
-     * Allows for traversal of the component tree and supports options for controlling the traversal.
      *
      * @param {Shadow} shadow - The parent component whose children are to be visited.
      * @param {Function} visitor - A function to be called for each child component.
@@ -83,32 +104,110 @@ const fluidILScope = function (fluid) {
      *     - `name` (String): The name of the current child component.
      *     - `segs` (String[]): The array of segment names leading to the current child.
      *     - `depth` (Number): The depth of the current child in the traversal.
-     *     If the `visitor` function returns `true`, the traversal is terminated early.
      * @param {Object} options - Options to control the traversal:
      *     - `visited` (Object): A map of already visited component IDs to avoid cycles.
      *     - `flat` (Boolean): If `true`, prevents recursive traversal into child components.
      * @param {String[]} [segs=[]] - The path segments leading to the current component, used internally for recursion.
      * @return {Boolean|undefined} Returns `true` if the traversal was terminated early by the visitor function, otherwise `undefined`.
      */
-    fluid.visitComponentChildren = function (shadow, visitor, options, segs) {
-        segs = segs || [];
+    fluid.visitComponentChildren = function (shadow, visitor, options, segs = []) {
         for (const name in shadow.childComponents) {
             const childShadow = shadow.childComponents[name];
-            if (options.visited && options.visited[childShadow.$id]) {
+            if (!childShadow.that) {
+                continue;
+            }
+            if (options.visited[childShadow.that.$id]) {
                 continue;
             }
             segs.push(name);
-            if (options.visited) { // recall that this is here because we may run into a component that has been cross-injected which might otherwise cause cyclicity
-                options.visited[childShadow.$id] = true;
-            }
-            if (visitor(childShadow, name, segs, segs.length - 1)) {
-                return true;
-            }
+            // recall that this is here because we may run into a component that has been cross-injected which might otherwise cause cyclicity
+            options.visited[childShadow.that.$id] = true;
+
+            visitor(childShadow, name, segs, segs.length - 1);
+
             if (!options.flat) {
                 fluid.visitComponentChildren(childShadow, visitor, options, segs);
             }
             segs.pop();
         }
+    };
+
+    /** Query for all components matching a selector in a particular tree
+     * @param {Component} root - The root component at which to start the search
+     * @param {String} selector - An IoCSS selector, in form of a string. Note that since selectors supplied to this function implicitly
+     * match downwards, they do not contain the "head context" followed by whitespace required in the distributeOptions form. E.g.
+     * simply <code>"fluid.viewComponent"</code> will match all viewComponents below the root.
+     * @param {Boolean} [flat] - <code>true</code> if the search should just be performed at top level of the component tree
+     * Note that with <code>flat=false</code> this search will scan every component below the root and may well be very slow.
+     * @return {Component[]} An array holding all components matching the selector
+     */
+    fluid.queryILSelector = function (root, selector, flat = false) {
+        const parsed = typeof(selector) === "string" ? fluid.parseSelector(selector, fluid.ILSSMatcher) : selector;
+        const togo = [];
+
+        fluid.visitComponentsForMatching(root[$m], {flat: flat}, function (shadow, shadowStack, scopes) {
+            if (fluid.matchILSelector(parsed, shadowStack, scopes, 1)) {
+                togo.push(shadow.shadowMap[$m].proxy);
+            }
+        });
+        return togo;
+    };
+
+    // TODO: This implementation is obviously poor and has numerous flaws - in particular it does no backtracking as well as matching backwards through the selector
+    /** Match a parsed IL selector against a selection of data structures representing a component's tree context.
+     * @param {ParsedSelector} selector - A parsed selector structure as returned from `fluid.parseSelector`.
+     * @param {Shadow[]} shadowStack - An array of components ascending up the tree from the component being matched,
+     * which will be held in the last position.
+     * @param {Object[]} scopes - An array of own scope records as cached in the component's shadows
+     * @param {Number} i - One plus the index of the IoCSS head component within `thatStack` - all components before this
+     * index will be ignored for matching. Will have value `1` in the queryIoCSelector route.
+     * @return {Boolean} `true` if the selector matches the leaf component at the end of `thatStack`
+     */
+    fluid.matchILSelector = function (selector, shadowStack, scopes, i) {
+        let thatpos = shadowStack.length - 1;
+        let selpos = selector.length - 1;
+        while (true) {
+            const isChild = selector[selpos].child;
+            const mustMatchHere = thatpos === shadowStack.length - 1 || isChild;
+
+            const that = shadowStack[thatpos];
+            const selel = selector[selpos];
+            let match = true;
+            for (let j = 0; j < selel.predList.length; ++j) {
+                const pred = selel.predList[j];
+                const context = pred.context;
+                if (context && context !== "*" && !(Object.prototype.hasOwnProperty.call(scopes[thatpos], context))) {
+                    match = false;
+                    break;
+                }
+                if (pred.id && that.id !== pred.id) {
+                    match = false;
+                    break;
+                }
+            }
+            if (selpos === 0 && thatpos > i && mustMatchHere && isChild) {
+                match = false; // child selector must exhaust stack completely - FLUID-5029
+            }
+            if (match) {
+                if (selpos === 0) {
+                    return true;
+                }
+                --thatpos;
+                --selpos;
+            }
+            else {
+                if (mustMatchHere) {
+                    return false;
+                }
+                else {
+                    --thatpos;
+                }
+            }
+            if (thatpos < i) {
+                return false;
+            }
+        }
+        return false;
     };
 
     // SCOPES
@@ -214,21 +313,6 @@ const fluidILScope = function (fluid) {
             }
         });
         childShadow.ownScopeTick.value = childShadow.ownScopeTick.peek() + 1;
-    };
-
-    class ArrayWithTick {
-        constructor() {
-            this.array = [];
-            this.tick = 0;
-            this.doneAt = 0;
-        }
-
-        update(newArray) {
-            if (!fluid.arrayEqual(this.array, newArray)) {
-                this.array = newArray;
-                this.tick++;
-            }
-        }
     };
 
     // About the SHADOW
@@ -693,10 +777,25 @@ const fluidILScope = function (fluid) {
         const refComputer = computed( function fetchContextReference() {
             // TODO: Need to cache these per site
             const target = fluid.resolveContext(parsed.context, shadow, resolver).value;
-            return fluid.isUnavailable(target) ? fluid.mergeUnavailable(fluid.unavailable({
-                message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
-                path: shadow.path
-            }), target) : fluid.isComponent(target) ? fluid.getForComponent(target[$m], parsed.path) : fluid.get(target, parsed.path);
+            if (fluid.isUnavailable(target)) {
+                return fluid.mergeUnavailable(fluid.unavailable({
+                    message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
+                    path: shadow.path
+                }), target);
+            } else if (fluid.isComponent(target)) {
+                if (parsed.selector) {
+                    const list = fluid.queryILSelector(target, parsed.selector);
+                    if (parsed.path) {
+                        return list.map(listEl => fluid.getForComponent(listEl[$m], parsed.path));
+                    } else {
+                        return list;
+                    }
+                } else {
+                    return fluid.getForComponent(target[$m], parsed.path);
+                }
+            } else {
+                return fluid.get(target, parsed.path);
+            }
         });
         return Object.assign(refComputer, {parsed, site: {shadow, segs}, $variety: "$contextRef"});
     };
@@ -1027,6 +1126,39 @@ const fluidILScope = function (fluid) {
     };
 
     /**
+     * Expands an effect-style function record into a reactive effect.
+     * The function and its arguments are resolved from the record, and an effect is created that runs in response to changes.
+     *
+     * @param {LayerLinkageRecord} record - A linkage record holding one or more entries including inputLayers/outputLayers
+     * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @param {String[]} segs - The path where this effect record appears in its component
+     * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
+     */
+    fluid.expandLinkageRecord = function (record, shadow, segs) {
+        const site = {shadow, segs};
+        const siteString = fluid.renderSite(site);
+        const array = fluid.isArrayable(record);
+        const togo = fluid.effect( () => {
+            if (array) {
+                record.forEach( (linkage, i) => fluid.registerCoOccurrence(`${siteString}-${i}`, linkage));
+            } else {
+                fluid.registerCoOccurrence(siteString, record);
+            }
+        }, null, {
+            onDispose: () => {
+                if (array) {
+                    record.forEach( (linkage, i) => fluid.deregisterCoOccurrence(`${siteString}-${i}`));
+                } else {
+                    fluid.deregisterCoOccurrence(siteString, record);
+                }
+            }
+        });
+        togo.$variety = "$linkage";
+        return togo;
+    };
+
+
+    /**
      * Expands a reactive record into a part of the component tree marked as reactive data.
      * If `record` is a String, it is interpreted as a context reference.
      *
@@ -1051,7 +1183,7 @@ const fluidILScope = function (fluid) {
      * @param {Shadow} shadow - The shadow record representing the parent component into which the subcomponent is being added.
      * @param {String} memberName - The member name of the subcomponent within the parent component.
      * @param {Object} expanded - The expanded component definition for the subcomponent, expected to contain a `$layers` field.
-     * @param {ScopeRecord} [scope] - The scope record tracking references and their resolution priorities during expansion.
+     * @param {ScopeRecord|null} [scope] - The scope record tracking references and their resolution priorities during expansion.
      * @param {String} [source] - The layer name in which this subcomponent definition appeared
      * @return {ComponentComputer} The result of invoking `fluid.pushPotentia`, representing the effect or pending instantiation of the subcomponent.
      */
@@ -1078,9 +1210,10 @@ const fluidILScope = function (fluid) {
     fluid.expandComponentRecord = function (record, shadow, segs, key) {
         const expanded = fluid.readerExpandLayer(record);
         const sourceLayer = fluid.get(shadow.layerMap, [...segs, $m, "source"]);
-        const sourceRecord = expanded.$for;
-        if (sourceRecord) {
-            const sourceSignal = fluid.fetchContextReference(sourceRecord.source, shadow);
+        const forRecord = expanded.$for;
+        const ifRecord = expanded.$if;
+        if (forRecord) {
+            const sourceSignal = fluid.fetchContextReference(forRecord.source, shadow);
             let listShadow;
             const componentList = fluid.computed(source => {
                 const allKeys = [];
@@ -1088,11 +1221,11 @@ const fluidILScope = function (fluid) {
                 const pushSubcomponentPotentia = function (value, subKey) {
                     allKeys.push("" + subKey);
                     const scope = {};
-                    if (sourceRecord.value !== undefined) {
-                        scope[sourceRecord.value] = {value: value, source: sourceSignal, sourcePath: subKey};
+                    if (forRecord.value !== undefined) {
+                        scope[forRecord.value] = {value: value, source: sourceSignal, sourcePath: subKey};
                     }
-                    if (sourceRecord.key !== undefined) {
-                        scope[sourceRecord.key] = {value: subKey, source: sourceSignal, sourcePath: subKey};
+                    if (forRecord.key !== undefined) {
+                        scope[forRecord.key] = {value: subKey, source: sourceSignal, sourcePath: subKey};
                     }
                     return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, scope, sourceLayer);
                 };
@@ -1125,6 +1258,25 @@ const fluidILScope = function (fluid) {
             // This gets pushed into the componentList computed scope above
             listShadow = listComputer.shadow;
             return listComputer;
+        } else if (ifRecord) {
+            const togo = signal();
+            let computer;
+            const sourceSignal = fluid.fetchContextReference(ifRecord, shadow);
+            // TODO: This should really be a sited effect but this requires rewriting effect allocation pathway
+            // See notes from 1/7/2025
+            shadow.frameworkEffects["conditionalComponent-" + segs.join(".")] = effect( () => {
+                const value = fluid.deSignal(sourceSignal);
+                if (value && !fluid.isUnavailable(value)) {
+                    computer = fluid.pushSubcomponentPotentia(shadow, key, expanded, null, sourceLayer);
+                    togo.value = computer;
+                } else {
+                    if (computer) {
+                        computer.shadow.potentia.value = fluid.emptyPotentia;
+                        computer = togo.value = null;
+                    }
+                }
+            });
+            return togo;
         } else {
             return fluid.pushSubcomponentPotentia(shadow, key, expanded, null, sourceLayer);
         }
@@ -1159,6 +1311,10 @@ const fluidILScope = function (fluid) {
     }, {
         key: "$effect",
         handler: fluid.expandEffectRecord,
+        isEffect: true
+    }, {
+        key: "$linkage",
+        handler: fluid.expandLinkageRecord,
         isEffect: true
     }, {
         key: "$reactiveRoot",
@@ -1377,7 +1533,7 @@ const fluidILScope = function (fluid) {
             layerNames.forEach(layerName => resolver.storeLayer(layerName));
             return resolver.resolve(layerNames);
         } else {
-            return fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}});
+            return fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
         }
     };
 
@@ -1468,7 +1624,7 @@ const fluidILScope = function (fluid) {
         fluid.forEachDeep(shadow.shadowMap, function allocateOneEffect(newRecord, segs) {
             if (newRecord.handlerRecord?.isEffect) {
                 const oldRecord = fluid.get(shadow.oldShadowMap, segs)?.[$m];
-                // !oldRecord.signalProdct: Deal with funny race where we managed to update instance before we ever allocate effects at all
+                // !oldRecord.signalProduct: Deal with funny race where we managed to update instance before we ever allocate effects at all
                 // !newRecord.signalProduct: Similarly if instance turns over during effect instantiation and we've already instantiated it
                 if ((!oldRecord || newRecord.signalRecord !== oldRecord.signalRecord || !oldRecord.signalProduct) && !newRecord.signalProduct) {
                     console.log(`Allocating effect at path ${segs.join(".")} for component at path ${shadow.path}`);

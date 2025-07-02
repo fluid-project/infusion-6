@@ -439,7 +439,7 @@ fluid.def("fluid.tests.fullPageEditor", {
         $component: {
             $layers: "fluid.templateViewComponent",
             template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
-            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.template, {fullPageEditor}.container)"
+            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.template, {fullPageEditor}.renderedContainer)"
         }
     }
 });
@@ -475,4 +475,31 @@ QUnit.test("Rendering content from dynamic layer", function (assert) {
     fluid.tests.dynamicLayerName({container});
     const dynamic = qs(".dynamic", container);
     assert.ok(dynamic, "Dynamic content has been rendered");
+});
+
+fluid.def("fluid.tests.assigneeIf", {
+    $layers: "fluid.templateViewComponent",
+    enabled: false,
+    template: `<div @id="assignee"></div>`,
+    elideParent: false,
+    assignee: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            $if: "{assigneeIf}.enabled",
+            template: `<div class="assignee"></div>`
+        }
+    }
+});
+
+QUnit.test("Conditional rendering", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.assigneeIf({container});
+    // Unfortunately we can't prevent allocation of the "outer container", even if there is no component
+    assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+
+    that.enabled = true;
+    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct");
+
+    that.enabled = false;
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
 });

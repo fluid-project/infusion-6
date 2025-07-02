@@ -104,16 +104,19 @@ fluid.def("fluid.editor.json", {
 </script>
 
 <template>
-    <div class="fl-editor" @id="editor" @class="active:@{isActive}">
+    <div class="fl-editor" @class="active:@{isActive}">
+        <div @id="editor"></div>
     </div>
 </template>
 
 <style>
 .fl-editor {
-    display: none
+    display: none;
+    min-height: 0;
 }
 
 .fl-editor.active {
-    display: block
+    display: flex;
 }
+
 </style>

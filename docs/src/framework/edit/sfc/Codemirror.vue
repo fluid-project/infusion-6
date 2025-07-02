@@ -15,7 +15,7 @@ fluid.def("fluid.codemirror", {
     refreshOnActive: {
         $effect: {
             func: instance => instance.refresh(),
-            args: ["{self}.instance", "{viewEditor}.isActive"]
+            args: ["{self}.instance", "{fluid.editor}.isActive"]
         }
     },
     readEffect: {
