@@ -60,7 +60,7 @@ fluid.lintScriptNode = function (vnode, fullText, hints, options, cm) {
     if (vnode.attrs.src) { // It's an external script which is (probably) not our responsibility - in future bring in locally sourced scripts too
         return;
     } else {
-        const text = vnode.children[0].text;
+        const text = vnode.children[0]?.text || "";
         cm.defMaps = fluid.parseDefMaps(text, vnode.start + "<script>".length);
         // eslint-disable-next-line new-cap
         JSHINT(text, options.jshint, options.globals);
@@ -76,7 +76,7 @@ fluid.lintStyleNode = function (vnode, fullText, hints, options, cm) {
     if (vnode.attrs.src) { // It's an external stylesheet which is (probably) not our responsibility
         return;
     } else {
-        const text = vnode.children[0].text;
+        const text = vnode.children[0]?.text || "";
         const {messages} = CSSLint.verify(text, options);
         const offsetLine = cm.doc.posFromIndex(vnode.start).line;
         messages.forEach(message => {

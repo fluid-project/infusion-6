@@ -9,7 +9,8 @@ html[fl-docking-area-mode~="edge"] {
 html[fl-docking-area-mode~="edge"] > *:not(.fl-resizer) {
     flex: 1 1 auto;
     contain: paint;
-    height: 100%;
+    /* Temporarily get rid of this in favour of .fl-editor-root definition  */
+    /* height: 100%;*/
 }
 
 .fl-resizer:hover:before {

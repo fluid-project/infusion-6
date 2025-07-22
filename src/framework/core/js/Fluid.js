@@ -869,8 +869,13 @@ const fluidJSScope = function (fluid) {
      * @return {any} The resolved value if `ref` is a `Signal`, or the original value if it is not.
      */
     fluid.deSignal = ref => {
+        let deref = 0;
         while (fluid.isSignal(ref)) {
             ref = ref.value;
+            deref++;
+            if (deref > fluid.strategyRecursionBailout) {
+                fluid.fail("Cyclic reference structure found in fluid.deSignal of ", ref);
+            }
         }
         return ref;
     };
@@ -1218,9 +1223,12 @@ const fluidJSScope = function (fluid) {
                     break;
                 }
                 const seg = segs[j];
-                // If there's no member and it is some kind of layer/component, produce a cheap "unavailable" value
-                if (!(seg in move) && root[$m]) {
-                    move = fluid.unavailable({messageKey: "NoMember", memberName: seg, layer: root});
+                if (!(seg in move) && move[$m]) {
+                    const shadow = move[$m];
+                    move = fluid.unavailable({
+                        message: `Component at path ${shadow.path} has no member ${seg}`,
+                        site: {shadow, segs}
+                    });
                     break;
                 }
                 move = fluid.deSignal(move[seg]);

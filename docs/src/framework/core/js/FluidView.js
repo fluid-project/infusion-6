@@ -451,6 +451,12 @@ const fluidViewScope = function (fluid) {
     fluid.parseSFC = function (rec, layerName, url) {
         let oldText;
         const injRecs = {};
+
+        const reject = message => {
+            const unavailable = fluid.unavailable(message);
+            fluid.def(layerName, unavailable);
+        };
+
         return fluid.effect(text => {
             if (text === oldText) {
                 console.log("Culling SFC injection effect since text has not changed");
@@ -462,24 +468,22 @@ const fluidViewScope = function (fluid) {
 
             const scriptNodes = fluid.querySelectorAll(vTree, "script");
             if (scriptNodes.length === 0) {
-                const unavailable = fluid.unavailable("Error in SFC: Expected definition for layer " + layerName +
-                    " but no script node was found");
-                fluid.def(layerName, unavailable);
+                reject(`Error in SFC: Expected definition for layer ${layerName} but no script node was found`);
             } else {
                 /** @type {ScriptNodeInfo[]} */
                 const defMapList = fluid.parseSFCScripts(scriptNodes);
                 /** @type {LayerDefIndex} */
                 const layerDefIndex = fluid.indexLayerDefs(defMapList);
                 if (!layerDefIndex[layerName]) {
-                    const unavailable = fluid.unavailable("Error in SFC: Expected definition for layer " + layerName +
-                        " but found " + Object.keys(layerDefIndex).join(", ") + " instead");
-                    fluid.def(layerName, unavailable);
+                    reject(`Error in SFC: Expected definition for layer ${layerName} but found ${Object.keys(layerDefIndex).join(", ")} instead`);
                 } else {
                     /** @type {LayerDefLocation} */
                     const ourDef = layerDefIndex[layerName];
                     /** @type {ScriptNodeInfo} */
                     const ourSNI = defMapList[ourDef.scriptIndex];
                     const oldLayers = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, "$layers");
+
+                    const partial = oldLayers && oldLayers.includes("fluid.partialViewComponent");
 
                     let patchedText = ourSNI.text;
 
@@ -490,7 +494,21 @@ const fluidViewScope = function (fluid) {
                     // If a <template> block is present, store it in the template registry and add a definition to resolve it
                     if (docTemplate) {
                         addLayers = ["fluid.sfcTemplateViewComponent"];
-                        patchedText = fluid.patchDefMap(patchedText, ourDef, "layerForTemplate", layerName, "last");
+                        if (partial) {
+                            const relativeContainer = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, "relativeContainer");
+                            if (!relativeContainer) {
+                                reject(`Error in SFC for ${layerName}: Didn't find relativeContainer property for partial component`);
+                                return;
+                            }
+                            const ptl = {
+                                [layerName]: {
+                                    relativeContainer
+                                }
+                            };
+                            patchedText = fluid.patchDefMap(patchedText, ourDef, "partialTemplateLayers", ptl, "last");
+                        } else {
+                            patchedText = fluid.patchDefMap(patchedText, ourDef, "templateLayer", layerName, "last");
+                        }
                         fluid.writeParsedTemplate(layerName, docTemplate);
                     }
 
@@ -540,6 +558,7 @@ const fluidViewScope = function (fluid) {
     fluid.templateStore = {};
 
     fluid.fetchParsedTemplate = function (layerName) {
+        // TODO: fall back to the layer's templateTree if it is not in the store
         return fluid.templateStore[layerName].value;
     };
 
@@ -989,7 +1008,7 @@ const fluidViewScope = function (fluid) {
                     const tokens = fluid.parseStringTemplate(effRef);
                     const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
                     const negMap = fluid.liftNegate(negate);
-                    // Unwrap the primitive token so it is more principled to check for falsy during parseTemplate
+                    // Unwrap the primitive token so it is more principled to check for falsy during compositeTemplate
                     const renderedPrim = fluid.isSignal(rendered) ? fluid.mapSignal(rendered.$tokens[0], negMap) : negMap(rendered);
                     return [key, renderedPrim];
                 }));
@@ -1018,6 +1037,71 @@ const fluidViewScope = function (fluid) {
         return elideParent ? vTree.children[0] : vTree;
     };
 
+    fluid.isSimpleClassSelectorCutpoint = function (tree) { // Glorified utility from 2010
+        return tree.length === 1 && tree[0].predList.length === 1 && tree[0].predList[0].clazz;
+    };
+
+    /**
+     * Matches virtual DOM nodes with a specific class and collects them into a results array.
+     * This function recursively traverses the virtual DOM tree to find nodes with the specified class.
+     *
+     * @param {VNode} tree - The root virtual DOM node to start the search from.
+     * @param {String} clazz - The class name to match.
+     * @param {VNode[]} [results=[]] - An array to collect matching nodes.
+     * @return {VNode[]} The array of matching virtual DOM nodes.
+     */
+    fluid.matchSimpleClass = function (tree, clazz, results = []) {
+        const thisClazz = tree.attrs?.["class"];
+        if (thisClazz && thisClazz.split(" ").includes(clazz)) {
+            results.push(tree);
+        }
+        if (tree.children) {
+            tree.children.forEach(child => fluid.matchSimpleClass(child, clazz, results));
+        }
+        return results;
+    };
+
+    const relDispositions = {
+        before: 0,
+        after: 1
+    };
+
+    fluid.compositeVTree = function (compositedTree, rec, layerName) {
+        const [disposition, selector] = rec.relativeContainer.split(":");
+        const parsedSelector = fluid.parseSelector(selector, fluid.simpleCSSMatcher);
+        const clazz = fluid.isSimpleClassSelectorCutpoint(parsedSelector);
+        if (!clazz) {
+            return fluid.unavailable(`Error in partial template for ${layerName}: Support for complex selector ${selector} is not implemented`);
+        } else {
+            const nodes = fluid.matchSimpleClass(compositedTree, clazz);
+            if (nodes.length !== 1) {
+                return fluid.unavailable(`Error in partial template for ${layerName}: No exact match (${nodes.length}) for class selector .${clazz}`);
+            } else {
+                const target = nodes[0];
+                const relDisposition = relDispositions[disposition];
+                if (relDisposition === undefined) {
+                    return fluid.unavailable(`Error in partial template for ${layerName}: Unrecognised disposition ${disposition} which should be "after" or "before"`);
+                }
+                const templateTree = fluid.copy(fluid.fetchParsedTemplate(layerName));
+                const parentNode = target.parentNode;
+                const index = parentNode.children.indexOf(target);
+                parentNode.children.splice(index + relDisposition, 0, fluid.effVTree(templateTree, true));
+            }
+        }
+        return compositedTree;
+
+    };
+
+    // Sort of hack to allow unprocessed part of vtree to form a template for a selfTemplated child component by removing
+    // parentNode properties so it can be cloned.
+    fluid.retemplatise = function (vnode) {
+        delete vnode.parentNode;
+        if (vnode.children) {
+            vnode.children.forEach(fluid.retemplatise);
+        }
+        return vnode;
+    };
+
     /**
      * Process a vTree to parse text and attribute templates, creating effects to bind to markup during the later renderView stage.
      *
@@ -1025,7 +1109,7 @@ const fluidViewScope = function (fluid) {
      * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
      * @return {VNode} The processed vTree with rendered text and attributes.
      */
-    fluid.parseTemplate = function (vtemplate, self) {
+    fluid.activateTemplate = function (vtemplate, self) {
         const shadow = self[$m];
         // Awful hack to get around surplus notification problem for now
         const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.getForComponentSoft("fluid.editorRoot", ["selfEditing"], shadow));
@@ -1036,7 +1120,7 @@ const fluidViewScope = function (fluid) {
             const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
             /**
              * Recursively processes a VNode by rendering any template strings found in its text or attributes
-             * @param {VNode} vnode - The virtual node (vNode) to be processed.
+             * @param {VNode} vnode - The VNode to be processed.
              * @return {VNode} The processed VNode with rendered content in text and attributes.
              */
             function processVNode(vnode) {
@@ -1062,7 +1146,7 @@ const fluidViewScope = function (fluid) {
                             const parentTemplate = signal({
                                 tag: vnode.tag,
                                 attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
-                                children: vnode.children
+                                children: vnode.children.map(fluid.retemplatise)
                             });
                             delete vnode.children;
                             vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
@@ -1098,27 +1182,46 @@ const fluidViewScope = function (fluid) {
                         vnode.attrs["class"] = allClass;
                     }
                     if (vnode.children !== undefined) {
-                        vnode.children = vnode.children.map(processVNode, vnode);
+                        vnode.children = vnode.children.map(processVNode);
                     }
                 }
                 return vnode;
             }
 
-            function parseTemplate(tree) {
+            const activateTemplate = tree => {
                 fluid.disposeEffects(templateEffects);
                 const togo = processVNode(tree);
                 fluid.acquireLoadDirectives(vtemplate);
                 templateEffects.forEach(effect => effect.$site = self);
                 return togo;
+            };
+
+            const assignParents = (vnode, parentNode = null) => {
+                vnode.parentNode = parentNode;
+                if (vnode.children) {
+                    vnode.children.forEach(child => assignParents(child, vnode));
+                }
+                return vnode;
+            };
+            if (!vtemplate) {
+                // TODO: looks like this can only occur through reference like {self}.parentTemplate which should produce unavailable by itself
+                return fluid.unavailable("Template not configured");
             }
 
             const tree = fluid.copy(vtemplate);
             const useTree = fluid.effVTree(tree, self.elideParent);
+            let compositedTree = assignParents(useTree);
+
+            if (fluid.hasLayer(self, "fluid.partialViewComponent")) {
+                fluid.each(self.partialTemplateLayers, (rec, layerName) => {
+                    compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
+                });
+            };
 
             // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
-            const parsedTree = parseTemplate(useTree);
+            const activatedTree = activateTemplate(compositedTree);
 
-            const filteredTree = selfEditing ? selfEditingRef.$component.filterForSelfEditing(parsedTree, self) : parsedTree;
+            const filteredTree = selfEditing ? selfEditingRef.$component.filterForSelfEditing(activatedTree, self) : activatedTree;
 
             fluid.bindContainer(templateEffects, filteredTree, self);
             return filteredTree;
@@ -1231,7 +1334,7 @@ const fluidViewScope = function (fluid) {
      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
      */
     fluid.renderView = function (self, container, vTree) {
-        console.log(`renderView beginning for ${self[$m].memberName} with vTree ${vTree._id} container `, container.flDomId);
+        console.log(`renderView beginning for ${self[$m].path} with vTree ${vTree._id} container `, container.flDomId);
         fluid.patchChildren(vTree, container, true);
     };
 
@@ -1245,17 +1348,20 @@ const fluidViewScope = function (fluid) {
         container: "$compute:fluid.unavailable(Container not specified)",
         renderedContainer: fluid.unavailable({cause: "Component not rendered", variety: "config"}),
         templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
-        vTree: "$compute:fluid.parseTemplate({self}.templateTree, {self})",
+        vTree: "$compute:fluid.activateTemplate({self}.templateTree, {self})",
         renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree)",
-        css: fluid.unavailable({cause: "No CSS is configured", variety: "config"}),
-        renderCSS: "$effect:fluid.renderCSS({self})",
         $variety: "framework"
     });
 
     fluid.def("fluid.selfTemplate", {
-        $layers: "fluid.component",
+        $layers: "fluid.viewComponent",
         templateTree: "{self}.parentTemplate",
         elideParent: false,
+        $variety: "framework"
+    });
+
+    fluid.def("fluid.partialViewComponent", {
+        relativeContainer: fluid.unavailable({cause: "Relative container not configured", variety: "config"}),
         $variety: "framework"
     });
 
@@ -1308,7 +1414,7 @@ const fluidViewScope = function (fluid) {
     fluid.def("fluid.viewComponentList", {
         $layers: "fluid.viewComponent",
         elideParent: false,
-        templateTree: "$compute:fluid.listViewTree({self}.list)",
+        vTree: "$compute:fluid.listViewTree({self}.list)",
         $variety: "framework"
     });
 
@@ -1330,49 +1436,6 @@ const fluidViewScope = function (fluid) {
         }, [list]);
     };
 
-    // Shared structure to store watchers of per-layer CSS
-    const layerWatchers = {};
-
-    fluid.applyLayerWatcher = function (layerName, nodeId, shadow, segs, material, injectFunc) {
-        if (!layerWatchers[nodeId]) {
-            const layerSig = fluid.readLayer(layerName);
-            if (layerSig) {
-                // Create just one watcher per layer, using our own css signal as an exemplar
-                const materialSignal = fluid.getForComponent(shadow, segs);
-                const watcher = fluid.effect((material) => injectFunc(material, nodeId), [materialSignal]);
-                layerWatchers[nodeId] = watcher;
-                // In theory we would clear these up if the layer is destroyed and/or the last component referencing it is destroyed
-            } else { // It is not from a layer, simply watch this individual component's CSS
-                injectFunc(material, nodeId);
-            }
-        }
-    };
-
-    fluid.getValueAndLayer = function (shadow, segs) {
-        const value = fluid.getForComponent(shadow, segs).value;
-        // Look into our layer map to find the provenance of the css value
-        const layerName = fluid.get(shadow.layerMap, [...segs, $m, "source"]);
-        return {value, layerName};
-    };
-
-    // Note: this system of watching CSS value in components is disused since CSS is all currently loaded from SFCs
-
-    /**
-     * An effect which renders CSS for a component by injecting it into the DOM and associating it with a specific layer.
-     * This function ensures that each layer's CSS is only injected once by maintaining a registry of watchers.
-     * If the CSS is associated with a layer, it creates a watcher to monitor changes and updates the DOM accordingly.
-     * If the CSS is not associated with a layer, it directly injects the CSS into the DOM.
-     *
-     * @param {Object} self - The component instance whose CSS is being rendered.
-     */
-    fluid.renderCSS = function (self) {
-        const shadow = self[$t].shadow;
-        const cssSegs = ["css"];
-        const {value: css, layerName} = fluid.getValueAndLayer(shadow, cssSegs);
-        const nodeId = "fl-css-" + layerName;
-        fluid.applyLayerWatcher(layerName, nodeId, shadow, cssSegs, css, fluid.injectCSS);
-    };
-
     fluid.def("fluid.templateViewComponent", {
         $layers: "fluid.viewComponent",
         templateTree: "$compute:fluid.parseHTMLToTree({self}.template)",
@@ -1381,7 +1444,7 @@ const fluidViewScope = function (fluid) {
 
     fluid.def("fluid.sfcTemplateViewComponent", {
         $layers: "fluid.templateViewComponent",
-        templateTree: "$compute:fluid.fetchParsedTemplate({self}.layerForTemplate)",
+        templateTree: "$compute:fluid.fetchParsedTemplate({self}.templateLayer)",
         $variety: "framework"
     });
 

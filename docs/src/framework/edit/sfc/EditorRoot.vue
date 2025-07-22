@@ -311,11 +311,14 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
     flex-direction: column;
     position: sticky;
     top: 0;
+    height: 99.5vh; /* 100 will produce tiny scroll jank when we hit the bottom */
 }
 
 .fl-layer-browser {
     display: flex;
     flex-direction: column;
+    overflow-y: auto;
+    margin: 0 5px;
 }
 
 .fl-editor-main-pane {

@@ -9,10 +9,13 @@ fluid.def("fluid.demos.assigneeControl", {
                 $linkage: [{
                     inputLayers: ["fluid.demos.filters"],
                     outputLayers: ["fluid.demos.filters.withAssignee"]
-                }, /*{
+                }, {
                     inputLayers: ["fluid.demos.todoItem"],
                     outputLayers: ["fluid.demos.todoItem.withAssignee"]
-                }*/]
+                }, {
+                    inputLayers: ["fluid.demos.todoList"],
+                    outputLayers: ["fluid.demos.todoList.withAssignee"]
+                }]
             }
         }
     },

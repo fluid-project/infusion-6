@@ -14,20 +14,27 @@
 
     <fluid-url-base id="todoUrlBase" src="./"></fluid-url-base>
 
+    <!-- definitions for base app -->
     <fluid-import layer="fluid.demos.todoApp" src="@{todoUrlBase}/sfc/fluid-demos-todoApp.vue"></fluid-import>
     <fluid-import layer="fluid.demos.todoList" src="@{todoUrlBase}/sfc/fluid-demos-todoList.vue"></fluid-import>
     <fluid-import layer="fluid.demos.todoItem" src="@{todoUrlBase}/sfc/fluid-demos-todoItem.vue"></fluid-import>
 
-    <fluid-import layer="fluid.demos.assignee" src="@{todoUrlBase}/sfc/fluid-demos-assignee.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.assigneeControl" src="@{todoUrlBase}/sfc/fluid-demos-assigneeControl.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.facets" src="@{todoUrlBase}/sfc/fluid-demos-facets.vue"></fluid-import>
+    <!-- definitions for filtering per se -->
+    <fluid-import layer="fluid.UISelect" src="@{todoUrlBase}/sfc/fluid-UISelect.vue"></fluid-import>
     <fluid-import layer="fluid.demos.filter" src="@{todoUrlBase}/sfc/fluid-demos-filter.vue"></fluid-import>
     <fluid-import layer="fluid.demos.filters" src="@{todoUrlBase}/sfc/fluid-demos-filters.vue"></fluid-import>
     <fluid-import layer="fluid.demos.filterCompleted" src="@{todoUrlBase}/sfc/fluid-demos-filterCompleted.vue"></fluid-import>
+
+    <!-- block of imports to enable assignees -->
+    <fluid-import layer="fluid.demos.assignee" src="@{todoUrlBase}/sfc/fluid-demos-assignee.vue"></fluid-import>
+    <fluid-import layer="fluid.demos.assigneeControl" src="@{todoUrlBase}/sfc/fluid-demos-assigneeControl.vue"></fluid-import>
+    <fluid-import layer="fluid.demos.todoList.withAssignee" src="@{todoUrlBase}/sfc/fluid-demos-todoList-withAssignee.vue"></fluid-import>
+    <fluid-import layer="fluid.demos.todoItem.withAssignee" src="@{todoUrlBase}/sfc/fluid-demos-todoItem-withAssignee.vue"></fluid-import>
     <fluid-import layer="fluid.demos.filterAssignee" src="@{todoUrlBase}/sfc/fluid-demos-filterAssignee.vue"></fluid-import>
     <fluid-import layer="fluid.demos.filters.withAssignee" src="@{todoUrlBase}/sfc/fluid-demos-filters-withAssignee.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.selectUI" src="@{todoUrlBase}/sfc/fluid-demos-selectUI.vue"></fluid-import>
 
+    <!-- facet checkbox definition to make assignees infusable -->
+    <fluid-import layer="fluid.demos.facets" src="@{todoUrlBase}/sfc/fluid-demos-facets.vue"></fluid-import>
 
     <fluid-url-base id="editUrlBase" src="../../src/framework/edit"></fluid-url-base>
     <fluid-url-base id="libUrlBase" src="../../src/lib"></fluid-url-base>
@@ -37,8 +44,11 @@
 
 </head>
 <body>
-    <!-- Instantiate the app on this div -->
-    <div fluid-layers="fluid.demos.todoApp">
+    <div>
+        <!-- Instantiate the app on this div -->
+        <div fluid-layers="fluid.demos.todoApp">
+        </div>
     </div>
+
 </body>
 </html>

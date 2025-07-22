@@ -55,7 +55,11 @@ const fluidSubstrateScope = function (fluid) {
         return fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
     };
 
+    const $m = fluid.metadataSymbol;
+
     fluid.substrateTree.rootEntries = function (self) {
+        const selfShadow = self[$m];
+        selfShadow.renderPass = {};
         const rootShadow = fluid.globalInstantiator.rootShadow;
         const children = Object.values(rootShadow.childComponents);
         const useChildren = self.userLayersOnly ? children.filter(fluid.shadowHasUserLayer) : children;
@@ -81,8 +85,6 @@ const fluidSubstrateScope = function (fluid) {
         return togo;
     };
 
-    const $m = fluid.metadataSymbol;
-
     fluid.deSignalLight = ref => {
         while (fluid.isSignal(ref)) {
             ref = ref.peek();
@@ -93,6 +95,13 @@ const fluidSubstrateScope = function (fluid) {
     const displayLayers = ["fluid.viewComponentList", "fluid.componentList", "fluid.viewComponent", "fluid.component"];
 
     fluid.substrateTree.componentToEntry = function (self, shadow, layer, parent) {
+        const selfShadow = self[$m];
+        if (selfShadow.renderPass[shadow.path]) {
+            console.log("Found circular path to shadow at ", shadow.path);
+            return fluid.NoValue;
+        } else {
+            selfShadow.renderPass[shadow.path] = true;
+        }
         const id = fluid.renderSite({shadow});
         if (fluid.isUnavailable(shadow.flatMerged)) {
             return {id, value: shadow.flatMerged};
@@ -112,11 +121,18 @@ const fluidSubstrateScope = function (fluid) {
                 shadow
             };
 
-            if (self[$m] === shadow) {
+            if (selfShadow === shadow) {
                 togo.value += `<svg class="fl-recursion-marker" width="40" height="20"><use href="#fl-recursion"/></svg>`;
             } else if (layers.includes("fluid.componentList")) {
                 if (fluid.isUserLayer(togo.layer)) {
-                    togo.children = fluid.map(that.list.value, (proxy, key) => self.valueToEntry(proxy[$m], ["list", key], proxy, layer, togo));
+                    togo.children = fluid.map(that.list.value, (proxy, key) => {
+                        const component = proxy[$m];
+                        if (fluid.isUnavailable(component)) {
+                            return fluid.NoValue;
+                        } else {
+                            return self.valueToEntry(component, ["list", key], proxy, layer, togo);
+                        }
+                    });
                 } else {
                     return fluid.NoValue;
                 }
@@ -173,10 +189,11 @@ const fluidSubstrateScope = function (fluid) {
 
     const styleForCol = colour => `style="background-color: ${colour}"`;
 
-    // TODO: Quick hack to filter out this property created by the SFC parser since we can't be bothered to create a fresh
+    // TODO: Quick hack to filter out these properties created by the SFC parser since we can't be bothered to create a fresh
     // layer for it just now
     const censoredMap = {
-        "layerForTemplate": true
+        "templateLayer": true,
+        "partialTemplateLayers": true
     };
 
     fluid.substrateTree.valueToEntry = function (self, shadow, segs, valueSignal, inLayer, parent) {

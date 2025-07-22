@@ -1,5 +1,7 @@
 <script>
 fluid.def("fluid.demos.filters.withAssignee", {
+    $layers: ["fluid.sfcTemplateViewComponent", "fluid.partialViewComponent"],
+    relativeContainer: "after: .fl-filter-completed",
     filterAssignee: {
         $component: {
             $layers: "fluid.demos.filterAssignee"
@@ -9,11 +11,7 @@ fluid.def("fluid.demos.filters.withAssignee", {
 </script>
 
 <template>
-    <div class="fl-controls">
-        <h3>Filter</h3>
-        <div @id="filterCompleted" class="fl-filter-outer"></div>
-        <div @id="filterAssignee" class="fl-filter-outer"></div>
-    </div>
+    <div @id="filterAssignee" class="fl-filter-outer fl-filter-assignee"></div>
 </template>
 
 <style>

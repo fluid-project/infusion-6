@@ -113,6 +113,7 @@ fluid.def("fluid.editor.json", {
 .fl-editor {
     display: none;
     min-height: 0;
+    width: 100%;
 }
 
 .fl-editor.active {

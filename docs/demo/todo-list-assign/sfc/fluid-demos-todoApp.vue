@@ -11,15 +11,18 @@ fluid.def("fluid.demos.todoApp", {
 fluid.demos.fetchTodos = () => [
     {
         "text": "Write some code",
-        "completed": false
+        "completed": false,
+        "assignee": "Makary Kronbernkzion"
     },
     {
         "text": "Eat some food",
-        "completed": true
+        "completed": true,
+        "assignee": "Makary Kronbernkzion"
     },
     {
         "text": "Sleep",
-        "completed": false
+        "completed": false,
+        "assignee": "<none>"
     }
 ];
 

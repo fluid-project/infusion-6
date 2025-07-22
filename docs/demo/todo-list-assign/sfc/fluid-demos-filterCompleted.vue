@@ -3,7 +3,8 @@ fluid.def("fluid.demos.filterCompleted", {
     $layers: ["fluid.demos.filter", "fluid.sfcTemplateViewComponent"],
     select: {
         $component: {
-            $layers: ["fluid.demos.selectUI", "fluid.selfTemplate"]
+            $layers: ["fluid.UISelect", "fluid.selfTemplate"],
+            selection: "all"
         }
     },
     accept: {

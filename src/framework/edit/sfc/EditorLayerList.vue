@@ -81,7 +81,6 @@ fluid.editor.layerList.fromStore = function (store, userOnly, colourManager) {
 
 .fl-layerlist {
     border: 1px solid #cccccc;
-    margin: 0 0.55em;
     display: flex;
     flex-direction: column;
 }

@@ -245,6 +245,7 @@ fluid.selfEdit.effect = function (self, selfEditing, editorRoot) {
     background: white;
     border: 1px solid #ccc;
     padding: 2px 4px;
+    z-index: 1; /* So doesn't pop under CodeMirror */
 }
 
 .fl-menu-body input {

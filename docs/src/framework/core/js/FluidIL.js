@@ -147,7 +147,7 @@ const fluidILScope = function (fluid) {
 
         fluid.visitComponentsForMatching(root[$m], {flat: flat}, function (shadow, shadowStack, scopes) {
             if (fluid.matchILSelector(parsed, shadowStack, scopes, 1)) {
-                togo.push(shadow.shadowMap[$m].proxy);
+                togo.push(fluid.proxyMat(shadow.computer, shadow, []));
             }
         });
         return togo;
@@ -305,10 +305,10 @@ const fluidILScope = function (fluid) {
         });
     };
 
-    fluid.clearScope = function (parentShadow, child, childShadow) {
+    fluid.clearScope = function (parentShadow, childShadow) {
         const ownScope = Object.getOwnPropertyNames(childShadow.ownScope);
         ownScope.forEach(context => {
-            if (parentShadow.childrenScope[context].value === child) {
+            if (parentShadow.childrenScope[context].value === childShadow) {
                 delete parentShadow.childrenScope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
             }
         });
@@ -349,7 +349,7 @@ const fluidILScope = function (fluid) {
      */
     fluid.clearComponentIndexes = function (instantiator, destroyRec) {
         const shadow = destroyRec.shadow;
-        fluid.clearScope(shadow, destroyRec.child, destroyRec.childShadow, destroyRec.name);
+        fluid.clearScope(shadow, destroyRec.childShadow, destroyRec.name);
         // Note that "pathToComponent" will not be available during afterDestroy. This is so that we can synchronously recreate the component
         // in an afterDestroy listener (FLUID-5931). We don't clear up the shadow itself until after afterDestroy.
         delete instantiator.pathToComponent[destroyRec.childPath];
@@ -676,7 +676,13 @@ const fluidILScope = function (fluid) {
             }
         });
     };
-
+    /**
+     * Retrieves a signal for a value at a path within a component.
+     *
+     * @param {Shadow} shadow - The shadow record of the component.
+     * @param {String} path - The path to resolve within the component's shadow.
+     * @return {Signal<any>} A signal representing the value at the specified path.
+     */
     fluid.getForComponent = function (shadow, path) {
         const segs = fluid.pathToSegs(path);
         if (segs.length === 0) {
@@ -786,7 +792,7 @@ const fluidILScope = function (fluid) {
                 if (parsed.selector) {
                     const list = fluid.queryILSelector(target, parsed.selector);
                     if (parsed.path) {
-                        return list.map(listEl => fluid.getForComponent(listEl[$m], parsed.path));
+                        return list.map(listEl => fluid.getForComponent(listEl, parsed.path));
                     } else {
                         return list;
                     }
@@ -970,10 +976,10 @@ const fluidILScope = function (fluid) {
     fluid.resolveArgMaterial = function (material, shadow, segs, resolver) {
         if (fluid.isPrimitive(material)) {
             return fluid.isILReference(material) ? fluid.fetchContextReference(material, shadow, segs, resolver) : material;
-        } else if (Array.isArray(material)) { // TODO: Append keys to segs
-            return material.map(member => fluid.resolveArgMaterial(member, shadow, segs, resolver));
+        } else if (Array.isArray(material)) {
+            return material.map((member, key) => fluid.resolveArgMaterial(member, shadow, [...segs, key], resolver));
         } else if (fluid.isPlainObject(material, true)) {
-            return fluid.transform(material, member => fluid.resolveArgMaterial(member, shadow, segs, resolver));
+            return fluid.transform(material, (member, key) => fluid.resolveArgMaterial(member, shadow, [...segs, key], resolver));
         } else {
             return material;
         }
@@ -1067,7 +1073,7 @@ const fluidILScope = function (fluid) {
     fluid.resolveFuncRecord = function (rec, shadow, segs) {
         const func = fluid.resolveFuncReference(rec, shadow, segs);
         const args = fluid.makeArray(rec.args);
-        const resolvedArgs = fluid.resolveArgMaterial(args, shadow, segs);
+        const resolvedArgs = fluid.resolveArgMaterial(args, shadow, [...segs, "args"]);
 
         return {func, resolvedArgs};
     };
@@ -1078,11 +1084,12 @@ const fluidILScope = function (fluid) {
      *
      * @param {FuncRecord} record - The record describing the compute-style function. Must include either `func` or `funcName`, and optionally `args`.
      * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @param {String[]} segs - The path where this record appears in its component
      * @return {Signal<any>} A computed signal representing the result of invoking the resolved function with the resolved arguments.
      *     Includes a `$variety` property set to `"$compute"`.
      */
-    fluid.expandComputeRecord = function (record, shadow) {
-        const {func, resolvedArgs} = fluid.resolveFuncRecord(record, shadow);
+    fluid.expandComputeRecord = function (record, shadow, segs) {
+        const {func, resolvedArgs} = fluid.resolveFuncRecord(record, shadow, [...segs, "$compute"]);
         const togo = fluid.computed(func, resolvedArgs, {flattenArg: fluid.flattenSignals});
         togo.$variety = "$compute";
         return togo;
@@ -1094,11 +1101,12 @@ const fluidILScope = function (fluid) {
      *
      * @param {FuncRecord} record - The record describing the compute-style function. Must include either `func` or `funcName`, and optionally `args`.
      * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @param {String[]} segs - The path where this record appears in its component
      * @return {Signal<any>} A computed signal representing the result of invoking the resolved function with the resolved arguments.
      *     Includes a `$variety` property set to `"$compute"`.
      */
-    fluid.expandEagerComputeRecord = function (record, shadow) {
-        const togo = fluid.expandComputeRecord(record, shadow);
+    fluid.expandEagerComputeRecord = function (record, shadow, segs) {
+        const togo = fluid.expandComputeRecord(record, shadow, [...segs, "$eagerCompute"]);
         togo.$variety = "$eagerCompute";
         return togo;
     };
@@ -1113,7 +1121,7 @@ const fluidILScope = function (fluid) {
      * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
      */
     fluid.expandEffectRecord = function (record, shadow, segs) {
-        const {func: funcSignal, resolvedArgs} = fluid.resolveFuncRecord(record, shadow, segs);
+        const {func: funcSignal, resolvedArgs} = fluid.resolveFuncRecord(record, shadow, [...segs, "$effect"]);
         const func = fluid.deSignal(funcSignal);
         if (fluid.isUnavailable(func)) {
             return func;
@@ -1721,7 +1729,7 @@ const fluidILScope = function (fluid) {
 
     fluid.queueScheduleEffects = function (shadow) {
         fluid.scheduleEffectsQueue.push(shadow);
-        if (fluid.effectGuardDepth === 0) {
+        if (fluid.effectGuardDepth <= 1) {
             const active = fluid.scheduleEffectsQueue.reverse();
             fluid.scheduleEffectsQueue = [];
             active.forEach(shadow => {
@@ -1779,7 +1787,14 @@ const fluidILScope = function (fluid) {
                 instance = fluid.freshComponent(potentia.props, shadow);
                 instance.instanceId = shadow.instanceId++;
                 console.log("Allocated instanceId " + instance.instanceId + " at site " + shadow.path);
-                fluid.expandLayer(instance, flatMerged, shadow, []);
+                try {
+                    ++fluid.effectGuardDepth;
+                    fluid.expandLayer(instance, flatMerged, shadow, []);
+                }
+                finally {
+                    --fluid.effectGuardDepth;
+                }
+
             }
             console.log("Disposing effects for path " + shadow.path);
             fluid.disposeLayerEffects(shadow);
@@ -1798,11 +1813,12 @@ const fluidILScope = function (fluid) {
             const instantiator = parentShadow.instantiator;
             instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
             fluid.applyScope(shadow.variableScope, variableScope);
+
+            fluid.queueScheduleEffects(shadow);
         } finally {
             --fluid.effectGuardDepth;
+            fluid.queueScheduleEffects(shadow);
         }
-
-        fluid.queueScheduleEffects(shadow);
 
         return computer;
     };

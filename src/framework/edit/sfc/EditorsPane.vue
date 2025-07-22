@@ -50,12 +50,15 @@ fluid.def("fluid.editor.editorsPane", {
 <style>
     .fl-editor-layer-tabs {
         display: flex;
+        min-height: 48px;
+        overflow-x: auto;
     }
 
     .fl-editor-layer-tab {
         padding: 4px 4px 3px;
         font-size: 14px;
         white-space: nowrap;
+        height: 28px;
     }
 
     .fl-editor-layer-tab .fl-editor-close {

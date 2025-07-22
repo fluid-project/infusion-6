@@ -119,7 +119,7 @@ const editorRootScope = function (fluid) {
     fluid.filterForSelfEditing = function (vTree, component, editorRoot, layerColours) {
         const shadow = component[$m];
         console.log("Filtering for selfEditing at path ", shadow.path);
-        const templateLayer = fluid.hasLayer(component, "fluid.sfcTemplateViewComponent") ? component.layerForTemplate : shadow.layerMap.template?.[$m]?.source;
+        const templateLayer = fluid.hasLayer(component, "fluid.sfcTemplateViewComponent") ? component.templateLayer : shadow.layerMap.template?.[$m]?.source;
         if (templateLayer && fluid.isUserLayer(templateLayer)) {
             const layerColour = layerColours[templateLayer];
             const liveColour = layerColours.$live;

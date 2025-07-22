@@ -6,9 +6,8 @@ fluid.def("fluid.demos.todoItem", {
 <template>
     <div>
         <span class="todo tag is-large"
-              @class="completed:@{completed}, is-info:!@{completed}"
-              @onclick="{todoList}.toggleItem({itemIndex})">
-              @{text}
+              @class="completed:@{completed}, is-info:!@{completed}">
+            <span @onclick="{todoList}.toggleItem({itemIndex})" class="item-text">@{text}</span>
             <button class="delete is-small"
                 @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
         </span>
@@ -21,7 +20,7 @@ fluid.def("fluid.demos.todoItem", {
     cursor: pointer;
 }
 
-.todo.completed {
+.todo.completed .item-text {
     text-decoration: line-through;
 }
 </style>
