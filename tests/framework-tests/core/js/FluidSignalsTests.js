@@ -13,10 +13,8 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 
 "use strict";
 
-/* global QUnit, preactSignalsCore */
+/* global QUnit */
 
-// noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
-var {signal, computed, effect} = preactSignalsCore;
 
 fluid.setLogging(true);
 
@@ -24,69 +22,172 @@ fluid.registerNamespace("fluid.tests");
 
 QUnit.module("Fluid Signals Tests");
 
-QUnit.test("Delegate tests", assert => {
-    const upstreamData = signal({lower: -3, upper: 2965});
-    const computeDefault = computed( () => (upstreamData.value));
-    const delegate = fluid.delegatedSignal(computeDefault);
+// --- Example: diamond-shaped graph with 4 nodes ---
+// Structure:
+//    top
+//   /   \
+//  A     B
+//   \   /
+//    base
 
-    assert.deepEqual(delegate.value, {lower: -3, upper: 2965}, "Initial value is equal to default");
+QUnit.test("Diamond tests", assert => {
 
-    delegate.value = {lower: 100, upper: 2965};
+    const base = fluid.cell(2);
 
-    assert.deepEqual(delegate.value, {lower: 100, upper: 2965}, "Delegated signal value has been allocated and written");
+    const seq = [];
 
-    delegate.reset();
+    const A = fluid.cell().compute(v => {
+        console.log("compute A (base * 2)");
+        seq.push("A");
+        return v * 2;
+    }, [base]);
 
-    assert.deepEqual(delegate.value, {lower: -3, upper: 2965}, "Original value has been restored");
+    const B = fluid.cell().compute(v => {
+        console.log("compute B (base + 3)");
+        seq.push("B");
+        return v + 3;
+    }, [base]);
+
+    const top = fluid.cell().compute((a, b) => {
+        console.log("compute top (A + B)");
+        seq.push("top");
+        return a + b;
+    }, [A, B]);
+
+    assert.deepEqual(seq, [], "No notifications on build");
+
+    const first = top.get();
+
+    assert.equal(first, 9, "First compute");
+    assert.deepEqual(seq, ["A", "B", "top"], "First activation");
+
+    const second = top.get();
+
+    assert.equal(second, 9, "Second compute");
+    assert.deepEqual(seq, ["A", "B", "top"], "No further activation");
+
+    seq.length = 0;
+
+    base.set(10);
+
+    const third = top.get();
+
+    assert.equal(third, 33, "Third compute");
+    assert.deepEqual(seq, ["A", "B", "top"], "Second activation");
+
+    seq.length = 0;
+
+    base.set(2);
+
+    const fourth = top.get();
+
+    assert.equal(fourth, 9, "Fourth compute");
+    assert.deepEqual(seq, ["A", "B", "top"], "Third activation");
+
 });
 
-QUnit.test("Delegate slippage tests", assert => {
-    const upstreamData = signal(3);
-    const computeDefault = computed( () => (upstreamData.value));
-    const delegate = fluid.delegatedSignal(computeDefault);
+QUnit.test("Bidi tests", assert => {
 
-    assert.equal(delegate.value, 3, "Initial value is equal to default");
+    const celsiusCell = fluid.cell(22);
+    const fahrenheitCell = fluid.cell();
 
-    delegate.value += 2;
+    const cSeq = [];
+    const cEffect = fluid.effect({
+        bind: celsius => cSeq.push(celsius)
+    }, [celsiusCell]);
 
-    assert.deepEqual(delegate.value, 5, "Delegated signal value has been allocated and written");
+    assert.deepEqual(cSeq, [22], "Startup notification");
 
-    upstreamData.value++;
+    const fSeq = [];
+    const fEffect = fluid.effect({
+        bind: fahrenheit => fSeq.push(fahrenheit)
+    }, [fahrenheitCell]);
 
-    assert.deepEqual(delegate.value, 5, "No change in delegated signal value after upstream update");
+    const reset = () => {
+        fSeq.length = 0;
+        cSeq.length = 0;
+    };
 
-    delegate.reset();
+    assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
-    assert.deepEqual(delegate.value, 4, "Updated upstream value revealed");
+    fahrenheitCell.compute(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+
+    assert.deepEqual(fSeq, [71.6], "One notification on forward arc");
+    assert.deepEqual(cSeq, [22], "No backward notification");
+
+    celsiusCell.compute(fahrenheit => 5 * (fahrenheit - 32), [fahrenheitCell]);
+
+    assert.deepEqual(fSeq, [71.6], "No change on faithful inverse");
+    assert.deepEqual(cSeq, [22], "No change on faithful inverse");
+
+    reset();
+
+    celsiusCell.set(20);
+
+    assert.deepEqual(cSeq, [20], "Original update");
+    assert.deepEqual(fSeq, [68], "Relayed update");
+
+    reset();
+
+    fahrenheitCell.set(212);
+
+    assert.deepEqual(fSeq, [212], "Original update");
+    assert.deepEqual(cSeq, [100], "Relayed update");
+
+    // Tear down one relation
+    fahrenheitCell.compute(null);
+
+    reset();
+
+    celsiusCell.set(20);
+
+    assert.deepEqual(cSeq, [20], "Original update");
+    assert.deepEqual(fSeq, [], "No relay update");
+
+    reset();
+
+    fahrenheitCell.set(71.6);
+
+    assert.deepEqual(fSeq, [71.6], "Original update");
+    assert.deepEqual(cSeq, [22], "Relayed update");
+
+    reset();
+
+    // Dispose of the sequence logging effects
+    cEffect.dispose();
+    fEffect.dispose();
+
+    fahrenheitCell.set(68);
+
+    assert.deepEqual(fSeq, [], "No further notifications");
+    assert.deepEqual(cSeq, [], "No further notifications");
+
 });
 
-QUnit.test("Delegates with effects slippage tests", assert => {
-    const upstreamData = signal(3);
-    const computeDefault = computed( () => (upstreamData.value));
-    const delegate = fluid.delegatedSignal(computeDefault);
+QUnit.test("Early cutoff tests", assert => {
 
-    let log = [];
-    effect( () => {
-        log.push(delegate.value);
-    });
+    let busyCount = 0;
 
-    assert.equal(delegate.value, 3, "Initial value is equal to default");
-    assert.deepEqual(log, [3], "Single effect on startup");
-    log = [];
+    function busy() {
+        busyCount++;
+    }
 
-    delegate.value += 2;
+    const headCell = fluid.cell(0);
+    const c1Cell = fluid.cell().compute(head => head, [headCell]);
+    const c2Cell = fluid.cell().compute(() => { c1Cell.get(); return 0; });
+    const c3Cell = fluid.cell().compute(c2 => { busy(); return c2 + 1; }, [c2Cell]);
+    const c4Cell = fluid.cell().compute(c3 => c3 + 2, [c3Cell]);
+    const c5Cell = fluid.cell().compute(c4 => c4 + 3, [c4Cell]);
 
-    assert.deepEqual(delegate.value, 5, "Delegated signal value has been allocated and written");
-    assert.deepEqual(log, [5], "Single fire of effect");
-    log = [];
+    // Initial computation
+    headCell.set(1);
+    assert.equal(c5Cell.get(), 6, "Computed value 6");
+    assert.equal(busyCount, 1, "One lot of busy on init");
 
-    upstreamData.value += 2;
+    console.log("Test start");
 
-    assert.deepEqual(delegate.value, 5, "No change in delegated signal value after upstream update");
-    assert.deepEqual(log, [], "No fire of effect on upstream update");
+    headCell.set(0);
+    assert.equal(c5Cell.get(), 6, "No change in computed value");
+    assert.equal(busyCount, 1, "Busy censored through early cutoff");
 
-    delegate.reset();
-
-    assert.deepEqual(delegate.value, 5, "Updated upstream value revealedf");
-    assert.deepEqual(log, [], "No fire of effect on revealing upstream update equal to written value");
 });

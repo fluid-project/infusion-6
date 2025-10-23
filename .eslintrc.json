@@ -23,6 +23,14 @@
             }
         }
     },
+    "overrides": [{
+        "files": [
+            "tests/manual-tests/framework/js/es6*.js"
+            ],
+        "parserOptions": {
+            "sourceType": "module"
+        }
+    }],
     "parserOptions": {
         "ecmaVersion": 2022
     },

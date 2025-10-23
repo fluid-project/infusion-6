@@ -5,7 +5,7 @@
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
 var {signal, effect, computed, untracked} = preactSignalsCore;
 
-const fluidJSScope = function (fluid) {
+const $fluidJSScope = function (fluid) {
 
     fluid.version = "Infusion 6.0.0";
 
@@ -783,18 +783,17 @@ const fluidJSScope = function (fluid) {
      * * "I/O" indicates pending I/O
      * @return {fluid.marker} A marker of type "Unavailable".
      */
-    fluid.unavailable = (cause = {}, variety = "error") => {
-        const togo = fluid.makeMarker("Unavailable", {
-            causes: fluid.makeArray(cause).map(oneCause => {
-                if (typeof(oneCause) === "string") {
-                    oneCause = {message: oneCause};
-                }
-                if (!oneCause.variety) {
-                    oneCause.variety = variety;
-                }
-                return oneCause;
-            })
-        }, true);
+    fluid.unavailable = function (cause = {}, variety = "error") {
+        const togo = Object.create(fluid.unavailable.prototype);
+        togo.causes = fluid.makeArray(cause).map(oneCause => {
+            if (typeof(oneCause) === "string") {
+                oneCause = {message: oneCause};
+            }
+            if (!oneCause.variety) {
+                oneCause.variety = variety;
+            }
+            return oneCause;
+        });
         togo.variety = togo.causes.reduce((acc, {variety}) => {
             const priority = fluid.unavailablePriority[variety];
             return priority > acc.priority ? {variety, priority} : acc;
@@ -812,7 +811,7 @@ const fluidJSScope = function (fluid) {
                 if (prop === $t) {
                     return target;
                 } else if (prop === Symbol.toPrimitive) {
-                    fluid.fail(fluid.formatUnavailable(target));
+                    return target;
                 } else if (prop === "toString") {
                     return () => fluid.formatUnavailable(target);
                 } else {
@@ -822,9 +821,14 @@ const fluidJSScope = function (fluid) {
             getOwnPropertyDescriptor: function (target, key) {
                 return {value: this.get(target, key), enumerable: true, configurable: true};
             },
-            getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignal(target))
+            getPrototypeOf: () => Object.getPrototypeOf(target)
         });
         return proxy;
+    };
+
+    // Intended to be used for object which has already passed fluid.isUnavailable
+    fluid.deproxyUnavailable = function (target) {
+        return Object.getOwnPropertyDescriptor(target, $t) ? fluid.deSignal(target[$t]) : target;
     };
 
     /**
@@ -833,7 +837,7 @@ const fluidJSScope = function (fluid) {
      * @param {Object} totest - The object to test.
      * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
      */
-    fluid.isUnavailable = totest => totest instanceof fluid.marker && totest.type === "Unavailable";
+    fluid.isUnavailable = totest => totest instanceof fluid.unavailable;
 
     fluid.isErrorUnavailable = totest => fluid.isUnavailable(totest) && totest.variety === "error";
 
@@ -846,7 +850,8 @@ const fluidJSScope = function (fluid) {
      * @return {Object} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
      */
     fluid.mergeUnavailable = function (existing, fresh) {
-        return !existing ? fresh : fluid.unavailable(existing.causes.concat(fresh.causes));
+        return !existing ? fresh : fluid.unavailable(fluid.deproxyUnavailable(existing).causes.concat(
+            fluid.deproxyUnavailable(fresh).causes));
     };
 
     /*** SIGNAL PROCESSING ***/
@@ -884,7 +889,7 @@ const fluidJSScope = function (fluid) {
         flattenArg: fluid.deSignal
     };
 
-    // TODO: Probably needs to be made available as a context name
+    // TODO: Probably needs to be made available as a context name - there's support now as $oldValue
     fluid.OldValue = fluid.makeMarker("Old Computed Value");
 
     /**
@@ -3002,7 +3007,7 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value to an
+     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value changes to an
      * available value.
      *
      * @param {Component} component - The component containing the signal.
@@ -3023,7 +3028,4 @@ const fluidJSScope = function (fluid) {
 
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
 var fluid = fluid || {}; // eslint-disable-line no-redeclare
-fluidJSScope(fluid);
-
-// noinspection ES6ConvertVarToLetConst -- Hint for future module munger
-var exports = {fluidJSScope}; // eslint-disable-line no-unused-vars
+$fluidJSScope(fluid);

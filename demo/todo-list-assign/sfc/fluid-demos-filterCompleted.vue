@@ -19,6 +19,7 @@ fluid.def("fluid.demos.filterCompleted", {
 </script>
 
 <template>
+    <fluid-import layer="fluid.UISelect" src="@{todoUrlBase}/sfc/fluid-UISelect.vue"></fluid-import>
     <div class="fl-control-holder">
         <label class="fl-control-label">Filter Completed:</label>
         <select class="fl-control" @id="select" @onchange="{self}.updateSelection({0})">

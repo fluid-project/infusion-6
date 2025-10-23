@@ -2,7 +2,7 @@
 
 "use strict";
 
-const fluidILScope = function (fluid) {
+const $fluidILScope = function (fluid) {
 
     // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
     var {signal, computed, effect, untracked} = preactSignalsCore;
@@ -332,7 +332,7 @@ const fluidILScope = function (fluid) {
      * @property {fluid.instantiator} instantiator - The instantiator which allocated this component/shadow
      * @property {Object} frameworkEffects - A possibly deep structure of effects allocated by the framework which
      * which need to be disposed when the component is destroyed. Any user effects are disposed as layers come and go.
-     * @property {ArrayWithTick} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
+     * @property {Signal<String[]>} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
      */
 
     /**
@@ -394,6 +394,7 @@ const fluidILScope = function (fluid) {
     };
 
     fluid.instantiator = function () {
+        /** @type {fluid.instantiator} */
         const that = {
             /**
              * A map that associates component paths with their corresponding shadow records.
@@ -680,7 +681,7 @@ const fluidILScope = function (fluid) {
      * Retrieves a signal for a value at a path within a component.
      *
      * @param {Shadow} shadow - The shadow record of the component.
-     * @param {String} path - The path to resolve within the component's shadow.
+     * @param {String|String[]} path - The path to resolve within the component's shadow.
      * @return {Signal<any>} A signal representing the value at the specified path.
      */
     fluid.getForComponent = function (shadow, path) {
@@ -840,7 +841,9 @@ const fluidILScope = function (fluid) {
      */
 
     /**
-     * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
+     * Traverse into signalised material to resolve a "sited value" - as well as any finally resolved concrete value,
+     * also return metadata around it in the form of a ShadowCursor that references the shadowMap at the target site
+     * and the shadow which holds it.
      *
      * @param {any} ref - The value to resolve. May be a `Signal` or a plain value.
      * @param {ShadowCursor} shadowCursor - Cursor into the shadow where original reference was found
@@ -2041,5 +2044,5 @@ const fluidILScope = function (fluid) {
 };
 
 if (typeof(fluid) !== "undefined") {
-    fluidILScope(fluid);
+    $fluidILScope(fluid);
 }

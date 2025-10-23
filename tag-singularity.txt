@@ -1,0 +1,918 @@
+diff --git a/demo/todo-list-sfc/sfc/todo-list.vue b/demo/todo-list-sfc/sfc/todo-list.vue
+index 9ad2a28..17a33ae 100644
+--- a/demo/todo-list-sfc/sfc/todo-list.vue
++++ b/demo/todo-list-sfc/sfc/todo-list.vue
+@@ -54,7 +54,9 @@ fluid.demos.todoKeyUp = function (e, todos) {
+         </section>
+         <section class="section">
+             <input class="input is-rounded" @onkeyup="fluid.demos.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
+-            <div @id="todoItems" class="section"></div>
++            <div class="section">
++                <div @id="todoItems"></div>
++            </div>
+         </section>
+     </div>
+ </template>
+diff --git a/src/framework/core/js/Fluid.js b/src/framework/core/js/Fluid.js
+index 3f51c5e..f5958bb 100644
+--- a/src/framework/core/js/Fluid.js
++++ b/src/framework/core/js/Fluid.js
+@@ -706,8 +706,7 @@ const fluidJSScope = function (fluid) {
+      * accepts or returns any of these values, and if so, what its semantic is  - most are of private
+      * use internal to the framework
+      */
+-    fluid.marker = function () {
+-    };
++    fluid.marker = function () {};
+     /**
+      * Create a marker object with a specific type and additional properties.
+      * Markers are optionally mutable or immutable (frozen).
+@@ -1978,9 +1977,9 @@ const fluidJSScope = function (fluid) {
+      * @throws {Error} - Throws an error if the hierarchy is inconsistent.
+      */
+     fluid.C3_merge = function (seqs) {
+-        fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
++        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
+         let res = [];
+-        let i = 0;
++        // let i = 0;
+ 
+         while (true) {
+             let nonemptyseqs = seqs.filter(seq => seq.length > 0);
+@@ -1988,13 +1987,13 @@ const fluidJSScope = function (fluid) {
+                 return res;
+             }
+ 
+-            i++;
+-            fluid.log(`\n${i} round: candidates...`);
++            // i++;
++            // fluid.log(`\n${i} round: candidates...`);
+ 
+             let cand = null;
+             for (let seq of nonemptyseqs) {
+                 cand = seq[0];
+-                fluid.log(` ${cand}`);
++                // fluid.log(` ${cand}`);
+                 // eslint-disable-next-line no-loop-func
+                 let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
+                 if (nothead.length > 0) {
+diff --git a/src/framework/core/js/FluidIL.js b/src/framework/core/js/FluidIL.js
+index 6a33225..38fcf92 100644
+--- a/src/framework/core/js/FluidIL.js
++++ b/src/framework/core/js/FluidIL.js
+@@ -178,6 +178,8 @@ const fluidILScope = function (fluid) {
+         shadow.ownScope[$m] = "ownScope-" + shadow.path;
+         shadow.variableScope = Object.create(shadow.ownScope);
+         shadow.variableScope[$m] = "variableScope-" + shadow.path;
++        shadow.ownScopeTick = signal(0);
++        shadow.scopeTick = parentShadow ? computed( () => shadow.ownScopeTick.value + parentShadow.ownScopeTick.value) : shadow.ownScopeTick;
+ 
+         return effect(function scopeEffect() {
+             const childOfRoot = !shadow.parentShadow || shadow.parentShadow.that === rootComponent;
+@@ -199,6 +201,7 @@ const fluidILScope = function (fluid) {
+                     // TODO: Remember to delete these again when clearing
+                 }
+             });
++            shadow.ownScopeTick.value = shadow.ownScopeTick.peek() + 1;
+         });
+     };
+ 
+@@ -209,6 +212,7 @@ const fluidILScope = function (fluid) {
+                 delete parentShadow.childrenScope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
+             }
+         });
++        childShadow.ownScopeTick.value = childShadow.ownScopeTick.peek() + 1;
+     };
+ 
+     class ArrayWithTick {
+@@ -330,7 +334,6 @@ const fluidILScope = function (fluid) {
+             if (created) {
+                 shadow.path = path;
+                 shadow.memberName = name;
+-                shadow.dynamicLayerNames = new ArrayWithTick();
+                 shadow.parentShadow = parentShadow;
+                 shadow.childComponents = {};
+                 shadow.frameworkEffects = {};
+@@ -558,6 +561,8 @@ const fluidILScope = function (fluid) {
+             } else {
+                 const local = resolver ? resolver(context) : fluid.NoValue;
+                 if (local === fluid.NoValue) {
++                    // eslint-disable-next-line no-unused-vars
++                    const scopeTick = shadow.ownScopeTick.value; // Read the scope tick to cause a dependency
+                     const resolvedRec = shadow.variableScope[context];
+                     if (resolvedRec) {
+                         const resolved = resolvedRec.value;
+@@ -1390,14 +1395,17 @@ const fluidILScope = function (fluid) {
+             const allLayerNames = [...layerNames, ...mergeRecordLayerNames].reverse();
+ 
+             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
+-            shadow.dynamicLayerNames.update([...new Set(dynamicNames)]);
++            const uniqueDynamicNames = [...new Set(dynamicNames)];
++            if (!fluid.arrayEqual(uniqueDynamicNames, shadow.dynamicLayerNames.peek())) {
++                shadow.dynamicLayerNames.value = uniqueDynamicNames;
++            }
++
+             // TODO: We notice layerNames now routinely duplicates mergedRecordLayerNames - C3 doesn't in fact make a problem of this
+             // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
+             const uniqueStaticNames = [...new Set(staticNames)];
+ 
+             const resolver = new fluid.HierarchyResolver();
+             // Any dynamic layer name which doesn't resolve is going to be categorised as unavailable
+-            // But we have a problem that we've lost the signal
+             const {designalArgs: resolvedStaticNames, unavailable} = fluid.processSignalArgs(uniqueStaticNames);
+             const resolved = unavailable || fluid.flatMergedRound(shadow, resolver, resolvedStaticNames); // <= WILL READ LAYER REGISTRY
+ 
+@@ -1422,19 +1430,19 @@ const fluidILScope = function (fluid) {
+     fluid.possiblyRenderError = x => x;
+ 
+     fluid.scheduleEffects = function (shadow) {
+-        if (shadow.dynamicLayerNames.array.length > 0) {
++        // We would like this effect to act later than scopeEffect which is why it is scheduled now
++        if (shadow.dynamicLayerNames.peek().length > 0 && !shadow.frameworkEffects.dynamicLayerEffect) {
+             shadow.frameworkEffects.dynamicLayerEffect = effect(() => {
+-                if (shadow.dynamicLayerNames.doneAt < shadow.dynamicLayerNames.tick) {
+-                    shadow.dynamicMergeRecord.value = {
+-                        mergeRecordType: "dynamicLayers",
+-                        layer: {
+-                            $layers: shadow.dynamicLayerNames.array.map(function resolveDynamicLayers(ref) {
+-                                return fluid.deSignal(fluid.fetchContextReference(ref, shadow, ["$layers"]));
+-                            })
+-                        }
+-                    };
+-                    shadow.dynamicLayerNames.doneAt = shadow.dynamicLayerNames.tick;
+-                }
++                const resolvedDynamicLayers = shadow.dynamicLayerNames.value.map((function resolveDynamicLayers(ref) {
++                    return fluid.deSignal(fluid.fetchContextReference(ref, shadow, ["$layers"]));
++                }));
++                // Pushes update to dynamicMergeRecord and hence renotifies flatMergedComputer
++                shadow.dynamicMergeRecord.value = {
++                    mergeRecordType: "dynamicLayers",
++                    layer: {
++                        $layers: resolvedDynamicLayers
++                    }
++                };
+             });
+         }
+ 
+@@ -1532,8 +1540,12 @@ const fluidILScope = function (fluid) {
+             return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName, variableScope);
+         }
+     };
++    fluid.busyUnavailable = fluid.unavailable("System is busy");
++
++    fluid.isIdle = signal(true);
+ 
+     fluid.effectGuardDepth = 0;
++    // Shadow[] - list of allocated shadows that need effects queued
+     fluid.scheduleEffectsQueue = [];
+ 
+     fluid.queueScheduleEffects = function (shadow) {
+@@ -1551,6 +1563,8 @@ const fluidILScope = function (fluid) {
+                 });
+                 shadow.effectScheduler.$variety = "effectScheduler";
+             });
++            console.log("*** SETTING SYSTEM IDLE");
++            fluid.isIdle.value = true;
+         }
+     };
+ 
+@@ -1563,7 +1577,7 @@ const fluidILScope = function (fluid) {
+      * @return {ComponentComputer} - The computed instance as a signal with shadow and $variety properties.
+      */
+     fluid.computeInstance = function (potentia, parentShadow, memberName, variableScope) {
+-        const instantiator = parentShadow.instantiator;
++        fluid.isIdle.value = fluid.busyUnavailable;
+ 
+         const shadow = Object.create(fluid.shadow.prototype);
+ 
+@@ -1575,6 +1589,7 @@ const fluidILScope = function (fluid) {
+             mergeRecordType: "dynamicLayers",
+             layer: {}
+         });
++        shadow.dynamicLayerNames = signal([]);
+ 
+         shadow.instanceId = 0;
+         shadow.flatMerged = fluid.flatMergedComputer(shadow);
+@@ -1608,6 +1623,7 @@ const fluidILScope = function (fluid) {
+             ++fluid.effectGuardDepth;
+ 
+             // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
++            const instantiator = parentShadow.instantiator;
+             instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
+             fluid.applyScope(shadow.variableScope, variableScope);
+         } finally {
+diff --git a/src/framework/core/js/FluidView.js b/src/framework/core/js/FluidView.js
+index 733dd00..c76df7a 100644
+--- a/src/framework/core/js/FluidView.js
++++ b/src/framework/core/js/FluidView.js
+@@ -7,6 +7,8 @@ const fluidViewScope = function (fluid) {
+     const $m = fluid.metadataSymbol;
+     const $t = fluid.proxySymbol;
+ 
++    fluid.VNode = function () {};
++
+     /**
+      * @typedef {Object} VNode
+      * @property {String} [tag] - The tag name of the element (e.g., 'div', 'span').
+@@ -14,6 +16,7 @@ const fluidViewScope = function (fluid) {
+      * @property {VNode[]} [children] - An array of child virtual nodes.
+      * @property {String} [text] - The text content in the case this VNode represents a DOM TextNode.
+      * @property {Shadow} [shadow] - The shadow for a component for which this vnode is the template root
++     * @property {Boolean} [elideParent] - If a component root, whether the containment level should be elided
+      * @property {Number} _id - The id of this vnode
+      *
+      * @property {signal<HTMLElement>|undefined} [elementSignal] - A signal that resolves to the corresponding DOM element.
+@@ -503,7 +506,9 @@ const fluidViewScope = function (fluid) {
+         }
+         // Could also have members:
+         // elementSignal/renderEffects
+-        return {tag, attrs};
++        // We only bother to tag VNodes that might end up in layers so we don't end up recursing over them - could
++        // remove this if we get rid of the pushPotentia call on discovering @id
++        return Object.assign(Object.create(fluid.VNode.prototype), {tag, attrs});
+     };
+ 
+     /**
+@@ -699,6 +704,7 @@ const fluidViewScope = function (fluid) {
+         }
+     };
+ 
++    // Now disused, done manually during reconciliation
+     fluid.bindContainer = function (templateEffects, vnode, self) {
+         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
+             const togo = fluid.effect(function (element) {
+@@ -709,7 +715,14 @@ const fluidViewScope = function (fluid) {
+             return togo;
+         });
+         templateEffects.push(bindEffect);
+-        self.renderedContainer = vnode.elementSignal;
++        if (fluid.isUnavailable(self.renderedContainer)) {
++            // Well this definitely worked but it does push through the proxy and assign a signal into a value?
++            self.renderedContainer = vnode.elementSignal;
++        } else if (fluid.isUnavailable(vnode.elementSignal.peek())) {
++            // We rendered once already and the component definition has updated, recover our old container
++            vnode.elementSignal.value = self.renderedContainer;
++        }
++        // So it doesn't show up in substrate browser by default
+         self[$m].layerMap.renderedContainer.source = "fluid.viewComponent";
+     };
+ 
+@@ -772,18 +785,27 @@ const fluidViewScope = function (fluid) {
+                     fluid.pushPotentia(shadow, value, [{mergeRecordType: "template"}]);
+                 };
+                 disposable.$variety = "$component";
++                // The parent holding the @id is going to have to be "restartable" for patchChildren so we must assure
++                // that a record is kept of what it gets bound to. This is potentially a "mixed content" node.
++                if (vnode.parentNode) {
++                    vnode.parentNode.elementSignal ||= signal(fluid.unavailableElement);
++                    vnode.elideParent = true;
++                }
+                 // Cheapest way to signal to fluid.patchChildren that it should not attempt to recurse on child nodes
+                 // by itself:
+-                delete vnode.children;
++                //delete vnode.children;
++                // We always allocate a fresh vnode for every component root even if they get folded by elideParent
++                // vnode.componentRoot = true;
+                 const templateRecord = {
+                     mergeRecordType: "template",
+                     layer: {
+                         $layers: "fluid.viewComponent",
+-                        container: vnode.elementSignal
++                        container: vnode
+                     }
+                 };
+ 
+-                fluid.pushPotentia(shadow, value, [templateRecord]);
++                const computer = fluid.pushPotentia(shadow, value, [templateRecord]);
++                vnode.children = [{computer}];
+                 return disposable;
+             });
+         } else if (key === "@class") {
+@@ -828,8 +850,9 @@ const fluidViewScope = function (fluid) {
+              * @param {VNode} vnode - The virtual node (vNode) to be processed.
+              * @return {VNode} The processed VNode with rendered content in text and attributes.
+              */
+-            function processVNode(vnode) {
++            function processVNode(vnode, parentNode = null) {
+                 vnode.shadow = shadow;
++                vnode.parentNode = parentNode;
+                 if (vnode.text !== undefined) {
+                     const tokens = fluid.parseStringTemplate(vnode.text);
+                     const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+@@ -871,15 +894,15 @@ const fluidViewScope = function (fluid) {
+                         vnode.attrs["class"] = allClass;
+                     }
+                     if (vnode.children !== undefined) {
+-                        vnode.children = vnode.children.map(processVNode);
++                        vnode.children = vnode.children.map(child => processVNode(child, vnode));
+                     }
+                 }
+                 return vnode;
+             }
+ 
+-            function parseTemplate(tree) {
++            function parseTemplate(tree, parentNode) {
+                 fluid.disposeEffects(templateEffects);
+-                const togo = processVNode(tree);
++                const togo = processVNode(tree, parentNode);
+                 templateEffects.forEach(effect => effect.$site = self);
+                 return togo;
+             }
+@@ -887,9 +910,14 @@ const fluidViewScope = function (fluid) {
+ 
+                 fluid.acquireLoadDirectives(element);
+                 const tree = fluid.domToVDom(element);
+-                const togo = parseTemplate(tree);
++                tree.componentRoot = true;
++                // We need to glue this on so that restartable renders can look up the vTree to find the next concrete parent
++                // of elided VNodes
++                const parentNode = shadow.that.container instanceof fluid.VNode ? shadow.that.container.parentNode : null;
+ 
+-                fluid.bindContainer(templateEffects, tree, self);
++                const togo = parseTemplate(tree, parentNode);
++
++                // fluid.bindContainer(templateEffects, tree, self);
+                 return togo;
+ 
+             } else {
+@@ -902,6 +930,13 @@ const fluidViewScope = function (fluid) {
+         // Try to remove event listeners and the like?
+     };
+ 
++    fluid.noteViewContainerRegistry = function (element, shadow) {
++        const existing = fluid.viewContainerRegistry.get(element);
++        if (!existing || existing.path.length < shadow.path.length) {
++            fluid.viewContainerRegistry.set(element, shadow);
++        }
++    };
++
+     /**
+      * Binds a DOM element to a virtual node (VNode), setting up necessary bindings or effect handling.
+      * If the VNode contains a signal, it will update its value with the provided element.
+@@ -911,10 +946,22 @@ const fluidViewScope = function (fluid) {
+      * @param {HTMLElement} element - The DOM element to bind to the virtual node.
+      */
+     fluid.bindDom = function (vnode, element) {
++        if (vnode.componentRoot) {
++            const shadow = vnode.shadow;
++            fluid.noteViewContainerRegistry(element, shadow);
++            fluid.setForComponent(shadow.that, "renderedContainer", element);
++            // So it doesn't show up in substrate view by default
++            shadow.layerMap.renderedContainer.source = "fluid.viewComponent";
++
++            vnode.elementSignal ||= signal(fluid.unavailableElement);
++        }
+         if (vnode.elementSignal) {
+             fluid.unbindDom(vnode, vnode.elementSignal.peek());
+             vnode.elementSignal.value = element;
+         }
++        if (vnode.sourceNodes) {
++            vnode.sourceNodes.forEach(node => fluid.bindDom(node, element));
++        }
+     };
+ 
+     fluid.svgTags = new Set([
+@@ -985,6 +1032,95 @@ const fluidViewScope = function (fluid) {
+         return ["$template", vnode.tag];
+     };
+ 
++    /**
++     * Resolves a VNode from a VNode potentially holding a component computer reference, considered as a proxy for a site reference.
++     * If it has `computer` property, it extracts the component's vTree and adds additional metadata such as
++     * `componentRoot`, `elideParent`, and `shadow` to turn it into a template root node.
++     * If the child does not contain a `computer` property, it is returned as-is.
++     *
++     * @param {VNode} child - The child VNode to resolve.
++     * @return {VNode|null} The resolved VNode with additional metadata, or the original child VNode.
++     */
++    fluid.resolveVNode = function (child) {
++        if (child.computer) {
++            const component = child.computer.value;
++            const vnode = fluid.getThroughSignals(component, ["vTree"]).value;
++            // TODO: Should really render error
++            if (fluid.isUnavailable(vnode)) {
++                return null;
++            } else {
++                return {...vnode, componentRoot: true,
++                    elideParent: component.elideParent,
++                    shadow: component[$m]
++                };
++            }
++        } else {
++            return child;
++        }
++    };
++
++    /**
++     * Resolves an array of virtual child nodes (VChildren), flattening any elided parents
++     * and merging attributes (especially class names) down to the actual leaf nodes.
++     *
++     * @param {Array<VNode>} children - The array of virtual children to resolve.
++     * @param {Object} [mergeAttrs={}] - Non-class attributes to merge into each child.
++     * @param {Object} [mergeClass={}] - A set-like object of class names to propagate.
++     * @return {Array<VNode>} - A flattened array of resolved virtual nodes with merged attributes.
++     */
++    fluid.resolveVChildren = function (children, mergeAttrs = {}, mergeClass = {}, sourceNodes = []) {
++        const result = [];
++
++        const pushChild = function (vnode) {
++            const attrs = vnode.attrs || {};
++            let ownClassMap = {};
++            if (attrs.class && !fluid.isSignal(attrs.class)) {
++                const classList = attrs.class.split(/\s+/).filter(Boolean);
++                ownClassMap = Object.fromEntries(classList.map(cls => [cls, true]));
++            }
++
++            if (vnode.elideParent) {
++                // Merge only non-class attributes
++                // eslint-disable-next-line no-unused-vars
++                const { class: _, ...nonClassAttrs } = attrs;
++                const nextMergeAttrs = { ...mergeAttrs, ...nonClassAttrs };
++                const nextMergeClass = { ...mergeClass, ...ownClassMap };
++                // Push to the front so that most derived node is at the end so that ViewComponentRegistry is attached to that one.
++                const nextSourceNodes = [vnode, ...sourceNodes];
++
++                result.push(...fluid.resolveVChildren(vnode.children, nextMergeAttrs, nextMergeClass, nextSourceNodes));
++            } else {
++                if (vnode.text) {
++                    result.push(vnode);
++                } else {
++                    // Merge all attribute values down - clearly room for bags of optimisations here
++                    const finalClassMap = {...mergeClass, ...ownClassMap};
++                    const finalClassKeys = Object.keys(finalClassMap);
++                    const mergedAttrs = {
++                        ...mergeAttrs,
++                        ...attrs
++                    };
++                    if (finalClassKeys.length > 0) {
++                        mergedAttrs.class = finalClassKeys.join(" ");
++                    }
++                    if (Object.keys(mergedAttrs).length === 0 && sourceNodes.length === 0) {
++                        result.push(vnode);
++                    } else {
++                        result.push({...vnode, attrs: mergedAttrs, sourceNodes});
++                    }
++                }
++            }
++        };
++
++        children.forEach(child => {
++            const resolved = fluid.resolveVNode(child);
++            if (resolved) {
++                pushChild(resolved);
++            }
++        });
++
++        return result;
++    };
+ 
+     // Hack to assign ids to vnodes to ensure that their events get bound to container DOM nodes exactly once
+     let vnode_id = 1;
+@@ -1011,9 +1147,10 @@ const fluidViewScope = function (fluid) {
+ 
+         // It may be undefined because this is a joint to a subcomponent as applied in fluid.processAttributeDirective
+         if (vnode.children !== undefined) {
+-            const vcount = vnode.children.length;
++            const children = fluid.resolveVChildren(vnode.children);
++            const vcount = children.length;
+             for (let i = 0; i < vcount; ++i) {
+-                const vchild = vnode.children[i];
++                const vchild = children[i];
+                 let other = element.childNodes[i];
+                 if (!other || !fluid.matchNodeToVNode(other, vchild)) {
+                     const fresh = fluid.nodeFromVNode(vchild);
+@@ -1033,7 +1170,7 @@ const fluidViewScope = function (fluid) {
+     };
+ 
+     /**
+-     * A registry that maps container elements to their associated component instances.
++     * A registry that maps container elements to their associated component shadows.
+      * This is used to track which component is responsible for rendering a specific container.
+      */
+     fluid.viewContainerRegistry = new WeakMap();
+@@ -1055,15 +1192,76 @@ const fluidViewScope = function (fluid) {
+         return container ? fluid.viewContainerRegistry.get(container) : null;
+     };
+ 
+-    const containerToRenderedVTree = new WeakMap();
++    fluid.renderQueue = signal(null);
++
++    fluid.findRenderRoots = function (renderQueue) {
++        const keys = Object.keys(renderQueue);
++        for (const key of keys) {
++            for (const otherKey of keys) {
++                if (otherKey !== key && otherKey.startsWith(key + ".")) {
++                    delete renderQueue[otherKey];
++                }
++            }
++        }
++
++        return Object.values(renderQueue);
++    };
++
++    /**
++     * Traverses the parent nodes of a virtual tree (vTree) to find the first node
++     * that does not have `elideParent` set and has `elementSignal` defined.
++     *
++     * @param {VNode} vTree - The virtual tree node to start the traversal from.
++     * @return {VNode|null} The restartable render node, or null if not found.
++     */
++    fluid.findRestartableRender = function (vTree) {
++        let currentNode = vTree;
++        while (currentNode) {
++            if (!currentNode.elideParent && currentNode.elementSignal && !fluid.isUnavailable(currentNode.elementSignal.value)) {
++                return currentNode;
++            }
++            if (currentNode.componentRoot) {
++                // Leap to parent node stored in component's container if we are a component root
++                const container = currentNode.shadow.that.container;
++                currentNode = container.parentNode;
++            } else {
++                currentNode = currentNode.parentNode;
++            }
++        }
++        return null;
++    };
+ 
+-    fluid.getContainerRecord = function (container) {
+-        let contRec = containerToRenderedVTree.get(container);
+-        if (!contRec) {
+-            contRec = {};
+-            containerToRenderedVTree.set(container, contRec);
++    fluid.globalRenderEffect = fluid.effect(renderQueue => {
++        if (renderQueue) {
++            const roots = fluid.findRenderRoots(renderQueue);
++            console.log("global render effect starting with queue ", roots.map(({shadow}) => shadow.path).join(", "));
++            roots.forEach(function renderRoot({vTree, container, shadow}) {
++                if (vTree.elideParent || container instanceof fluid.VNode && (!container.elementSignal || fluid.isUnavailable(container.elementSignal.value))) {
++                    const restartable = fluid.findRestartableRender(container);
++                    if (restartable) {
++                        fluid.patchChildren(restartable, restartable.elementSignal.value);
++                    } else { // Framework logic failure
++                        fluid.fail("Couldn't locate render restart root");
++                    }
++                } else {
++                    const useContainer = fluid.isDOMNode(container) ? container : container.elementSignal.value;
++                    if (fluid.isUnavailable(useContainer)) {
++                        fluid.fail("Isolated render scheduled for subcomponent at ", shadow.path, " which has not previous been rendered");
++                    }
++                    fluid.patchChildren(vTree, useContainer);
++                }
++            });
++        }
++        fluid.renderQueue.value = null;
++    }, [fluid.renderQueue, fluid.isIdle]);
++
++    fluid.queueRenderView = function (rec) {
++        let queue = fluid.renderQueue.peek();
++        if (!queue) {
++            queue = {};
++            fluid.renderQueue.value = queue;
+         }
+-        return contRec;
++        queue[rec.shadow.path] = rec;
+     };
+ 
+     /**
+@@ -1072,19 +1270,35 @@ const fluidViewScope = function (fluid) {
+      * This function updates the container's contents to match the provided virtual tree.
+      * If `elideParent` is true, the `vTree`'s children are grafted as children of the current container.
+      *
+-     * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
+-     * @param {HTMLElement} container - The target DOM element where the virtual tree should be rendered.
++     * @param {fluid.component} self - The component in the context of which template references are to be parsed
++     * @param {HTMLElement|Object} container - The target DOM element where the virtual tree should be rendered.
+      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
+      * @param {Boolean} [elideParent=false] - If true, renders `vTree` directly into the container.
+      */
+     fluid.renderView = function (self, container, vTree, elideParent) {
++        const shadow = self[$m];
+         vTree._id = vTree._id || vnode_id++;
+-        console.log(`renderView beginning for ${self[$m].memberName} with vTree ${vTree._id} container `, container.flDomId);
++
++        if (fluid.hasLayer(self, "fluid.viewComponentList")) {
++            console.log("Render list");
++        }
++
++        const renderedContainer = fluid.deSignal(shadow.that.renderedContainer);
++        if (!fluid.isUnavailable(renderedContainer)) {
++            fluid.bindDom(vTree, renderedContainer);
++        } else {
++            vTree.elementSignal ||= signal(fluid.unavailableElement);
++        }
++
++        console.log(`renderView beginning for ${shadow.memberName} with vTree ${vTree._id} container `, container.flDomId);
++        fluid.queueRenderView({shadow, container, vTree, elideParent});
++        return;
+         let useTree = vTree;
+         if (!elideParent) {
+             useTree = fluid.elementToVNode(container);
+             useTree.children = [vTree];
+         }
++
+         fluid.patchChildren(useTree, container);
+     };
+ 
+@@ -1134,13 +1348,14 @@ const fluidViewScope = function (fluid) {
+             if (that.$layers.includes("fluid.viewComponent")) {
+                 const vTree = fluid.deSignal(that.vTree);
+                 if (fluid.isErrorUnavailable(vTree)) {
+-                    fluid.renderError(fluid.deSignal(that.container), vTree);
++                    fluid.renderError(fluid.deSignal(that.renderedContainer), vTree);
+                 }
+             }
+         } else if (fluid.isErrorUnavailable(shadow.flatMerged)) {
+             const container = shadow.mergeRecords.reduce((acc, record) => record.container || acc, null);
++            // TODO: Presumably this should go into the vTree temporarilyh
+             if (container) {
+-                fluid.renderError(container, shadow.flatMerged);
++                // fluid.renderError(container, shadow.flatMerged);
+             }
+         }
+     };
+@@ -1153,11 +1368,23 @@ const fluidViewScope = function (fluid) {
+     fluid.def("fluid.viewComponentList", {
+         $layers: "fluid.viewComponent",
+         elideParent: true,
+-        vTree: "$compute:fluid.listViewTree({self}.list)",
++        vTree: "$compute:fluid.listViewTree({self}, {self}.list)",
+         $variety: "framework"
+     });
+ 
+-    fluid.listViewTree = function (list) {
++    /**
++     * Generates a virtual DOM tree for a list of components.
++     * This function computes the virtual DOM tree by processing the signal arguments of the list,
++     * extracting the components and their corresponding virtual trees, and handling any unavailable states.
++     * @param {fluid.component} self - List component holding the list of components
++     * @param {Signal<fluid.viewComponent[]>} list - A signal containing the list of components to render.
++     * @return {Signal<VNode>} A computed signal representing the virtual DOM tree for the list.
++     * The virtual DOM tree has the following structure:
++     * - `tag`: The root tag of the virtual DOM tree, typically "template".
++     * - `children`: An array of child virtual DOM trees corresponding to the components in the list.
++     * If any component or its virtual tree is unavailable, the signal yields the unavailable state.
++     */
++    fluid.listViewTree = function (self, list) {
+         return fluid.computed(componentList => {
+             const {designalArgs: components, unavailable: compUnavailable} = fluid.processSignalArgs(componentList);
+             if (compUnavailable) {
+@@ -1169,6 +1396,9 @@ const fluidViewScope = function (fluid) {
+                 } = fluid.processSignalArgs(components.map(component => component.vTree));
+                 return treesUnavailable || {
+                     tag: "template",
++                    componentRoot: true,
++                    elideParent: true,
++                    shadow: self[$m],
+                     children: childTrees
+                 };
+             }
+@@ -1246,7 +1476,7 @@ const fluidViewScope = function (fluid) {
+                     container: element
+                 });
+                 // Put this in early in case instantiation fails
+-                fluid.viewContainerRegistry.set(element, instance);
++                fluid.viewContainerRegistry.set(element, instance[$t].shadow);
+             }
+         });
+     });
+diff --git a/src/framework/edit/js/substrateTree.js b/src/framework/edit/js/substrateTree.js
+index 0a35828..7dc6a8c 100644
+--- a/src/framework/edit/js/substrateTree.js
++++ b/src/framework/edit/js/substrateTree.js
+@@ -333,7 +333,7 @@ const fluidSubstrateScope = function (fluid) {
+     fluid.substrateTree.highlight = function (self, inspectingSite) {
+         const overlay = document.getElementById("fl-editor-inspect-overlay");
+         const id = inspectingSite && fluid.renderSite(inspectingSite);
+-        const target = id && self.container.querySelector(`[data-row-id="${id}"]`);
++        const target = id && self.renderedContainer.querySelector(`[data-row-id="${id}"]`);
+         fluid.applyOverlay({selfOverlay: overlay}, target, "hsl(0 0% 70%)");
+     };
+ 
+diff --git a/src/framework/edit/sfc/EditorMenu.vue b/src/framework/edit/sfc/EditorMenu.vue
+index 5e57457..22323fa 100644
+--- a/src/framework/edit/sfc/EditorMenu.vue
++++ b/src/framework/edit/sfc/EditorMenu.vue
+@@ -1,5 +1,6 @@
+ <script>
+ fluid.def("fluid.editor.menu", {
++    elideParent: false,
+     menuItemsData: {
+         File: [{
+             text: "Export..."
+@@ -48,6 +49,7 @@ fluid.def("fluid.editor.menu", {
+                     args: ["{itemName}", "{menu}.menuOpen"]
+                 }
+             },
++            elideParent: false,
+             template: `
+             <div class="fl-menu-item-holder">
+                 <div class="fl-menu-item fl-clickable fl-no-dismiss"
+@@ -66,6 +68,7 @@ fluid.def("fluid.editor.menu", {
+                         value: "menuRecord"
+ 
+                     },
++                    elideParent: false,
+                     template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({menuRecord})">@{{menuRecord}.text}</div>`
+                 }
+             }
+@@ -99,6 +102,7 @@ fluid.def("fluid.editor.menu.filterLayers", {
+ fluid.def("fluid.editor.menu.inspect", {
+     $layers: "fluid.templateViewComponent",
+     inspecting: false,
++    elideParent: false,
+     template: `
+ 
+ <div class="fl-inspect" @class="fl-inspecting:@{inspecting}" @onclick="{self}.inspecting = !{self}.inspecting" title="Select an element on the page to inspect it">
+@@ -137,7 +141,7 @@ fluid.inspect.effect = function (self, inspecting) {
+ <template>
+     <div class="fl-menubar">
+         <div @id="inspect"></div>
+-        <div class="fl-menu-items" @id="menuItems"></div>
++        <div class="fl-menu-items"><div @id="menuItems"></div></div>
+         <div class="fl-editor-close fl-clickable" @onclick="{fullPageEditor}.editorVisible = false">
+             <span class="mdi mdi-close"></span>
+         </div>
+diff --git a/src/framework/edit/sfc/HistoryPane.vue b/src/framework/edit/sfc/HistoryPane.vue
+index fd2cf41..7aa37a8 100644
+--- a/src/framework/edit/sfc/HistoryPane.vue
++++ b/src/framework/edit/sfc/HistoryPane.vue
+@@ -22,7 +22,7 @@ fluid.def("fluid.editor.historyList", {
+             args: [fluid.layerHistory, fluid.layerHistoryIndex, "{editorRoot}.showUserLayersOnly", "{colourManager}.layerColours"]
+         }
+     },
+-    template: `<div @id="history" class="fl-history-pane"></div>`,
++    template: `<div class="fl-history-pane"><div @id="history"></div></div>`,
+     history: {
+         $component: {
+             $layers: "fluid.templateViewComponent",
+diff --git a/src/lib/preact-signals/preact-signals-core.js b/src/lib/preact-signals/preact-signals-core.js
+index bc6ae87..0c2fe4a 100644
+--- a/src/lib/preact-signals/preact-signals-core.js
++++ b/src/lib/preact-signals/preact-signals-core.js
+@@ -241,15 +241,8 @@
+             }
+         });
+     };
+-    Signal.prototype.valueOf = function () {
+-        return this.value;
+-    };
+-    Signal.prototype.toString = function () {
+-        return this.value + "";
+-    };
+-    Signal.prototype.toJSON = function () {
+-        return this.value;
+-    };
++
++    /** AB patch: Remove hazardous conversion methods **/
+     Signal.prototype.peek = function () {
+         var prevContext = evalContext;
+         evalContext = undefined;
+diff --git a/tests/framework-tests/core/js/FluidViewTests.js b/tests/framework-tests/core/js/FluidViewTests.js
+index 123e2e5..fc0eb10 100644
+--- a/tests/framework-tests/core/js/FluidViewTests.js
++++ b/tests/framework-tests/core/js/FluidViewTests.js
+@@ -112,12 +112,8 @@ fluid.tests.nestedExpect = {
+     "class": "outer",
+     $children: {
+         $tagName: "div",
+-        "class": "outerInner",
+-        $children: {
+-            $tagName: "div",
+-            "class": "inner",
+-            $textContent: "Text from inner"
+-        }
++        "class": "outerInner inner",
++        $textContent: "Text from inner"
+     }
+ };
+ 
+@@ -164,7 +160,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
+     });
+ 
+     const newExpected = fluid.copy(fluid.tests.nestedExpect);
+-    newExpected.$children.$children.$textContent = "New brush";
++    newExpected.$children.$textContent = "New brush";
+     assert.assertNode(root, newExpected, "Updated render correct");
+ 
+     const nodes2 = fluid.tests.getNodeParents(container, ".inner");
+@@ -190,7 +186,7 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
+     });
+ 
+     const newExpected = fluid.copy(fluid.tests.nestedExpect);
+-    newExpected.$children["class"] = "newHandle";
++    newExpected.$children["class"] = "newHandle inner";
+     assert.assertNode(root, newExpected, "Updated render correct");
+ 
+     const nodes2 = fluid.tests.getNodeParents(container, ".inner");
+@@ -242,6 +238,7 @@ fluid.tests.todos = [
+ 
+ fluid.def("fluid.tests.todoItem", {
+     $layers: "fluid.templateViewComponent",
++    elideParent: false,
+     template:
+         `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
+             @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
+@@ -270,7 +267,9 @@ fluid.def("fluid.tests.todoList", {
+         </section>
+         <section class="section">
+             <input class="input is-rounded" @onkeyup="fluid.tests.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
+-            <div @id="todoItems" class="section"></div>
++            <div class="section">
++                <div @id="todoItems"></div>
++            </div>
+         </section>
+     </div>`,
+     todoItems: {
+@@ -303,7 +302,24 @@ fluid.def("fluid.tests.todoList", {
+     }
+ });
+ 
++fluid.tests.todoStructure = count => ({
++    $tagName: "section",
++    "class": "section",
++    $children: [{
++        $tagName: "input",
++        "class": "input is-rounded",
++        type: "text",
++        placeholder: "New todo"
++    }, {
++        $tagName: "div",
++        "class": "section",
++        $children: Array(count).fill({$tagName: "span"})
++    }]
++});
++
+ fluid.tests.checkTodoRendering = function (assert, that, container, model) {
++    const t = texts => texts.map(text => text.trim());
++
+     const items = that.todoItems.list;
+     assert.equal(items.length, model.length, "Correct component count");
+ 
+@@ -312,8 +328,11 @@ fluid.tests.checkTodoRendering = function (assert, that, container, model) {
+     const treeTexts = items.map(item => item.text);
+     assert.deepEqual(treeTexts, modelTexts, "Correct texts for component tree items");
+ 
++    const section = qs("section.section", container);
++    assert.assertNode(section, fluid.tests.todoStructure(modelTexts.length), "Correct top-level markup structure");
++
+     const renderedTexts = qsa(".todo", container).map(element => element.innerText);
+-    assert.deepEqual(renderedTexts, modelTexts, "Correct texts for markup rendered items");
++    assert.deepEqual(t(renderedTexts), modelTexts, "Correct texts for markup rendered items");
+ 
+     const modelCompleted = model.map(todo => todo.completed);
+     const treeCompleted = items.map(item => item.completed);
+@@ -453,6 +472,7 @@ QUnit.test("Reference up through rendering effect", function (assert) {
+ 
+ fluid.def("fluid.tests.dynamicChild", {
+     $layers: "fluid.templateViewComponent",
++    elideParent: false,
+     template: `<div class="dynamic">Dynamic template</div>`
+ });
+ 
+diff --git a/tests/test-core/qunit/js/qunit-fluid.js b/tests/test-core/qunit/js/qunit-fluid.js
+index 200887b..f177c77 100644
+--- a/tests/test-core/qunit/js/qunit-fluid.js
++++ b/tests/test-core/qunit/js/qunit-fluid.js
+@@ -79,19 +79,25 @@ QUnit.assert.unavailable = function (value, message) {
+     this.ok(fluid.isUnavailable(value), message);
+ };
+ 
++fluid.isIgnorableNode = function (node) {
++    return node.nodeType === 3 && /^\s*$/.test(node.nodeValue); // Whitespace text node
++};
++
++const renderNodePath = segs => segs.length === 0 ? "<root>" : segs.join(".");
++
+ 
+ /* Assert that one or more DOM nodes and possibly their descendents match a JSON specification
+  */
+-QUnit.assert.assertNode = function (node, expected, message) {
++QUnit.assert.assertNode = function (node, expected, message, segs = []) {
+     if (!node.nodeType) { // Some types of DOM nodes (e.g. select) have a valid "length" property
+         if (node.length === 1 && expected.length === undefined) {
+             node = node[0];
+         }
+         else if (node.length !== undefined) {
+             expected = fluid.makeArray(expected);
+-            this.equal(node.length, expected.length, message + ": Expected number of nodes ");
++            this.equal(node.length, expected.length, `${message} - ${renderNodePath(segs)}: Expected number of nodes `);
+             for (let i = 0; i < node.length; ++i) {
+-                QUnit.assert.assertNode.call(this, node[i], expected[i], message + ": node " + i + ": ");
++                QUnit.assert.assertNode.call(this, node[i], expected[i], message, [...segs, `${i}(${node[i].tagName.toLowerCase()})`]);
+             }
+             return;
+         }
+@@ -113,10 +119,10 @@ QUnit.assert.assertNode = function (node, expected, message) {
+         const evalue = expected[key];
+         const pass = evalue === attr;
+         if (key === "$children") {
+-            const children = [...node.childNodes];
+-            QUnit.assert.assertNode.call(this, children, evalue, "> " + message);
++            const children = [...node.childNodes].filter(node => !fluid.isIgnorableNode(node));
++            QUnit.assert.assertNode.call(this, children, evalue, "> " + message, segs);
+         } else {
+-            this.ok(pass, message + messageExt + " expected value: " + evalue + " actual: " + attr);
++            this.ok(pass, `${message} - ${renderNodePath(segs)} ${messageExt} expected value: ${evalue} actual: ${attr}`);
+         }
+     }
+ };
