@@ -16,7 +16,8 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 
 const fs = require("fs"),
     path = require("path"),
-    vm = require("vm");
+    vm = require("vm"),
+    linkedom = require("linkedom");
 
 const moduleBaseDir = path.resolve(__dirname, "../..");
 
@@ -79,6 +80,15 @@ fluid.invokeLater = function (func) {
 
 fluid.loadInContext = loadInContext;
 fluid.loadIncludes = loadIncludes;
+
+fluid.serverDocument = linkedom.parseHTML("<html />").document;
+
+fluid.serverDocumentParser = function (text) {
+    const document = linkedom.parseHTML(text).document;
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(document.firstElementChild);
+    return fragment;
+};
 
 fluid.testingSupportLoaded = false;
 

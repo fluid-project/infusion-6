@@ -119,7 +119,7 @@ fluid.codemirror.construct = function (self, holder, container, oldInstance) {
 <script src="@{libUrlBase}/codemirror/js/json-lint.js"></script>
 <script src="@{libUrlBase}/codemirror/js/css-lint.js"></script>
 
-<script src="@{editUrlBase}/js/sfcLinter.js"></script>
+<script src="%fluid-edit/js/sfcLinter.js"></script>
 
 <style src="@{libUrlBase}/codemirror/css/codemirror.css"></style>
 <style src="@{libUrlBase}/codemirror/css/lint.css"></style>

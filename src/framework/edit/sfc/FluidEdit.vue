@@ -62,20 +62,20 @@ fluid.injectEditor(document);
 </script>
 
 <template>
-    <!-- Upstream loader needs to define libUrlBase and editUrlbase -->
-    <!-- <fluid-url-base id="libUrlBase" src="../../../src/lib"></fluid-url-base> -->
+    <!-- Upstream loader needs to define %infusion-6 and %fluid-edit -->
+    <!-- <fluid-module id="infusion-6" src="../../../src/lib"></fluid-module> -->
     <div>
-        <fluid-import layer="fluid.editorRoot" src="@{editUrlBase}/sfc/EditorRoot.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.layerList" src="@{editUrlBase}/sfc/EditorLayerList.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.menu" src="@{editUrlBase}/sfc/EditorMenu.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.editorsPane" src="@{editUrlBase}/sfc/EditorsPane.vue"></fluid-import>
-        <fluid-import layer="fluid.editor" src="@{editUrlBase}/sfc/Editor.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.historyPane" src="@{editUrlBase}/sfc/HistoryPane.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.substratePane" src="@{editUrlBase}/sfc/SubstratePane.vue"></fluid-import>
+        <fluid-import layer="fluid.editorRoot" src="%fluid-edit/sfc/EditorRoot.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.layerList" src="%fluid-edit/sfc/EditorLayerList.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.menu" src="%fluid-edit/sfc/EditorMenu.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.editorsPane" src="%fluid-edit/sfc/EditorsPane.vue"></fluid-import>
+        <fluid-import layer="fluid.editor" src="%fluid-edit/sfc/Editor.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.historyPane" src="%fluid-edit/sfc/HistoryPane.vue"></fluid-import>
+        <fluid-import layer="fluid.editor.substratePane" src="%fluid-edit/sfc/SubstratePane.vue"></fluid-import>
 
-        <fluid-import layer="fluid.codemirror" src="@{editUrlBase}/sfc/Codemirror.vue"></fluid-import>
+        <fluid-import layer="fluid.codemirror" src="%fluid-edit/sfc/Codemirror.vue"></fluid-import>
     </div>
 
 </template>
 
-<style src="@{editUrlBase}/css/FluidEdit.css"></style>
+<style src="%fluid-edit/css/FluidEdit.css"></style>
