@@ -85,7 +85,7 @@ fluid.demos.todoKeyUp = function (e, todos) {
     </div>
 </template>
 
-<style src="@{todoUrlBase}/css/bulma.css"></style>
+<style src="%todoApp/css/bulma.css"></style>
 
 <style>
     .fl-controls-section {

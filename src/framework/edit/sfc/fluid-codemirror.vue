@@ -98,31 +98,33 @@ fluid.codemirror.construct = function (self, holder, container, oldInstance) {
 };
 </script>
 
-<script src="@{libUrlBase}/codemirror/js/codemirror.js"></script>
-<script src="@{libUrlBase}/codemirror/js/css.js"></script>
-<script src="@{libUrlBase}/codemirror/js/javascript.js"></script>
-<script src="@{libUrlBase}/codemirror/js/markdown.js"></script>
-<script src="@{libUrlBase}/codemirror/js/xml.js"></script>
-<script src="@{libUrlBase}/codemirror/js/overlay.js"></script>
-<script src="@{libUrlBase}/codemirror/js/htmlmixed.js"></script>
-<script src="@{libUrlBase}/codemirror/js/vue.js"></script>
+<!-- What if someone wants to intercede on any of these imports? -->
+
+<script src="%infusion-lib/codemirror/js/codemirror.js"></script>
+<script src="%infusion-lib/codemirror/js/css.js"></script>
+<script src="%infusion-lib/codemirror/js/javascript.js"></script>
+<script src="%infusion-lib/codemirror/js/markdown.js"></script>
+<script src="%infusion-lib/codemirror/js/xml.js"></script>
+<script src="%infusion-lib/codemirror/js/overlay.js"></script>
+<script src="%infusion-lib/codemirror/js/htmlmixed.js"></script>
+<script src="%infusion-lib/codemirror/js/vue.js"></script>
 
 <!-- The core linting implementations -->
-<script src="@{libUrlBase}/codemirror/js/jshint.js"></script>
-<script src="@{libUrlBase}/codemirror/js/jsonlint.js"></script>
-<script src="@{libUrlBase}/codemirror/js/csslint.js"></script>
-<script src="@{libUrlBase}/codemirror/js/htmlhint.js"></script>
+<script src="%infusion-lib/codemirror/js/jshint.js"></script>
+<script src="%infusion-lib/codemirror/js/jsonlint.js"></script>
+<script src="%infusion-lib/codemirror/js/csslint.js"></script>
+<script src="%infusion-lib/codemirror/js/htmlhint.js"></script>
 
 <!-- CodeMirror's integrations for linting modes -->
-<script src="@{libUrlBase}/codemirror/js/forked-lint.js"></script>
-<script src="@{libUrlBase}/codemirror/js/javascript-lint.js"></script>
-<script src="@{libUrlBase}/codemirror/js/json-lint.js"></script>
-<script src="@{libUrlBase}/codemirror/js/css-lint.js"></script>
+<script src="%infusion-lib/codemirror/js/forked-lint.js"></script>
+<script src="%infusion-lib/codemirror/js/javascript-lint.js"></script>
+<script src="%infusion-lib/codemirror/js/json-lint.js"></script>
+<script src="%infusion-lib/codemirror/js/css-lint.js"></script>
 
 <script src="%fluid-edit/js/sfcLinter.js"></script>
 
-<style src="@{libUrlBase}/codemirror/css/codemirror.css"></style>
-<style src="@{libUrlBase}/codemirror/css/lint.css"></style>
+<style src="%infusion-lib/codemirror/css/codemirror.css"></style>
+<style src="%infusion-lib/codemirror/css/lint.css"></style>
 
 <style>
 .CodeMirror {

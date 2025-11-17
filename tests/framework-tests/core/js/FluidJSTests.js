@@ -1,4 +1,4 @@
-/* global QUnit */
+/* global QUnit, signal, computed */
 
 "use strict";
 
@@ -193,7 +193,7 @@ QUnit.test("stringTemplate: greedy", assert => {
     const tenant = "../tenant";
     const tenantname = "core";
     const expected = "../tenant/core";
-    const result = fluid.stringTemplate(template, { tenant: tenant, tenantname: tenantname });
+    const result = fluid.percStringTemplate(template, { tenant: tenant, tenantname: tenantname });
     assert.equal(expected, result, "The template strings should match.");
 });
 
@@ -211,7 +211,7 @@ QUnit.test("stringTemplate: array of string values", assert => {
         " files (" + atSize +
         " of " + totalSize + ")";
 
-    const result = fluid.stringTemplate(template, data);
+    const result = fluid.percStringTemplate(template, data);
     assert.equal(expected, result, "The template strings should match.");
 });
 
@@ -230,7 +230,7 @@ QUnit.test("stringTemplate: data object", assert => {
         " files (" + data.atSize +
         " of " + data.totalSize + ")";
 
-    const result = fluid.stringTemplate(template, data);
+    const result = fluid.percStringTemplate(template, data);
     assert.equal(expected, result, "The template strings should match.");
 });
 
@@ -242,7 +242,7 @@ QUnit.test("stringTemplate: empty string", assert => {
     };
 
     const expected = "Hello !";
-    const result = fluid.stringTemplate(template, data);
+    const result = fluid.percStringTemplate(template, data);
     assert.equal(expected, result, "The template strings should match.");
 });
 
@@ -260,7 +260,7 @@ QUnit.test("stringTemplate: missing value", assert => {
         " files (" + data.atSize +
         " of " + data.totalSize + ")";
 
-    const result = fluid.stringTemplate(template, data);
+    const result = fluid.percStringTemplate(template, data);
     assert.equal(expected, result, "The template strings should match.");
 });
 
@@ -277,7 +277,7 @@ QUnit.test("stringTemplate: multiple replacement", assert => {
         " files (" + totalFiles +
         " of " + atSize + ")";
 
-    const result = fluid.stringTemplate(template, data);
+    const result = fluid.percStringTemplate(template, data);
     assert.equal(expected, result, "The template strings should match.");
 });
 
@@ -687,4 +687,36 @@ fluid.tests.c3tests.forEach(fixture => {
             assert.expectFluidError("Expected failure", () => fluid.C3_precedence_parents([last], defs), fixture.error);
         }
     });
+});
+
+// Ensure preact-signals itself passes early cutoff
+QUnit.test("Early cutoff tests", assert => {
+
+    let busyCount = 0;
+
+    function busy() {
+        busyCount++;
+    }
+
+    const headCell = signal(0);
+    const c1Cell = computed( () => headCell.value);
+    const c2Cell = computed( () => {
+        c1Cell.value;
+        return 0;
+    });
+    const c3Cell = computed( () => { busy(); return c2Cell.value + 1; });
+    const c4Cell = computed( () => c3Cell.value + 2);
+    const c5Cell = computed( () => c4Cell.value + 3);
+
+    // Initial computation
+    headCell.value = 1;
+    assert.equal(c5Cell.value, 6, "Computed value 6");
+    assert.equal(busyCount, 1, "One lot of busy on init");
+
+    console.log("Test start");
+
+    headCell.value = 0;
+    assert.equal(c5Cell.value, 6, "No change in computed value");
+    assert.equal(busyCount, 1, "Busy censored through early cutoff");
+
 });

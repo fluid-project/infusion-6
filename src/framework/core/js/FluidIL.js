@@ -616,7 +616,9 @@ const $fluidILScope = function (fluid) {
         return string;
     };
 
-    fluid.getForComponentSoft = function (context, segs, shadow) {
+    // Currently just used in one place - fluid.activateTemplate's
+    // const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReferenceSoft("fluid.editorRoot", ["selfEditing"], shadow));
+    fluid.fetchContextReferenceSoft = function (context, segs, shadow) {
         const togo = signal();
         effect(() => {
             // eslint-disable-next-line no-unused-vars
@@ -677,6 +679,20 @@ const $fluidILScope = function (fluid) {
             }
         });
     };
+
+    fluid.getForComponentSoft = function (shadow, segs) {
+        const togo = signal(fluid.unavailable(`Path ${segs.join(", ")} has not been evaluated`));
+        effect( () => {
+            const sig = fluid.getForComponent(shadow, segs);
+            queueMicrotask(() => {
+                untracked( () => {
+                    togo.value = sig.value;
+                });
+            });
+        });
+        return togo;
+    };
+
     /**
      * Retrieves a signal for a value at a path within a component.
      *
@@ -1583,7 +1599,10 @@ const $fluidILScope = function (fluid) {
             // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
             const uniqueStaticNames = [...new Set(staticNames)];
 
-            const resolver = new fluid.HierarchyResolver();
+            const resolver = new fluid.HierarchyResolver(layerNames => {
+                // TODO: Dispose this properly
+                shadow.frameworkEffects.importLoader = fluid.ensureImportsLoaded(shadow, layerNames);
+            });
             // Any dynamic layer name which doesn't resolve is going to be categorised as unavailable
             const {designalArgs: resolvedStaticNames, unavailable} = fluid.processSignalArgs(uniqueStaticNames);
             const resolved = unavailable || fluid.flatMergedRound(shadow, resolver, resolvedStaticNames); // <= WILL READ LAYER REGISTRY
@@ -2040,7 +2059,6 @@ const $fluidILScope = function (fluid) {
 
     fluid.constructRootComponents(fluid.globalInstantiator); // currently a singleton - in future, alternative instantiators might come back
 
-    fluid.importMap = {};
 };
 
 if (typeof(fluid) !== "undefined") {

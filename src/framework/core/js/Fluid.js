@@ -191,15 +191,6 @@ const $fluidJSScope = function (fluid) {
         }
     };
 
-    // TODO: rescued from kettleCouchDB.js - clean up in time
-    fluid.expect = function (name, target, members) {
-        fluid.transform(fluid.makeArray(members), function (key) {
-            if (target[key] === undefined) {
-                fluid.fail(name + " missing required member " + key);
-            }
-        });
-    };
-
     // Logging
 
     /** Returns whether logging is enabled - legacy method
@@ -928,6 +919,11 @@ const $fluidJSScope = function (fluid) {
         return {designalArgs, unavailable};
     };
 
+    fluid.signalsToAvailable = function (sigs) {
+        const sigRec = fluid.processSignalArgs(sigs);
+        return sigRec.unavailable || sigRec.designalArgs;
+    };
+
     /**
      * Appends a site to the `site` array of the last element in the `causes` array of the given "unavailable" marker.
      * If the `site` array does not exist, it is allocated.
@@ -1193,21 +1189,35 @@ const $fluidJSScope = function (fluid) {
         return path;
     };
 
+    fluid.missingPolicies = {
+        unavailable: (root, path) => fluid.unavailable({
+            message: `Path ${path} was not found in model`,
+            // TODO: Upgrade incoming data so that it always comes with a full site cursor
+            site: root
+        }),
+        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    };
+
     /**
      * Retrieve the value at a specified path within a nested object structure.
      * Traverses the object hierarchy based on the path segments.
      *
      * @param {Object} root - The root object to begin traversal from.
      * @param {String|String[]} path - The path to the desired value, specified as a string or an array of path segments.
+     * @param {"unavailable"|"error"} [missingPolicy] - An optional policy from `fluid.missingPolicies` to be followed if a value is not found
      * @return {any} The value at the specified path, or `undefined` if the path traverses beyond defined objects.
      */
-    fluid.get = function (root, path) {
+    fluid.get = function (root, path, missingPolicy) {
         const segs = fluid.pathToSegs(path);
         const limit = segs.length;
         for (let j = 0; j < limit; ++j) {
             root = root ? root[segs[j]] : undefined;
         }
-        return root;
+        if (root === undefined && missingPolicy) {
+            return fluid.missingPolicies[missingPolicy](root, path);
+        } else {
+            return root;
+        }
     };
 
     /**
@@ -1222,6 +1232,9 @@ const $fluidJSScope = function (fluid) {
      */
     fluid.getThroughSignals = function (root, segs, extra) {
         const togo = computed(function getThroughSignals() {
+            if (window.cycleImminent) {
+                debugger;
+            }
             let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
                 if (!move || fluid.isUnavailable(move)) {
@@ -2495,9 +2508,11 @@ const $fluidJSScope = function (fluid) {
         /**
          * Create a new HierarchyResolver.
          *
+         * @param {Function} layerFetcher - Function which will initiate fetching of demanded layers
          * @param {Object<String, Signal>} [flatDefsIn={}] - An optional initial map of precomputed layer signals.
          */
-        constructor(flatDefsIn = {}) {
+        constructor(layerFetcher, flatDefsIn = {}) {
+            this.layerFetcher = layerFetcher;
             // A local store, so that we can use C3_precedence with direct lookups
             this.flatDefs = Object.assign({}, flatDefsIn);
         }
@@ -2583,6 +2598,7 @@ const $fluidJSScope = function (fluid) {
                 // Second check if any layers are unavailable
                 const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
                 if (unavailable) {
+                    this.layerFetcher(layerNames);
                     return unavailable;
                 } else {
                     // Finally flatten cache into pure values ready for resolution
@@ -2644,6 +2660,40 @@ const $fluidJSScope = function (fluid) {
         return fluid.getThroughSignals(resolved, ["merged"], {$variety: "mergedDef"});
     };
 
+    fluid.layerLoaders = {
+        "vue": "fluid.loadSFC",
+        "js": "fluid.loadLayer"
+    };
+
+    fluid.importMap = {};
+
+    fluid.loadImportMap = function (importMap) {
+        fluid.transform(importMap, ({path}, layerName) => {
+            const url = fluid.module.resolvePath(path);
+            fluid.importMap[layerName] = {
+                loadStyle: "sfc",
+                url
+            };
+            const extension = url.split(".").pop();
+            const loader = fluid.layerLoaders[extension];
+            if (!loader) {
+                fluid.fail("Can't find loader for file ", url);
+            } else {
+                fluid.invokeGlobalFunction(loader, [layerName, url]);
+            }
+
+        });
+    };
+
+    /**
+     * Acquires and processes an import map by transforming its paths and loading the corresponding layers.
+     * @param {Object<String, String>} importMap - An $importMap as found on a component
+     */
+    fluid.acquireImports = function (importMap) {
+        const useImportMap = fluid.transform(importMap, path => ({path}));
+        fluid.loadImportMap(useImportMap);
+    };
+
     // Must be defined before we construct any components
     fluid.makeComponentCreator = function (componentName) {
         const creator = function () {
@@ -2659,8 +2709,10 @@ const $fluidJSScope = function (fluid) {
 
     fluid.writeDef = function (layerName, layer) {
         fluid.writeLayer(layerName, layer);
-        // TODO: This should just be a natural side-effect of writing any layer descended from fluid.component
+        // TODO: Generalised mechanism for side-effects for layer registration
         fluid.makeComponentCreator(layerName);
+        // TODO: Reactive implementation of this, and also withdraw when deregistered
+        fluid.acquireImports(layer.$importMap);
     };
 
     fluid.deferredDef = function (layerName, layer) {
@@ -2834,7 +2886,7 @@ const $fluidJSScope = function (fluid) {
      * @param {Object.<String.String>} values - A map of token names to the values which should be interpolated.
      * @return {String} The text of `template` whose tokens have been interpolated with values.
      */
-    fluid.oldStringTemplate = function (template, values) {
+    fluid.percStringTemplate = function (template, values) {
         let keys = Object.keys(values);
         keys = keys.sort((keya, keyb) => keyb.length - keya.length);
         for (let i = 0; i < keys.length; ++i) {
@@ -2899,7 +2951,7 @@ const $fluidJSScope = function (fluid) {
      * @param {String} template - A string that contains placeholders for tokens of the form `@{token}` embedded into it.
      * @return {Array<String|Object>} An array of token values.
      */
-    fluid.parseStringTemplate = function (template) {
+    fluid.parseAtStringTemplate = function (template) {
         const tokens = [];
         let lastIndex = 0;
         let match;
@@ -2936,9 +2988,9 @@ const $fluidJSScope = function (fluid) {
         return tokens;
     };
 
-    fluid.stringTemplate = function (template, model) {
-        const tokens = fluid.parseStringTemplate(template);
-        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path));
+    fluid.atStringTemplate = function (template, model) {
+        const tokens = fluid.parseAtStringTemplate(template);
+        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path, "error"));
         return segs.join("");
     };
 
@@ -2959,6 +3011,14 @@ const $fluidJSScope = function (fluid) {
      */
     fluid.fetch = function (url, options, strategy) {
         const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
+        const assignResult = data => {
+            try {
+                togo.value = data;
+            } catch (e) { // Don't use catch's error handler since this will swallow it
+                fluid.fail("Error assigning I/O result: ", e);
+                throw e;
+            }
+        };
         fetch(url, {...options, ...fluid.cacheOptions})
             .then(response => {
                 if (!response.ok) {
@@ -2970,13 +3030,15 @@ const $fluidJSScope = function (fluid) {
             .then(data => {
                 if (!fluid.isErrorUnavailable(togo.peek())) { // Fetch API provides an undefined response in the case response is not OK
                     if (options?.delay) {
-                        window.setTimeout(() => togo.value = data, options.delay);
+                        window.setTimeout(() => assignResult(data), options.delay);
                     } else {
-                        togo.value = data;
+                        assignResult(data);
                     }
                 }
             })
-            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
+            .catch(err => {
+                togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"});
+            });
         return togo;
     };
 
@@ -3007,6 +3069,22 @@ const $fluidJSScope = function (fluid) {
     };
 
     /**
+     * Converts a signal into a Promise that resolves when the signal's value changes to an
+     * available value.
+     *
+     * @param {Signal<any>} valSignal - The signal to monitor.
+     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
+     */
+    fluid.signalToPromise = function (valSignal) {
+        return new Promise( (resolve) => {
+            const effect = fluid.effect(function (value) {
+                resolve(value);
+                effect._dispose();
+            }, [valSignal]);
+        });
+    };
+
+    /**
      * Converts a signal at a given path within a component into a Promise that resolves when the signal's value changes to an
      * available value.
      *
@@ -3014,14 +3092,9 @@ const $fluidJSScope = function (fluid) {
      * @param {String|String[]} path - The path within the component where the signal is located.
      * @return {Promise<any>} A Promise that resolves with the value of the signal when it updates.
      */
-    fluid.toPromise = function (component, path) {
+    fluid.siteToPromise = function (component, path) {
         const pathSignal = fluid.getForComponent(component[$m], path);
-        return new Promise( (resolve) => {
-            const effect = fluid.effect(function (pathValue) {
-                resolve(pathValue);
-                effect._dispose();
-            }, [pathSignal]);
-        });
+        return fluid.signalToPromise(pathSignal);
     };
 
 };

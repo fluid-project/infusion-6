@@ -1,4 +1,4 @@
-/* global computed */
+/* global signal, effect */
 
 "use strict";
 
@@ -15,21 +15,6 @@ const $fluidViewBrowserScope = function (fluid) {
     fluid.parseDOM = function (template) {
         const fragment = document.createRange().createContextualFragment(template);
         return fragment.firstElementChild || fluid.unavailable("Unable to parse template as HTML");
-    };
-
-    fluid.shadowForElement = element => {
-        const shadow = fluid.viewContainerRegistry.get(element);
-        return shadow && !/^fullPageEditor-\d+\.inspectOverlay$/.test(shadow.path) ? shadow : null;
-    };
-
-    fluid.shadowForElementParent = element => {
-        while (element) {
-            const shadow = fluid.shadowForElement(element);
-            if (shadow) {
-                return {shadow, container: element};
-            }
-            element = element.parentElement;
-        }
     };
 
     /**
@@ -172,66 +157,13 @@ const $fluidViewBrowserScope = function (fluid) {
         }
     };
 
-    /**
-     * Create a live `Signal` that tracks elements matching a CSS selector within a DOM subtree.
-     * The signal updates whenever matching elements are added or removed.
-     * @param {String} selector - The CSS selector to match elements.
-     * @param {Element|null} [root=null] - The root element to observe; defaults to `document` if `null`.
-     * @return {Signal<Array<Element>>} A signal containing the current list of matching elements.
-     */
-    fluid.liveQuery = function (selector, root = null) {
-        const togo = signal([]);
-        const context = root || document;
-
-        const updateMatches = () => {
-            const upcoming = Array.from(context.querySelectorAll(selector));
-            if (!fluid.arrayEqual(togo.value, upcoming)) {
-                togo.value = upcoming;
-            }
-        };
-
-        const observer = new MutationObserver(() => {
-            // TODO: Could do better, I guess, by observing updates in a finegrained way but this is just fine for now
-            updateMatches();
-        });
-
-        const init = () => {
-            observer.observe(context, {
-                childList: true,
-                subtree: true
-            });
-            updateMatches();
-        };
-        // Despite widespread explanations to the contrary, MutationObserver will not register correctly before document is loaded
-        fluid.applyOnLoad(init);
-
-        // TODO: Go with our wierd "Effect" contract for now, need to make a general "disposable" contract
-        togo._dispose = () => observer.disconnect();
-        return togo;
-    };
-
-    /**
-     * Create a computed `Signal` that tracks the first element matching a CSS selector within a DOM subtree.
-     * If no element matches, the signal yields an "unavailable" placeholder.
-     * @param {String} selector - The CSS selector to match a single element.
-     * @param {Element|null} [root=null] - The root element to observe; defaults to `document` if `null`.
-     * @return {Signal<Element|Object>} A signal containing the first matching element or an "unavailable" placeholder.
-     */
-    fluid.liveQueryOne = function (selector, root = null) {
-        const noElement = fluid.unavailable({cause: "No element matches selector " + selector, variety: "I/O"});
-        const query = fluid.liveQuery(selector, root);
-        const togo = computed( () => query.value.length === 0 ? noElement : query.value[0]);
-        togo._dispose = query._dispose();
-        return togo;
-    };
-
     fluid.applyOnLoad(() => {
-        fluid.acquireUrlBases(document.documentElement);
-        fluid.acquireImports(document, document.documentElement);
+        fluid.acquireModules(document.documentElement);
+        fluid.docToImportMap(document, document.documentElement);
     });
 
     // Many thanks to Hugo Daniel https://hugodaniel.com/pages/boredom/ for inspiration for this concept
-    fluid.selfBootQuery = fluid.liveQuery("*[fluid-layers]");
+    fluid.selfBootQuery = fluid.liveQuerySelectorAll("*[fluid-layers]");
 
     fluid.selfBootEffect = effect( () => {
         const elements = fluid.selfBootQuery.value;

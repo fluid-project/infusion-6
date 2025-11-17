@@ -464,7 +464,7 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
         userDbName: "users",
         userDbUrl: {
             $compute: {
-                func: "fluid.oldStringTemplate",
+                func: "fluid.percStringTemplate",
                 args:     ["http://localhost:%port/%userDbName", { port: "{self}.couch.port", userDbName: "{self}.couch.userDbName" }]
             }
             /** Perhaps a DSL could write:
@@ -583,7 +583,7 @@ QUnit.test("Async computation test", async function (assert) {
             }
         }
     });
-    await fluid.toPromise(that, "result");
+    await fluid.siteToPromise(that, "result");
     assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
 });
 

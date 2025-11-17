@@ -4,6 +4,7 @@
     window.preactSignalsCore = exports;
 })(function (require, exports) {
     "use strict";
+    window.cycleImminent = false;
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.signal = signal;
     exports.computed = computed;
@@ -263,6 +264,9 @@
         },
         set: function (value) {
             if (value !== this._value) {
+                if (batchIteration > 50) {
+                    window.cycleImminent = true;
+                }
                 if (batchIteration > 100) {
                     throw new Error("Cycle detected");
                 }
@@ -613,5 +617,17 @@
         // because bound functions seem to be just as fast and take up a lot less memory.
         // return effect._dispose.bind(effect);
         return effect;
+    }
+
+    /** Given a computed or an effect whose callback has just been called, determine what are the ultimate source
+     * node(s) whose updates have been responsible for the update, and what is the path through computed nodes to
+     * the supplied target
+     * @param {Target} target Computed or Effect which has just been notified
+     * @returns {Object} cause - Structure reporting cause of notification
+     * @returns {Array[Source]} sources - The source(s) whose updates caused the notification
+     * @returns {Array[Computed]} path - The intermediate computed nodes between sources and target, sorted in dependency
+     * order
+     */
+    function findCause(target) {
     }
 });

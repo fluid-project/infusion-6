@@ -1,0 +1,10 @@
+{
+    "name": "fluid-tests",
+    "version": "6.0.0-pre",
+    "infusion": {
+        "imports": [
+            "lib/qunit/js/qunit.js",
+            "test-core/qunit/js/qunit-fluid.js"
+        ]
+    }
+}

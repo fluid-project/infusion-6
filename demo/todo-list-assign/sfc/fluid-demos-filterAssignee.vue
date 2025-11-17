@@ -1,6 +1,9 @@
 <script>
 fluid.def("fluid.demos.filterAssignee", {
     $layers: ["fluid.demos.filter", "fluid.sfcTemplateViewComponent"],
+    $importMap: {
+        "fluid.UISelect": "%todoApp/sfc/fluid-UISelect.vue"
+    },
     select: {
         $component: {
             $layers: "fluid.UISelect",

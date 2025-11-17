@@ -35,6 +35,13 @@ const sfcParserScope = function (fluid) {
         return token;
     };
 
+    const expectTokens = function (token, names) {
+        if (!names.includes(token.name)) {
+            throw ("Unexpected token with name ", token.name, ", expected ", names.join(", "));
+        };
+        return token;
+    };
+
     const $m = fluid.metadataSymbol;
 
 
@@ -111,7 +118,7 @@ const sfcParserScope = function (fluid) {
         } else if (state.currentDef && token.name === "ObjectExpression" && state.segs.length === 0) {
             fluid.set(state, ["defMap", state.currentDef, ...state.segs, $m], {from: token.from + state.offset, to: token.to + state.offset});
         } else if (state.currentDef && token.name === "Property") {
-            const propDef = expectToken(token.children[0], "PropertyDefinition");
+            const propDef = expectTokens(token.children[0], ["PropertyDefinition", "String"]); // Could be unquoted or quoted
             const value = token.children[2]; // Could be ObjectExpression, String, or any other RH
             state.segs.push(propDef.text);
             pushedSeg = true;
@@ -145,7 +152,7 @@ const sfcParserScope = function (fluid) {
      * If the given `key` is already present in the `defMap`, its textual range is removed.
      *
      * @param {String} text - The original textual form of the structure to patch.
-     * @param {Object} defMap - A flat defMap mapping top-level property names to their source ranges.
+     * @param {DefMap} defMap - A flat defMap mapping top-level property names to their source ranges.
      *                          Must include a root range at defMap.$m.
      * @param {String} key - The property key to add or update in the structure.
      * @param {Object} value - The new value to assign to the property key.

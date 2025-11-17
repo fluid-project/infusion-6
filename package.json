@@ -73,5 +73,29 @@
         "terser": "5.39.0",
         "qunit": "2.21.0",
         "xhr-mock": "2.5.1"
+    },
+    "infusion": {
+        "imports": {
+            "client": [
+                "src/lib/preact-signals/preact-signals-core.js",
+                "src/framework/core/js/Fluid.js",
+                "src/framework/core/js/FluidModules.js",
+                "src/framework/core/js/FluidIL.js",
+                "src/framework/core/js/FluidView-browser.js",
+                "src/lib/lezer/lezer-javascript-browser.js",
+                "src/framework/core/js/sfc-parser.js",
+                "src/framework/core/js/template-parser.js"
+            ],
+            "server": [
+                "src/lib/preact-signals/preact-signals-core.js",
+                "src/framework/core/js/Fluid.js",
+                "src/framework/core/js/FluidModules.js",
+                "src/framework/core/js/FluidIL.js",
+                "src/framework/core/js/FluidView-node.js",
+                "src/lib/lezer/lezer-javascript-browser.js",
+                "src/framework/core/js/sfc-parser.js",
+                "src/framework/core/js/template-parser.js"
+            ]
+        }
     }
 }

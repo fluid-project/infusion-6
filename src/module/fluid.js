@@ -21,13 +21,20 @@ const fs = require("fs"),
 
 const moduleBaseDir = path.resolve(__dirname, "../..");
 
-const getBaseDir = function () {
-    return __dirname;
-};
 
-const buildPath = function (pathSeg) {
-    return path.join(getBaseDir(), pathSeg);
-};
+/**
+ * Joins two path segments using a forward slash.
+ *
+ * Ensures that there is exactly one slash between segments.
+ *
+ * @param {String} a - The first path segment.
+ * @param {String} b - The second path segment.
+ * @return {String} The combined path.
+ */
+function buildPath(a, b) {
+    console.log(a, b);
+    return a.replace(/\/+$/, "") + "/" + b.replace(/^\/+/, "");
+}
 
 // Report of experiments performed with node.js globals done on 1/9/14 - what we might like to write at this point is
 // fluid: {global: GLOBAL}; - this "nearly" works but unfortunately the process of transporting the "pan-global" object
@@ -55,18 +62,24 @@ context.window = context;
 
 /* Load a standard, non-require-aware Fluid framework file into the Fluid context, given a filename
  * relative to this directory (src/module) **/
-const loadInContext = function (path, absolute) {
-    const fullpath = absolute ? path : buildPath(path);
-    const data = fs.readFileSync(fullpath);
-    vm.runInContext(data, context, fullpath);
+const loadInContext = function (fullPath) {
+    const data = fs.readFileSync(fullPath);
+    vm.runInContext(data, context, fullPath);
 };
 
-const loadIncludes = function (path) {
-    const includes = require(buildPath(path));
-    includes.forEach(include => loadInContext(include));
+const loadImportsFromPackage = function (path) {
+    const modulePath = buildPath(moduleBaseDir, path);
+    const pkgPath = modulePath + "package.json";
+    const pkg = require(pkgPath);
+    const imports = pkg.infusion.imports;
+    const ourImports = imports.server || imports;
+    ourImports.forEach(include => {
+        const fullPath = buildPath(modulePath, include);
+        loadInContext(fullPath);
+    });
 };
 
-loadIncludes("includes.json");
+loadImportsFromPackage("/");
 
 const fluid = context.fluid;
 
@@ -79,7 +92,7 @@ fluid.invokeLater = function (func) {
 };
 
 fluid.loadInContext = loadInContext;
-fluid.loadIncludes = loadIncludes;
+fluid.loadImportsFromPackage = loadImportsFromPackage;
 
 fluid.serverDocument = linkedom.parseHTML("<html />").document;
 
@@ -98,13 +111,13 @@ fluid.testingSupportLoaded = false;
 fluid.loadTestingSupport = function () {
     // Guard against multiple inclusion of QUnit - FLUID-6188
     if (!fluid.testingSupportLoaded) {
-        fluid.loadIncludes("devIncludes.json");
+        loadImportsFromPackage("tests/");
         fluid.testingSupportLoaded = true;
     }
 };
 
 
-fluid.module.register("infusion", moduleBaseDir, require);
+fluid.module.register("infusion", moduleBaseDir);
 
 // Export the fluid object into the pan-module node.js global object
 global.fluid = fluid;

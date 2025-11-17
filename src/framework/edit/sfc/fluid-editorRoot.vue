@@ -207,21 +207,23 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
         overlay: document.getElementById("fl-inspect-overlay"),
         selfOverlay: document.getElementById("fl-self-inspect-overlay")
     };
-    let target, colour;
-    if (inspectingSite) {
-        const that = inspectingSite.shadow.that;
-        const layerName = fluid.peek(that.$layers);
-        colour = layerColours[layerName] || "transparent";
-        Object.values(overlays).map(overlay => overlay.querySelector(".fl-inspect-layer").innerText = layerName);
-        target = fluid.deSignal(that.renderedContainer);
+    if (overlays.overlay && overlays.selfOverlay) {
+        let target, colour;
+        if (inspectingSite) {
+            const that = inspectingSite.shadow.that;
+            const layerName = fluid.peek(that.$layers);
+            colour = layerColours[layerName] || "transparent";
+            Object.values(overlays).map(overlay => overlay.querySelector(".fl-inspect-layer").innerText = layerName);
+            target = fluid.deSignal(that.renderedContainer);
+        }
+        fluid.applyOverlay(overlays, target, colour);
     }
-    fluid.applyOverlay(overlays, target, colour);
 };
 
 </script>
 
-<script src="@{editUrlBase}/js/editorRoot.js"></script>
-<script src="@{editUrlBase}/js/layerColourManager.js"></script>
+<script src="%fluid-edit/js/editorRoot.js"></script>
+<script src="%fluid-edit/js/layerColourManager.js"></script>
 
 <template>
     <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="max-width: 700px; min-width: 700px">

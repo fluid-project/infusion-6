@@ -9,7 +9,7 @@ fluid.def("fluid.editor.substratePane", {
 });
 </script>
 
-<script src="@{editUrlBase}/js/substrateTree.js"></script>
+<script src="%fluid-edit/js/substrateTree.js"></script>
 
 <template>
     <div class="fl-substrate-pane" @id="substrateTree">

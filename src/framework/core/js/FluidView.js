@@ -85,8 +85,64 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
-     * Finds all child nodes of a given virtual node that match a specified tag name.
-     * This implementation only supports exact matches by tag name.
+     * Create a live `Signal` that tracks elements matching a CSS selector within a DOM subtree.
+     * The signal updates whenever matching elements are added or removed.
+     * @param {String} selector - The CSS selector to match elements.
+     * @param {Element|null} [root=null] - The root element to observe; defaults to `document` if `null`.
+     * @param {Document} [dokkument=document] - The document object to use for querying and observing.
+     * @return {Signal<Array<Element>>} A signal containing the current list of matching elements.
+     */
+    fluid.liveQuerySelectorAll = function (selector, root = null, dokkument = document) {
+        const togo = signal([]);
+        const context = root || dokkument;
+
+        const updateMatches = () => {
+            const upcoming = Array.from(context.querySelectorAll(selector));
+            if (!fluid.arrayEqual(togo.value, upcoming)) {
+                togo.value = upcoming;
+            }
+        };
+        const window = dokkument.defaultView;
+
+        const observer = new window.MutationObserver(() => {
+            // TODO: Could do better, I guess, by observing updates in a finegrained way but this is just fine for now
+            updateMatches();
+        });
+
+        const init = () => {
+            observer.observe(context, {
+                childList: true,
+                subtree: true
+            });
+            updateMatches();
+        };
+        // Despite widespread explanations to the contrary, MutationObserver will not register correctly before document is loaded
+        fluid.applyOnLoad(init);
+
+        // TODO: Go with our wierd "Effect" contract for now, need to make a general "disposable" contract
+        togo._dispose = () => observer.disconnect();
+        return togo;
+    };
+
+    /**
+     * Create a computed `Signal` that tracks the first element matching a CSS selector within a DOM subtree.
+     * If no element matches, the signal yields an "unavailable" placeholder.
+     * @param {String} selector - The CSS selector to match a single element.
+     * @param {Element|null} [root=null] - The root element to observe; defaults to `document` if `null`.
+     * @param {Document} [dokkument=document] - The document object to use for querying and observing.
+     * @return {Signal<Element|Object>} A signal containing the first matching element or an "unavailable" placeholder.
+     */
+    fluid.liveQuerySelector = function (selector, root = null, dokkument = document) {
+        const noElement = fluid.unavailable({cause: "No element matches selector " + selector, variety: "I/O"});
+        const query = fluid.liveQuerySelectorAll(selector, root, dokkument);
+        const togo = computed( () => query.value.length === 0 ? noElement : query.value[0]);
+        togo._dispose = query._dispose();
+        return togo;
+    };
+
+    /**
+     * Finds all child nodes of a given virtual or physical node that match a specified tag name.
+     * For virtual nodes, this implementation only supports exact matches by tag name.
      *
      * @param {VNode|Element} node - The virtual or DOM node whose children are to be searched.
      * @param {String} selector - The tag name to match (case-insensitive).
@@ -164,6 +220,9 @@ const fluidViewScope = function (fluid) {
         return root;
     };
 
+    // TODO: see if we can make this read-only
+    fluid.trueSignal = signal(true);
+
     /**
      * @typedef {Object} InjectionStyle
      * @property {Function} construct - A function that returns a virtual DOM node (VNode) representing the script element.
@@ -179,6 +238,7 @@ const fluidViewScope = function (fluid) {
             }),
             update: (node, rec, absUrl) => {
                 node.firstChild.nodeValue = rec.text + `\n/*# sourceURL=${absUrl}*/`;
+                return fluid.trueSignal;
             }
         },
         link: {
@@ -192,6 +252,7 @@ const fluidViewScope = function (fluid) {
             update: (node, rec) => {
                 // It must be a fluid.importUrlResource
                 node.setAttribute("href", rec.url);
+                return fluid.trueSignal;
             }
         }
     };
@@ -205,6 +266,7 @@ const fluidViewScope = function (fluid) {
             }),
             update: (node, rec, absUrl) => {
                 node.firstChild.nodeValue = rec.text + `\n//# sourceURL=${absUrl}`;
+                return fluid.trueSignal;
             }
         },
         link: {
@@ -216,9 +278,12 @@ const fluidViewScope = function (fluid) {
                 }
             }),
             update: (node, rec) => {
+                const togo = signal(fluid.unavailable(`Script at url {rec.url} is loading`, "I/O"));
                 // It must be a fluid.importUrlResource
                 node.setAttribute("src", rec.url);
+                node.onload = () => togo.value = true;
                 node.async = false;
+                return togo;
             }
         }
     };
@@ -240,24 +305,26 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
-     * Injects a Single File Component (SFC) element into the document's head.
+     * Injects a SFC element (either a script or a style node) into the document's head.
      *
      * @param {Document} dokkument - The document object used to create and append the DOM node.
      * @param {String} nodeId - The unique identifier for the DOM node to be injected.
      * @param {InjectionStyle} injStyle - The injection style object containing methods to construct and update the DOM node.
      * @param {InjectRecord} injRec - The record containing either the URL or inline content for the SFC.
      * @param {String} url - The URL of the SFC, used for debugging and error reporting.
+     * @return {signal<Boolean>} - A signal which resolves to `true` once the injection has completed
      */
     fluid.doInjectSFCElement = function (dokkument, nodeId, injStyle, injRec, url) {
         const absUrl = url; // fluid.toAbsoluteUrl(dokkument, url);
         const fresh = fluid.vNodeToDom(dokkument, injStyle.construct());
         fresh.id = nodeId;
-        injStyle.update(fresh, injRec, absUrl);
+        const togo = injStyle.update(fresh, injRec, absUrl);
         try {
             dokkument.head.appendChild(fresh);
         } catch (e) {
             fluid.fail(`Syntax error in SFC injection at url ${url}: ${e.message}`, e);
         }
+        return togo;
     };
 
     /**
@@ -282,6 +349,7 @@ const fluidViewScope = function (fluid) {
      * @param {String} url - The URL of the SFC, used for debugging and error reporting.
      * @param {Object<String, InjectRecord>} oldInjRecs - A map of existing injection records, keyed by node ID.
      * @param {Object<String, InjectionStyle>} injStyles - A map of injection styles, keyed by "literal" or "link".
+     * @return {signal<Boolean>} - A signal which resolves to `true` once the injection has completed
      */
     fluid.injectSFCElement = function (dokkument, injRec, url, oldInjRecs, injStyles) {
         const nodeId = injRec.nodeId;
@@ -296,38 +364,43 @@ const fluidViewScope = function (fluid) {
             }
             const injStyleKey = injRec.text ? "literal" : "link";
             const injStyle = injStyles[injStyleKey];
-            fluid.doInjectSFCElement(dokkument, nodeId, injStyle, injRec, url);
+            return fluid.doInjectSFCElement(dokkument, nodeId, injStyle, injRec, url);
+        } else {
+            return fluid.trueSignal;
         }
     };
 
-    fluid.urlBaseRegistry = {};
-
+    // TODO: Destroying the nodes should also deregister the module - global Giladism
     /**
-     * Resolves a raw template string into a fully qualified URL using the `fluid.urlBaseRegistry`.
+     * Acquires all `<fluid-module>` elements within the given DOM root and populates the fluid module registry.
+     * Each `<fluid-module>` element must have an `id` and a `src` attribute. The `src` is normalized to ensure it ends with a "/".
      *
-     * @param {String} raw - The raw template string containing placeholders.
-     * @return {String} The resolved URL.
+     * @param {VNode|Element} root - The root DOM element to search for `<fluid-module>` elements.
+     * @return {Object<String, Object>} An array of objects representing the acquired `<fluid-module>` nodes.
      */
-    fluid.templateBaseUrl = function (raw) {
-        const tidy = raw.replace(/}\//g, "}"); // ensure no leading / in suffix URL
-        return fluid.stringTemplate(tidy, fluid.urlBaseRegistry);
+    fluid.acquireModules = function (root) {
+        const moduleNodes = fluid.querySelectorAll(root, "fluid-module");
+        const entries = moduleNodes.map(node => {
+            const id = node.attrs.id;
+            const src = node.attrs.src;
+            fluid.module.register(id, src.endsWith("/") ? src : src + "/");
+            return [id, { node, path: src}];
+        });
+        return Object.fromEntries(entries);
     };
 
     /**
-     * Acquires all `<fluid-url-base>` elements within the given DOM root and populates the `fluid.urlBaseRegistry`.
-     * Each `<fluid-url-base>` element must have an `id` and a `src` attribute. The `src` is normalized to ensure it ends with a "/".
+     * Extracts the layer name from a given file path.
      *
-     * @param {VNode|Element} root - The root DOM element to search for `<fluid-url-base>` elements.
-     * @return {Array<Object>} An array of objects representing the acquired `<fluid-url-base>` nodes.
+     * This function matches the last segment of the file path (excluding the file extension),
+     * replaces any hyphens (`-`) with dots (`.`), and returns the resulting string.
+     *
+     * @param {String} path - The file path to extract the layer name from.
+     * @return {String} The extracted layer name with hyphens replaced by dots, or an empty string if no match is found.
      */
-    fluid.acquireUrlBases = function (root) {
-        const urlBaseNodes = fluid.querySelectorAll(root, "fluid-url-base");
-        urlBaseNodes.forEach(node => {
-            const id = node.attrs.id;
-            const src = node.attrs.src;
-            fluid.urlBaseRegistry[id] = src.endsWith("/") ? src : src + "/";
-        });
-        return urlBaseNodes.map(node => ({node}));
+    fluid.pathToLayerName = function (path) {
+        const match = path.match(/\/([^/]+)\.[^/.]+$/);
+        return match ? match[1].replace(/-/g, ".") : "";
     };
 
     /**
@@ -339,20 +412,26 @@ const fluidViewScope = function (fluid) {
      * @param {VNode|Element} root - The root element to search for `<fluid-import>` elements.
      * @return {Array<Object>} An array of objects representing the acquired `<fluid-import>` nodes, including their layer names and URLs.
      */
-    fluid.acquireImports = function (dokkument, root) {
-        const togo = [];
+    fluid.docToImportMap = function (dokkument, root) {
+        const importMap = {};
         const importNodes = fluid.querySelectorAll(root, "fluid-import");
         importNodes.forEach(node => {
-            const layerName = node.attrs.layer;
-            const url = fluid.templateBaseUrl(node.attrs.src);
-            fluid.importMap[layerName] = {
-                loadStyle: "sfc",
-                url
-            };
-            togo.push({layerName, url, node});
-            fluid.loadSFC(layerName, url, dokkument);
+            const path = node.attrs.src;
+            const layerName = node.attrs.layer || fluid.pathToLayerName(path);
+            if (!layerName) {
+                // TODO: Feed this back to any UI editing the document
+                fluid.log(fluid.logLevel.FAIL, "Error in document structure: couldn't determine layer name from import ", node);
+            } else {
+                importMap[layerName] = {path, node};
+            }
         });
-        return togo;
+        fluid.loadImportMap(importMap);
+
+        // We can do this early in case the imports are found in a doc, otherwise it will happen when the layer
+        // is demanded - in time this should be removed
+        Object.keys(importMap).forEach(layerName => fluid.subscribeDocToImports(layerName, dokkument));
+
+        return importMap;
     };
 
     /**
@@ -373,7 +452,7 @@ const fluidViewScope = function (fluid) {
     };
 
     // Currently only called from activateTemplate
-    // acquireUrlBases and acquireImports called separtely from root document onload
+    // acquireModules and acquireImports called separately from root document onload
     /**
      * Processes and removes all `<fluid-url-base>` and `<fluid-import>` directive nodes from the given root.
      * This function ensures that these directive nodes are not rendered in the final DOM output, if the root was a template
@@ -382,9 +461,9 @@ const fluidViewScope = function (fluid) {
      */
     fluid.acquireLoadDirectives = function (dokkument, root) {
         // Remove directive nodes from template since no use in them rendering
-        const removeAll = recs => recs.forEach(rec => fluid.removeArrayElement(rec.node.parentNode, rec.node));
-        removeAll(fluid.acquireUrlBases(root));
-        removeAll(fluid.acquireImports(dokkument, root));
+        const removeAll = recs => fluid.each(recs, rec => fluid.removeArrayElement(rec.node.parentNode, rec.node));
+        removeAll(fluid.acquireModules(root));
+        removeAll(fluid.docToImportMap(dokkument, root));
     };
 
     /**
@@ -535,7 +614,7 @@ const fluidViewScope = function (fluid) {
                 defMapList.forEach((sni, index) => {
                     const nodeId = `fl-script-${layerName}-${index}`;
                     const injRec = sni.url ?
-                        {url: fluid.templateBaseUrl(sni.url)} :
+                        {url: fluid.module.resolvePath(sni.url)} :
                         // TODO: Should wrap script in closure so it doesn't pollute global namespace
                         {text: sni.text};
                     injRec.nodeId = nodeId;
@@ -548,7 +627,7 @@ const fluidViewScope = function (fluid) {
                     const nodeId = `fl-style-${layerName}-${index}`;
                     const src = styleNode.attrs?.src;
                     const injRec = src ?
-                        {url: fluid.templateBaseUrl(src)} :
+                        {url:  fluid.module.resolvePath(src)} :
                         {text: styleNode.children[0]?.text};
                     injRec.nodeId = nodeId;
                     injRec.variety = "style";
@@ -619,11 +698,11 @@ const fluidViewScope = function (fluid) {
      * @return {SFCRecord} Record for the SFC layer
      */
     fluid.readSFC = function (layerName) {
-        const unavailable = fluid.unavailable(`SFC for ${layerName} is not available`);
         const rec = fluid.sfcStore[layerName];
         if (rec) {
             return rec;
         } else {
+            const unavailable = fluid.unavailable(`SFC for ${layerName} is not available`);
             return fluid.sfcStore[layerName] = {
                 textSignal: signal(unavailable),
                 injRecsSignal: signal(unavailable),
@@ -634,35 +713,49 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
-     * Ensure that a Single File Component (SFC) is loaded from a given URL and bind its injections to the
-     * supplied document.
+     * Ensure that a Single File Component (SFC) is loaded from a given URL.
      *
      * @param {String} layerName - The name of the layer associated with the SFC.
      * @param {String} url - The URL from which to fetch the SFC content.
-     * @param {Document} dokkument - The document object into which any injection directives will be injected
      * @return {SFCRecord} The record tracking the SFC's load effects
      * @property {Signal<String>} text - A signal containing the SFC's text content or an "unavailable" placeholder.
      * @property {Effect} defEffect - An effect that registers the SFC's definition when the text signal updates.
      * @property {Signal<String>} fetchSignal - A signal containing the fetched SFC content from the URL.
      * @property {Effect} fetchEffect - An effect that updates the text signal with the fetched content.
      */
-    fluid.loadSFC = function (layerName, url, dokkument) {
+    fluid.loadSFC = function (layerName, url) {
+        console.log("loadSFC for ", layerName);
         const rec = fluid.readSFC(layerName);
         if (!rec.parseEffect) {
+            rec.url = url;
             rec.fetchSignal = fluid.fetchText(url);
             rec.fetchEffect = effect(() => rec.textSignal.value = rec.fetchSignal.value);
             rec.parseEffect = fluid.parseSFC(rec, layerName);
         }
+        return rec;
+    };
+
+    /**
+     * Bind injections from the specified SFC layer to the supplied document.
+     * @param {String} layerName - The name of the layer for which injections are to be bound
+     * @param {Document} dokkument - The document object into which any injection directives will be injected
+     * @return {Signal<Boolean>} - A signal which resolves to `true` when injections are resolved
+     */
+    fluid.subscribeDocToImports = function (layerName, dokkument) {
+        const rec = fluid.readSFC(layerName);
         // TODO: One day clear these out
-        const docEffect = rec.docInjectEffects.get(dokkument);
+        let docEffect = rec.docInjectEffects.get(dokkument);
         if (!docEffect) {
             /** @type {Object<String, InjectRecord>} **/
             let oldInjRecs = {};
+            const injDone = signal(fluid.unavailable("Injection in progress"));
             const newDocEffect = fluid.effect(injRecs => {
-                Object.values(injRecs).forEach(injRec => {
-                    fluid.injectSFCElement(dokkument, injRec, url, oldInjRecs,
+                const injsDone = Object.values(injRecs).map(injRec => {
+                    fluid.injectSFCElement(dokkument, injRec, rec.url, oldInjRecs,
                         injRec.variety === "script" ? fluid.scriptInjectionStyles : fluid.cssInjectionStyles);
                 });
+                const injsDoneSignal = fluid.signalsToAvailable(injsDone);
+                effect( () => injDone.value = injsDoneSignal.value);
 
                 Object.keys(oldInjRecs).forEach(nodeId => {
                     const newRec = injRecs[nodeId];
@@ -672,10 +765,33 @@ const fluidViewScope = function (fluid) {
                 });
                 oldInjRecs = injRecs;
             }, [rec.injRecsSignal]);
+            newDocEffect.injDone = injDone;
             rec.docInjectEffects.set(dokkument, newDocEffect);
-
+            docEffect = newDocEffect;
         }
-        return rec;
+        return docEffect.injDone;
+    };
+
+    // TODO: need equivalent for server-style injections where there is no document - this would use "require" or "import".
+    /**
+     * Ensures that the specified layers are loaded and their imports are bound to the document.
+     * @param {Shadow} shadow - The shadow object representing the component context.
+     * @param {String[]} layerNames - An array of layer names to check and load imports for.
+     * @return {Effect|undefined} An effect which performs the import load
+     */
+    fluid.ensureImportsLoaded = function (shadow, layerNames) {
+        const theOne = layerNames.includes("fluid.fullPageEditor");
+        const docSignal = fluid.findDocument(shadow, theOne);
+        return fluid.effect((dokkument) => {
+            const injections = layerNames.map(layerName => {
+                const importRec = fluid.importMap[layerName];
+                if (importRec) {
+                    return fluid.subscribeDocToImports(layerName, dokkument);
+                }
+            });
+            // TODO: Return currently ignored - we react to injections through effects on layer store
+            return fluid.signalsToAvailable(injections);
+        }, [docSignal]);
     };
 
     /**
@@ -737,6 +853,21 @@ const fluidViewScope = function (fluid) {
         const existing = fluid.viewContainerRegistry.get(element);
         if (!existing || existing.path.length < shadow.path.length) {
             fluid.viewContainerRegistry.set(element, shadow);
+        }
+    };
+
+    fluid.shadowForElement = element => {
+        const shadow = fluid.viewContainerRegistry.get(element);
+        return shadow && !/^fullPageEditor-\d+\.inspectOverlay$/.test(shadow.path) ? shadow : null;
+    };
+
+    fluid.shadowForElementParent = element => {
+        while (element) {
+            const shadow = fluid.shadowForElement(element);
+            if (shadow) {
+                return {shadow, container: element};
+            }
+            element = element.parentElement;
         }
     };
 
@@ -863,7 +994,7 @@ const fluidViewScope = function (fluid) {
                     const [key, ref] = part.split(":");
                     const negate = ref.startsWith("!");
                     const effRef = negate ? ref.substring(1) : ref;
-                    const tokens = fluid.parseStringTemplate(effRef);
+                    const tokens = fluid.parseAtStringTemplate(effRef);
                     const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
                     const negMap = fluid.liftNegate(negate);
                     // Unwrap the primitive token so it is more principled to check for falsy during compositeTemplate
@@ -874,7 +1005,7 @@ const fluidViewScope = function (fluid) {
             }
             delete vnode.attrs[key];
         } else if (key !== "class") {
-            const tokens = fluid.parseStringTemplate(value);
+            const tokens = fluid.parseAtStringTemplate(value);
             const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
             if (fluid.isSignal(rendered)) {
                 rendered.$source = value;
@@ -892,7 +1023,7 @@ const fluidViewScope = function (fluid) {
     fluid.editorRootRef = null;
 
     fluid.effVTree = function (vTree, elideParent) {
-        return elideParent ? vTree.children[0] : vTree;
+        return elideParent ? (vTree.children[0] || vTree) : vTree;
     };
 
     fluid.isSimpleClassSelectorCutpoint = function (tree) { // Glorified utility from 2010
@@ -960,21 +1091,43 @@ const fluidViewScope = function (fluid) {
         return vnode;
     };
 
+    fluid.shadowsToRoot = function (shadow) {
+        const togo = [];
+        while (shadow) {
+            togo.push(shadow);
+            shadow = shadow.parentShadow;
+        }
+        return togo;
+    };
+
     /**
      * Retrieves the `ownerDocument` associated with a given shadow component.
      *
      * @param {Shadow} shadow - The shadow object representing the component context.
-     * @return {Document|undefined} The document object associated with the shadow's container, or `undefined` if no valid container is found.
+     * @return {Signal<Document|undefined|unavailable>} The document object associated with the shadow's container, or `undefined` if no valid container is found.
      */
-    fluid.findDocument = function (shadow) {
-        while (shadow) {
-            const container = fluid.deSignal(shadow.that.container);
-            if (container === undefined || fluid.isUnavailable(container)) {
-                shadow = shadow.parentShadow;
-            } else {
-                return container.ownerDocument;
-            }
-        }
+    fluid.findDocument = function (shadow, theOne) {
+        const togo = signal(fluid.unavailable("Container in evaluation"));
+        const shadows = fluid.shadowsToRoot(shadow);
+        const containerSigs = shadows.map(moveShadow => {
+            const sig = fluid.getForComponentSoft(moveShadow, ["container"]);
+            sig.shadow = moveShadow;
+            return sig;
+        });
+        effect( () => {
+            containerSigs.find(containerSig => {
+                const container = containerSig.value;
+                if (theOne) {
+                    console.log("Loading fullPageEditor");
+                }
+                if (container && !fluid.isUnavailable(container)) {
+                    // It may be a document element already
+                    togo.value = container.ownerDocument || container;
+                    return;
+                }
+            });
+        });
+        return togo;
     };
 
     /**
@@ -987,7 +1140,7 @@ const fluidViewScope = function (fluid) {
     fluid.activateTemplate = function (vtemplate, self) {
         const shadow = self[$m];
         // Awful hack to get around surplus notification problem for now
-        const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.getForComponentSoft("fluid.editorRoot", ["selfEditing"], shadow));
+        const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReferenceSoft("fluid.editorRoot", ["selfEditing"], shadow));
         const selfEditing = selfEditingRef.value;
 
         return untracked( () => {
@@ -1002,7 +1155,7 @@ const fluidViewScope = function (fluid) {
                 vnode.shadow = shadow;
                 vnode._id = vnode._id || vnode_id++;
                 if (vnode.text !== undefined) {
-                    const tokens = fluid.parseStringTemplate(vnode.text);
+                    const tokens = fluid.parseAtStringTemplate(vnode.text);
                     const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
                     fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
                     return Object.assign(vnode, {text: rendered});
@@ -1066,6 +1219,10 @@ const fluidViewScope = function (fluid) {
             const activateTemplate = tree => {
                 fluid.disposeEffects(templateEffects);
                 const togo = processVNode(tree);
+                // TODO: In the end this will be done on parse of the SFC and folding its provenance onto the $imports layer property
+                // TODO: This path is now broken - fluid.findDocument returns a signal and this function accepts a Document.
+                // We can't actually asynchronise this here and this whole process of acquiring imports from template documents is broken
+                // Use layer imports for now until we can have a big reform - either do this processing on parse, or attach machinery to templates directly etc.
                 fluid.acquireLoadDirectives(fluid.findDocument(shadow), vtemplate);
                 templateEffects.forEach(effect => effect.$site = self);
                 return togo;

@@ -8,6 +8,11 @@ fluid.registerNamespace("fluid.tests");
 
 QUnit.module("Fluid View Tests");
 
+QUnit.test("Layer name extraction test", function (assert) {
+    const layerName = fluid.pathToLayerName("%todoApp/sfc/fluid-demos-todoApp.vue");
+    assert.equal("fluid.demos.todoApp", layerName, "Layer name extracted");
+});
+
 fluid.def("fluid.tests.basicRender", {
     $layers: "fluid.templateViewComponent",
     text: "Initial value",

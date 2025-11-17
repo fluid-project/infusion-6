@@ -25,8 +25,7 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 fluid.registerNamespace("fluid.module");
 
 // A mapping of module name to a structure containing elements
-//    baseDir {String} The slash-terminated filesystem path of the base directory of the module
-//    require {Function} A function capable as acting as "require" loading modules relative to the module
+//    path {String} The slash-terminated filesystem or URL path of the base directory of the module
 
 fluid.module.modules = {};
 
@@ -45,22 +44,13 @@ fluid.module.canonPath = function (path) {
  * the Fluid module loader's records. The call will generally take the form:
  * <code>fluid.module.register("my-module", __dirname, require)</code>
  */
-fluid.module.register = function (name, baseDir, moduleRequire) {
-    fluid.log(fluid.logLevel.WARN, "Registering module " + name + " from path " + baseDir);
+fluid.module.register = function (name, path) {
+    fluid.log(fluid.logLevel.WARN, "Registering module " + name + " from path " + path);
     fluid.module.modules[name] = {
-        baseDir: fluid.module.canonPath(baseDir),
-        require: moduleRequire
+        path: fluid.module.canonPath(path)
     };
 };
 
-fluid.module.getDirs = function () {
-    return fluid.getMembers(fluid.module.modules, "baseDir");
-};
-
-/* Returns a suitable set of terms for interpolating module root paths into file paths by use of `fluid.stringTemplate` */
-fluid.module.terms = function () {
-    return fluid.module.getDirs();
-};
 
 /**
  * Resolve a path expression which may begin with a module reference of the form,
@@ -70,5 +60,6 @@ fluid.module.terms = function () {
  */
 
 fluid.module.resolvePath = function (path) {
-    return fluid.stringTemplate(path, fluid.module.getDirs()).replace("//", "/");
+    const terms = fluid.getMembers(fluid.module.modules, "path");
+    return fluid.percStringTemplate(path, terms).replace("//", "/");
 };

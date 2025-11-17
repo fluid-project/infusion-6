@@ -1,6 +1,17 @@
 <script>
 fluid.def("fluid.fullPageEditor", {
     $layers: "fluid.sfcTemplateViewComponent",
+    $importMap: {
+        "fluid.editorRoot": "%fluid-edit/sfc/fluid-editorRoot.vue",
+        "fluid.editor": "%fluid-edit/sfc/fluid-editor.vue",
+        "fluid.editor.layerList": "%fluid-edit/sfc/fluid-editor-layerList.vue",
+        "fluid.editor.menu": "%fluid-edit/sfc/fluid-editor-menu.vue",
+        "fluid.editor.editorsPane": "%fluid-edit/sfc/fluid-editor-editorsPane.vue",
+        "fluid.editor.historyPane": "%fluid-edit/sfc/fluid-editor-historyPane.vue",
+        "fluid.editor.substratePane": "%fluid-edit/sfc/fluid-editor-substratePane.vue",
+        "fluid.codemirror": "%fluid-edit/sfc/fluid-codemirror.vue"
+    },
+    // Expects: html from creator, and body as container
     editorVisible: false,
     editButton: {
         $component: {
@@ -50,32 +61,8 @@ fluid.def("fluid.fullPageEditor", {
     $variety: "frameworkAux"
 
 });
-
-fluid.injectEditor = function (dokkument = document) {
-    const html = dokkument.documentElement;
-    return fluid.fullPageEditor({container: fluid.liveQueryOne("body", html), html});
-};
-
-// Perhaps could be parameterised somehow but hard to see how
-fluid.injectEditor(document);
-
 </script>
 
-<template>
-    <!-- Upstream loader needs to define %infusion-6 and %fluid-edit -->
-    <!-- <fluid-module id="infusion-6" src="../../../src/lib"></fluid-module> -->
-    <div>
-        <fluid-import layer="fluid.editorRoot" src="%fluid-edit/sfc/EditorRoot.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.layerList" src="%fluid-edit/sfc/EditorLayerList.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.menu" src="%fluid-edit/sfc/EditorMenu.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.editorsPane" src="%fluid-edit/sfc/EditorsPane.vue"></fluid-import>
-        <fluid-import layer="fluid.editor" src="%fluid-edit/sfc/Editor.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.historyPane" src="%fluid-edit/sfc/HistoryPane.vue"></fluid-import>
-        <fluid-import layer="fluid.editor.substratePane" src="%fluid-edit/sfc/SubstratePane.vue"></fluid-import>
-
-        <fluid-import layer="fluid.codemirror" src="%fluid-edit/sfc/Codemirror.vue"></fluid-import>
-    </div>
-
-</template>
-
 <style src="%fluid-edit/css/FluidEdit.css"></style>
+<template>
+</template>

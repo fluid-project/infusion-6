@@ -6,6 +6,9 @@ const $fluidSignalsScope = function (fluid) {
     let CurrentGets = null;
     let CurrentGetsIndex = 0;
     let EffectQueue = [];
+    let UpdateDepth = 0;
+    let StabilizeDepth = 0;
+    const MAX_UPDATE_DEPTH = 100;
 
     // Cache states
     const CacheClean = 0;
@@ -30,6 +33,7 @@ const $fluidSignalsScope = function (fluid) {
         cell.cleanups = [];
         cell.equals = defaultEquality;
         cell.available = initialValue !== undefined;
+        cell.updating = false;
 
         return cell;
     };
@@ -44,25 +48,19 @@ const $fluidSignalsScope = function (fluid) {
             ) {
                 CurrentGetsIndex++;
             } else {
-                if (!CurrentGets) {
-                    CurrentGets = [this];
-                }
-                else {
-                    CurrentGets.push(this);
-                }
+                if (!CurrentGets) CurrentGets = [this];
+                else CurrentGets.push(this);
             }
         }
 
         // Update if we have a function and might be stale
-        if (this.fn) {
-            this.updateIfNecessary();
-        }
+        if (this.fn) this.updateIfNecessary();
 
         return this._value;
     };
 
     fluid.cell.prototype.set = function (value) {
-        // If setting a function as a plain value (not compute), treat as value
+        // If we had a function, remove it and its dependencies
         if (this.fn) {
             this.removeParentObservers(0);
             this.sources = null;
@@ -70,14 +68,21 @@ const $fluidSignalsScope = function (fluid) {
         }
 
         if (!this.equals(this._value, value)) {
+            this._value = value;
+            this.available = true;
+
+            // Mark observers as dirty
             if (this.observers) {
                 for (let i = 0; i < this.observers.length; i++) {
                     const observer = this.observers[i];
                     observer.stale(CacheDirty);
                 }
             }
-            this._value = value;
-            this.available = true;
+        }
+
+        // Process any effects that were queued (only at top level)
+        if (StabilizeDepth === 0) {
+            stabilize();
         }
     };
 
@@ -92,13 +97,14 @@ const $fluidSignalsScope = function (fluid) {
             return this;
         }
 
+        // Remove old source observers before setting new ones
+        if (this.sources) {
+            this.removeParentObservers(0);
+        }
+
         const oldFn = this.fn;
         this.fn = fn;
         this.sources = sources || null;
-
-        if (fn !== oldFn) {
-            this.stale(CacheDirty);
-        }
 
         // Set up observer links from sources to this cell
         if (sources) {
@@ -107,9 +113,16 @@ const $fluidSignalsScope = function (fluid) {
                 if (!source.observers) {
                     source.observers = [this];
                 } else {
-                    source.observers.push(this);
+                    // Check if already observing to avoid duplicates
+                    if (!source.observers.includes(this)) {
+                        source.observers.push(this);
+                    }
                 }
             }
+        }
+
+        if (fn !== oldFn) {
+            this.stale(CacheDirty);
         }
 
         // Immediately compute the value
@@ -134,6 +147,12 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     fluid.cell.prototype.update = function () {
+        // Prevent infinite recursion in circular dependencies
+        if (this.updating) {
+            return;
+        }
+
+        this.updating = true;
         const oldValue = this._value;
 
         const prevReaction = CurrentReaction;
@@ -176,7 +195,7 @@ const $fluidSignalsScope = function (fluid) {
                     const source = this.sources[i];
                     if (!source.observers) {
                         source.observers = [this];
-                    } else {
+                    } else if (!source.observers.includes(this)) {
                         source.observers.push(this);
                     }
                 }
@@ -188,6 +207,7 @@ const $fluidSignalsScope = function (fluid) {
             CurrentGets = prevGets;
             CurrentReaction = prevReaction;
             CurrentGetsIndex = prevIndex;
+            this.updating = false;
         }
 
         // Handle diamond dependencies
@@ -202,31 +222,43 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     fluid.cell.prototype.updateIfNecessary = function () {
-        if (this.state === CacheCheck) {
-            for (const source of this.sources) {
-                source.updateIfNecessary();
-                if (this.state === CacheDirty) {
-                    break;
+        // Prevent stack overflow in circular dependencies
+        UpdateDepth++;
+        if (UpdateDepth > MAX_UPDATE_DEPTH) {
+            UpdateDepth--;
+            return;
+        }
+
+        try {
+            if (this.state === CacheCheck) {
+                for (const source of this.sources) {
+                    source.updateIfNecessary();
+                    if (this.state === CacheDirty) {
+                        break;
+                    }
                 }
             }
-        }
 
-        if (this.state === CacheDirty) {
-            this.update();
-        }
+            if (this.state === CacheDirty) {
+                this.update();
+            }
 
-        this.state = CacheClean;
+            this.state = CacheClean;
+        } finally {
+            UpdateDepth--;
+        }
     };
 
     fluid.cell.prototype.removeParentObservers = function (index) {
-        if (!this.sources) {
-            return;
-        }
+        if (!this.sources) return;
         for (let i = index; i < this.sources.length; i++) {
             const source = this.sources[i];
+            if (!source.observers) continue;
             const swap = source.observers.findIndex(v => v === this);
-            source.observers[swap] = source.observers[source.observers.length - 1];
-            source.observers.pop();
+            if (swap !== -1) {
+                source.observers[swap] = source.observers[source.observers.length - 1];
+                source.observers.pop();
+            }
         }
     };
 
@@ -237,16 +269,12 @@ const $fluidSignalsScope = function (fluid) {
         effect.disposed = false;
 
         const fn = function () {
-            if (effect.disposed) {
-                return;
-            }
+            if (effect.disposed) return;
             const args = sources.map(s => s.get());
 
             // Check if all sources are available
             const allAvailable = sources.every(s => s.available);
-            if (!allAvailable) {
-                return;
-            }
+            if (!allAvailable) return;
 
             config.bind.apply(null, args);
         };
@@ -269,6 +297,25 @@ const $fluidSignalsScope = function (fluid) {
 
         return effect;
     };
+
+    // Stabilize function to process effect queue
+    function stabilize() {
+        if (StabilizeDepth > 0) return;
+
+        StabilizeDepth++;
+        try {
+            while (EffectQueue.length > 0) {
+                const queue = EffectQueue.slice();
+                EffectQueue.length = 0;
+
+                for (let i = 0; i < queue.length; i++) {
+                    queue[i].get();
+                }
+            }
+        } finally {
+            StabilizeDepth--;
+        }
+    }
 };
 
 if (typeof(fluid) !== "undefined") {
