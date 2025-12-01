@@ -317,8 +317,8 @@ const $fluidILScope = function (fluid) {
 
     // About the SHADOW
     // This holds a record of IL information for each instantiated component.
-    // It is allocated at: instantiator's "recordComponent"
-    // It is destroyed at: instantiator's "clearConcreteComponent"
+    // It is allocated at: fluid.freshComponent
+    // It is destroyed at: instantiator's "clearComponent"
     /**
      * @typedef {Object} Shadow
      * @property {Object} that - The component for which this shadow is held
@@ -333,6 +333,8 @@ const $fluidILScope = function (fluid) {
      * @property {Object} frameworkEffects - A possibly deep structure of effects allocated by the framework which
      * which need to be disposed when the component is destroyed. Any user effects are disposed as layers come and go.
      * @property {Signal<String[]>} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
+     * @property {Object<String, Unavailable>} unavailableLayerNames - Map of layers which are currently unavailable
+     * @property {Boolean} [resolveRoot] - Whether this shadow's scope names will resolve globally
      */
 
     /**
@@ -1634,15 +1636,14 @@ const $fluidILScope = function (fluid) {
      * @param {Shadow} shadow - The shadow record of the component which is merging.
      * @param {fluid.HierarchyResolver} resolver - The resolver used to store and resolve layered definitions.
      * @param {String[]} layerNames - An array of layer names to be merged and resolved.
-     * @return {any} The resolved merged definition for the computed instance, or an "unavailable" marker if resolution fails.
+     * @return {LayerDef} The resolved merged definition for the computed instance
      */
     fluid.flatMergedRound = function (shadow, resolver, layerNames) {
-        if (layerNames.length > 0) {
-            layerNames.forEach(layerName => resolver.storeLayer(layerName));
-            return resolver.resolve(layerNames);
-        } else {
-            return fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
+        if (layerNames.length === 0) {
+            shadow.unavailableLayerNames["fluid.noLayers"] = fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
         }
+        layerNames.forEach(layerName => resolver.storeLayer(layerName));
+        return resolver.resolve(layerNames);
     };
 
     // The user will be expecting the priority of any layers supplied dynamically to be high, and in particular to beat
@@ -1686,25 +1687,19 @@ const $fluidILScope = function (fluid) {
             const resolver = new fluid.HierarchyResolver(layerNames => {
                 fluid.ensureImportsLoaded(shadow, layerNames);
             });
-            // Any dynamic layer name which doesn't resolve is going to be categorised as unavailable
-            const {designalArgs: resolvedStaticNames, unavailable} = fluid.processSignalArgs(uniqueStaticNames);
-            const resolved = unavailable || fluid.flatMergedRound(shadow, resolver, resolvedStaticNames); // <= WILL READ LAYER REGISTRY
+            const resolved = fluid.flatMergedRound(shadow, resolver, uniqueStaticNames); // <= WILL READ LAYER REGISTRY
 
-            if (fluid.isUnavailable(resolved)) {
-                return resolved;
-            } else {
-                const layers = resolved.mergeRecords.concat(mergeRecords).concat({
-                    mergeRecordType: "live",
-                    mergeRecordName: "live",
-                    layer: shadow.liveLayer
-                });
-                fluid.upgradeDynamicLayers(layers, dynamicMergeRecord);
-                shadow.mergeRecords = layers;
+            const layers = resolved.mergeRecords.concat(mergeRecords).concat({
+                mergeRecordType: "live",
+                mergeRecordName: "live",
+                layer: shadow.liveLayer
+            });
+            fluid.upgradeDynamicLayers(layers, dynamicMergeRecord);
+            shadow.mergeRecords = layers;
 
-                const flatMerged = fluid.makeLayer("flatMerged", shadow);
-                shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
-                return flatMerged;
-            }
+            const flatMerged = fluid.makeLayer("flatMerged", shadow);
+            shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
+            return flatMerged;
         });
     };
 
@@ -1736,25 +1731,29 @@ const $fluidILScope = function (fluid) {
 
         fluid.possiblyRenderError(shadow); // Callout to FluidView.js
 
-        const expandEffect = (newRecord, segs) => {
-            newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow, segs);
-            fluid.siteSignal(newRecord.signalProduct, shadow, segs);
-        };
-        // Instantiate any fresh effects
-        fluid.forEachDeep(shadow.shadowMap, function allocateOneEffect(newRecord, segs) {
-            if (newRecord.handlerRecord?.isEffect) {
-                const oldRecord = fluid.get(shadow.oldShadowMap, segs)?.[$m];
-                // !oldRecord.signalProduct: Deal with funny race where we managed to update instance before we ever allocate effects at all
-                // !newRecord.signalProduct: Similarly if instance turns over during effect instantiation and we've already instantiated it
-                if ((!oldRecord || newRecord.signalRecord !== oldRecord.signalRecord || !oldRecord.signalProduct) && !newRecord.signalProduct) {
-                    // console.log(`Allocating effect at path ${segs.join(".")} for component at path ${shadow.path}`);
-                    expandEffect(newRecord, segs);
+        // Only proceed to allocate any effects if the component has no unavailable layers
+        if (Object.keys(shadow.unavailableLayerNames).length === 0) {
+
+            const expandEffect = (newRecord, segs) => {
+                newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow, segs);
+                fluid.siteSignal(newRecord.signalProduct, shadow, segs);
+            };
+            // Instantiate any fresh effects
+            fluid.forEachDeep(shadow.shadowMap, function allocateOneEffect(newRecord, segs) {
+                if (newRecord.handlerRecord?.isEffect) {
+                    const oldRecord = fluid.get(shadow.oldShadowMap, segs)?.[$m];
+                    // !oldRecord.signalProduct: Deal with funny race where we managed to update instance before we ever allocate effects at all
+                    // !newRecord.signalProduct: Similarly if instance turns over during effect instantiation and we've already instantiated it
+                    if ((!oldRecord || newRecord.signalRecord !== oldRecord.signalRecord || !oldRecord.signalProduct) && !newRecord.signalProduct) {
+                        // console.log(`Allocating effect at path ${segs.join(".")} for component at path ${shadow.path}`);
+                        expandEffect(newRecord, segs);
+                    }
+                } else if (newRecord.handlerRecord?.isBindable) {
+                    // Ensure this bindable value is allocated if it hasn't been already
+                    newRecord.signalProduct.selfObserve();
                 }
-            } else if (newRecord.handlerRecord?.isBindable) {
-                // Ensure this bindable value is allocated if it hasn't been already
-                newRecord.signalProduct.selfObserve();
-            }
-        });
+            });
+        }
 
         // probably occurs whenever instance becomes invalid.
         if (fluid.isEmptyPotentia(shadow.potentia.peek())) {
@@ -1923,6 +1922,7 @@ const $fluidILScope = function (fluid) {
             layer: {}
         });
         shadow.dynamicLayerNames = signal([]);
+        shadow.unavailableLayerNames = Object.create(null);
 
         shadow.instanceId = 0;
         shadow.flatMerged = fluid.flatMergedComputer(shadow);

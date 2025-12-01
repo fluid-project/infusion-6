@@ -1532,10 +1532,10 @@ const fluidViewScope = function (fluid) {
                     fluid.renderError(fluid.deSignal(that.container), vTree);
                 }
             }
-        } else if (fluid.isErrorUnavailable(shadow.flatMerged)) {
+        } else if (fluid.isErrorUnavailable(shadow.that)) {
             const container = shadow.mergeRecords.reduce((acc, record) => record.container || acc, null);
             if (container) {
-                fluid.renderError(container, shadow.flatMerged);
+                fluid.renderError(container, shadow.that);
             }
         }
     };

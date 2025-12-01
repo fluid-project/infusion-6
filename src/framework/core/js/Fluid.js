@@ -2216,10 +2216,23 @@ const $fluidJSScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} LayerDef
+     * @property {String|String[]} [$layers] - Any parent layers of this layer
+     * @property {"framework"|"frameworkAux"} [$variety] - If this layer is a core framework or auxiliary (from the editing
+     * UI system) layer
+     */
+
+    /**
+     * @typedef {Object} RawLayer
+     * @property {LayerDef} raw - Any parent layers of this layer
+     * @property {Boolean} demanded - If this layer has been demanded by the implementation of a component
+     */
+
+    /**
      * Creates a new layer in the `fluid.layerStore` and updates the layer history.
      * This function immutably adds a new layer to the existing store and records the operation in the history.
      * @param {String} layerName - The name of the new layer to be added.
-     * @param {Object} layerValue - The value associated with the new layer.
+     * @param {LayerDef} layerValue - The value associated with the new layer.
      */
     fluid.newLayer = function (layerName, layerValue) {
         const store = fluid.layerStore.value;
@@ -2270,7 +2283,7 @@ const $fluidJSScope = function (fluid) {
      * If the layer already exists, updates its value. If it does not exist, creates a new signal for it.
      *
      * @param {String} layerName - The name of the layer to write or update.
-     * @param {Object} layer - The layer data to store.
+     * @param {LayerDef} layer - The layer data to store.
      */
     fluid.writeLayer = function (layerName, layer) {
         const store = fluid.layerStore.peek();
@@ -2333,7 +2346,7 @@ const $fluidJSScope = function (fluid) {
      * - `2`: Core framework layer (`framework`).
      * - `-1`: Unknown or unsupported variety.
      *
-     * @param {Object} layerDef - The layer definition object to evaluate.
+     * @param {LayerDef} layerDef - The layer definition object to evaluate.
      * @return {Number} The framework status of the layer.
      */
     fluid.layerFrameworkStatus = function (layerDef) {
@@ -2480,7 +2493,7 @@ const $fluidJSScope = function (fluid) {
     /**
      * @typedef {Object} MergedHierarchyResolution
      * @property {MergeRecord[]} mergeRecords - The array of merge records representing the merged layers and their priorities.
-     * @property {Object} merged - The final merged object representing the composite component definition.
+     * @property {LayerDef} merged - The final merged object representing the composite component definition.
      * @property {LayerMap} layerMap - A map of all paths in the merged object to their source layers.
      */
 
@@ -2559,13 +2572,13 @@ const $fluidJSScope = function (fluid) {
         /**
          * Create a new HierarchyResolver.
          *
-         * @param {Function} layerFetcher - Function which will initiate fetching of demanded layers
-         * @param {Object<String, Signal>} [flatDefsIn={}] - An optional initial map of precomputed layer signals.
+         * @param {Function} [layerFetcher] - Function which will initiate fetching of demanded layers which are unavailable
          */
-        constructor(layerFetcher, flatDefsIn = {}) {
-            this.layerFetcher = layerFetcher;
+        constructor(layerFetcher) {
+            this.layerFetcher = layerFetcher || (() => {});
             // A local store, so that we can use C3_precedence with direct lookups
-            this.flatDefs = Object.assign({}, flatDefsIn);
+            this.flatDefs = Object.create(null);
+            this.unavailableLayers = Object.create(null);
         }
 
         /**
@@ -2578,14 +2591,18 @@ const $fluidJSScope = function (fluid) {
         storeParents(layer, rootLayer) {
             return layer.$layers.map(layerName => {
                 if (layerName === rootLayer) {
+                    this.unavailableLayers[layerName] =
                     // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
-                    return signal(fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`));
+                        fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`);
+                    return {};
                 } else {
                     return this.storeLayer(layerName, rootLayer);
                 }
             });
         }
 
+        // TODO: Unclear why we make this reactive currently given we construct a fresh HierarchyResolver for each turn round
+        // fluid.flatMergedComputer
         /**
          * Stores and returns a computed signal representing the expanded definition of the specified layer, by issuing a request
          * to the layer registry via fluid.readLayer.
@@ -2593,27 +2610,26 @@ const $fluidJSScope = function (fluid) {
          *
          * @param {String} layerName - The name of the layer to be stored and resolved.
          * @param {String} [rootLayer] - The original root layer used for cycle detection. Defaults to `layerName` if not provided.
-         * @return {Signal} A computed signal that resolves to the expanded layer or an `unavailable` signal if resolution fails.
+         * @return {LayerDef} A layer definition
          */
         storeLayer(layerName, rootLayer) {
-            let layerComputer = this.flatDefs[layerName];
-            if (!layerComputer) {
+            let layerDef = this.flatDefs[layerName];
+            if (!layerDef) {
                 // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
                 this.flatDefs[layerName] = "in progress";
-                this.flatDefs[layerName] = layerComputer = computed(() => {
-                    const layer = fluid.readLayer(layerName, true).value;
-                    if (fluid.isUnavailable(layer)) {
-                        return layer;
-                    } else {
-                        const readerExpanded = fluid.readerExpandLayer(layer.raw);
-                        const parentComputers = this.storeParents(readerExpanded, rootLayer || layerName);
-                        // Ensure layer computers for all parent layers get evaluated right now
-                        const {unavailable} = fluid.processSignalArgs(parentComputers);
-                        return unavailable || readerExpanded;
-                    }
-                });
+
+                const layer = fluid.readLayer(layerName, true).value;
+                if (fluid.isUnavailable(layer)) {
+                    this.unavailableLayers[layerName] = layer;
+                    layerDef = {};
+                } else {
+                    const readerExpanded = fluid.readerExpandLayer(layer.raw);
+                    this.storeParents(readerExpanded, rootLayer || layerName);
+                    layerDef = readerExpanded;
+                }
             }
-            return layerComputer;
+            this.flatDefs[layerName] = layerDef;
+            return layerDef;
         }
 
         /**
@@ -2641,42 +2657,29 @@ const $fluidJSScope = function (fluid) {
          *     or an `unavailable` signal if resolution could not be completed.
          */
         resolve(layerNames) {
-            /** @type {Object<String, Signal>} flatDefs - A map of layer names to signals containing raw layer definitions. **/
-            const flatDefs = this.flatDefs;
             while (true) {
-                // First prime the cache by evaluating all signals at tip
-                fluid.each(flatDefs, def => def.value);
-                // Second check if any layers are unavailable
-                const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
-                if (unavailable) {
-                    this.layerFetcher(layerNames);
-                    return unavailable;
-                } else {
-                    // Finally flatten cache into pure values ready for resolution
-                    const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
-                    const order = fluid.C3_precedence_parents(layerNames, veryFlatDefs).reverse();
-                    if (this.resolveHierarchyRound(order, layerNames)) {
-                        continue;
-                    }
-                    const mergeRecords = order.map((oneLayerName, i) => ({
-                        mergeRecordType: "def",
-                        mergeRecordName: oneLayerName,
-                        // Towards the right here, stronger records
-                        priority: fluid.mergeRecordTypes.def - i,
-                        layer: veryFlatDefs[oneLayerName]
-                    })).concat({
-                        // Definition just holding the resolved $layers member, overriding all previous entries
-                        mergeRecordType: "defParents",
-                        mergeRecordName: "defParents",
-                        priority: fluid.mergeRecordTypes.defParents,
-                        layer: {$layers: order}
-                    });
-                    const merged = {};
-                    return {
-                        // Note merged is currently only read by fluid.readDef
-                        mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
-                    };
+                const order = fluid.C3_precedence_parents(layerNames, this.flatDefs).reverse();
+                if (this.resolveHierarchyRound(order, layerNames)) {
+                    continue;
                 }
+                const mergeRecords = order.map((oneLayerName, i) => ({
+                    mergeRecordType: "def",
+                    mergeRecordName: oneLayerName,
+                    // Towards the right of here, stronger records
+                    priority: fluid.mergeRecordTypes.def - i,
+                    layer: this.flatDefs[oneLayerName]
+                })).concat({
+                    // Definition just holding the resolved $layers member, overriding all previous entries
+                    mergeRecordType: "defParents",
+                    mergeRecordName: "defParents",
+                    priority: fluid.mergeRecordTypes.defParents,
+                    layer: {$layers: order}
+                });
+                const merged = {};
+                return {
+                    // Note merged is currently only read by fluid.readDef
+                    mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
+                };
 
             }
         };
@@ -2699,16 +2702,13 @@ const $fluidJSScope = function (fluid) {
     /**
      * Retrieves a layer's merged configuration
      * @param {String} layerName - The name of the grade whose options are to be read or written
-     * @return {Computed<any>} - Signal for merged definition
+     * @return {LayerDef} - Merged layer definition
      */
     fluid.readMergedDef = function (layerName) {
         // TODO: economise on these in the "giant mat"
         const resolver = new fluid.HierarchyResolver();
-        const resolved = computed(() => {
-            resolver.storeLayer(layerName);
-            return resolver.resolve([layerName]);
-        });
-        return fluid.getThroughSignals(resolved, ["merged"], {$variety: "mergedDef"});
+        resolver.storeLayer(layerName);
+        return resolver.resolve([layerName]).merged;
     };
 
     fluid.layerLoaders = {
@@ -3078,7 +3078,7 @@ const $fluidJSScope = function (fluid) {
      * @param {String} url - The URL to fetch data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
      * @param {Function} strategy - An async function to process the response.
-     * @return {signal<any>} A signal containing the processed data or an "unavailable" state.
+     * @return {Signal<any>} A signal containing the processed data or an "unavailable" state.
      */
     fluid.fetch = function (url, options, strategy) {
         const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));

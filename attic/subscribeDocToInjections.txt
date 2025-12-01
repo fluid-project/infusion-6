@@ -1,0 +1,98 @@
+    /**
+     * Bind injections from the specified SFC layer to the supplied document.
+     * @param {String} layerName - The name of the layer for which injections are to be bound
+     * @param {Document} dokkument - The document object into which any injection directives will be injected
+     * @return {Signal<Boolean>} - A signal which resolves to `true` when injections are resolved
+     */
+    fluid.subscribeDocToInjections = function (layerName, dokkument) {
+        const rec = fluid.readSFC(layerName);
+        // TODO: One day clear these out
+        let docEffect = rec.docInjectEffects.get(dokkument);
+        if (!docEffect) {
+            /** @type {Object<String, InjectRecord>} **/
+            let oldInjRecs = {};
+            const injDone = signal(fluid.unavailable("Injection in progress"));
+            injDone.layerName = layerName;
+            injDone.dokkument = dokkument;
+            const newDocEffect = fluid.effect(async function docInjectEffect(injRecs) {
+                fluid.startBufferDefs();
+                try {
+                    /** @type {DocInjectionRecord[]} */
+                    const docInjRecs = Object.values(injRecs).map(injRec =>
+                        fluid.decodeInjectSFCElement(dokkument, injRec, rec.url, oldInjRecs,
+                            injRec.variety === "script" ? fluid.scriptInjectionStyles : fluid.cssInjectionStyles)
+                    ).filter(injRec => injRec);
+                    const injsDone = docInjRecs.map(docInjRec => fluid.doInjectSFCElement(docInjRec));
+                    const injsDoneSignal = fluid.signalsToAvailable(injsDone);
+                    const res = fluid.signalToPromise(injsDoneSignal);
+                    await res;
+                    console.log(`Await for ${layerName} is done`);
+                } finally {
+                    console.log(`Finally for ${layerName} is starting`);
+                    // Don't actually register layers until all the rest of the code has executed
+                    fluid.endBufferDefs();
+                    injDone.value = true;
+                }
+
+                Object.keys(oldInjRecs).forEach(nodeId => {
+                    const newRec = injRecs[nodeId];
+                    if (!newRec) {
+                        fluid.clearInjRec(nodeId);
+                    }
+                });
+                oldInjRecs = injRecs;
+            }, [rec.injRecsSignal]);
+            newDocEffect.injDone = injDone;
+            rec.docInjectEffects.set(dokkument, newDocEffect);
+            fluid.noteLayerInjectionInProgress(injDone);
+            docEffect = newDocEffect;
+        }
+        return docEffect.injDone;
+    };
+
+        fluid.subscribeDocToInjections = function (layerName, dokkument) {
+        const rec = fluid.readSFC(layerName);
+        // TODO: One day clear these out
+        let docEffect = rec.docInjectEffects.get(dokkument);
+        if (!docEffect) {
+            /** @type {Object<String, InjectRecord>} **/
+            let oldInjRecs = {};
+            const injDone = signal(fluid.unavailable("Injection in progress"));
+            injDone.layerName = layerName;
+            injDone.dokkument = dokkument;
+            const newDocEffect = fluid.effect(async function docInjectEffect(injRecs) {
+                const docInjRecs = Object.values(injRecs).map(injRec =>
+                    fluid.decodeInjectSFCElement(dokkument, injRec, rec.url, oldInjRecs,
+                        injRec.variety === "script" ? fluid.scriptInjectionStyles : fluid.cssInjectionStyles)
+                );
+                /** @type {DocInjectionRecord} **/
+                const lateDocInjRec = docInjRecs.find(rec => rec?.injStyle.defer);
+                if (lateDocInjRec) {
+                    // Ensure namespaces at least are there for any layers which are going to be defined so that sidebar code can bind to them
+                    Object.keys(lateDocInjRec.injRec.defMaps).forEach(layerName => fluid.registerNamespace(layerName));
+                }
+                /** @type {DocInjectionRecord[]} **/
+                const earlyDocInjRecs = docInjRecs.filter(rec => rec && rec !== lateDocInjRec);
+                const earlyInjsDone = earlyDocInjRecs.map(docInjRec => fluid.doInjectSFCElement(docInjRec));
+                const earlyInjsDoneSignal = fluid.signalsToAvailable(earlyInjsDone);
+                await (fluid.signalToPromise(earlyInjsDoneSignal));
+                if (lateDocInjRec) {
+                    await fluid.signalToPromise(fluid.doInjectSFCElement(lateDocInjRec));
+                }
+                injDone.value = true;
+
+                Object.keys(oldInjRecs).forEach(nodeId => {
+                    const newRec = injRecs[nodeId];
+                    if (!newRec) {
+                        fluid.clearInjRec(nodeId);
+                    }
+                });
+                oldInjRecs = injRecs;
+            }, [rec.injRecsSignal]);
+            newDocEffect.injDone = injDone;
+            rec.docInjectEffects.set(dokkument, newDocEffect);
+            fluid.noteLayerInjectionInProgress(injDone);
+            docEffect = newDocEffect;
+        }
+        return docEffect.injDone;
+    };
