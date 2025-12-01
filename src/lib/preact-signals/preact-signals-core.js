@@ -380,8 +380,8 @@
         }
         target._sources = head;
     }
-    function Computed(fn) {
-        Signal.call(this, undefined);
+    function Computed(fn, initValue) {
+        Signal.call(this, initValue); // AMB Patch - allow initial value other than undefined, e.g. unavailable
         this._fn = fn;
         this._sources = undefined;
         this._globalVersion = globalVersion - 1;
@@ -493,10 +493,11 @@
      * updated when any signals accessed from within the callback function change.
      *
      * @param fn The effect callback.
+     * @param initValue Any initial value for the computed signal (usually an unavailable value)
      * @returns A new read-only signal.
      */
-    function computed(fn) {
-        return new Computed(fn);
+    function computed(fn, initValue) {
+        return new Computed(fn, initValue);
     }
     function cleanupEffect(effect) {
         var cleanup = effect._cleanup;
@@ -541,12 +542,17 @@
         }
         endBatch();
     }
-    function Effect(fn) {
+    function Effect(fn, options) {
         this._fn = fn;
         this._cleanup = undefined;
         this._sources = undefined;
         this._nextBatchedEffect = undefined;
         this._flags = TRACKING;
+        // AMB patch
+        const inDispose = options?.onDispose;
+        if (inDispose !== undefined) {
+            this.onDispose = Array.isArray(inDispose) ? [...inDispose] : [inDispose];
+        }
     }
     Effect.prototype._callback = function () {
         var finish = this._start();
@@ -589,7 +595,15 @@
         if (!(this._flags & RUNNING)) {
             disposeEffect(this);
         }
+        // AMB patch
+        if (this.onDispose) {
+            this.onDispose.forEach(oneDispose => oneDispose(this));
+        }
+        this.disposed = true;
     };
+    Effect.prototype.dispose = function () {
+        this._dispose();
+    }
     /**
      * Create an effect to run arbitrary code in response to signal changes.
      *
@@ -603,8 +617,8 @@
      * @param fn The effect callback.
      * @returns A function for disposing the effect.
      */
-    function effect(fn) {
-        var effect = new Effect(fn);
+    function effect(fn, options) {
+        var effect = new Effect(fn, options);
         try {
             effect._callback();
         }

@@ -2,9 +2,7 @@
 
 const fluidSubstrateScope = function (fluid) {
 
-    // DeferredDef allows us to make references into the component's namespace function without them trying to resolve
-    // on the point of definition
-    fluid.deferredDef("fluid.substrateTree", {
+    fluid.def("fluid.substrateTree", {
         $layers: "fluid.templateViewComponent",
         defaultState: "$compute:fluid.substrateTree.defaultState({self}.rootEntries)",
         userState: {
@@ -41,13 +39,13 @@ const fluidSubstrateScope = function (fluid) {
         template: "$compute:fluid.substrateTree.renderTemplate({self}, {self}.rootEntries, {self}.idToState)",
         domListeners: {
             // Ad hoc event binding syntax to deal with the fact that we synthesize our template afresh on every render
-            // rather than via a template or vDOM generator
-            // - selector / event / method - work up a better syntax in time
+            // rather than via a template or vDOM generator, operated by fluid.substrateTree.renderTemplate
+            // - selector : event : method - work up a better syntax in time
             mouseover: "/ : mouseover : fluid.substrateTree.mouseover({0}:event, {editorRoot})",
             mouseleave: "/ : mouseleave : fluid.substrateTree.mouseleave({editorRoot})",
             foldClick: "/ : click : fluid.substrateTree.foldClick({0}:event, {self})"
         },
-        inspectingHighlightEffect: "$effect:fluid.substrateTree.highlight({self}, {editorRoot}.inspectingSite)",
+        inspectingHighlightEffect: "$effect:fluid.substrateTree.highlight({self}, {editorRoot}.inspectingSite, {global}.document)",
         $variety: "frameworkAux"
     });
 
@@ -145,7 +143,7 @@ const fluidSubstrateScope = function (fluid) {
         }
     };
 
-    const funcRecords = ["$compute", "$eagerCompute", "$effect", "$method"];
+    const funcRecords = ["$compute", "$bindable", "$effect", "$method"];
     const renderRecordName = function (input) {
         return input.charAt(1).toUpperCase() + input.slice(2) + " ";
     };
@@ -351,11 +349,13 @@ const fluidSubstrateScope = function (fluid) {
         return `<div class="fl-substrate-pane" ${bindSpec}>${fluid.substrateTree.treeList(self, null, rootEntries, self.renderOptions, idToState)}</div>`;
     };
 
-    fluid.substrateTree.highlight = function (self, inspectingSite) {
+    fluid.substrateTree.highlight = function (self, inspectingSite, document) {
         const overlay = document.getElementById("fl-editor-inspect-overlay");
-        const id = inspectingSite && fluid.renderSite(inspectingSite);
-        const target = id && self.container.querySelector(`[data-row-id="${id}"]`);
-        fluid.applyOverlay({selfOverlay: overlay}, target, "hsl(0 0% 70%)");
+        if (overlay) {
+            const id = inspectingSite && fluid.renderSite(inspectingSite);
+            const target = id && self.container.querySelector(`[data-row-id="${id}"]`);
+            fluid.applyOverlay({selfOverlay: overlay}, target, "hsl(0 0% 70%)");
+        }
     };
 
     fluid.substrateTree.mouseover = function (e, editorRoot) {
@@ -363,7 +363,7 @@ const fluidSubstrateScope = function (fluid) {
         const closestRow = e.target.closest("[data-row-id]");
         if (closestHover && closestRow) {
             const id = closestRow.getAttribute("data-row-id");
-            const site = fluid.parseSite(id, editorRoot);
+            const site = fluid.parseSite(id);
             editorRoot.inspectingSite = site;
         } else {
             editorRoot.inspectingSite = null;

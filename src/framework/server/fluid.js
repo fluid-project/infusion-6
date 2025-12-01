@@ -17,9 +17,9 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 const fs = require("fs"),
     path = require("path"),
     vm = require("vm"),
-    linkedom = require("linkedom");
+    nodeFetch = require("./node-fetch-wrapper.js");
 
-const moduleBaseDir = path.resolve(__dirname, "../..");
+const moduleBaseDir = path.resolve(__dirname, "../../../");
 
 
 /**
@@ -55,7 +55,9 @@ const context = vm.createContext({
     __dirname: __dirname,
     path: path,
     process: process, // Enable straightforward ContextAwareness check
-    require: require
+    require: require,
+    URL: URL,
+    fetch: nodeFetch
 });
 
 context.window = context;
@@ -82,6 +84,7 @@ const loadImportsFromPackage = function (path) {
 loadImportsFromPackage("/");
 
 const fluid = context.fluid;
+fluid.V8Context = context;
 
 
 // As well as for efficiency, it's useful to customise this because an uncaught
@@ -93,15 +96,6 @@ fluid.invokeLater = function (func) {
 
 fluid.loadInContext = loadInContext;
 fluid.loadImportsFromPackage = loadImportsFromPackage;
-
-fluid.serverDocument = linkedom.parseHTML("<html />").document;
-
-fluid.serverDocumentParser = function (text) {
-    const document = linkedom.parseHTML(text).document;
-    const fragment = document.createDocumentFragment();
-    fragment.appendChild(document.firstElementChild);
-    return fragment;
-};
 
 fluid.testingSupportLoaded = false;
 
@@ -121,5 +115,7 @@ fluid.module.register("infusion", moduleBaseDir);
 
 // Export the fluid object into the pan-module node.js global object
 global.fluid = fluid;
+
+require("./server-support.js");
 
 module.exports = fluid;

@@ -18,7 +18,7 @@
         "signals"
     ],
     "repository": "git://github.com/fluid-project/infusion-6.git",
-    "main": "./src/module/fluid.js",
+    "main": "./src/framework/server/fluid.js",
     "scripts": {
         "clean": "run-p clean:*",
         "clean:build": "rimraf build products",
@@ -43,6 +43,8 @@
     ],
     "dependencies": {
         "linkedom": "0.18.10",
+        "node-fetch": "2.7.0",
+        "he": "1.2.0",
         "@preact/signals-core": "1.7.0",
         "@preact/signals": "2.0.1",
         "preact": "10.25.4",
@@ -81,6 +83,7 @@
                 "src/framework/core/js/Fluid.js",
                 "src/framework/core/js/FluidModules.js",
                 "src/framework/core/js/FluidIL.js",
+                "src/framework/core/js/FluidView.js",
                 "src/framework/core/js/FluidView-browser.js",
                 "src/lib/lezer/lezer-javascript-browser.js",
                 "src/framework/core/js/sfc-parser.js",
@@ -91,6 +94,7 @@
                 "src/framework/core/js/Fluid.js",
                 "src/framework/core/js/FluidModules.js",
                 "src/framework/core/js/FluidIL.js",
+                "src/framework/core/js/FluidView.js",
                 "src/framework/core/js/FluidView-node.js",
                 "src/lib/lezer/lezer-javascript-browser.js",
                 "src/framework/core/js/sfc-parser.js",

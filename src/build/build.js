@@ -5,7 +5,7 @@ const glob = require("glob"),
     path = require("path"),
     fs = require("fs-extra"),
     terser = require("terser"),
-    fluid = require("infusion-6");
+    fluid = require("../..");
 
 fluid.registerNamespace("fluid.build");
 

@@ -1,9 +1,10 @@
-/* global signal, effect */
+/* global signal */
 
 "use strict";
 
 const $fluidViewBrowserScope = function (fluid) {
-    const $t = fluid.proxySymbol;
+
+    fluid.environment = "browser";
 
     // Currently disused
     /**
@@ -149,39 +150,6 @@ const $fluidViewBrowserScope = function (fluid) {
         vTreeRec.push({el, event, rawHandler, modifiers, vnodeId: vnode._id});
     };
 
-    fluid.applyOnLoad = function (func) {
-        if (document.readyState === "complete") {
-            func();
-        } else {
-            document.addEventListener("DOMContentLoaded", func);
-        }
-    };
-
-    fluid.applyOnLoad(() => {
-        fluid.acquireModules(document.documentElement);
-        fluid.docToImportMap(document, document.documentElement);
-    });
-
-    // Many thanks to Hugo Daniel https://hugodaniel.com/pages/boredom/ for inspiration for this concept
-    fluid.selfBootQuery = fluid.liveQuerySelectorAll("*[fluid-layers]");
-
-    fluid.selfBootEffect = effect( () => {
-        const elements = fluid.selfBootQuery.value;
-        elements.forEach(element => {
-            const existing = fluid.viewContainerRegistry.get(element);
-            if (!existing) {
-                const layers = element.getAttribute("fluid-layers").split(" ").map(layer => layer.trim());
-                const [firstLayer, ...restLayers] = layers;
-                const instance = fluid.initFreeComponent(firstLayer, {
-                    $layers: restLayers,
-                    container: element
-                });
-                // Put this in early in case instantiation fails - TODO standardise access to shadow
-                fluid.viewContainerRegistry.set(element, instance[$t].shadow);
-            }
-        });
-    });
-
     fluid.globalDismissalSignal = signal(0);
 
     fluid.def("fluid.globalDismissal", {
@@ -205,6 +173,18 @@ const $fluidViewBrowserScope = function (fluid) {
     });
 
     fluid.globalDismissalInstance = fluid.globalDismissal();
+
+    fluid.applyOnLoad = function (func) {
+        if (document.readyState === "complete") {
+            func();
+        } else {
+            document.addEventListener("DOMContentLoaded", func);
+        }
+    };
+
+    // Boot the current document into Infusion by acquiring fluid-import, fluid-module nodes and instantiating
+    // components on any fluid-layer nodes
+    fluid.bootDocument(document);
 
 };
 

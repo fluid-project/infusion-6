@@ -9,7 +9,12 @@ fluid.def("fluid.editorRoot", {
     inspectingSite: null,
     selfEditing: false,
 
-    animateInspectOverlay: "$effect:fluid.animateInspectOverlay({self}, {self}.inspectingSite, {colourManager}.layerColours)",
+    animateInspectOverlay: {
+        $effect: {
+            func: "fluid.animateInspectOverlay",
+            args: ["{self}", "{self}.inspectingSite", "{colourManager}.layerColours", "{global}.document"]
+        }
+    },
 
     colourManager: {
         $component: {
@@ -56,22 +61,25 @@ fluid.def("fluid.editorRoot", {
     },
     editorHolderForLayer: {
         $method: {
-            func: (editorsPane, layerName) => {
+            func: async (editorsPane, layerName) => {
                 const $m = fluid.metadataSymbol;
-                // TODO: ILCSS syntax for locating things
-                const children = Object.values(editorsPane.editorHolders[$m].childComponents);
-                const found = children.find(childShadow => childShadow.that.layerRec.value.layerName === layerName);
-                return found && found.shadowMap[$m].proxy;
+                // TODO: async version of fluid.queryILSelector - deal with the fact that constructing an editor may be async through code loading
+                const childShadows = editorsPane.editorHolders[$m].childComponents
+                const children = Object.values(childShadows).map(shadow => shadow.shadowMap[$m].proxy);
+
+                await(fluid.signalToPromise(fluid.signalsToAvailable(children)));
+
+                return children.find(child => child.layerRec.layerName === layerName);
             },
             args: ["{editorsPane}", "{0}:layerName"]
         }
     },
     goToLayerRef: {
         $method: {
-            func: (self, layerRef) => {
+            func: async (self, layerRef) => {
                 // TODO: At some point deal with the fact that one editor might handle more than one layer - in the case
                 // it is a multiplexed SFC - do we really want to support that?
-                const holder = self.editorHolderForLayer(layerRef.context);
+                const holder = await(self.editorHolderForLayer(layerRef.context));
                 holder.goToRef(layerRef);
             }
         },
@@ -79,10 +87,11 @@ fluid.def("fluid.editorRoot", {
     },
     focusLayerEditor: {
         $method: {
-            func: (self, layerName) => {
+            func: async (self, layerName) => {
                 self.selectedLayerTab = layerName;
-                const holder = self.editorHolderForLayer(layerName);
-                holder.editor.instance.focus();
+                const holder = await(self.editorHolderForLayer(layerName));
+                const instance = await(fluid.signalToPromise(holder.editor.instance));
+                instance.focus();
             },
             args: ["{self}", "{0}:layerName"]
         }
@@ -142,66 +151,59 @@ fluid.def("fluid.editorRoot", {
         }
     },
     editUpdateListener: {
-        $eagerCompute: {
-            func: "fluid.editorRoot.editUpdateListener",
-            args: ["{self}", "{$oldValue}"]
+        $bindable: {
+            bind: {
+                func: "fluid.editorRoot.editUpdateListener",
+                args: ["{self}", "{global}.MutationObserver"]
+            },
+            unbind: observer => observer.disconnect()
         }
     },
     $variety: "frameworkAux"
 });
 
-// TODO: We have to list these here since otherwise they is not available when the layer loads - need some clear way
+// TODO: We have to list these here since otherwise they are not available when the layer loads - need some clear way
 // to inject code synchronously or else reactively.
 
-fluid.editorRoot.editUpdateListener = function (editorRoot, oldInstance) {
-
-    if (oldInstance) {
-        return oldInstance;
-    } else {
-        const observer = new MutationObserver((mutationList) => {
-            const targets = [...new Set(mutationList.map(m => m.target))];
-            targets.forEach(target => {
-                const searcher = target.nodeType === 1 ? target : target.parentElement;
-                const editRoot = searcher && searcher.closest(".fl-edit-root");
-                if (editRoot) {
-                    const {shadow, container} = fluid.shadowForElementParent(editRoot);
-                    console.log("Found mutation of target ", target, " within root ", editRoot, " within container ", container);
-                    const path = fluid.pathToNode(editRoot, container);
-                    console.log("Path from editRoot to parent ", path.join(""));
-                    const vTree = shadow.that.vTree.peek();
-                    const vNode = fluid.navigatePath(vTree, path);
-                    console.log("Found corresponding vNode ", vNode);
-                    if (fluid.textDiff(vNode, editRoot)) {
-                        console.log("Text content identical, skipping")
-                    } else {
-                        const templateLayer = vNode.attrs["fl-template-layer"];
-                        const sfcRec = fluid.sfcStore[templateLayer];
-                        const origText = sfcRec.textSignal.value;
-                        const from = vNode.children[0].start;
-                        const to = fluid.peek(vNode.children).end;
-                        const newText = origText.slice(0, from) + editRoot.innerHTML + origText.slice(to);
-                        console.log(`Proposing updating text from\n${origText} to \n${newText}`);
-                        sfcRec.textSignal.value = newText;
-                    }
+fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
+    const observer = new MutationObserver((mutationList) => {
+        const targets = [...new Set(mutationList.map(m => m.target))];
+        targets.forEach(target => {
+            const searcher = target.nodeType === 1 ? target : target.parentElement;
+            const editRoot = searcher && searcher.closest(".fl-edit-root");
+            if (editRoot) {
+                const {shadow, container} = fluid.shadowForElementParent(editRoot);
+                console.log("Found mutation of target ", target, " within root ", editRoot, " within container ", container);
+                const path = fluid.pathToNode(editRoot, container);
+                console.log("Path from editRoot to parent ", path.join(""));
+                const vTree = shadow.that.vTree.peek();
+                const vNode = fluid.navigatePath(vTree, path);
+                console.log("Found corresponding vNode ", vNode);
+                if (fluid.textDiff(vNode, editRoot)) {
+                    console.log("Text content identical, skipping")
+                } else {
+                    const templateLayer = vNode.attrs["fl-template-layer"];
+                    const sfcRec = fluid.sfcStore[templateLayer];
+                    const origText = sfcRec.textSignal.value;
+                    const from = vNode.children[0].start;
+                    const to = fluid.peek(vNode.children).end;
+                    const newText = origText.slice(0, from) + editRoot.innerHTML + origText.slice(to);
+                    console.log(`Proposing updating text from\n${origText} to \n${newText}`);
+                    sfcRec.textSignal.value = newText;
                 }
-            });
+            }
         });
+    });
 
-        observer.observe(document, {
-            childList: true,
-            subtree: true,
-            characterData: true
-        });
-
-        // TODO: Dispose not currently bound to anything
-        return {
-            observer,
-            _dispose: () => observer.disconnect()
-        };
-    }
+    observer.observe(document, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
+    return observer;
 };
 
-fluid.animateInspectOverlay = function (self, inspectingSite, layerColours) {
+fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, document) {
     // We need two overlays, one for the app, and another lying outside <body> for self-inspection of the IDE
     const overlays = {
         overlay: document.getElementById("fl-inspect-overlay"),

@@ -20,13 +20,17 @@ const $fluidJSScope = function (fluid) {
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
 
+    fluid.isBrowser = function () {
+        return typeof(window) !== "undefined" && !!window.document;
+    };
+
     // A standard utility to schedule the invocation of a function after the current
     // stack returns. On browsers this defaults to setTimeout(func, 0) but in
     // other environments can be customised - e.g. to process.nextTick in node.js
     // In future, this could be optimised in the browser to not dispatch into the event queue
     // See https://github.com/YuzuJS/setImmediate for a more verbose but very robust replacement
     fluid.invokeLater = function (func) {
-        return setTimeout(func, 0);
+        return queueMicrotask(func);
     };
 
     // The following flag defeats all logging/tracing activities in the most performance-critical parts of the framework.
@@ -542,6 +546,45 @@ const $fluidJSScope = function (fluid) {
         return array.length === 0 ? undefined : array[array.length - 1];
     };
 
+    fluid.make_find = function (find_if) {
+        const target = find_if ? false : undefined;
+        return function (source, func, deffolt) {
+            let disp;
+            if (fluid.isArrayable(source)) {
+                for (let i = 0; i < source.length; ++i) {
+                    disp = func(source[i], i);
+                    if (disp !== target) {
+                        return find_if ? source[i] : disp;
+                    }
+                }
+            } else {
+                for (const key in source) {
+                    disp = func(source[key], key);
+                    if (disp !== target) {
+                        return find_if ? source[key] : disp;
+                    }
+                }
+            }
+            return deffolt;
+        };
+    };
+
+    /** Scan through an array or hash of objects, terminating on the first member which
+     * matches a predicate function.
+     * @param {Arrayable|Object} source - The array or hash of objects to be searched.
+     * @param {Function} func - A predicate function, acting on a member. A predicate which
+     * returns any value which is not <code>undefined</code> will terminate
+     * the search. The function accepts (object, index).
+     * @param {Object} deflt - A value to be returned in the case no predicate function matches
+     * a structure member. The default will be the natural value of <code>undefined</code>
+     * @return The first return value from the predicate function which is not <code>undefined</code>
+     */
+    fluid.find = fluid.make_find(false);
+    /* The same signature as fluid.find, only the return value is the actual element for which the
+     * predicate returns a value different from <code>false</code>
+     */
+    fluid.find_if = fluid.make_find(true);
+
     /** Scan through an array or hash of objects, removing those which match a predicate. Similar to
      * jQuery.grep, only acts on the list in-place by removal, rather than by creating
      * a new list by inclusion.
@@ -919,9 +962,16 @@ const $fluidJSScope = function (fluid) {
         return {designalArgs, unavailable};
     };
 
+    /**
+     * Processes an array of signals or values and returns a value which is available if all of the values are available.
+     * @param {Array} sigs - An array of signals or values to process.
+     * @return {Signal<Unavailable|Array>} The "unavailable" marker if any argument is unavailable, or the array of resolved arguments.
+     */
     fluid.signalsToAvailable = function (sigs) {
-        const sigRec = fluid.processSignalArgs(sigs);
-        return sigRec.unavailable || sigRec.designalArgs;
+        return computed( () => {
+            const sigRec = fluid.processSignalArgs(sigs);
+            return sigRec.unavailable || sigRec.designalArgs;
+        });
     };
 
     /**
@@ -946,6 +996,8 @@ const $fluidJSScope = function (fluid) {
         return unavailable;
     };
 
+    fluid.notEvaluated = fluid.unavailable("Computed not yet evaluated", "config");
+
     /**
      * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
      *
@@ -962,8 +1014,13 @@ const $fluidJSScope = function (fluid) {
                 unavailable
             } = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
             const func = fluid.deSignal(funcSignal);
-            return unavailable ? acc(unavailable) : fluid.isUnavailable(func) ? acc(func) : func.apply(null, designalArgs);
-        });
+            const anyUnavailable = unavailable || (fluid.isUnavailable(func) ? func : false);
+            if (options?.dispatcher) {
+                return options.dispatcher(func, designalArgs, anyUnavailable, oldValue);
+            } else {
+                return anyUnavailable ? acc(anyUnavailable) : func.apply(null, designalArgs);
+            }
+        }, fluid.notEvaluated);
     };
 
     let effectId = 1;
@@ -982,16 +1039,10 @@ const $fluidJSScope = function (fluid) {
             if (!unavailable || options?.free) {
                 return untracked( () => func.apply(this, designalArgs));
             }
-        });
+        }, options);
         togo.$func = func;
         togo.$args = args;
         togo.effectId = effectId++;
-        togo.dispose = () => {
-            options.onDispose && options.onDispose();
-            togo._dispose();
-            togo.disposed = true;
-            console.log("Disposed effectId ", togo.effectId);
-        };
         return togo;
     };
 
@@ -1006,9 +1057,9 @@ const $fluidJSScope = function (fluid) {
 
     fluid.disposeEffects = function (effectStructure) {
         if (effectStructure instanceof preactSignalsCore.Effect) {
-            effectStructure._dispose();
+            effectStructure.dispose();
         } else if (Array.isArray(effectStructure)) {
-            effectStructure.forEach(effect => effect._dispose());
+            effectStructure.forEach(effect => effect.dispose());
             effectStructure.length = 0;
         } else {
             Object.values(effectStructure).forEach(value => fluid.disposeEffects(value));
@@ -1191,7 +1242,7 @@ const $fluidJSScope = function (fluid) {
 
     fluid.missingPolicies = {
         unavailable: (root, path) => fluid.unavailable({
-            message: `Path ${path} was not found in model`,
+            message: `Path ${path} was not found`,
             // TODO: Upgrade incoming data so that it always comes with a full site cursor
             site: root
         }),
@@ -2205,7 +2256,7 @@ const $fluidJSScope = function (fluid) {
             const togo = store[layerName] = signal(fluid.unavailable({
                 message: "Layer " + layerName + " is not defined",
                 path: ["layer", layerName]
-            }));
+            }, "config"));
             if (demand) {
                 // TODO: Initiate fetch at this point if it is in importMap
                 togo.demanded = true;
@@ -2679,6 +2730,8 @@ const $fluidJSScope = function (fluid) {
             if (!loader) {
                 fluid.fail("Can't find loader for file ", url);
             } else {
+                // TODO: Note that loadImportMap currently starts load immediately - in future this will only happen
+                // in fluid.ensureImportsLoaded when the layer is actually demanded
                 fluid.invokeGlobalFunction(loader, [layerName, url]);
             }
 
@@ -2707,18 +2760,19 @@ const $fluidJSScope = function (fluid) {
         fluid.setGlobalValue(componentName, creator);
     };
 
+    // If we are processing definitions through injecting their code for loading an SFC, we need to defer them until
+    // all dependent injections are processed. If this buffer is allocated, they will be captured here rather than
+    // written immediately.
+    fluid.defBuffer = null;
+
     fluid.writeDef = function (layerName, layer) {
+        console.log("**** writeDef for layer ", layerName);
+        // TODO: Reactive implementation of this, and also withdraw when deregistered
+        // Do this first so that any stack keyed off fluid.writeLayer, e.g. subcomponent creation, can react to this.
+        fluid.acquireImports(layer.$importMap);
         fluid.writeLayer(layerName, layer);
         // TODO: Generalised mechanism for side-effects for layer registration
         fluid.makeComponentCreator(layerName);
-        // TODO: Reactive implementation of this, and also withdraw when deregistered
-        fluid.acquireImports(layer.$importMap);
-    };
-
-    fluid.deferredDef = function (layerName, layer) {
-        fluid.writeLayer(layerName, fluid.unavailable({cause: "Layer definition is deferred", variety: "I/O"}));
-        fluid.makeComponentCreator(layerName);
-        fluid.invokeLater( () => fluid.writeLayer(layerName, layer));
     };
 
     /**
@@ -2733,8 +2787,25 @@ const $fluidJSScope = function (fluid) {
         if (layer === undefined) {
             return fluid.readLayer(layerName).value.raw;
         } else {
-            fluid.writeDef(layerName, layer);
+            if (fluid.defBuffer) {
+                fluid.makeComponentCreator(layerName);
+                fluid.defBuffer[layerName] = layer;
+            } else {
+                fluid.writeDef(layerName, layer);
+            }
         }
+    };
+
+    fluid.startCaptureBufferDefs = function (defBuffer) {
+        fluid.defBuffer = defBuffer;
+    };
+
+    fluid.endCaptureBufferDefs = function () {
+        fluid.defBuffer = null;
+    };
+
+    fluid.writeBufferDefs = function (defBuffer) {
+        fluid.each(defBuffer, (layer, layerName) => fluid.writeDef(layerName, layer));
     };
 
     // A special marker object which will be placed at a current evaluation point in the tree in order
@@ -3049,7 +3120,7 @@ const $fluidJSScope = function (fluid) {
      *
      * @param {String} url - The URL to fetch text data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<String>} A signal containing the fetched text data or an "unavailable" state.
+     * @return {Signal<String>} A signal containing the fetched text data or an "unavailable" state.
      */
     fluid.fetchText = function (url, options) {
         return fluid.fetch(url, options, async response => response.text());
@@ -3062,7 +3133,7 @@ const $fluidJSScope = function (fluid) {
      *
      * @param {String} url - The URL to fetch JSON data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
+     * @return {Signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
      */
     fluid.fetchJSON = function (url, options) {
         return fluid.fetch(url, options, async response => response.json());
@@ -3077,9 +3148,9 @@ const $fluidJSScope = function (fluid) {
      */
     fluid.signalToPromise = function (valSignal) {
         return new Promise( (resolve) => {
-            const effect = fluid.effect(function (value) {
+            fluid.effect(function (value) {
                 resolve(value);
-                effect._dispose();
+                this.dispose();
             }, [valSignal]);
         });
     };

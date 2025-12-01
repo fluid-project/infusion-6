@@ -2,11 +2,14 @@
 fluid.def("fluid.editor.menu", {
     menuItemsData: {
         File: [{
-            text: "Export..."
+            text: "Export...",
+            layers: []
         }, {
-            text: "Export without editing..."
+            text: "Export without editing...",
+            layers: []
         }, {
-            text: "Export packed build..."
+            text: "Export packed build...",
+            layers: []
         }],
         Settings: [{
             text: "Filter framework layers",
@@ -113,7 +116,7 @@ fluid.def("fluid.editor.menu.inspect", {
         </g>
     </svg>
 </div>`,
-    inspectEffect: "$effect:fluid.inspect.effect({self}, {self}.active)",
+    inspectEffect: "$effect:fluid.inspect.effect({self}, {self}.active, {global}.document)",
     mouseMove: "$method:fluid.inspect.mouseMove({self}, {0}:event, {editorRoot})",
     click: "$method:fluid.clickMagic({inspect}, {selfEdit}, 0)",
 
@@ -135,7 +138,7 @@ fluid.inspect.mouseMove = function (self, event, editorRoot) {
     editorRoot.inspectingSite = useShadow ? {shadow: useShadow} : null;
 };
 
-fluid.inspect.effect = function (self, inspecting) {
+fluid.inspect.effect = function (self, inspecting, document) {
     const listener = self.mouseMove;
     if (inspecting) {
         document.addEventListener("mousemove", listener);

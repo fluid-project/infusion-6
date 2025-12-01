@@ -14,11 +14,7 @@ const $fluidViewNodeScope = function (fluid) {
     fluid.parseDOM = fluid.serverDocumentParser;
 
     // Noop stub to discard event handler registration on server
-    fluid.applyOns = function (vnode, shadow, el, on, vTreeRec) {
-        if (on) {
-            on.forEach(({onKey, onValue}) => fluid.applyOn(vnode, shadow, el, onKey, onValue, vTreeRec));
-        }
-    };
+    fluid.applyOns = () => {};
 
     // On the server assume that the document is always ready - need to check MutationObserver behaviour in linkedom
     fluid.applyOnLoad = function (func) {

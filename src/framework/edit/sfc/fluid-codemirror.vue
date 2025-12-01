@@ -11,7 +11,11 @@ fluid.def("fluid.codemirror", {
     text: "",
     elideParent: false,
     template: "<textarea>@{text}</textarea>",
-    instance: "$eagerCompute:fluid.codemirror.construct({self}, {fluid.editor}, {self}.renderedContainer, {$oldValue})",
+    instance: {
+        $bindable: {
+            bind: "fluid.codemirror.construct({self}, {fluid.editor}, {self}.renderedContainer, {global}.CodeMirror)"
+        }
+    },
     refreshOnActive: {
         $effect: {
             func: instance => instance.refresh(),
@@ -73,58 +77,55 @@ fluid.codemirror.updateText = function (instance, text) {
     }
 };
 
-fluid.codemirror.construct = function (self, holder, container, oldInstance) {
-    // Ensure we just construct exactly one component on our first render, regardless of whether we re-render
-    if (oldInstance) {
-        return oldInstance;
-    } else {
-        const validText = signal(fluid.unavailable("Text not validated"));
-        const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
-        const textarea = container.firstElementChild;
-        const instance = CodeMirror.fromTextArea(textarea, options);
-        instance.firstValid = false; // Ignore the first validation update from initial editor contents
-        console.log("Constructing from textArea ", textarea, " ", textarea.innerText);
-        instance.writeEffect = fluid.effect(validText => {
-            if (instance.firstValid && holder.writeText && !instance.inReadUpdate) {
-                // instance.selfWrite = true;
-                holder.writeText(validText);
-            }
-            instance.firstValid = true;
-        }, [validText]);
-        validText.$variety = "codeMirror-validText";
-        fluid.disableRendering(self);
-        return instance;
-    }
+fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
+    const validText = signal(fluid.unavailable("Text not validated"));
+    return {focus: () => {}, refresh: () => {}};
+    const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
+    const textarea = container.firstElementChild;
+    const instance = CodeMirror.fromTextArea(textarea, options);
+    instance.firstValid = false; // Ignore the first validation update from initial editor contents
+    console.log("Constructing from textArea ", textarea, " ", textarea.innerText);
+    instance.writeEffect = fluid.effect(validText => {
+        if (instance.firstValid && holder.writeText && !instance.inReadUpdate) {
+            // instance.selfWrite = true;
+            holder.writeText(validText);
+        }
+        instance.firstValid = true;
+    }, [validText]);
+    validText.$variety = "codeMirror-validText";
+    fluid.disableRendering(self);
+    return instance;
 };
 </script>
 
 <!-- What if someone wants to intercede on any of these imports? -->
 
-<script src="%infusion-lib/codemirror/js/codemirror.js"></script>
-<script src="%infusion-lib/codemirror/js/css.js"></script>
-<script src="%infusion-lib/codemirror/js/javascript.js"></script>
-<script src="%infusion-lib/codemirror/js/markdown.js"></script>
-<script src="%infusion-lib/codemirror/js/xml.js"></script>
-<script src="%infusion-lib/codemirror/js/overlay.js"></script>
-<script src="%infusion-lib/codemirror/js/htmlmixed.js"></script>
-<script src="%infusion-lib/codemirror/js/vue.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/codemirror.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/css.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/javascript.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/markdown.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/xml.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/overlay.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/htmlmixed.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/vue.js"></script>
 
 <!-- The core linting implementations -->
-<script src="%infusion-lib/codemirror/js/jshint.js"></script>
-<script src="%infusion-lib/codemirror/js/jsonlint.js"></script>
-<script src="%infusion-lib/codemirror/js/csslint.js"></script>
-<script src="%infusion-lib/codemirror/js/htmlhint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/jshint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/jsonlint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/csslint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/htmlhint.js"></script>
 
 <!-- CodeMirror's integrations for linting modes -->
-<script src="%infusion-lib/codemirror/js/forked-lint.js"></script>
-<script src="%infusion-lib/codemirror/js/javascript-lint.js"></script>
-<script src="%infusion-lib/codemirror/js/json-lint.js"></script>
-<script src="%infusion-lib/codemirror/js/css-lint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/forked-lint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/javascript-lint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/json-lint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/css-lint.js"></script>
 
 <script src="%fluid-edit/js/sfcLinter.js"></script>
 
-<style src="%infusion-lib/codemirror/css/codemirror.css"></style>
-<style src="%infusion-lib/codemirror/css/lint.css"></style>
+<style src="%infusion-6/src/lib/codemirror/css/codemirror.css"></style>
+<style src="%infusion-6/src/lib/codemirror/css/lint.css"></style>
+
 
 <style>
 .CodeMirror {
