@@ -71,7 +71,7 @@
         "minimist": "1.2.6",
         "npm-run-all2": "6.2.0",
         "rimraf": "3.0.2",
-        "serve": "13.0.2",
+        "serve": "14.2.5",
         "terser": "5.39.0",
         "qunit": "2.21.0",
         "xhr-mock": "2.5.1"
