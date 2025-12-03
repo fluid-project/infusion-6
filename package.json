@@ -49,7 +49,7 @@
         "@preact/signals": "2.0.1",
         "preact": "10.25.4",
         "codemirror": "5.65.19",
-        "jshint": "2.13.2",
+        "jshint": "2.13.6",
         "jsonlint": "1.6.3",
         "htmlhint": "1.1.4",
         "csslint": "1.0.5",
