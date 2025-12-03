@@ -819,12 +819,7 @@ const fluidViewScope = function (fluid) {
         return rec;
     };
 
-    /**
-     * Bind injections from the specified SFC layer to the supplied document.
-     * @param {String} layerName - The name of the layer for which injections are to be bound
-     * @param {Document} dokkument - The document object into which any injection directives will be injected
-     * @return {Signal<Boolean>} - A signal which resolves to `true` when injections are resolved
-     */
+
     /**
      * Bind injections from the specified SFC layer to the supplied document.
      * @param {String} layerName - The name of the layer for which injections are to be bound
@@ -885,21 +880,18 @@ const fluidViewScope = function (fluid) {
     /**
      * Ensures that the specified layers are loaded and their imports are bound to the document.
      * @param {Shadow} shadow - The shadow object representing the component context.
-     * @param {String[]} layerNames - An array of layer names to check and load imports for.
+     * @param {String} layerName - A layer name to check and load imports for.
      * @return {Signal<true>} A signal which resolves when imports are done
      */
-    fluid.ensureImportsLoaded = function (shadow, layerNames) {
-        const theOne = layerNames.includes("fluid.fullPageEditor") || layerNames.includes("fluid.editor");
-        const dokkument = fluid.findDocument(shadow, theOne);
-        const injections = layerNames.map(layerName => {
-            const importRec = fluid.importMap[layerName];
-            if (importRec) {
-                return fluid.subscribeDocToInjections(layerName, dokkument);
-            }
-        });
+    fluid.ensureImportsLoaded = function (shadow, layerName) {
+        const dokkument = fluid.findDocument(shadow);
+        const importRec = fluid.importMap[layerName];
+        if (importRec) {
+            return fluid.subscribeDocToInjections(layerName, dokkument);
+        } else {
+            return signal(true);
+        }
         // TODO: Return currently ignored - we react to injections through effects on layer store
-        return fluid.signalsToAvailable(injections);
-
     };
 
     /**
@@ -1302,7 +1294,7 @@ const fluidViewScope = function (fluid) {
                         const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
                         const allClass = computed( () => {
                             const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
-                                .filter(([, value]) => value)
+                                .filter(([, value]) => value && !fluid.isUnavailable(value))
                                 .map(([key]) => key);
                             return clazzSource + " " + classes;
                         });

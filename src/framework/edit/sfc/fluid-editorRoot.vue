@@ -62,14 +62,11 @@ fluid.def("fluid.editorRoot", {
     editorHolderForLayer: {
         $method: {
             func: async (editorsPane, layerName) => {
-                const $m = fluid.metadataSymbol;
-                // TODO: async version of fluid.queryILSelector - deal with the fact that constructing an editor may be async through code loading
-                const childShadows = editorsPane.editorHolders[$m].childComponents
-                const children = Object.values(childShadows).map(shadow => shadow.shadowMap[$m].proxy);
+                const children = fluid.liveQueryILSelector(editorsPane, "fluid.editor");
 
-                await(fluid.signalToPromise(fluid.signalsToAvailable(children)));
+                await(fluid.signalToPromise(children));
 
-                return children.find(child => child.layerRec.layerName === layerName);
+                return children.value.find(child => child.layerRec.layerName === layerName);
             },
             args: ["{editorsPane}", "{0}:layerName"]
         }

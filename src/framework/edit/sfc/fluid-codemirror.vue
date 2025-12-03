@@ -79,7 +79,6 @@ fluid.codemirror.updateText = function (instance, text) {
 
 fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
     const validText = signal(fluid.unavailable("Text not validated"));
-    return {focus: () => {}, refresh: () => {}};
     const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
     const textarea = container.firstElementChild;
     const instance = CodeMirror.fromTextArea(textarea, options);

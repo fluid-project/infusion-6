@@ -30,7 +30,7 @@ fluid.def("fluid.editor.historyList", {
             template: `
 <div class="fl-history-rec" @class="current:@{{historyRec}.current}" style="background-color: @{{historyRec}.colour}" title="@{layerName}">
     <div class="fl-history-layer">@{layerName}</div>
-    <div class="fl-history-type>">@{{historyRec}.type}</div>
+    <div class="fl-history-type">@{{historyRec}.type}</div>
 </div>`,
             $for: {
                 source: "{historyList}.records",

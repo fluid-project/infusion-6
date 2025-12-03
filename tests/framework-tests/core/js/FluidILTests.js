@@ -13,15 +13,15 @@ QUnit.test("Basic live merging", function (assert) {
         $layers: "fluid.component",
         testValue: 0
     });
-    const testDef = fluid.readMergedDef("fluid.tests.testComponent");
-    assert.strictEqual(testDef.value.testValue, 0, "Retrieve basic value");
-    assert.strictEqual(testDef.value.events.onCreate, 0, "Retrieve merged value");
+    const testDef = fluid.tests.testComponent();
+    assert.strictEqual(testDef.testValue, 0, "Retrieve basic value");
+    assert.strictEqual(testDef.events.onCreate, 0, "Retrieve merged value");
     fluid.def("fluid.tests.testComponent", {
         $layers: "fluid.component",
         testValue: 1
     });
-    assert.strictEqual(testDef.value.testValue, 1, "Updated basic value");
-    assert.strictEqual(testDef.value.events.onCreate, 0, "Merged value unchanged");
+    assert.strictEqual(testDef.testValue, 1, "Updated basic value");
+    assert.strictEqual(testDef.events.onCreate, 0, "Merged value unchanged");
 });
 
 fluid.def("fluid.tests.basicTestComponent", {

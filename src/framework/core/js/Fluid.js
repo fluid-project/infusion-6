@@ -807,7 +807,19 @@ const $fluidJSScope = function (fluid) {
     };
 
     /**
-     * Create a marker representing an "Unavailable" state with an associated waitset.
+     * @typedef {Object} Unavailable
+     * A mutable marker representing an "Unavailable" state.
+     *
+     * @property {Object[]} causes - An array of cause records. Each cause may include:
+     * * `message` {String} — A human-readable message describing the cause.
+     * * `variety` {String} — The variety assigned to the cause (e.g., "error", "config", "I/O").
+     *
+     * @property {String} variety - The overall variety of the unavailable marker,
+     *   computed as the highest-priority variety among all causes.
+     */
+
+    /**
+     * Create a marker representing an "Unavailable" state with an associated array of causes potentially including their sites.
      * The marker is mutable.
      *
      * @param {Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
@@ -815,7 +827,7 @@ const $fluidJSScope = function (fluid) {
      * * "error" indicates a syntax issue that needs design intervention.
      * * "config" indicates configuration designed to short-circuit evaluation which is not required.
      * * "I/O" indicates pending I/O
-     * @return {fluid.marker} A marker of type "Unavailable".
+     * @return {Unavailable} A marker of type "Unavailable".
      */
     fluid.unavailable = function (cause = {}, variety = "error") {
         const togo = Object.create(fluid.unavailable.prototype);
@@ -862,7 +874,7 @@ const $fluidJSScope = function (fluid) {
 
     // Intended to be used for object which has already passed fluid.isUnavailable
     fluid.deproxyUnavailable = function (target) {
-        return Object.getOwnPropertyDescriptor(target, $t) ? fluid.deSignal(target[$t]) : target;
+        return Object.getOwnPropertyDescriptor(target, $u) ? fluid.deSignal(target[$u]) : target;
     };
 
     /**
@@ -879,13 +891,27 @@ const $fluidJSScope = function (fluid) {
      * Merge two "unavailable" markers into a single marker, combining their causes.
      * If the existing marker is `null` or `undefined`, the fresh marker is returned as-is.
      *
-     * @param {Object|null|undefined} existing - The existing "unavailable" marker, or `null`/`undefined` if none exists.
-     * @param {Object} fresh - The new "unavailable" marker to merge with the existing one.
-     * @return {Object} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
+     * @param {Unavailable|null|undefined} existing - The existing "unavailable" marker, or `null`/`undefined` if none exists.
+     * @param {Unavailable} fresh - The new "unavailable" marker to merge with the existing one.
+     * @return {Unavailable} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
      */
     fluid.mergeUnavailable = function (existing, fresh) {
         return !existing ? fresh : fluid.unavailable(fluid.deproxyUnavailable(existing).causes.concat(
             fluid.deproxyUnavailable(fresh).causes));
+    };
+
+    /**
+     * Merge an array of "unavailable" markers into a single marker using pairwise
+     * reduction via `fluid.mergeUnavailable`. Null or undefined entries are skipped.
+     * If no valid markers are present, `null` is returned.
+     *
+     * @param {Unavailable[]} unavailables - An array of "unavailable" markers
+     * @return {Unavailable|null} A combined "unavailable" marker with merged causes, or `null` if the array was empty
+     */
+    fluid.mergeUnavailables = function (unavailables) {
+        return unavailables.reduce(function (acc, entry) {
+            return entry ? fluid.mergeUnavailable(acc, entry) : acc;
+        }, null);
     };
 
     /*** SIGNAL PROCESSING ***/
@@ -965,7 +991,7 @@ const $fluidJSScope = function (fluid) {
     /**
      * Processes an array of signals or values and returns a value which is available if all of the values are available.
      * @param {Array} sigs - An array of signals or values to process.
-     * @return {Signal<Unavailable|Array>} The "unavailable" marker if any argument is unavailable, or the array of resolved arguments.
+     * @return {Signal<Unavailable|Array>} Unavailable marker if any argument is unavailable, or the array of resolved arguments.
      */
     fluid.signalsToAvailable = function (sigs) {
         return computed( () => {
@@ -977,9 +1003,9 @@ const $fluidJSScope = function (fluid) {
     /**
      * Appends a site to the `site` array of the last element in the `causes` array of the given "unavailable" marker.
      * If the `site` array does not exist, it is allocated.
-     * @param {fluid.unavailable} unavailable - The "unavailable" marker containing the `causes` array.
+     * @param {Unavailable} unavailable - The "unavailable" marker containing the `causes` array.
      * @param {Site} [site] - The site to append to the `site` array of the last cause.
-     * @return {fluid.unavailable} The supplied unavailable value with a cause site filled in
+     * @return {Unavailable} The supplied unavailable value with a cause site filled in
      */
     fluid.accumulateUnavailableSite = function (unavailable, site) {
         // TODO: Causes should actually form independent chains rather than being in a linear array - can't guarantee
@@ -1478,7 +1504,6 @@ const $fluidJSScope = function (fluid) {
 
     /*** The Fluid instance id ***/
 
-    // unsupported, NON-API function
     fluid.generateUniquePrefix = function () {
         return (Math.floor(Math.random() * 1e12)).toString(36) + "-";
     };
@@ -1493,7 +1518,6 @@ const $fluidJSScope = function (fluid) {
      * globally unique with high probability (50% chance of collision after a million trials)
      * @return {String} A fresh unique id
      */
-
     fluid.allocateGuid = function () {
         return fluid_prefix + (fluid_id++);
     };
@@ -2050,102 +2074,14 @@ const $fluidJSScope = function (fluid) {
     fluid.failureEvent.addListener(fluid.builtinFail, "fail");
     fluid.failureEvent.addListener(fluid.logFailure, "log", "before:fail");
 
-    // Algorithm taken from Python 2.3's implementation from manual: https://www.python.org/download/releases/2.3/mro/#the-end
-    // Deals with FLUID-5800
-    // eslint-disable-next-line jsdoc/require-returns-check -- return is at head of loop body
-    /**
-     * Merges multiple sequences of layer names into a single sequence using the C3 linearization method.
-     * @param {String[][]} seqs - An array of sequences to be merged. **NOTE** The nested sequences will be modified by
-     * this function.
-     * @return {String[]} - The merged sequence.
-     * @throws {Error} - Throws an error if the hierarchy is inconsistent.
-     */
-    fluid.C3_merge = function (seqs) {
-        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
-        let res = [];
-        // let i = 0;
-
-        while (true) {
-            let nonemptyseqs = seqs.filter(seq => seq.length > 0);
-            if (nonemptyseqs.length === 0) {
-                return res;
-            }
-
-            // i++;
-            // fluid.log(`\n${i} round: candidates...`);
-
-            let cand = null;
-            for (let seq of nonemptyseqs) {
-                cand = seq[0];
-                // fluid.log(` ${cand}`);
-                // eslint-disable-next-line no-loop-func
-                let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
-                if (nothead.length > 0) {
-                    cand = null; // reject candidate
-                } else {
-                    break;
-                }
-            }
-
-            if (!cand) {
-                fluid.fail(`Inconsistent hierarchy for layer ${res[0]}: conflict between parent orders ${nonemptyseqs.map(ns => ns.toString()).join(", ")}`);
-            }
-
-            res.push(cand);
-            for (let seq of nonemptyseqs) {
-                while (seq[0] === cand) { // AMB fix if -> while to deal with duplicates in sequence
-                    seq.shift(); // remove cand
-                }
-            }
-        }
-    };
-
-    /**
-     * Computes C3 precedence of the parent layers of the supplied layer
-     * @param {String} C - The name of the layer whose parent precedence is required
-     * @param {Object<String, Object>} defs - A layer definition registry
-     * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
-     * @return {String[]} - The parent precedence list
-     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
-     */
-    fluid.C3_precedence = function (C, defs, visited) {
-        if (visited.has(C)) {
-            fluid.fail(`Circular hierarchy detected - layer ${C} has already been visited`);
-        }
-
-        visited.add(C);
-        const def = defs[C];
-        if (!def) {
-            // This error should not be received since the driver in fluid.hierarchyResolver will ensure that all parents have definitions
-            fluid.fail(`Parent layer ${C} referenced which is not defined`);
-        }
-        const parents = Array.from(defs[C].$layers);
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
-        const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
-
-        visited.delete(C);
-        return merged;
-    };
-
-    /**
-     * Computes C3 precedence of the parent layers of the supplied layer
-     * @param {String[]} parents - The name of the layer whose parent precedence is required
-     * @param {Object<String, Object>} defs - A layer definition registry
-     * @return {String[]} - The parent precedence list
-     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
-     */
-    fluid.C3_precedence_parents = function (parents, defs) {
-        const visited = new Set();
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
-        const merged = fluid.C3_merge(precLists);
-        return merged;
-    };
-
 
     /*** DEFAULTS AND OPTIONS MERGING SYSTEM ***/
 
     fluid.proxySymbol = Symbol("fluid.proxyTarget");
     const $t = fluid.proxySymbol;
+
+    fluid.unavailableSymbol = Symbol("fluid.unavailableTarget");
+    const $u = fluid.unavailableSymbol;
 
     fluid.unProxy = target => target?.[$t] ? target[$t] : target;
 
@@ -2563,6 +2499,97 @@ const $fluidJSScope = function (fluid) {
         return togo;
     };
 
+    // Algorithm taken from Python 2.3's implementation from manual: https://www.python.org/download/releases/2.3/mro/#the-end
+    // Deals with FLUID-5800
+    // eslint-disable-next-line jsdoc/require-returns-check -- return is at head of loop body
+    /**
+     * Merges multiple sequences of layer names into a single sequence using the C3 linearization method.
+     * @param {String[][]} seqs - An array of sequences to be merged. **NOTE** The nested sequences will be modified by
+     * this function.
+     * @return {String[]} - The merged sequence.
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent.
+     */
+    fluid.C3_merge = function (seqs) {
+        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
+        let res = [];
+        // let i = 0;
+
+        while (true) {
+            let nonemptyseqs = seqs.filter(seq => seq.length > 0);
+            if (nonemptyseqs.length === 0) {
+                return res;
+            }
+
+            // i++;
+            // fluid.log(`\n${i} round: candidates...`);
+
+            let cand = null;
+            for (let seq of nonemptyseqs) {
+                cand = seq[0];
+                // fluid.log(` ${cand}`);
+                // eslint-disable-next-line no-loop-func
+                let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
+                if (nothead.length > 0) {
+                    cand = null; // reject candidate
+                } else {
+                    break;
+                }
+            }
+
+            if (!cand) {
+                fluid.fail(`Inconsistent hierarchy for layer ${res[0]}: conflict between parent orders ${nonemptyseqs.map(ns => ns.toString()).join(", ")}`);
+            }
+
+            res.push(cand);
+            for (let seq of nonemptyseqs) {
+                while (seq[0] === cand) { // AMB fix if -> while to deal with duplicates in sequence
+                    seq.shift(); // remove cand
+                }
+            }
+        }
+    };
+
+    /**
+     * Computes C3 precedence of the parent layers of the supplied layer
+     * @param {String} C - The name of the layer whose parent precedence is required
+     * @param {Object<String, Object>} defs - A layer definition registry
+     * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
+     * @return {String[]} - The parent precedence list
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
+     */
+    fluid.C3_precedence = function (C, defs, visited) {
+        if (visited.has(C)) {
+            fluid.fail(`Circular hierarchy detected - layer ${C} has already been visited`);
+        }
+
+        visited.add(C);
+        const def = defs[C];
+        if (!def) {
+            // This error should not be received since the driver in fluid.hierarchyResolver will ensure that all parents have definitions
+            fluid.fail(`Parent layer ${C} referenced which is not defined`);
+        }
+        const parents = Array.from(defs[C].$layers);
+        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
+
+        visited.delete(C);
+        return merged;
+    };
+
+    /**
+     * Computes C3 precedence of the parent layers of the supplied layer
+     * @param {String[]} parents - The name of the layer whose parent precedence is required
+     * @param {Object<String, Object>} defs - A layer definition registry
+     * @return {String[]} - The parent precedence list
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
+     */
+    fluid.C3_precedence_parents = function (parents, defs) {
+        const visited = new Set();
+        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const merged = fluid.C3_merge(precLists);
+        return merged;
+    };
+
     /**
      * A resolver for computing and caching layered component definitions and their hierarchies.
      * It evaluates layer definitions via signals, computes parent relationships, and produces fully
@@ -2594,15 +2621,13 @@ const $fluidJSScope = function (fluid) {
                     this.unavailableLayers[layerName] =
                     // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
                         fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`);
-                    return {};
+                    return {$layers: []};
                 } else {
                     return this.storeLayer(layerName, rootLayer);
                 }
             });
         }
 
-        // TODO: Unclear why we make this reactive currently given we construct a fresh HierarchyResolver for each turn round
-        // fluid.flatMergedComputer
         /**
          * Stores and returns a computed signal representing the expanded definition of the specified layer, by issuing a request
          * to the layer registry via fluid.readLayer.
@@ -2621,7 +2646,8 @@ const $fluidJSScope = function (fluid) {
                 const layer = fluid.readLayer(layerName, true).value;
                 if (fluid.isUnavailable(layer)) {
                     this.unavailableLayers[layerName] = layer;
-                    layerDef = {};
+                    this.layerFetcher(layerName);
+                    layerDef = {$layers: []};
                 } else {
                     const readerExpanded = fluid.readerExpandLayer(layer.raw);
                     this.storeParents(readerExpanded, rootLayer || layerName);
@@ -2657,9 +2683,10 @@ const $fluidJSScope = function (fluid) {
          *     or an `unavailable` signal if resolution could not be completed.
          */
         resolve(layerNames) {
+            const useLayerNames = layerNames.filter(layerName => !this.unavailableLayers[layerName]);
             while (true) {
-                const order = fluid.C3_precedence_parents(layerNames, this.flatDefs).reverse();
-                if (this.resolveHierarchyRound(order, layerNames)) {
+                const order = fluid.C3_precedence_parents(useLayerNames, this.flatDefs).reverse();
+                if (this.resolveHierarchyRound(order, useLayerNames)) {
                     continue;
                 }
                 const mergeRecords = order.map((oneLayerName, i) => ({
@@ -2698,18 +2725,6 @@ const $fluidJSScope = function (fluid) {
         return layer.$layers && layer.$layers.includes(layerName);
     };
 
-    // Not really a general-purpose utility, used in test cases
-    /**
-     * Retrieves a layer's merged configuration
-     * @param {String} layerName - The name of the grade whose options are to be read or written
-     * @return {LayerDef} - Merged layer definition
-     */
-    fluid.readMergedDef = function (layerName) {
-        // TODO: economise on these in the "giant mat"
-        const resolver = new fluid.HierarchyResolver();
-        resolver.storeLayer(layerName);
-        return resolver.resolve([layerName]).merged;
-    };
 
     fluid.layerLoaders = {
         "vue": "fluid.loadSFC",
@@ -2830,8 +2845,8 @@ const $fluidJSScope = function (fluid) {
      * @return {any} The return value from the function
      */
     fluid.invokeGradedFunction = function (name, spec) {
-        const defaults = fluid.def(name).value;
-        if (!defaults || !defaults.argumentMap || !fluid.hasGrade(defaults, "fluid.function")) {
+        const defaults = fluid.readLayer(name).value;
+        if (!defaults || fluid.isUnavailable(name) || !defaults.argumentMap || !fluid.hasGrade(defaults, "fluid.function")) {
             fluid.fail("Cannot look up name " + name +
                 " to a function with registered argumentMap - got defaults ", defaults);
         }
