@@ -88,7 +88,7 @@ QUnit.test("Diamond tests", assert => {
 
 QUnit.test("Bidi tests", assert => {
 
-    const celsiusCell = fluid.cell(22);
+    const celsiusCell = fluid.cell(15);
     const fahrenheitCell = fluid.cell();
 
     const cSeq = [];
@@ -96,7 +96,7 @@ QUnit.test("Bidi tests", assert => {
         bind: celsius => cSeq.push(celsius)
     }, [celsiusCell]);
 
-    assert.deepEqual(cSeq, [22], "Startup notification");
+    assert.deepEqual(cSeq, [15], "Startup notification");
 
     const fSeq = [];
     const fEffect = fluid.effect({
@@ -112,13 +112,13 @@ QUnit.test("Bidi tests", assert => {
 
     fahrenheitCell.compute(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
 
-    assert.deepEqual(fSeq, [71.6], "One notification on forward arc");
-    assert.deepEqual(cSeq, [22], "No backward notification");
+    assert.deepEqual(fSeq, [59], "One notification on forward arc");
+    assert.deepEqual(cSeq, [15], "No backward notification");
 
-    celsiusCell.compute(fahrenheit => 5 * (fahrenheit - 32), [fahrenheitCell]);
+    celsiusCell.compute(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
-    assert.deepEqual(fSeq, [71.6], "No change on faithful inverse");
-    assert.deepEqual(cSeq, [22], "No change on faithful inverse");
+    assert.deepEqual(fSeq, [59], "No change on faithful inverse");
+    assert.deepEqual(cSeq, [15], "No change on faithful inverse");
 
     reset();
 
@@ -146,10 +146,10 @@ QUnit.test("Bidi tests", assert => {
 
     reset();
 
-    fahrenheitCell.set(71.6);
+    fahrenheitCell.set(59);
 
-    assert.deepEqual(fSeq, [71.6], "Original update");
-    assert.deepEqual(cSeq, [22], "Relayed update");
+    assert.deepEqual(fSeq, [59], "Original update");
+    assert.deepEqual(cSeq, [15], "Relayed update");
 
     reset();
 

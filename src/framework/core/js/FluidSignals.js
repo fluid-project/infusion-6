@@ -1,263 +1,362 @@
 "use strict";
 
 const $fluidSignalsScope = function (fluid) {
+
+    /** Implementation taken from Reactively at https://github.com/milomg/reactively/blob/main/packages/core/src/core.ts
+     *
+     * Nodes for constructing a reactive graph of reactive values and reactive computations.
+     *
+     * We call input nodes 'roots' and the output nodes 'leaves' of the graph here in discussion,
+     * but the distinction is based on the use of the graph, all nodes have the same internal structure.
+     * Changes flow from roots to leaves. It would be effective but inefficient to immediately propagate
+     * all changes from a root through the graph to descendant leaves. Instead we defer change
+     * most change progogation computation until a leaf is accessed. This allows us to coalesce computations
+     * and skip altogether recalculating unused sections of the graph.
+     *
+     * Each reactive node tracks its sources and its observers (observers are other
+     * elements that have this node as a source). Source and observer links are updated automatically
+     * as observer reactive computations re-evaluate and call get() on their sources.
+     *
+     * Each node stores a cache state to support the change propogation algorithm: 'clean', 'check', or 'dirty'
+     * In general, execution proceeds in three passes:
+     *  1. set() propogates changes down the graph to the leaves
+     *     direct children are marked as dirty and their deeper descendants marked as check
+     *     (no reactive computations are evaluated)
+     *  2. get() requests that parent nodes updateIfNecessary(), which proceeds recursively up the tree
+     *     to decide whether the node is clean (parents unchanged) or dirty (parents changed)
+     *  3. updateIfNecessary() evaluates the reactive computation if the node is dirty
+     *     (the computations are executed in root to leaf order)
+     */
+
     // Global state for tracking reactive context
-    let CurrentReaction = undefined;
-    let CurrentGets = null;
-    let CurrentGetsIndex = 0;
-    let EffectQueue = [];
-    let UpdateDepth = 0;
-    let StabilizeDepth = 0;
-    const MAX_UPDATE_DEPTH = 100;
+    /** current capture context for identifying @reactive sources (other reactive elements) and cleanups
+     * - active while evaluating a reactive function body  */
+    fluid.CurrentReaction = undefined;
+    fluid.CurrentGets = null;
+    fluid.CurrentGetsIndex = 0;
 
-    // Cache states
+    /** A list of non-clean 'effect' nodes that will be updated when stabilize() is called */
+    fluid.EffectQueue = [];
+
+    /**
+     * @enum {Number}
+     * @typedef {Number} CacheState
+     * @property {Number} CacheClean - The cache is clean (no changes).
+     * @property {Number} CacheCheck - The cache needs to be checked (potential changes).
+     * @property {Number} CacheDirty - The cache is dirty (changes detected).
+     */
     const CacheClean = 0;
-    const CacheCheck = 1;
-    const CacheDirty = 2;
+    const CacheCheck = 1; // green
+    const CacheDirty = 2; // red
 
-    function defaultEquality(a, b) {
-        return a === b;
-    }
+    fluid.defaultEquality = function (a, b) {
+        if (typeof(a) !== "number" || typeof(b) !== "number") {
+            return a === b;
+        } else {
+            // Don't use isNaN because of https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/isNaN#Confusing_special-case_behavior
+            if (a === b || a !== a && b !== b) { // Either the same concrete number or both NaN
+                return true;
+            } else {
+                const relError = Math.abs((a - b) / b);
+                return relError < 1e-12; // 64-bit floats have approx 16 digits accuracy, this should deal with most reasonable transforms
+            }
+        }
+    };
 
-    // Main cell constructor
+    /**
+     * @typedef {Object} Cell
+     * @property {function(): any} get - Retrieves the current value of the cell.
+     * @property {function(any): void} set - Sets a new value for the cell.
+     * @property {function(Function, Array<Cell>): Cell} compute - Sets up a reactive computation for the cell.
+     * @property {Any} _value - The current value stored in the cell.
+     * @property {Boolean} _isEffect - Is this an effect node.
+     * @property {CacheState} _state - The cache state of the cell (clean, check, or dirty).
+     * @property {Cell[]|null} _observers - Cells that have us as sources (down links)
+     * @property {Cell[]|null} _sources - Sources in reference order, not deduplicated (up links)
+     */
+
+    /**
+     * Creates a new reactive cell for managing state and computations.
+     *
+     * @param {any} [initialValue] - The initial value to store in the cell.
+     * @return {Cell} The newly created cell object.
+     */
     fluid.cell = function (initialValue) {
         const cell = Object.create(fluid.cell.prototype);
 
         // Initialize cell properties
         cell._value = initialValue;
-        cell.fn = undefined;
-        cell.observers = null;
-        cell.sources = null;
-        cell.state = CacheClean;
-        cell.effect = false;
-        cell.cleanups = [];
-        cell.equals = defaultEquality;
-        cell.available = initialValue !== undefined;
-        cell.updating = false;
+        cell._fn = undefined;
+        cell._observers = null; // nodes that have us as sources (down links)
+        cell._sources = null; // sources in reference order, not deduplicated (up links)
+
+        cell._state = CacheClean;
+        cell._isEffect = false;
+        cell._cleanups = [];
+        cell._equals = fluid.defaultEquality;
+        // NEW
+        cell._isUpdating = false;
 
         return cell;
     };
 
+    // Stopgap until we port in genuine unavailable
+    fluid.cell.isUnavailable = val => val === undefined;
+
+    /**
+     * Reactively evaluate the current cell, ensuring its value is up to date with respect to all computed dependents,
+     * within the current reactive context
+     *
+     * @return {any} The evaluated cell value
+     * @this {Cell}
+     */
     fluid.cell.prototype.get = function () {
         // Track this get in the current reaction context
-        if (CurrentReaction) {
+        if (fluid.CurrentReaction) {
             if (
-                !CurrentGets &&
-                CurrentReaction.sources &&
-                CurrentReaction.sources[CurrentGetsIndex] === this
+                !fluid.CurrentGets &&
+                fluid.CurrentReaction._sources &&
+                fluid.CurrentReaction._sources[fluid.CurrentGetsIndex] === this
             ) {
-                CurrentGetsIndex++;
+                fluid.CurrentGetsIndex++;
             } else {
-                if (!CurrentGets) CurrentGets = [this];
-                else CurrentGets.push(this);
-            }
-        }
-
-        // Update if we have a function and might be stale
-        if (this.fn) this.updateIfNecessary();
-
-        return this._value;
-    };
-
-    fluid.cell.prototype.set = function (value) {
-        // If we had a function, remove it and its dependencies
-        if (this.fn) {
-            this.removeParentObservers(0);
-            this.sources = null;
-            this.fn = undefined;
-        }
-
-        if (!this.equals(this._value, value)) {
-            this._value = value;
-            this.available = true;
-
-            // Mark observers as dirty
-            if (this.observers) {
-                for (let i = 0; i < this.observers.length; i++) {
-                    const observer = this.observers[i];
-                    observer.stale(CacheDirty);
+                if (!fluid.CurrentGets) {
+                    fluid.CurrentGets = [this];
+                }
+                else {
+                    fluid.CurrentGets.push(this);
                 }
             }
         }
 
-        // Process any effects that were queued (only at top level)
-        if (StabilizeDepth === 0) {
-            stabilize();
+        // Update if we have a function and might be stale
+        if (this._fn) {
+            fluid.cell.updateIfNecessary(this);
         }
+
+        return this._value;
     };
 
-    fluid.cell.prototype.compute = function (fn, sources) {
-        if (fn === null) {
-            // Remove computation
-            if (this.fn) {
-                this.removeParentObservers(0);
-                this.sources = null;
-                this.fn = undefined;
+    /**
+     * Update the value of this writeable cell
+     *
+     * @param {Any} value - The new cell value
+     * @this {Cell}
+     */
+    fluid.cell.prototype.set = function (value) {
+
+        if (!this._equals(this._value, value)) {
+            this._value = value;
+
+            // Mark observers as dirty
+            if (this._observers) {
+                for (let i = 0; i < this._observers.length; i++) {
+                    const observer = this._observers[i];
+                    fluid.cell.markStale(observer, CacheDirty);
+                }
+            }
+        }
+
+        fluid.cell.stabilize();
+    };
+
+    /**
+     * Mark this cell as holding a value computed from a set of other reactive cell values.
+     *
+     * @param {Function} fn - The function which will reactively evaluate this cell's value
+     * @param {Cell[]} [staticSources] - Any statically known cell dependencies whose reactively evaluated arguments will be supplied
+     * to `fn` when it is called.
+     * @return {Cell} This cell
+     * @this {Cell}
+     */
+    fluid.cell.prototype.compute = function (fn, staticSources) {
+        if (!fn) {
+            // Remove computation - part of middle block of original .set
+            if (this._fn) {
+                fluid.cell.removeParentObservers(this, 0);
+                this._sources = null;
+                this._fn = null;
             }
             return this;
         }
 
-        // Remove old source observers before setting new ones
-        if (this.sources) {
-            this.removeParentObservers(0);
-        }
+        const oldFn = this._fn;
+        this._fn = fn;
+        this._staticSources = staticSources ? [...staticSources] : null;
 
-        const oldFn = this.fn;
-        this.fn = fn;
-        this.sources = sources || null;
-
-        // Set up observer links from sources to this cell
-        if (sources) {
-            for (let i = 0; i < sources.length; i++) {
-                const source = sources[i];
-                if (!source.observers) {
-                    source.observers = [this];
+        // Set up observer links from sources to this cell - this is new signature
+        if (staticSources) {
+            for (let i = 0; i < staticSources.length; i++) {
+                const source = staticSources[i];
+                if (!source._observers) {
+                    source._observers = [this];
                 } else {
                     // Check if already observing to avoid duplicates
-                    if (!source.observers.includes(this)) {
-                        source.observers.push(this);
+                    if (!source._observers.includes(this)) {
+                        source._observers.push(this);
                     }
                 }
             }
         }
 
         if (fn !== oldFn) {
-            this.stale(CacheDirty);
+            fluid.cell.markStale(this, CacheDirty);
         }
 
-        // Immediately compute the value
-        this.updateIfNecessary();
+        fluid.cell.stabilize();
 
         return this;
     };
 
-    fluid.cell.prototype.stale = function (state) {
-        if (this.state < state) {
-            if (this.state === CacheClean && this.effect) {
-                EffectQueue.push(this);
+    /**
+     * Marks a cell and its observers as stale, updating their cache state.
+     *
+     * @param {Cell} cell - The reactive cell to mark as stale.
+     * @param {CacheState} state - The new cache state to assign (e.g., CacheDirty or CacheCheck).
+     */
+    fluid.cell.markStale = function (cell, state) {
+        if (cell._state < state) {
+            // If we were previously clean, then we know that we may need to update to get the new value
+            if (cell._state === CacheClean && cell._isEffect) {
+                fluid.EffectQueue.push(cell);
             }
 
-            this.state = state;
-            if (this.observers) {
-                for (let i = 0; i < this.observers.length; i++) {
-                    this.observers[i].stale(CacheCheck);
+            cell._state = state;
+            if (cell._observers) {
+                for (let i = 0; i < cell._observers.length; i++) {
+                    fluid.cell.markStale(cell._observers[i], CacheCheck);
                 }
             }
         }
     };
 
-    fluid.cell.prototype.update = function () {
+    /**
+     * Updates the value of a reactive cell by re-evaluating its computation function and managing dependencies.
+     * @param {Cell} cell - The reactive cell to update.
+     */
+    fluid.cell.update = function (cell) {
+        // AI
         // Prevent infinite recursion in circular dependencies
-        if (this.updating) {
+        if (cell._isUpdating || !cell._fn) {
             return;
         }
 
-        this.updating = true;
-        const oldValue = this._value;
+        cell._isUpdating = true;
+        // \AI
+        const oldValue = cell._value;
 
-        const prevReaction = CurrentReaction;
-        const prevGets = CurrentGets;
-        const prevIndex = CurrentGetsIndex;
+        const prevReaction = fluid.CurrentReaction;
+        const prevGets = fluid.CurrentGets;
+        const prevIndex = fluid.CurrentGetsIndex;
 
-        CurrentReaction = this;
-        CurrentGets = null;
-        CurrentGetsIndex = 0;
+        fluid.CurrentReaction = cell;
+        fluid.CurrentGets = null;
+        fluid.CurrentGetsIndex = 0;
 
         try {
-            if (this.cleanups.length) {
-                this.cleanups.forEach(c => c(this._value));
-                this.cleanups = [];
+            if (cell._cleanups.length) {
+                cell._cleanups.forEach(c => c(cell._value));
+                cell._cleanups = [];
             }
 
-            // Call the function with source values as arguments
-            if (this.sources) {
-                const args = this.sources.map(s => s.get());
-                this._value = this.fn.apply(null, args);
+            // new - dispatch values from static dependencies as arguments
+            if (cell._staticSources) {
+                const args = cell._staticSources.map(s => s.get());
+                cell._value = cell._fn.apply(null, args);
             } else {
-                this._value = this.fn();
+                cell._value = cell._fn();
             }
+            //
 
-            this.available = true;
 
-            // Update sources if they changed during execution
-            if (CurrentGets) {
-                this.removeParentObservers(CurrentGetsIndex);
-                if (this.sources && CurrentGetsIndex > 0) {
-                    this.sources.length = CurrentGetsIndex + CurrentGets.length;
-                    for (let i = 0; i < CurrentGets.length; i++) {
-                        this.sources[CurrentGetsIndex + i] = CurrentGets[i];
+            // Update sources if they changed during execution -     // if the sources have changed, update source & observer links
+            if (fluid.CurrentGets) {
+                fluid.cell.removeParentObservers(cell, fluid.CurrentGetsIndex);
+                if (cell._sources && fluid.CurrentGetsIndex > 0) {
+                    cell._sources.length = fluid.CurrentGetsIndex + fluid.CurrentGets.length;
+                    for (let i = 0; i < fluid.CurrentGets.length; i++) {
+                        cell._sources[fluid.CurrentGetsIndex + i] = fluid.CurrentGets[i];
                     }
                 } else {
-                    this.sources = CurrentGets;
+                    cell._sources = fluid.CurrentGets;
                 }
 
-                for (let i = CurrentGetsIndex; i < this.sources.length; i++) {
-                    const source = this.sources[i];
-                    if (!source.observers) {
-                        source.observers = [this];
-                    } else if (!source.observers.includes(this)) {
-                        source.observers.push(this);
+                for (let i = fluid.CurrentGetsIndex; i < cell._sources.length; i++) {
+                    const source = cell._sources[i];
+                    if (!source._observers) {
+                        source._observers = [cell];
+                    } else if (!source._observers.includes(cell)) {
+                        source._observers.push(cell);
                     }
                 }
-            } else if (this.sources && CurrentGetsIndex < this.sources.length) {
-                this.removeParentObservers(CurrentGetsIndex);
-                this.sources.length = CurrentGetsIndex;
+            } else if (cell._sources && fluid.CurrentGetsIndex < cell._sources.length) {
+                fluid.cell.removeParentObservers(cell, fluid.CurrentGetsIndex);
+                cell._sources.length = fluid.CurrentGetsIndex;
             }
         } finally {
-            CurrentGets = prevGets;
-            CurrentReaction = prevReaction;
-            CurrentGetsIndex = prevIndex;
-            this.updating = false;
+            fluid.CurrentGets = prevGets;
+            fluid.CurrentReaction = prevReaction;
+            fluid.CurrentGetsIndex = prevIndex;
+            cell._isUpdating = false;
         }
 
-        // Handle diamond dependencies
-        if (!this.equals(oldValue, this._value) && this.observers) {
-            for (let i = 0; i < this.observers.length; i++) {
-                const observer = this.observers[i];
-                observer.state = CacheDirty;
+        // handles diamond dependencies if we're the parent of a diamond. - part of original impl
+        if (!cell._equals(oldValue, cell._value) && cell._observers) {
+            for (let i = 0; i < cell._observers.length; i++) {
+                const observer = cell._observers[i];
+                observer._state = CacheDirty;
             }
         }
 
-        this.state = CacheClean;
+        cell._state = CacheClean;
     };
 
-    fluid.cell.prototype.updateIfNecessary = function () {
-        // Prevent stack overflow in circular dependencies
-        UpdateDepth++;
-        if (UpdateDepth > MAX_UPDATE_DEPTH) {
-            UpdateDepth--;
+    /**
+     * Ensures that a reactive cell is up to date by checking and updating its dependencies as needed.
+     * @param {Cell} cell - The reactive cell to update if necessary.
+     */
+    fluid.cell.updateIfNecessary = function (cell) {
+        // If we are potentially dirty, see if we have a parent who has actually changed value
+        if (cell._state === CacheCheck) {
+            for (const source of cell._sources) {
+                fluid.cell.updateIfNecessary(source);
+                if (cell._state === CacheDirty) {
+                    // Stop the loop here so we won't trigger updates on other parents unnecessarily
+                    // If our computation changes to no longer use some sources, we don't
+                    // want to update() a source we used last time, but now don't use.
+                    break;
+                }
+            }
+        }
+
+        if (cell._state === CacheDirty) {
+            fluid.cell.update(cell);
+        }
+
+        cell._state = CacheClean;
+
+    };
+
+    // Only calls with index !== 0 are in update() - what are they doing?
+    /**
+     * Removes this cell as an observer from its parent source cells starting at the given index.
+     * @param {Cell} cell - The cell whose parent observer links are to be removed.
+     * @param {Number} index - The starting index in the sources array from which to remove observer links.
+     * @this {Cell}
+     */
+    fluid.cell.removeParentObservers = function (cell, index) {
+        if (!cell._sources) {
             return;
         }
-
-        try {
-            if (this.state === CacheCheck) {
-                for (const source of this.sources) {
-                    source.updateIfNecessary();
-                    if (this.state === CacheDirty) {
-                        break;
-                    }
-                }
+        for (let i = index; i < cell._sources.length; i++) {
+            const source = cell._sources[i]; // We don't actually delete sources here because we're replacing the entire array soon
+            if (!source._observers) {
+                continue;
             }
-
-            if (this.state === CacheDirty) {
-                this.update();
-            }
-
-            this.state = CacheClean;
-        } finally {
-            UpdateDepth--;
-        }
-    };
-
-    fluid.cell.prototype.removeParentObservers = function (index) {
-        if (!this.sources) return;
-        for (let i = index; i < this.sources.length; i++) {
-            const source = this.sources[i];
-            if (!source.observers) continue;
-            const swap = source.observers.findIndex(v => v === this);
+            const swap = source._observers.findIndex(v => v === this);
             if (swap !== -1) {
-                source.observers[swap] = source.observers[source.observers.length - 1];
-                source.observers.pop();
+                source._observers[swap] = source.observers[source._observers.length - 1];
+                source._observers.pop();
             }
         }
     };
@@ -265,57 +364,54 @@ const $fluidSignalsScope = function (fluid) {
     // Effect implementation
     fluid.effect = function (config, sources) {
         const effect = fluid.cell();
-        effect.effect = true;
-        effect.disposed = false;
+        effect._isEffect = true;
+        effect._isDisposed = false;
 
         const fn = function () {
-            if (effect.disposed) return;
+            if (effect._isDisposed) {
+                return;
+            }
             const args = sources.map(s => s.get());
 
             // Check if all sources are available
-            const allAvailable = sources.every(s => s.available);
-            if (!allAvailable) return;
+            const allAvailable = args.every(arg => !fluid.cell.isUnavailable(arg));
+            if (!allAvailable) {
+                return;
+            }
 
             config.bind.apply(null, args);
         };
 
         effect.compute(fn, sources);
-        effect.stale(CacheDirty);
-        EffectQueue.push(effect);
+        // In original effect cell constructor there was stabilizeFn?.(this);
+        // compute constructor will enqueue self since there has been a change in _fn and _state
 
         // Run immediately
-        effect.updateIfNecessary();
+        fluid.cell.updateIfNecessary(effect);
 
         effect.dispose = function () {
-            effect.disposed = true;
-            if (effect.sources) {
-                effect.removeParentObservers(0);
-                effect.sources = null;
+            effect._isDisposed = true;
+            if (effect._sources) {
+                fluid.cell.removeParentObservers(effect, 0);
+                effect._sources = null;
             }
-            effect.fn = undefined;
+            effect._fn = undefined;
         };
 
         return effect;
     };
 
     // Stabilize function to process effect queue
-    function stabilize() {
-        if (StabilizeDepth > 0) return;
+    fluid.cell.stabilize = function () {
+        while (fluid.EffectQueue.length > 0) {
+            const queue = fluid.EffectQueue.slice();
+            fluid.EffectQueue.length = 0;
 
-        StabilizeDepth++;
-        try {
-            while (EffectQueue.length > 0) {
-                const queue = EffectQueue.slice();
-                EffectQueue.length = 0;
-
-                for (let i = 0; i < queue.length; i++) {
-                    queue[i].get();
-                }
+            for (let i = 0; i < queue.length; i++) {
+                queue[i].get();
             }
-        } finally {
-            StabilizeDepth--;
         }
-    }
+    };
 };
 
 if (typeof(fluid) !== "undefined") {

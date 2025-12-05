@@ -1655,8 +1655,7 @@ const $fluidILScope = function (fluid) {
      * for any entries in shadow.unavailableLayers.
      *
      * @param {Shadow} shadow - The shadow record of the component to check.
-     * @return {Unavailable|Component} Returns a merged unavailable value if any layers are unavailable,
-     *               otherwise returns the component's computed value or the raw component instance.
+     * @return {Unavailable|undefined} Returns a merged unavailable value if any layers are unavailable, otherwise undefined
      */
     fluid.checkUnavailableComponent = function (shadow) {
         const unavailableLayerVals = Object.values(shadow.unavailableLayers.peek());
