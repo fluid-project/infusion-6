@@ -29,21 +29,20 @@ const htmlParserScope = function (fluid) {
     }
 
     /*
-     * Create a cached version of a pure function.
+     * Create a cached version of a pure function of a string
      */
-    function cached(fn) {
+    fluid.stringCache = function (fn) {
         const cache = Object.create(null);
         return (function cachedFn(str) {
             const hit = cache[str];
             return hit || (cache[str] = fn(str));
         });
-    }
+    };
 
     function isTextTag(el) {
         return el.tag === "script" || el.tag === "style";
     };
 
-    // TODO: Resolve "he" decoder on the server or use linkedom or something similar
     let decoder;
 
     function decodeEntity(html) {
@@ -52,8 +51,10 @@ const htmlParserScope = function (fluid) {
         return decoder.textContent;
     }
 
-    const decodeHTMLCached = cached(decodeEntity);
-
+    if (typeof(document) !== "undefined") {
+        fluid.decodeHtmlEntity = fluid.stringCache(decodeEntity);
+        // On the server defined in server-support.js
+    }
 
     // HTML5 tags https://html.spec.whatwg.org/multipage/indices.html#elements-3
     // Phrasing Content https://html.spec.whatwg.org/multipage/dom.html#phrasing-content
@@ -412,7 +413,7 @@ const htmlParserScope = function (fluid) {
                     if (options.skipWhitespace && isWhitespace) {
                         return;
                     }
-                    const decoded = isTextTag(currentParent) ? text : decodeHTMLCached(text);
+                    const decoded = isTextTag(currentParent) ? text : fluid.decodeHtmlEntity(text);
                     const prev = children[children.length - 1];
 
                     if (!isWhitespace || !children.length || !fluid.isWhitespace(prev?.text)) {

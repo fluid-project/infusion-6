@@ -257,15 +257,17 @@ const editorRootScope = function (fluid) {
         }
     };
 
-    document.addEventListener("keydown", function (evt) {
-        evt.stopImmediatePropagation();
-        if (evt.key === "z" && (evt.ctrlKey || evt.metaKey)) {
-            console.log("Undo");
-            fluid.historyBack();
-        } else if (evt.key === "y" && (evt.ctrlKey || evt.metaKey)) {
-            fluid.historyForward();
-        }
-    });
+    if (typeof(document) !== "undefined") {
+        document.addEventListener("keydown", function (evt) {
+            evt.stopImmediatePropagation();
+            if (evt.key === "z" && (evt.ctrlKey || evt.metaKey)) {
+                console.log("Undo");
+                fluid.historyBack();
+            } else if (evt.key === "y" && (evt.ctrlKey || evt.metaKey)) {
+                fluid.historyForward();
+            }
+        });
+    }
 
 };
 

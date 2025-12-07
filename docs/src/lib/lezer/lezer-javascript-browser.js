@@ -112,7 +112,7 @@ var LezerJS = (function (exports) {
         /**
         The inner tree.
         */
-        tree, 
+        tree,
         /**
         If this is null, this tree replaces the entire node (it will
         be included in the regular iteration instead of its host
@@ -122,7 +122,7 @@ var LezerJS = (function (exports) {
         only entered by [`resolveInner`](#common.Tree.resolveInner)
         and [`enter`](#common.SyntaxNode.enter).
         */
-        overlay, 
+        overlay,
         /**
         The parser used to create this subtree.
         */
@@ -153,16 +153,16 @@ var LezerJS = (function (exports) {
         same name within a node set should play the same semantic
         role.
         */
-        name, 
+        name,
         /**
         @internal
         */
-        props, 
+        props,
         /**
         The id of this node in its set. Corresponds to the term ids
         used in the parser.
         */
-        id, 
+        id,
         /**
         @internal
         */
@@ -356,20 +356,20 @@ var LezerJS = (function (exports) {
         /**
         The type of the top node.
         */
-        type, 
+        type,
         /**
         This node's child nodes.
         */
-        children, 
+        children,
         /**
         The positions (offsets relative to the start of this tree) of
         the children.
         */
-        positions, 
+        positions,
         /**
         The total length of this tree
         */
-        length, 
+        length,
         /**
         Per-node [node props](#common.NodeProp) to associate with this node.
         */
@@ -441,7 +441,7 @@ var LezerJS = (function (exports) {
         position. If 1, it'll move into nodes that start at the
         position. With 0, it'll only enter nodes that cover the position
         from both sides.
-        
+
         Note that this will not enter
         [overlays](#common.MountedTree.overlay), and you often want
         [`resolveInner`](#common.Tree.resolveInner) instead.
@@ -566,11 +566,11 @@ var LezerJS = (function (exports) {
         /**
         The buffer's content.
         */
-        buffer, 
+        buffer,
         /**
         The total length of the group of nodes in the buffer.
         */
-        length, 
+        length,
         /**
         The node set used in this buffer.
         */
@@ -715,7 +715,7 @@ var LezerJS = (function (exports) {
         get next() { return this.parent; }
     }
     class TreeNode extends BaseNode {
-        constructor(_tree, from, 
+        constructor(_tree, from,
         // Index in parent node, set to -1 if the node is not a direct child of _parent.node (overlay)
         index, _parent) {
             super();
@@ -958,7 +958,7 @@ var LezerJS = (function (exports) {
         /**
         @internal
         */
-        constructor(node, 
+        constructor(node,
         /**
         @internal
         */
@@ -1508,17 +1508,17 @@ var LezerJS = (function (exports) {
     }
     function balanceRange(
     // The type the balanced tree's inner nodes.
-    balanceType, 
+    balanceType,
     // The direct children and their positions
-    children, positions, 
+    children, positions,
     // The index range in children/positions to use
-    from, to, 
+    from, to,
     // The start position of the nodes, relative to their parent.
-    start, 
+    start,
     // Length of the outer node
-    length, 
+    length,
     // Function to build the top node of the balanced tree
-    mkTop, 
+    mkTop,
     // Function to build internal nodes for the balanced tree
     mkTree) {
         let total = 0;
@@ -1562,7 +1562,7 @@ var LezerJS = (function (exports) {
         Start a parse, returning a [partial parse](#common.PartialParse)
         object. [`fragments`](#common.TreeFragment) can be passed in to
         make the parse incremental.
-        
+
         By default, the entire input is parsed. You can pass `ranges`,
         which should be a sorted array of non-empty, non-overlapping
         ranges, to parse only those ranges. The tree returned in that
@@ -1611,16 +1611,16 @@ var LezerJS = (function (exports) {
         /**
         The parse that this stack is part of @internal
         */
-        p, 
+        p,
         /**
         Holds state, input pos, buffer index triplets for all but the
         top state @internal
         */
-        stack, 
+        stack,
         /**
         The current parse state @internal
         */
-        state, 
+        state,
         // The position at which the next reduce should take place. This
         // can be less than `this.pos` when skipped expressions have been
         // added to the stack (which should be moved outside of the next
@@ -1628,24 +1628,24 @@ var LezerJS = (function (exports) {
         /**
         @internal
         */
-        reducePos, 
+        reducePos,
         /**
         The input position up to which this stack has parsed.
         */
-        pos, 
+        pos,
         /**
         The dynamic score of the stack, including dynamic precedence
         and error-recovery penalties
         @internal
         */
-        score, 
+        score,
         // The output buffer. Holds (type, start, end, size) quads
         // representing nodes created by the parser, where `size` is
         // amount of buffer array entries covered by this node.
         /**
         @internal
         */
-        buffer, 
+        buffer,
         // The base offset of the buffer. When stacks are split, the split
         // instance shared the buffer history with its parent up to
         // `bufferBase`, which is the absolute offset (including the
@@ -1654,15 +1654,15 @@ var LezerJS = (function (exports) {
         /**
         @internal
         */
-        bufferBase, 
+        bufferBase,
         /**
         @internal
         */
-        curContext, 
+        curContext,
         /**
         @internal
         */
-        lookAhead = 0, 
+        lookAhead = 0,
         // A parent stack from which this was split off, if any. This is
         // set up so that it always points to a stack that has some
         // additional buffer content, never to a stack with an equal
@@ -2259,7 +2259,7 @@ var LezerJS = (function (exports) {
         /**
         @internal
         */
-        input, 
+        input,
         /**
         @internal
         */
@@ -2331,7 +2331,7 @@ var LezerJS = (function (exports) {
         Look at a code unit near the stream position. `.peek(0)` equals
         `.next`, `.peek(-1)` gives you the previous character, and so
         on.
-        
+
         Note that looking around during tokenizing creates dependencies
         on potentially far-away content, which may reduce the
         effectiveness incremental parsing—when looking forward—or even
@@ -3602,17 +3602,17 @@ var LezerJS = (function (exports) {
         /**
         The optional name of the base tag @internal
         */
-        name, 
+        name,
         /**
         The set of this tag and all its parent tags, starting with
         this one itself and sorted in order of decreasing specificity.
         */
-        set, 
+        set,
         /**
         The base unmodified tag that this one is based on, if it's
         modified @internal
         */
-        base, 
+        base,
         /**
         The modifiers applied to this.base @internal
         */
@@ -3652,7 +3652,7 @@ var LezerJS = (function (exports) {
         same modifier to a twice tag will return the same value (`m1(t1)
         == m1(t1)`) and applying multiple modifiers will, regardless or
         order, produce the same tag (`m1(m2(t1)) == m2(m1(t1))`).
-        
+
         When multiple modifiers are applied to a given base tag, each
         smaller set of modifiers is registered as a parent, so that for
         example `m1(m2(m3(t1)))` is a subtype of `m1(m2(t1))`,

@@ -5,7 +5,7 @@
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
 var {signal, effect, computed, untracked} = preactSignalsCore;
 
-const fluidJSScope = function (fluid) {
+const $fluidJSScope = function (fluid) {
 
     fluid.version = "Infusion 6.0.0";
 
@@ -20,13 +20,17 @@ const fluidJSScope = function (fluid) {
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
 
+    fluid.isBrowser = function () {
+        return typeof(window) !== "undefined" && !!window.document;
+    };
+
     // A standard utility to schedule the invocation of a function after the current
     // stack returns. On browsers this defaults to setTimeout(func, 0) but in
     // other environments can be customised - e.g. to process.nextTick in node.js
     // In future, this could be optimised in the browser to not dispatch into the event queue
     // See https://github.com/YuzuJS/setImmediate for a more verbose but very robust replacement
     fluid.invokeLater = function (func) {
-        return setTimeout(func, 0);
+        return queueMicrotask(func);
     };
 
     // The following flag defeats all logging/tracing activities in the most performance-critical parts of the framework.
@@ -189,15 +193,6 @@ const fluidJSScope = function (fluid) {
             fluid.logFailure(messages, activity);
             fluid.builtinFail(messages, activity);
         }
-    };
-
-    // TODO: rescued from kettleCouchDB.js - clean up in time
-    fluid.expect = function (name, target, members) {
-        fluid.transform(fluid.makeArray(members), function (key) {
-            if (target[key] === undefined) {
-                fluid.fail(name + " missing required member " + key);
-            }
-        });
     };
 
     // Logging
@@ -551,6 +546,45 @@ const fluidJSScope = function (fluid) {
         return array.length === 0 ? undefined : array[array.length - 1];
     };
 
+    fluid.make_find = function (find_if) {
+        const target = find_if ? false : undefined;
+        return function (source, func, deffolt) {
+            let disp;
+            if (fluid.isArrayable(source)) {
+                for (let i = 0; i < source.length; ++i) {
+                    disp = func(source[i], i);
+                    if (disp !== target) {
+                        return find_if ? source[i] : disp;
+                    }
+                }
+            } else {
+                for (const key in source) {
+                    disp = func(source[key], key);
+                    if (disp !== target) {
+                        return find_if ? source[key] : disp;
+                    }
+                }
+            }
+            return deffolt;
+        };
+    };
+
+    /** Scan through an array or hash of objects, terminating on the first member which
+     * matches a predicate function.
+     * @param {Arrayable|Object} source - The array or hash of objects to be searched.
+     * @param {Function} func - A predicate function, acting on a member. A predicate which
+     * returns any value which is not <code>undefined</code> will terminate
+     * the search. The function accepts (object, index).
+     * @param {Object} deflt - A value to be returned in the case no predicate function matches
+     * a structure member. The default will be the natural value of <code>undefined</code>
+     * @return The first return value from the predicate function which is not <code>undefined</code>
+     */
+    fluid.find = fluid.make_find(false);
+    /* The same signature as fluid.find, only the return value is the actual element for which the
+     * predicate returns a value different from <code>false</code>
+     */
+    fluid.find_if = fluid.make_find(true);
+
     /** Scan through an array or hash of objects, removing those which match a predicate. Similar to
      * jQuery.grep, only acts on the list in-place by removal, rather than by creating
      * a new list by inclusion.
@@ -773,7 +807,19 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
-     * Create a marker representing an "Unavailable" state with an associated waitset.
+     * @typedef {Object} Unavailable
+     * A mutable marker representing an "Unavailable" state.
+     *
+     * @property {Object[]} causes - An array of cause records. Each cause may include:
+     * * `message` {String} — A human-readable message describing the cause.
+     * * `variety` {String} — The variety assigned to the cause (e.g., "error", "config", "I/O").
+     *
+     * @property {String} variety - The overall variety of the unavailable marker,
+     *   computed as the highest-priority variety among all causes.
+     */
+
+    /**
+     * Create a marker representing an "Unavailable" state with an associated array of causes potentially including their sites.
      * The marker is mutable.
      *
      * @param {Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
@@ -781,20 +827,19 @@ const fluidJSScope = function (fluid) {
      * * "error" indicates a syntax issue that needs design intervention.
      * * "config" indicates configuration designed to short-circuit evaluation which is not required.
      * * "I/O" indicates pending I/O
-     * @return {fluid.marker} A marker of type "Unavailable".
+     * @return {Unavailable} A marker of type "Unavailable".
      */
-    fluid.unavailable = (cause = {}, variety = "error") => {
-        const togo = fluid.makeMarker("Unavailable", {
-            causes: fluid.makeArray(cause).map(oneCause => {
-                if (typeof(oneCause) === "string") {
-                    oneCause = {message: oneCause};
-                }
-                if (!oneCause.variety) {
-                    oneCause.variety = variety;
-                }
-                return oneCause;
-            })
-        }, true);
+    fluid.unavailable = function (cause = {}, variety = "error") {
+        const togo = Object.create(fluid.unavailable.prototype);
+        togo.causes = fluid.makeArray(cause).map(oneCause => {
+            if (typeof(oneCause) === "string") {
+                oneCause = {message: oneCause};
+            }
+            if (!oneCause.variety) {
+                oneCause.variety = variety;
+            }
+            return oneCause;
+        });
         togo.variety = togo.causes.reduce((acc, {variety}) => {
             const priority = fluid.unavailablePriority[variety];
             return priority > acc.priority ? {variety, priority} : acc;
@@ -812,7 +857,7 @@ const fluidJSScope = function (fluid) {
                 if (prop === $t) {
                     return target;
                 } else if (prop === Symbol.toPrimitive) {
-                    fluid.fail(fluid.formatUnavailable(target));
+                    return target;
                 } else if (prop === "toString") {
                     return () => fluid.formatUnavailable(target);
                 } else {
@@ -822,9 +867,14 @@ const fluidJSScope = function (fluid) {
             getOwnPropertyDescriptor: function (target, key) {
                 return {value: this.get(target, key), enumerable: true, configurable: true};
             },
-            getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignal(target))
+            getPrototypeOf: () => Object.getPrototypeOf(target)
         });
         return proxy;
+    };
+
+    // Intended to be used for object which has already passed fluid.isUnavailable
+    fluid.deproxyUnavailable = function (target) {
+        return Object.getOwnPropertyDescriptor(target, $u) ? fluid.deSignal(target[$u]) : target;
     };
 
     /**
@@ -833,7 +883,7 @@ const fluidJSScope = function (fluid) {
      * @param {Object} totest - The object to test.
      * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
      */
-    fluid.isUnavailable = totest => totest instanceof fluid.marker && totest.type === "Unavailable";
+    fluid.isUnavailable = totest => totest instanceof fluid.unavailable;
 
     fluid.isErrorUnavailable = totest => fluid.isUnavailable(totest) && totest.variety === "error";
 
@@ -841,12 +891,27 @@ const fluidJSScope = function (fluid) {
      * Merge two "unavailable" markers into a single marker, combining their causes.
      * If the existing marker is `null` or `undefined`, the fresh marker is returned as-is.
      *
-     * @param {Object|null|undefined} existing - The existing "unavailable" marker, or `null`/`undefined` if none exists.
-     * @param {Object} fresh - The new "unavailable" marker to merge with the existing one.
-     * @return {Object} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
+     * @param {Unavailable|null|undefined} existing - The existing "unavailable" marker, or `null`/`undefined` if none exists.
+     * @param {Unavailable} fresh - The new "unavailable" marker to merge with the existing one.
+     * @return {Unavailable} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
      */
     fluid.mergeUnavailable = function (existing, fresh) {
-        return !existing ? fresh : fluid.unavailable(existing.causes.concat(fresh.causes));
+        return !existing ? fresh : fluid.unavailable(fluid.deproxyUnavailable(existing).causes.concat(
+            fluid.deproxyUnavailable(fresh).causes));
+    };
+
+    /**
+     * Merge an array of "unavailable" markers into a single marker using pairwise
+     * reduction via `fluid.mergeUnavailable`. Null or undefined entries are skipped.
+     * If no valid markers are present, `null` is returned.
+     *
+     * @param {Unavailable[]} unavailables - An array of "unavailable" markers
+     * @return {Unavailable|null} A combined "unavailable" marker with merged causes, or `null` if the array was empty
+     */
+    fluid.mergeUnavailables = function (unavailables) {
+        return unavailables.reduce(function (acc, entry) {
+            return entry ? fluid.mergeUnavailable(acc, entry) : acc;
+        }, null);
     };
 
     /*** SIGNAL PROCESSING ***/
@@ -884,7 +949,7 @@ const fluidJSScope = function (fluid) {
         flattenArg: fluid.deSignal
     };
 
-    // TODO: Probably needs to be made available as a context name
+    // TODO: Probably needs to be made available as a context name - there's support now as $oldValue
     fluid.OldValue = fluid.makeMarker("Old Computed Value");
 
     /**
@@ -924,11 +989,23 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * Processes an array of signals or values and returns a value which is available if all of the values are available.
+     * @param {Array} sigs - An array of signals or values to process.
+     * @return {Signal<Unavailable|Array>} Unavailable marker if any argument is unavailable, or the array of resolved arguments.
+     */
+    fluid.signalsToAvailable = function (sigs) {
+        return computed( () => {
+            const sigRec = fluid.processSignalArgs(sigs);
+            return sigRec.unavailable || sigRec.designalArgs;
+        });
+    };
+
+    /**
      * Appends a site to the `site` array of the last element in the `causes` array of the given "unavailable" marker.
      * If the `site` array does not exist, it is allocated.
-     * @param {fluid.unavailable} unavailable - The "unavailable" marker containing the `causes` array.
+     * @param {Unavailable} unavailable - The "unavailable" marker containing the `causes` array.
      * @param {Site} [site] - The site to append to the `site` array of the last cause.
-     * @return {fluid.unavailable} The supplied unavailable value with a cause site filled in
+     * @return {Unavailable} The supplied unavailable value with a cause site filled in
      */
     fluid.accumulateUnavailableSite = function (unavailable, site) {
         // TODO: Causes should actually form independent chains rather than being in a linear array - can't guarantee
@@ -944,6 +1021,8 @@ const fluidJSScope = function (fluid) {
         }
         return unavailable;
     };
+
+    fluid.notEvaluated = fluid.unavailable("Computed not yet evaluated", "config");
 
     /**
      * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
@@ -961,8 +1040,13 @@ const fluidJSScope = function (fluid) {
                 unavailable
             } = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
             const func = fluid.deSignal(funcSignal);
-            return unavailable ? acc(unavailable) : fluid.isUnavailable(func) ? acc(func) : func.apply(null, designalArgs);
-        });
+            const anyUnavailable = unavailable || (fluid.isUnavailable(func) ? func : false);
+            if (options?.dispatcher) {
+                return options.dispatcher(func, designalArgs, anyUnavailable, oldValue);
+            } else {
+                return anyUnavailable ? acc(anyUnavailable) : func.apply(null, designalArgs);
+            }
+        }, fluid.notEvaluated);
     };
 
     let effectId = 1;
@@ -981,16 +1065,10 @@ const fluidJSScope = function (fluid) {
             if (!unavailable || options?.free) {
                 return untracked( () => func.apply(this, designalArgs));
             }
-        });
+        }, options);
         togo.$func = func;
         togo.$args = args;
         togo.effectId = effectId++;
-        togo.dispose = () => {
-            options.onDispose && options.onDispose();
-            togo._dispose();
-            togo.disposed = true;
-            console.log("Disposed effectId ", togo.effectId);
-        };
         return togo;
     };
 
@@ -1005,9 +1083,9 @@ const fluidJSScope = function (fluid) {
 
     fluid.disposeEffects = function (effectStructure) {
         if (effectStructure instanceof preactSignalsCore.Effect) {
-            effectStructure._dispose();
+            effectStructure.dispose();
         } else if (Array.isArray(effectStructure)) {
-            effectStructure.forEach(effect => effect._dispose());
+            effectStructure.forEach(effect => effect.dispose());
             effectStructure.length = 0;
         } else {
             Object.values(effectStructure).forEach(value => fluid.disposeEffects(value));
@@ -1188,21 +1266,35 @@ const fluidJSScope = function (fluid) {
         return path;
     };
 
+    fluid.missingPolicies = {
+        unavailable: (root, path) => fluid.unavailable({
+            message: `Path ${path} was not found`,
+            // TODO: Upgrade incoming data so that it always comes with a full site cursor
+            site: root
+        }),
+        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    };
+
     /**
      * Retrieve the value at a specified path within a nested object structure.
      * Traverses the object hierarchy based on the path segments.
      *
      * @param {Object} root - The root object to begin traversal from.
      * @param {String|String[]} path - The path to the desired value, specified as a string or an array of path segments.
+     * @param {"unavailable"|"error"} [missingPolicy] - An optional policy from `fluid.missingPolicies` to be followed if a value is not found
      * @return {any} The value at the specified path, or `undefined` if the path traverses beyond defined objects.
      */
-    fluid.get = function (root, path) {
+    fluid.get = function (root, path, missingPolicy) {
         const segs = fluid.pathToSegs(path);
         const limit = segs.length;
         for (let j = 0; j < limit; ++j) {
             root = root ? root[segs[j]] : undefined;
         }
-        return root;
+        if (root === undefined && missingPolicy) {
+            return fluid.missingPolicies[missingPolicy](root, path);
+        } else {
+            return root;
+        }
     };
 
     /**
@@ -1217,6 +1309,9 @@ const fluidJSScope = function (fluid) {
      */
     fluid.getThroughSignals = function (root, segs, extra) {
         const togo = computed(function getThroughSignals() {
+            if (window.cycleImminent) {
+                debugger;
+            }
             let move = fluid.deSignal(root);
             for (let j = 0; j < segs.length; ++j) {
                 if (!move || fluid.isUnavailable(move)) {
@@ -1409,7 +1504,6 @@ const fluidJSScope = function (fluid) {
 
     /*** The Fluid instance id ***/
 
-    // unsupported, NON-API function
     fluid.generateUniquePrefix = function () {
         return (Math.floor(Math.random() * 1e12)).toString(36) + "-";
     };
@@ -1424,7 +1518,6 @@ const fluidJSScope = function (fluid) {
      * globally unique with high probability (50% chance of collision after a million trials)
      * @return {String} A fresh unique id
      */
-
     fluid.allocateGuid = function () {
         return fluid_prefix + (fluid_id++);
     };
@@ -1981,102 +2074,14 @@ const fluidJSScope = function (fluid) {
     fluid.failureEvent.addListener(fluid.builtinFail, "fail");
     fluid.failureEvent.addListener(fluid.logFailure, "log", "before:fail");
 
-    // Algorithm taken from Python 2.3's implementation from manual: https://www.python.org/download/releases/2.3/mro/#the-end
-    // Deals with FLUID-5800
-    // eslint-disable-next-line jsdoc/require-returns-check -- return is at head of loop body
-    /**
-     * Merges multiple sequences of layer names into a single sequence using the C3 linearization method.
-     * @param {String[][]} seqs - An array of sequences to be merged. **NOTE** The nested sequences will be modified by
-     * this function.
-     * @return {String[]} - The merged sequence.
-     * @throws {Error} - Throws an error if the hierarchy is inconsistent.
-     */
-    fluid.C3_merge = function (seqs) {
-        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
-        let res = [];
-        // let i = 0;
-
-        while (true) {
-            let nonemptyseqs = seqs.filter(seq => seq.length > 0);
-            if (nonemptyseqs.length === 0) {
-                return res;
-            }
-
-            // i++;
-            // fluid.log(`\n${i} round: candidates...`);
-
-            let cand = null;
-            for (let seq of nonemptyseqs) {
-                cand = seq[0];
-                // fluid.log(` ${cand}`);
-                // eslint-disable-next-line no-loop-func
-                let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
-                if (nothead.length > 0) {
-                    cand = null; // reject candidate
-                } else {
-                    break;
-                }
-            }
-
-            if (!cand) {
-                fluid.fail(`Inconsistent hierarchy for layer ${res[0]}: conflict between parent orders ${nonemptyseqs.map(ns => ns.toString()).join(", ")}`);
-            }
-
-            res.push(cand);
-            for (let seq of nonemptyseqs) {
-                while (seq[0] === cand) { // AMB fix if -> while to deal with duplicates in sequence
-                    seq.shift(); // remove cand
-                }
-            }
-        }
-    };
-
-    /**
-     * Computes C3 precedence of the parent layers of the supplied layer
-     * @param {String} C - The name of the layer whose parent precedence is required
-     * @param {Object<String, Object>} defs - A layer definition registry
-     * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
-     * @return {String[]} - The parent precedence list
-     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
-     */
-    fluid.C3_precedence = function (C, defs, visited) {
-        if (visited.has(C)) {
-            fluid.fail(`Circular hierarchy detected - layer ${C} has already been visited`);
-        }
-
-        visited.add(C);
-        const def = defs[C];
-        if (!def) {
-            // This error should not be received since the driver in fluid.hierarchyResolver will ensure that all parents have definitions
-            fluid.fail(`Parent layer ${C} referenced which is not defined`);
-        }
-        const parents = Array.from(defs[C].$layers);
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
-        const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
-
-        visited.delete(C);
-        return merged;
-    };
-
-    /**
-     * Computes C3 precedence of the parent layers of the supplied layer
-     * @param {String[]} parents - The name of the layer whose parent precedence is required
-     * @param {Object<String, Object>} defs - A layer definition registry
-     * @return {String[]} - The parent precedence list
-     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
-     */
-    fluid.C3_precedence_parents = function (parents, defs) {
-        const visited = new Set();
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
-        const merged = fluid.C3_merge(precLists);
-        return merged;
-    };
-
 
     /*** DEFAULTS AND OPTIONS MERGING SYSTEM ***/
 
     fluid.proxySymbol = Symbol("fluid.proxyTarget");
     const $t = fluid.proxySymbol;
+
+    fluid.unavailableSymbol = Symbol("fluid.unavailableTarget");
+    const $u = fluid.unavailableSymbol;
 
     fluid.unProxy = target => target?.[$t] ? target[$t] : target;
 
@@ -2147,10 +2152,23 @@ const fluidJSScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} LayerDef
+     * @property {String|String[]} [$layers] - Any parent layers of this layer
+     * @property {"framework"|"frameworkAux"} [$variety] - If this layer is a core framework or auxiliary (from the editing
+     * UI system) layer
+     */
+
+    /**
+     * @typedef {Object} RawLayer
+     * @property {LayerDef} raw - Any parent layers of this layer
+     * @property {Boolean} demanded - If this layer has been demanded by the implementation of a component
+     */
+
+    /**
      * Creates a new layer in the `fluid.layerStore` and updates the layer history.
      * This function immutably adds a new layer to the existing store and records the operation in the history.
      * @param {String} layerName - The name of the new layer to be added.
-     * @param {Object} layerValue - The value associated with the new layer.
+     * @param {LayerDef} layerValue - The value associated with the new layer.
      */
     fluid.newLayer = function (layerName, layerValue) {
         const store = fluid.layerStore.value;
@@ -2187,7 +2205,7 @@ const fluidJSScope = function (fluid) {
             const togo = store[layerName] = signal(fluid.unavailable({
                 message: "Layer " + layerName + " is not defined",
                 path: ["layer", layerName]
-            }));
+            }, "config"));
             if (demand) {
                 // TODO: Initiate fetch at this point if it is in importMap
                 togo.demanded = true;
@@ -2201,7 +2219,7 @@ const fluidJSScope = function (fluid) {
      * If the layer already exists, updates its value. If it does not exist, creates a new signal for it.
      *
      * @param {String} layerName - The name of the layer to write or update.
-     * @param {Object} layer - The layer data to store.
+     * @param {LayerDef} layer - The layer data to store.
      */
     fluid.writeLayer = function (layerName, layer) {
         const store = fluid.layerStore.peek();
@@ -2264,7 +2282,7 @@ const fluidJSScope = function (fluid) {
      * - `2`: Core framework layer (`framework`).
      * - `-1`: Unknown or unsupported variety.
      *
-     * @param {Object} layerDef - The layer definition object to evaluate.
+     * @param {LayerDef} layerDef - The layer definition object to evaluate.
      * @return {Number} The framework status of the layer.
      */
     fluid.layerFrameworkStatus = function (layerDef) {
@@ -2411,7 +2429,7 @@ const fluidJSScope = function (fluid) {
     /**
      * @typedef {Object} MergedHierarchyResolution
      * @property {MergeRecord[]} mergeRecords - The array of merge records representing the merged layers and their priorities.
-     * @property {Object} merged - The final merged object representing the composite component definition.
+     * @property {LayerDef} merged - The final merged object representing the composite component definition.
      * @property {LayerMap} layerMap - A map of all paths in the merged object to their source layers.
      */
 
@@ -2481,6 +2499,97 @@ const fluidJSScope = function (fluid) {
         return togo;
     };
 
+    // Algorithm taken from Python 2.3's implementation from manual: https://www.python.org/download/releases/2.3/mro/#the-end
+    // Deals with FLUID-5800
+    // eslint-disable-next-line jsdoc/require-returns-check -- return is at head of loop body
+    /**
+     * Merges multiple sequences of layer names into a single sequence using the C3 linearization method.
+     * @param {String[][]} seqs - An array of sequences to be merged. **NOTE** The nested sequences will be modified by
+     * this function.
+     * @return {String[]} - The merged sequence.
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent.
+     */
+    fluid.C3_merge = function (seqs) {
+        // fluid.log(`\n\nCPL[${seqs[0][0]}]=${JSON.stringify(seqs)}`);
+        let res = [];
+        // let i = 0;
+
+        while (true) {
+            let nonemptyseqs = seqs.filter(seq => seq.length > 0);
+            if (nonemptyseqs.length === 0) {
+                return res;
+            }
+
+            // i++;
+            // fluid.log(`\n${i} round: candidates...`);
+
+            let cand = null;
+            for (let seq of nonemptyseqs) {
+                cand = seq[0];
+                // fluid.log(` ${cand}`);
+                // eslint-disable-next-line no-loop-func
+                let nothead = nonemptyseqs.filter(s => s.indexOf(cand) > 0);
+                if (nothead.length > 0) {
+                    cand = null; // reject candidate
+                } else {
+                    break;
+                }
+            }
+
+            if (!cand) {
+                fluid.fail(`Inconsistent hierarchy for layer ${res[0]}: conflict between parent orders ${nonemptyseqs.map(ns => ns.toString()).join(", ")}`);
+            }
+
+            res.push(cand);
+            for (let seq of nonemptyseqs) {
+                while (seq[0] === cand) { // AMB fix if -> while to deal with duplicates in sequence
+                    seq.shift(); // remove cand
+                }
+            }
+        }
+    };
+
+    /**
+     * Computes C3 precedence of the parent layers of the supplied layer
+     * @param {String} C - The name of the layer whose parent precedence is required
+     * @param {Object<String, Object>} defs - A layer definition registry
+     * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
+     * @return {String[]} - The parent precedence list
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
+     */
+    fluid.C3_precedence = function (C, defs, visited) {
+        if (visited.has(C)) {
+            fluid.fail(`Circular hierarchy detected - layer ${C} has already been visited`);
+        }
+
+        visited.add(C);
+        const def = defs[C];
+        if (!def) {
+            // This error should not be received since the driver in fluid.hierarchyResolver will ensure that all parents have definitions
+            fluid.fail(`Parent layer ${C} referenced which is not defined`);
+        }
+        const parents = Array.from(defs[C].$layers);
+        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
+
+        visited.delete(C);
+        return merged;
+    };
+
+    /**
+     * Computes C3 precedence of the parent layers of the supplied layer
+     * @param {String[]} parents - The name of the layer whose parent precedence is required
+     * @param {Object<String, Object>} defs - A layer definition registry
+     * @return {String[]} - The parent precedence list
+     * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
+     */
+    fluid.C3_precedence_parents = function (parents, defs) {
+        const visited = new Set();
+        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const merged = fluid.C3_merge(precLists);
+        return merged;
+    };
+
     /**
      * A resolver for computing and caching layered component definitions and their hierarchies.
      * It evaluates layer definitions via signals, computes parent relationships, and produces fully
@@ -2490,11 +2599,13 @@ const fluidJSScope = function (fluid) {
         /**
          * Create a new HierarchyResolver.
          *
-         * @param {Object<String, Signal>} [flatDefsIn={}] - An optional initial map of precomputed layer signals.
+         * @param {Function} [layerFetcher] - Function which will initiate fetching of demanded layers which are unavailable
          */
-        constructor(flatDefsIn = {}) {
+        constructor(layerFetcher) {
+            this.layerFetcher = layerFetcher || (() => {});
             // A local store, so that we can use C3_precedence with direct lookups
-            this.flatDefs = Object.assign({}, flatDefsIn);
+            this.flatDefs = Object.create(null);
+            this.unavailableLayers = Object.create(null);
         }
 
         /**
@@ -2507,8 +2618,10 @@ const fluidJSScope = function (fluid) {
         storeParents(layer, rootLayer) {
             return layer.$layers.map(layerName => {
                 if (layerName === rootLayer) {
+                    this.unavailableLayers[layerName] =
                     // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
-                    return signal(fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`));
+                        fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`);
+                    return {$layers: []};
                 } else {
                     return this.storeLayer(layerName, rootLayer);
                 }
@@ -2522,27 +2635,27 @@ const fluidJSScope = function (fluid) {
          *
          * @param {String} layerName - The name of the layer to be stored and resolved.
          * @param {String} [rootLayer] - The original root layer used for cycle detection. Defaults to `layerName` if not provided.
-         * @return {Signal} A computed signal that resolves to the expanded layer or an `unavailable` signal if resolution fails.
+         * @return {LayerDef} A layer definition
          */
         storeLayer(layerName, rootLayer) {
-            let layerComputer = this.flatDefs[layerName];
-            if (!layerComputer) {
+            let layerDef = this.flatDefs[layerName];
+            if (!layerDef) {
                 // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
                 this.flatDefs[layerName] = "in progress";
-                this.flatDefs[layerName] = layerComputer = computed(() => {
-                    const layer = fluid.readLayer(layerName, true).value;
-                    if (fluid.isUnavailable(layer)) {
-                        return layer;
-                    } else {
-                        const readerExpanded = fluid.readerExpandLayer(layer.raw);
-                        const parentComputers = this.storeParents(readerExpanded, rootLayer || layerName);
-                        // Ensure layer computers for all parent layers get evaluated right now
-                        const {unavailable} = fluid.processSignalArgs(parentComputers);
-                        return unavailable || readerExpanded;
-                    }
-                });
+
+                const layer = fluid.readLayer(layerName, true).value;
+                if (fluid.isUnavailable(layer)) {
+                    this.unavailableLayers[layerName] = layer;
+                    this.layerFetcher(layerName);
+                    layerDef = {$layers: []};
+                } else {
+                    const readerExpanded = fluid.readerExpandLayer(layer.raw);
+                    this.storeParents(readerExpanded, rootLayer || layerName);
+                    layerDef = readerExpanded;
+                }
             }
-            return layerComputer;
+            this.flatDefs[layerName] = layerDef;
+            return layerDef;
         }
 
         /**
@@ -2570,41 +2683,30 @@ const fluidJSScope = function (fluid) {
          *     or an `unavailable` signal if resolution could not be completed.
          */
         resolve(layerNames) {
-            /** @type {Object<String, Signal>} flatDefs - A map of layer names to signals containing raw layer definitions. **/
-            const flatDefs = this.flatDefs;
+            const useLayerNames = layerNames.filter(layerName => !this.unavailableLayers[layerName]);
             while (true) {
-                // First prime the cache by evaluating all signals at tip
-                fluid.each(flatDefs, def => def.value);
-                // Second check if any layers are unavailable
-                const {unavailable} = fluid.processSignalArgs(Object.values(flatDefs));
-                if (unavailable) {
-                    return unavailable;
-                } else {
-                    // Finally flatten cache into pure values ready for resolution
-                    const veryFlatDefs = fluid.transform(flatDefs, def => def.value);
-                    const order = fluid.C3_precedence_parents(layerNames, veryFlatDefs).reverse();
-                    if (this.resolveHierarchyRound(order, layerNames)) {
-                        continue;
-                    }
-                    const mergeRecords = order.map((oneLayerName, i) => ({
-                        mergeRecordType: "def",
-                        mergeRecordName: oneLayerName,
-                        // Towards the right here, stronger records
-                        priority: fluid.mergeRecordTypes.def - i,
-                        layer: veryFlatDefs[oneLayerName]
-                    })).concat({
-                        // Definition just holding the resolved $layers member, overriding all previous entries
-                        mergeRecordType: "defParents",
-                        mergeRecordName: "defParents",
-                        priority: fluid.mergeRecordTypes.defParents,
-                        layer: {$layers: order}
-                    });
-                    const merged = {};
-                    return {
-                        // Note merged is currently only read by fluid.readDef
-                        mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
-                    };
+                const order = fluid.C3_precedence_parents(useLayerNames, this.flatDefs).reverse();
+                if (this.resolveHierarchyRound(order, useLayerNames)) {
+                    continue;
                 }
+                const mergeRecords = order.map((oneLayerName, i) => ({
+                    mergeRecordType: "def",
+                    mergeRecordName: oneLayerName,
+                    // Towards the right of here, stronger records
+                    priority: fluid.mergeRecordTypes.def - i,
+                    layer: this.flatDefs[oneLayerName]
+                })).concat({
+                    // Definition just holding the resolved $layers member, overriding all previous entries
+                    mergeRecordType: "defParents",
+                    mergeRecordName: "defParents",
+                    priority: fluid.mergeRecordTypes.defParents,
+                    layer: {$layers: order}
+                });
+                const merged = {};
+                return {
+                    // Note merged is currently only read by fluid.readDef
+                    mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
+                };
 
             }
         };
@@ -2623,20 +2725,41 @@ const fluidJSScope = function (fluid) {
         return layer.$layers && layer.$layers.includes(layerName);
     };
 
-    // Not really a general-purpose utility, used in test cases
-    /**
-     * Retrieves a layer's merged configuration
-     * @param {String} layerName - The name of the grade whose options are to be read or written
-     * @return {Computed<any>} - Signal for merged definition
-     */
-    fluid.readMergedDef = function (layerName) {
-        // TODO: economise on these in the "giant mat"
-        const resolver = new fluid.HierarchyResolver();
-        const resolved = computed(() => {
-            resolver.storeLayer(layerName);
-            return resolver.resolve([layerName]);
+
+    fluid.layerLoaders = {
+        "vue": "fluid.loadSFC",
+        "js": "fluid.loadLayer"
+    };
+
+    fluid.importMap = {};
+
+    fluid.loadImportMap = function (importMap) {
+        fluid.transform(importMap, ({path}, layerName) => {
+            const url = fluid.module.resolvePath(path);
+            fluid.importMap[layerName] = {
+                loadStyle: "sfc",
+                url
+            };
+            const extension = url.split(".").pop();
+            const loader = fluid.layerLoaders[extension];
+            if (!loader) {
+                fluid.fail("Can't find loader for file ", url);
+            } else {
+                // TODO: Note that loadImportMap currently starts load immediately - in future this will only happen
+                // in fluid.ensureImportsLoaded when the layer is actually demanded
+                fluid.invokeGlobalFunction(loader, [layerName, url]);
+            }
+
         });
-        return fluid.getThroughSignals(resolved, ["merged"], {$variety: "mergedDef"});
+    };
+
+    /**
+     * Acquires and processes an import map by transforming its paths and loading the corresponding layers.
+     * @param {Object<String, String>} importMap - An $importMap as found on a component
+     */
+    fluid.acquireImports = function (importMap) {
+        const useImportMap = fluid.transform(importMap, path => ({path}));
+        fluid.loadImportMap(useImportMap);
     };
 
     // Must be defined before we construct any components
@@ -2652,16 +2775,19 @@ const fluidJSScope = function (fluid) {
         fluid.setGlobalValue(componentName, creator);
     };
 
-    fluid.writeDef = function (layerName, layer) {
-        fluid.writeLayer(layerName, layer);
-        // TODO: This should just be a natural side-effect of writing any layer descended from fluid.component
-        fluid.makeComponentCreator(layerName);
-    };
+    // If we are processing definitions through injecting their code for loading an SFC, we need to defer them until
+    // all dependent injections are processed. If this buffer is allocated, they will be captured here rather than
+    // written immediately.
+    fluid.defBuffer = null;
 
-    fluid.deferredDef = function (layerName, layer) {
-        fluid.writeLayer(layerName, fluid.unavailable({cause: "Layer definition is deferred", variety: "I/O"}));
+    fluid.writeDef = function (layerName, layer) {
+        console.log("**** writeDef for layer ", layerName);
+        // TODO: Reactive implementation of this, and also withdraw when deregistered
+        // Do this first so that any stack keyed off fluid.writeLayer, e.g. subcomponent creation, can react to this.
+        fluid.acquireImports(layer.$importMap);
+        fluid.writeLayer(layerName, layer);
+        // TODO: Generalised mechanism for side-effects for layer registration
         fluid.makeComponentCreator(layerName);
-        fluid.invokeLater( () => fluid.writeLayer(layerName, layer));
     };
 
     /**
@@ -2676,8 +2802,25 @@ const fluidJSScope = function (fluid) {
         if (layer === undefined) {
             return fluid.readLayer(layerName).value.raw;
         } else {
-            fluid.writeDef(layerName, layer);
+            if (fluid.defBuffer) {
+                fluid.makeComponentCreator(layerName);
+                fluid.defBuffer[layerName] = layer;
+            } else {
+                fluid.writeDef(layerName, layer);
+            }
         }
+    };
+
+    fluid.startCaptureBufferDefs = function (defBuffer) {
+        fluid.defBuffer = defBuffer;
+    };
+
+    fluid.endCaptureBufferDefs = function () {
+        fluid.defBuffer = null;
+    };
+
+    fluid.writeBufferDefs = function (defBuffer) {
+        fluid.each(defBuffer, (layer, layerName) => fluid.writeDef(layerName, layer));
     };
 
     // A special marker object which will be placed at a current evaluation point in the tree in order
@@ -2702,8 +2845,8 @@ const fluidJSScope = function (fluid) {
      * @return {any} The return value from the function
      */
     fluid.invokeGradedFunction = function (name, spec) {
-        const defaults = fluid.def(name).value;
-        if (!defaults || !defaults.argumentMap || !fluid.hasGrade(defaults, "fluid.function")) {
+        const defaults = fluid.readLayer(name).value;
+        if (!defaults || fluid.isUnavailable(name) || !defaults.argumentMap || !fluid.hasGrade(defaults, "fluid.function")) {
             fluid.fail("Cannot look up name " + name +
                 " to a function with registered argumentMap - got defaults ", defaults);
         }
@@ -2829,7 +2972,7 @@ const fluidJSScope = function (fluid) {
      * @param {Object.<String.String>} values - A map of token names to the values which should be interpolated.
      * @return {String} The text of `template` whose tokens have been interpolated with values.
      */
-    fluid.oldStringTemplate = function (template, values) {
+    fluid.percStringTemplate = function (template, values) {
         let keys = Object.keys(values);
         keys = keys.sort((keya, keyb) => keyb.length - keya.length);
         for (let i = 0; i < keys.length; ++i) {
@@ -2894,7 +3037,7 @@ const fluidJSScope = function (fluid) {
      * @param {String} template - A string that contains placeholders for tokens of the form `@{token}` embedded into it.
      * @return {Array<String|Object>} An array of token values.
      */
-    fluid.parseStringTemplate = function (template) {
+    fluid.parseAtStringTemplate = function (template) {
         const tokens = [];
         let lastIndex = 0;
         let match;
@@ -2931,9 +3074,9 @@ const fluidJSScope = function (fluid) {
         return tokens;
     };
 
-    fluid.stringTemplate = function (template, model) {
-        const tokens = fluid.parseStringTemplate(template);
-        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path));
+    fluid.atStringTemplate = function (template, model) {
+        const tokens = fluid.parseAtStringTemplate(template);
+        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path, "error"));
         return segs.join("");
     };
 
@@ -2950,10 +3093,18 @@ const fluidJSScope = function (fluid) {
      * @param {String} url - The URL to fetch data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
      * @param {Function} strategy - An async function to process the response.
-     * @return {signal<any>} A signal containing the processed data or an "unavailable" state.
+     * @return {Signal<any>} A signal containing the processed data or an "unavailable" state.
      */
     fluid.fetch = function (url, options, strategy) {
         const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
+        const assignResult = data => {
+            try {
+                togo.value = data;
+            } catch (e) { // Don't use catch's error handler since this will swallow it
+                fluid.fail("Error assigning I/O result: ", e);
+                throw e;
+            }
+        };
         fetch(url, {...options, ...fluid.cacheOptions})
             .then(response => {
                 if (!response.ok) {
@@ -2965,13 +3116,15 @@ const fluidJSScope = function (fluid) {
             .then(data => {
                 if (!fluid.isErrorUnavailable(togo.peek())) { // Fetch API provides an undefined response in the case response is not OK
                     if (options?.delay) {
-                        window.setTimeout(() => togo.value = data, options.delay);
+                        window.setTimeout(() => assignResult(data), options.delay);
                     } else {
-                        togo.value = data;
+                        assignResult(data);
                     }
                 }
             })
-            .catch(err => togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
+            .catch(err => {
+                togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"});
+            });
         return togo;
     };
 
@@ -2982,7 +3135,7 @@ const fluidJSScope = function (fluid) {
      *
      * @param {String} url - The URL to fetch text data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<String>} A signal containing the fetched text data or an "unavailable" state.
+     * @return {Signal<String>} A signal containing the fetched text data or an "unavailable" state.
      */
     fluid.fetchText = function (url, options) {
         return fluid.fetch(url, options, async response => response.text());
@@ -2995,35 +3148,43 @@ const fluidJSScope = function (fluid) {
      *
      * @param {String} url - The URL to fetch JSON data from.
      * @param {RequestInit} [options] - Optional fetch configuration options.
-     * @return {signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
+     * @return {Signal<Object>} A signal containing the fetched JSON data or an "unavailable" state.
      */
     fluid.fetchJSON = function (url, options) {
         return fluid.fetch(url, options, async response => response.json());
     };
 
     /**
-     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value to an
+     * Converts a signal into a Promise that resolves when the signal's value changes to an
+     * available value.
+     *
+     * @param {Signal<any>} valSignal - The signal to monitor.
+     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
+     */
+    fluid.signalToPromise = function (valSignal) {
+        return new Promise( (resolve) => {
+            fluid.effect(function (value) {
+                resolve(value);
+                this.dispose();
+            }, [valSignal]);
+        });
+    };
+
+    /**
+     * Converts a signal at a given path within a component into a Promise that resolves when the signal's value changes to an
      * available value.
      *
      * @param {Component} component - The component containing the signal.
      * @param {String|String[]} path - The path within the component where the signal is located.
      * @return {Promise<any>} A Promise that resolves with the value of the signal when it updates.
      */
-    fluid.toPromise = function (component, path) {
+    fluid.siteToPromise = function (component, path) {
         const pathSignal = fluid.getForComponent(component[$m], path);
-        return new Promise( (resolve) => {
-            const effect = fluid.effect(function (pathValue) {
-                resolve(pathValue);
-                effect._dispose();
-            }, [pathSignal]);
-        });
+        return fluid.signalToPromise(pathSignal);
     };
 
 };
 
 // noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
 var fluid = fluid || {}; // eslint-disable-line no-redeclare
-fluidJSScope(fluid);
-
-// noinspection ES6ConvertVarToLetConst -- Hint for future module munger
-var exports = {fluidJSScope}; // eslint-disable-line no-unused-vars
+$fluidJSScope(fluid);

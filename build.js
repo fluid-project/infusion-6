@@ -106,6 +106,9 @@ const buildIndex = {
     }, {
         src: "src",
         dest: "docs/src"
+    }, {
+        src: "tests",
+        dest: "docs/tests"
     }]
 };
 

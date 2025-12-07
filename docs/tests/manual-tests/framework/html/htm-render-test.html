@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>HTM Render Tests</title>
+
+    <script src="../../../../src/lib/preact-signals/preact-signals-core.js"></script>
+
+    <script src="../../../../src/lib/preact/preact.esbuild.js"></script>
+
+    <script src="../../../../src/lib/preact/preact.hooks.esbuild.js"></script>
+    <script src="../../../../src/lib/preact-signals/preact-signals.js"></script>
+
+    <script src="../../../../src/lib/htm/htm.esbuild.js"></script>
+
+
+</head>
+
+<body>
+<main>
+    <button id="run-tests">Render Tests</button>
+    <h1>HTM rendering tests - leaf signal update</h1>
+    <h2>Results</h2>
+    <ul class="results"></ul>
+    <div class="target"></div>
+</main>
+<script src="../js/htm-render-test.js"></script>
+<script>
+    document.querySelector("#run-tests").addEventListener("click", runTests);
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-/* global JSHINT, CSSLint, CodeMirror, LezerJS */
+/* global JSHINT, CSSLint, CodeMirror */
 
 "use strict";
 

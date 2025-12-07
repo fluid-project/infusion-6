@@ -1,0 +1,11 @@
+{
+    "name": "todoApp",
+    "version": "6.0.0-pre",
+    "infusion": {
+        "imports": [
+            "./sfc/todo-app.vue",
+            "./sfc/todo-list.vue",
+            "./sfc/todo-item.vue"
+        ]
+    }
+}

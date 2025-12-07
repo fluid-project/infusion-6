@@ -5,32 +5,41 @@
 
     <link rel="stylesheet" href="demo.css">
 
-    <script src="../../src/lib/preact-signals/preact-signals-core.js"></script>
-    <script src="../../src/lib/lezer/lezer-javascript-browser.js"></script>
+    <fluid-module id="infusion-6" src="../../src/"></fluid-module>
 
-    <script src="../../src/framework/core/js/Fluid.js"></script>
-    <script src="../../src/framework/core/js/FluidIL.js"></script>
-    <script src="../../src/framework/core/js/FluidView.js"></script>
-    <script src="../../src/framework/core/js/template-parser.js"></script>
-    <script src="../../src/framework/core/js/sfc-parser.js"></script>
+    <!--
+    <fluid-import src="%infusion-6"></fluid-import>
+    -->
 
-    <fluid-url-base id="composeUrlBase" src="./"></fluid-url-base>
+    <script src="../../src/lib/preact-signals/preact-signals-core.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/lib/lezer/lezer-javascript-browser.js" fluid-hydrated="%infusion-6"></script>
 
-    <fluid-import layer="fluid.demos.blogApp" src="@{composeUrlBase}/sfc/blogApp.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.post" src="@{composeUrlBase}/sfc/post.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.fullPost" src="@{composeUrlBase}/sfc/fullPost.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.navbar" src="@{todoUrlBase}/sfc/navbar.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.header" src="@{todoUrlBase}/sfc/header.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.footer" src="@{todoUrlBase}/sfc/footer.vue"></fluid-import>
+    <script src="../../src/framework/core/js/Fluid.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidModules.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidIL.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidView.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidView-browser.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/template-parser.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/sfc-parser.js" fluid-hydrated="%infusion-6"></script>
 
-    <fluid-import layer="fluid.demos.divergencePost" src="@{todoUrlBase}/posts/divergence.vue"></fluid-import>
-    <fluid-import layer="fluid.demos.substratePost" src="@{todoUrlBase}/posts/substrate.vue"></fluid-import>
+    <fluid-module id="composeApp" src="./"></fluid-module>
 
-    <fluid-url-base id="editUrlBase" src="../../src/framework/edit"></fluid-url-base>
-    <fluid-url-base id="libUrlBase" src="../../src/lib"></fluid-url-base>
+    <fluid-import src="%composeApp/sfc/fluid-demos-blogApp.vue" fluid-hydrated="%composeApp"></fluid-import>
+    <fluid-import src="%composeApp/sfc/fluid-demos-post.vue" fluid-hydrated="%composeApp"></fluid-import>
+    <fluid-import src="%composeApp/sfc/fluid-demos-fullPost.vue" fluid-hydrated="%composeApp"></fluid-import>
+    <fluid-import src="%composeApp/sfc/fluid-demos-navbar.vue" fluid-hydrated="%composeApp"></fluid-import>
+    <fluid-import src="%composeApp/sfc/fluid-demos-header.vue" fluid-hydrated="%composeApp"></fluid-import>
+    <fluid-import src="%composeApp/sfc/fluid-demos-footer.vue" fluid-hydrated="%composeApp"></fluid-import>
 
-    <!-- Add this import to make the app editable -->
-    <fluid-import layer="fluid.fullPageEditor" src="@{editUrlBase}/sfc/FluidEdit.vue"></fluid-import>
+    <fluid-import src="%composeApp/posts/fluid-demos-divergencePost.vue" fluid-hydrated="%composeApp"></fluid-import>
+    <fluid-import src="%composeApp/posts/fluid-demos-substratePost.vue" fluid-hydrated="%composeApp"></fluid-import>
+
+
+    <!-- Add this module, import and instance to make the app editable -->
+    <fluid-module id="fluid-edit" src="../../src/framework/edit"></fluid-module>
+
+    <fluid-import src="%fluid-edit/sfc/fluid-edit.vue"></fluid-import>
+    <div fluid-layers="fluid.edit"></div>
 
     <title>Self-editing demo</title>
 </head>

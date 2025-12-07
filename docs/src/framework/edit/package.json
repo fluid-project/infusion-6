@@ -1,0 +1,7 @@
+{
+    "name": "fluid-edit",
+    "version": "6.0.0-pre",
+    "infusion": {
+        "main": "sfc/fluid-edit.vue"
+    }
+}

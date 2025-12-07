@@ -4,6 +4,7 @@
     window.preactSignalsCore = exports;
 })(function (require, exports) {
     "use strict";
+    window.cycleImminent = false;
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.signal = signal;
     exports.computed = computed;
@@ -263,6 +264,9 @@
         },
         set: function (value) {
             if (value !== this._value) {
+                if (batchIteration > 50) {
+                    window.cycleImminent = true;
+                }
                 if (batchIteration > 100) {
                     throw new Error("Cycle detected");
                 }
@@ -376,8 +380,8 @@
         }
         target._sources = head;
     }
-    function Computed(fn) {
-        Signal.call(this, undefined);
+    function Computed(fn, initValue) {
+        Signal.call(this, initValue); // AMB Patch - allow initial value other than undefined, e.g. unavailable
         this._fn = fn;
         this._sources = undefined;
         this._globalVersion = globalVersion - 1;
@@ -489,10 +493,11 @@
      * updated when any signals accessed from within the callback function change.
      *
      * @param fn The effect callback.
+     * @param initValue Any initial value for the computed signal (usually an unavailable value)
      * @returns A new read-only signal.
      */
-    function computed(fn) {
-        return new Computed(fn);
+    function computed(fn, initValue) {
+        return new Computed(fn, initValue);
     }
     function cleanupEffect(effect) {
         var cleanup = effect._cleanup;
@@ -537,12 +542,17 @@
         }
         endBatch();
     }
-    function Effect(fn) {
+    function Effect(fn, options) {
         this._fn = fn;
         this._cleanup = undefined;
         this._sources = undefined;
         this._nextBatchedEffect = undefined;
         this._flags = TRACKING;
+        // AMB patch
+        const inDispose = options?.onDispose;
+        if (inDispose !== undefined) {
+            this.onDispose = Array.isArray(inDispose) ? [...inDispose] : [inDispose];
+        }
     }
     Effect.prototype._callback = function () {
         var finish = this._start();
@@ -585,7 +595,15 @@
         if (!(this._flags & RUNNING)) {
             disposeEffect(this);
         }
+        // AMB patch
+        if (this.onDispose) {
+            this.onDispose.forEach(oneDispose => oneDispose(this));
+        }
+        this.disposed = true;
     };
+    Effect.prototype.dispose = function () {
+        this._dispose();
+    }
     /**
      * Create an effect to run arbitrary code in response to signal changes.
      *
@@ -599,8 +617,8 @@
      * @param fn The effect callback.
      * @returns A function for disposing the effect.
      */
-    function effect(fn) {
-        var effect = new Effect(fn);
+    function effect(fn, options) {
+        var effect = new Effect(fn, options);
         try {
             effect._callback();
         }
@@ -613,5 +631,17 @@
         // because bound functions seem to be just as fast and take up a lot less memory.
         // return effect._dispose.bind(effect);
         return effect;
+    }
+
+    /** Given a computed or an effect whose callback has just been called, determine what are the ultimate source
+     * node(s) whose updates have been responsible for the update, and what is the path through computed nodes to
+     * the supplied target
+     * @param {Target} target Computed or Effect which has just been notified
+     * @returns {Object} cause - Structure reporting cause of notification
+     * @returns {Array[Source]} sources - The source(s) whose updates caused the notification
+     * @returns {Array[Computed]} path - The intermediate computed nodes between sources and target, sorted in dependency
+     * order
+     */
+    function findCause(target) {
     }
 });

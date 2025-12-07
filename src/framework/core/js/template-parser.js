@@ -31,7 +31,7 @@ const htmlParserScope = function (fluid) {
     /*
      * Create a cached version of a pure function of a string
      */
-    fluid.cached = function (fn) {
+    fluid.stringCache = function (fn) {
         const cache = Object.create(null);
         return (function cachedFn(str) {
             const hit = cache[str];
@@ -52,7 +52,7 @@ const htmlParserScope = function (fluid) {
     }
 
     if (typeof(document) !== "undefined") {
-        fluid.decodeHtmlEntity = fluid.cached(decodeEntity);
+        fluid.decodeHtmlEntity = fluid.stringCache(decodeEntity);
         // On the server defined in server-support.js
     }
 
