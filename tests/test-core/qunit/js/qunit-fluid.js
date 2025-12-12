@@ -79,6 +79,17 @@ QUnit.assert.unavailable = function (value, message) {
     this.ok(fluid.isUnavailable(value), message);
 };
 
+/* Assert that two values are nearly equal, taking into account floating point slop if they are both Numbers
+ */
+QUnit.assert.nearEqual = function (actual, expected, message) {
+    this.pushResult({
+        result: fluid.defaultEquality(expected, actual),
+        actual,
+        expected,
+        message
+    });
+};
+
 fluid.isIgnorableNode = function (node) {
     return node.nodeType === 3 && /^\s*$/.test(node.nodeValue); // Whitespace text node
 };

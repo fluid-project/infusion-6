@@ -720,3 +720,44 @@ QUnit.test("Early cutoff tests", assert => {
     assert.equal(busyCount, 1, "Busy censored through early cutoff");
 
 });
+
+QUnit.test("Updates downstream pending computations", assert => {
+
+    const s1 = signal(0);
+    const s2 = signal(0);
+
+    let order = "";
+
+    const t1 = computed(() => {
+        order += "t1";
+        return s1.value === 0;
+    });
+
+    const t2 = computed(() => {
+        order += "c1";
+        return s1.value;
+    });
+
+    const t3 = computed(() => {
+        order += "c2";
+
+        // force dependency on t1
+        t1.value;
+
+        // nested computed
+        return computed(() => {
+            order += "c2_1";
+            return s2.value;
+        });
+    });
+
+    // cause update
+    s1.value = 1;
+
+    // trigger recomputation
+    t2.value;
+    t3.value.value;
+
+    // Solid-signals order: "t1c1c2c2_1"
+    assert.equal(order, "c1c2t1c2_1", "Downstream computations run in expected order");
+});

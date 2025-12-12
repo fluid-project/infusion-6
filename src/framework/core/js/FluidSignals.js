@@ -31,11 +31,11 @@ const $fluidSignalsScope = function (fluid) {
     // Global state for tracking reactive context
     /** current capture context for identifying reactive elements
      * - active while evaluating a reactive function body  */
-    // The current reaction whose _fn is in execution
-    fluid.CurrentReaction = undefined;
+    // The current Edge whose _fn is in execution
+    fluid.CurrentReaction = null;
     // Becomes set if the _fn begins to demand a source which is out of step with any of its previously recorded ones
     fluid.CurrentGets = null;
-    // Tracks along the current array of _sources as _fn executes and demands dependents
+    // Tracks along the current array of sources as _fn executes and demands dependents
     fluid.CurrentGetsIndex = 0;
 
     /** A list of non-clean 'effect' nodes that will be updated when stabilize() is called */
@@ -57,6 +57,31 @@ const $fluidSignalsScope = function (fluid) {
         CacheCheck = fluid.CacheCheck,
         CacheDirty = fluid.CacheDirty;
 
+
+    /**
+     * @typedef {Object} Cell
+     *
+     * @property {function(): any} get - Retrieves the current value of the cell.
+     * @property {function(any): void} set - Sets a new value for the cell.
+     * @property {function(Function, Array<Cell>): Cell} compute - Sets up a reactive computation for the cell.
+     *
+     * @property {Any} _value - The current value stored in the cell.
+     * @property {CacheState} _state - The cache state of the cell (clean, check, or dirty).
+     * @property {Cell|null} _dirtyFrom - Cell from along which we were dirtied
+     * @property {Cell[]|null} _observers - Cells that have us as sources (out links)
+     * @property {Edge[]|null} _inEdges - Array of incoming edges which could update this node
+     * @property {Cell[]|null} _consumedSources - Sources from which arcs have been traversed during this fit
+     * @property {Boolean} _isEffect - Is this an effect node
+     */
+
+    /** @typedef {Object} Edge
+     * @property {Cell} target - The cell that we are the edge to (a computer for)
+     * @property {Cell|null} key - The key for the edge, either the first staticSource or null if there are not any
+     * @property {Cell[]|null} sources - Sources in reference order, not deduplicated (in links)
+     * @property {Cell[]|null} staticSources - Static sources supplied
+     * @property {Function} fn - The function to be called to compute the value
+     */
+
     fluid.defaultEquality = function (a, b) {
         if (typeof(a) !== "number" || typeof(b) !== "number") {
             return a === b;
@@ -71,22 +96,63 @@ const $fluidSignalsScope = function (fluid) {
         }
     };
 
+    fluid.CurrentFit = {
+        /** @type {Cell[]} An array of cells for which the _consumedSources member has been set during this fit */
+        targetsConsumed: []
+    };
+
+    fluid.endFit = function () {
+        fluid.CurrentFit.targetsConsumed.forEach(target => target._consumedSources = null);
+        fluid.CurrentFit.targetsConsumed.length = 0;
+    };
+
+    fluid.findCause = function () {
+        const currentEdge = fluid.CurrentReaction;
+        if (currentEdge) {
+            const cause = [];
+            let target = currentEdge.target;
+
+            do {
+                cause.push(target);
+                target = target._dirtyFrom;
+            } while (target);
+            return cause;
+        } else {
+            return null;
+        }
+    };
+
     /**
-     * @typedef {Object} Cell
-     * @property {function(): any} get - Retrieves the current value of the cell.
-     * @property {function(any): void} set - Sets a new value for the cell.
-     * @property {function(Function, Array<Cell>): Cell} compute - Sets up a reactive computation for the cell.
-     * @property {Any} _value - The current value stored in the cell.
-     * @property {Boolean} _isEffect - Is this an effect node.
-     * @property {CacheState} _state - The cache state of the cell (clean, check, or dirty).
-     * @property {Cell[]|null} _observers - Cells that have us as sources (down links)
-     * @property {Cell[]|null} _sources - Sources in reference order, not deduplicated (up links)
+     * Adds the given sources to the list of culled sources for a specific target cell. This signals that one
+     * leg of a bidirectional arc has been travelled and that the reverse arc should be ignored for this fit.
+     *
+     * @param {Cell} target - The target cell for which sources are being culled.
+     * @param {Array[Cell]} inSources - The array of source cells to be added to the culled sources list.
      */
+    fluid.consumeSources = function (target, inSources) {
+        const sources = target._consumedSources || [];
+        Array.prototype.push.apply(sources, inSources);
+        target._consumedSources = sources;
+        fluid.CurrentFit.targetsConsumed.push(target);
+    };
+
+    /**
+     * Removes an element from an array at the specified index by replacing it with the last element,
+     * then removing the last element. This is an efficient way to remove an item without preserving order.
+     *
+     * @param {Array} array - The array from which to remove the element.
+     * @param {Number} index - The index of the element to remove.
+     */
+    fluid.removeAtIndex = function (array, index) {
+        array[index] = array[array.length - 1];
+        array.pop();
+    };
+
 
     /**
      * Creates a new reactive cell for managing state and computations.
      *
-     * @param {any} [initialValue] - The initial value to store in the cell.
+     * @param {Any} [initialValue] - The initial value to store in the cell.
      * @param {Object} [props] - Additional properties to contextualise the cell
      * @return {Cell} The newly created cell object.
      */
@@ -94,14 +160,14 @@ const $fluidSignalsScope = function (fluid) {
         const cell = Object.create(fluid.cellPrototype);
         Object.assign(cell, props);
 
-        // Initialize cell properties
         cell._value = initialValue;
-        cell._fn = undefined;
-        cell._observers = null; // nodes that have us as sources (down links)
-        cell._sources = null; // sources in reference order, not deduplicated (up links)
+        cell._dirtyFrom = null;
+        cell._observers = null; // nodes that have us as sources (outgoing links)
+        cell._inEdges = null;
+        cell._consumedSources = null;
+        cell._consumedEdge = null;
 
         cell._state = CacheClean;
-        cell._isEffect = false;
         // NEW
         cell._isUpdating = false;
 
@@ -128,8 +194,8 @@ const $fluidSignalsScope = function (fluid) {
         if (fluid.CurrentReaction) {
             if (
                 !fluid.CurrentGets &&
-                fluid.CurrentReaction._sources &&
-                fluid.CurrentReaction._sources[fluid.CurrentGetsIndex] === this
+                fluid.CurrentReaction.sources &&
+                fluid.CurrentReaction.sources[fluid.CurrentGetsIndex] === this
             ) {
                 // No divergence with previous _sources and none is requested - simply step along the array of _sources
                 fluid.CurrentGetsIndex++;
@@ -145,8 +211,8 @@ const $fluidSignalsScope = function (fluid) {
             }
         }
 
-        // Update if we have a function and might be stale
-        if (this._fn) {
+        // Update if we have in edges and might be stale
+        if (this._inEdges) {
             fluid.cell.updateIfNecessary(this);
         }
 
@@ -168,7 +234,7 @@ const $fluidSignalsScope = function (fluid) {
             if (this._observers) {
                 for (let i = 0; i < this._observers.length; i++) {
                     const observer = this._observers[i];
-                    fluid.cell.markStale(observer, CacheDirty);
+                    fluid.cell.markStale(observer, CacheDirty, this);
                 }
             }
         }
@@ -186,42 +252,56 @@ const $fluidSignalsScope = function (fluid) {
      * @this {Cell}
      */
     fluid.cell.prototype.compute = function (fn, staticSources) {
+        // The edge's key is either its first source or null
+        const key = staticSources && staticSources[0] || null;
+        if (!this._inEdges) {
+            this._inEdges = [];
+        }
+        const inEdgeIndex = this._inEdges.findIndex(edge => edge.key === key);
+        let inEdge = inEdgeIndex === -1 ? null : this._inEdges[inEdgeIndex];
+
         if (!fn) {
             // Remove computation - part of middle block of original .set
-            if (this._fn) {
-                fluid.cell.removeParentObservers(this, 0);
-                this._sources = null;
-                this._fn = null;
+            if (inEdge) {
+                fluid.cell.removeParentObservers(this, inEdge, 0);
+                fluid.removeAtIndex(this._inEdges, inEdgeIndex);
             }
             return this;
-        }
+        } else {
 
-        const oldFn = this._fn;
-        this._fn = fn;
-        this._staticSources = staticSources ? [...staticSources] : null;
+            const oldFn = inEdge?._fn;
+            if (!inEdge) {
+                inEdge = Object.create(null);
+                inEdge.key = key;
+            }
 
-        // Set up observer links from sources to this cell - this is new signature
-        if (staticSources) {
-            for (let i = 0; i < staticSources.length; i++) {
-                const source = staticSources[i];
-                if (!source._observers) {
-                    source._observers = [this];
-                } else {
-                    // Check if already observing to avoid duplicates
-                    if (!source._observers.includes(this)) {
+            inEdge.fn = fn;
+            inEdge.staticSources = staticSources ? [...staticSources] : null;
+            inEdge.sources = staticSources ? [...staticSources] : null;
+            inEdge.target = this;
+            this._inEdges.push(inEdge);
+
+            // Set up observer links from sources to this cell - this is new signature
+            if (staticSources) {
+                for (let i = 0; i < staticSources.length; i++) {
+                    const source = staticSources[i];
+                    if (!source._observers) {
+                        source._observers = [this];
+                    } else {
                         source._observers.push(this);
                     }
                 }
             }
+
+            if (fn !== oldFn) {
+                // Note in this case we don't mark a _dirtyFrom, all incoming edges are in play?
+                fluid.cell.markStale(this, CacheDirty);
+            }
+
+            fluid.cell.stabilize();
+
+            return this;
         }
-
-        if (fn !== oldFn) {
-            fluid.cell.markStale(this, CacheDirty);
-        }
-
-        fluid.cell.stabilize();
-
-        return this;
     };
 
     /**
@@ -229,8 +309,9 @@ const $fluidSignalsScope = function (fluid) {
      *
      * @param {Cell} cell - The reactive cell to mark as stale.
      * @param {CacheState} state - The new cache state to assign (e.g., CacheDirty or CacheCheck).
+     * @param {Cell} [dirtyFrom] - A cell joined by an edge responsible for dirtiness
      */
-    fluid.cell.markStale = function (cell, state) {
+    fluid.cell.markStale = function (cell, state, dirtyFrom) {
         if (cell._state < state) {
             // If we were previously clean, then we know that we may need to update to get the new value
             if (cell._state === CacheClean && cell._isEffect) {
@@ -238,9 +319,15 @@ const $fluidSignalsScope = function (fluid) {
             }
 
             cell._state = state;
+            cell._dirtyFrom = dirtyFrom;
             if (cell._observers) {
+                const consumedSources = cell._consumedSources;
                 for (let i = 0; i < cell._observers.length; i++) {
-                    fluid.cell.markStale(cell._observers[i], CacheCheck);
+                    const observer = cell._observers[i];
+                    if (!consumedSources?.includes(observer)) {
+                        fluid.cell.markStale(observer, CacheCheck, cell);
+                    }
+
                 }
             }
         }
@@ -249,11 +336,12 @@ const $fluidSignalsScope = function (fluid) {
     /**
      * Updates the value of a reactive cell by re-evaluating its computation function and managing dependencies.
      * @param {Cell} cell - The reactive cell to update.
+     * @param {Edge} inEdge - The edge along which we should update
      */
-    fluid.cell.update = function (cell) {
+    fluid.cell.update = function (cell, inEdge) {
         // AI
         // Prevent infinite recursion in circular dependencies
-        if (cell._isUpdating || !cell._fn) {
+        if (cell._isUpdating || !cell._inEdges) {
             return;
         }
 
@@ -265,64 +353,98 @@ const $fluidSignalsScope = function (fluid) {
         const prevGets = fluid.CurrentGets;
         const prevIndex = fluid.CurrentGetsIndex;
 
-        fluid.CurrentReaction = cell;
+        fluid.CurrentReaction = inEdge;
         fluid.CurrentGets = null;
         fluid.CurrentGetsIndex = 0;
 
         try {
 
-            // new - dispatch values from static dependencies as arguments
-            if (cell._staticSources) {
-                const args = cell._staticSources.map(s => s.get());
-                cell._value = cell._fn.apply(null, args);
-            } else {
-                cell._value = cell._fn();
-            }
-            //
+            const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
 
+            fluid.consumeSources(cell, inEdge.sources);
+
+            cell._value = inEdge.fn.apply(null, args);
 
             // Update sources if they changed during execution -     // if the sources have changed, update source & observer links
             if (fluid.CurrentGets) {
                 // We diverged, inherit the unchanged portion of sources array up to CurrentGetsIndex and then splice in the excess
-                fluid.cell.removeParentObservers(cell, fluid.CurrentGetsIndex);
-                if (cell._sources && fluid.CurrentGetsIndex > 0) {
-                    cell._sources.length = fluid.CurrentGetsIndex + fluid.CurrentGets.length;
+                fluid.cell.removeParentObservers(cell, inEdge, fluid.CurrentGetsIndex);
+                if (inEdge.sources && fluid.CurrentGetsIndex > 0) {
+                    inEdge.sources.length = fluid.CurrentGetsIndex + fluid.CurrentGets.length;
                     for (let i = 0; i < fluid.CurrentGets.length; i++) {
-                        cell._sources[fluid.CurrentGetsIndex + i] = fluid.CurrentGets[i];
+                        inEdge.sources[fluid.CurrentGetsIndex + i] = fluid.CurrentGets[i];
                     }
                 } else {
-                    cell._sources = fluid.CurrentGets;
+                    inEdge.sources = fluid.CurrentGets;
                 }
 
-                for (let i = fluid.CurrentGetsIndex; i < cell._sources.length; i++) {
-                    const source = cell._sources[i];
+                for (let i = fluid.CurrentGetsIndex; i < inEdge.sources.length; i++) {
+                    // Add ourselves to the end of the parent .observers array
+                    const source = inEdge.sources[i];
                     if (!source._observers) {
                         source._observers = [cell];
-                    } else if (!source._observers.includes(cell)) {
+                    } else {
                         source._observers.push(cell);
                     }
                 }
-            } else if (cell._sources && fluid.CurrentGetsIndex < cell._sources.length) {
+            } else if (inEdge.sources && fluid.CurrentGetsIndex < inEdge.sources.length) {
                 // We didn't diverge but demanded strictly fewer sources than our predecessor, trim the excess
-                fluid.cell.removeParentObservers(cell, fluid.CurrentGetsIndex);
-                cell._sources.length = fluid.CurrentGetsIndex;
+                fluid.cell.removeParentObservers(cell, inEdge, fluid.CurrentGetsIndex);
+                inEdge.sources.length = fluid.CurrentGetsIndex;
             }
         } finally {
             fluid.CurrentGets = prevGets;
             fluid.CurrentReaction = prevReaction;
             fluid.CurrentGetsIndex = prevIndex;
             cell._isUpdating = false;
-        }
+            cell._state = CacheClean;
+            // cell._dirtyFrom = null;
 
-        // handles diamond dependencies if we're the parent of a diamond. - part of original impl
-        if (!fluid.cell.equals(oldValue, cell._value) && cell._observers) {
-            for (let i = 0; i < cell._observers.length; i++) {
-                const observer = cell._observers[i];
-                observer._state = CacheDirty;
+            // Misleading original comment:
+            // handles diamond dependencies if we're the parent of a diamond.
+            if (!fluid.cell.equals(oldValue, cell._value) && cell._observers) {
+                const consumedSources = cell._consumedSources;
+                // We've changed value, so mark our children as dirty so they'll reevaluate
+                for (let i = 0; i < cell._observers.length; i++) {
+                    const observer = cell._observers[i];
+                    if (!consumedSources?.includes(observer)) {
+                        observer._state = CacheDirty;
+                        observer._dirtyFrom = cell;
+                    }
+                }
+            }
+
+            if (fluid.CurrentReaction === null) {
+                fluid.endFit();
             }
         }
 
-        cell._state = CacheClean;
+
+    };
+
+    /**
+     * Determine which compute edge should be activated in order to update a dirty cell. Either the one
+     * which leads to a cell from which an edge originally marked us as dirty, or one with no unavailable
+     * values.
+     * @param {Cell} cell - The reactive cell to update if necessary.
+     * @return {Edge} edge - The edge to be activated
+     */
+    fluid.cell.findDirtyEdge = function (cell) {
+        let bestCandidate;
+        if (cell._dirtyFrom) {
+            bestCandidate = cell._inEdges.find(edge =>
+                edge.sources?.includes(cell._dirtyFrom));
+        } else {
+            bestCandidate = cell._inEdges[0];
+            if (cell._inEdges.length > 1) {
+                cell._inEdges.forEach(edge => {
+                    if (!edge.sources?.some(source => fluid.cell.isUnavailable(source._value))) {
+                        bestCandidate = edge;
+                    }
+                });
+            }
+        }
+        return bestCandidate;
     };
 
     /**
@@ -331,45 +453,56 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell.updateIfNecessary = function (cell) {
         // If we are potentially dirty, see if we have a parent who has actually changed value
-        if (cell._state === CacheCheck) {
-            for (const source of cell._sources) {
-                fluid.cell.updateIfNecessary(source);
-                if (cell._state === CacheDirty) {
-                    // Stop the loop here so we won't trigger updates on other parents unnecessarily
-                    // If our computation changes to no longer use some sources, we don't
-                    // want to update() a source we used last time, but now don't use.
-                    break;
+        if (cell._state === CacheCheck || fluid.cell.isUnavailable(cell._value)) {
+            if (cell._inEdges) {
+                outer: for (const edge of cell._inEdges) {
+                    if (edge.sources) {
+                        for (const source of edge.sources) {
+                            fluid.cell.updateIfNecessary(source);
+                            if (cell._state === CacheDirty) {
+                                // Stop the loop here so we won't trigger updates on other parents unnecessarily
+                                // If our computation changes to no longer use some sources, we don't
+                                // want to update() a source we used last time, but now don't use.
+                                break outer;
+                            }
+                        }
+                    }
                 }
             }
         }
 
         if (cell._state === CacheDirty) {
-            fluid.cell.update(cell);
+            const edge = fluid.cell.findDirtyEdge(cell);
+            if (edge) {
+                fluid.cell.update(cell, edge);
+            }
         }
-
-        cell._state = CacheClean;
+        // Don't mark ourselves as clean if value is not available since it may be computable from another relation
+        if (!fluid.isUnavailable(cell._value)) {
+            cell._state = CacheClean;
+        }
 
     };
 
     /**
-     * Removes this cell as an observer from its parent source cells starting at the given index.
-     * @param {Cell} cell - The cell whose parent observer links are to be removed.
+     * Removes this cell as an observer from its parent source cells starting at the given index of an edge's sources
+     * @param {Cell} cell - The reactive cell to be removed
+     * @param {Edge} edge - The edge whose sources should be removed
      * @param {Number} index - The starting index in the sources array from which to remove observer links.
      * @this {Cell}
      */
-    fluid.cell.removeParentObservers = function (cell, index) {
-        if (!cell._sources) {
+    fluid.cell.removeParentObservers = function (cell, edge, index) {
+        if (!edge.sources) {
             return;
         }
-        for (let i = index; i < cell._sources.length; i++) {
-            const source = cell._sources[i]; // We don't actually delete sources here because we're replacing the entire array soon
+        for (let i = index; i < edge.sources.length; i++) {
+            const source = edge.sources[i]; // We don't actually delete sources here because we're replacing the entire array soon
             if (!source._observers) {
                 continue;
             }
-            const swap = source._observers.findIndex(v => v === this);
-            if (swap !== -1) {
-                source._observers[swap] = source.observers[source._observers.length - 1];
-                source._observers.pop();
+            const ourIndex = source._observers.findIndex(v => v === cell);
+            if (ourIndex !== -1) {
+                fluid.removeAtIndex(source._observers, ourIndex);
             }
         }
     };
@@ -404,11 +537,10 @@ const $fluidSignalsScope = function (fluid) {
 
         effect.dispose = function () {
             effect._isDisposed = true;
-            if (effect._sources) {
-                fluid.cell.removeParentObservers(effect, 0);
-                effect._sources = null;
+            if (effect._inEdges) {
+                effect._inEdges.forEach(edge => fluid.cell.removeParentObservers(effect, edge, 0));
+                effect._inEdges = null;
             }
-            effect._fn = undefined;
         };
 
         return effect;

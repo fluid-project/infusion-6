@@ -2988,8 +2988,6 @@ const $fluidJSScope = function (fluid) {
         return template;
     };
 
-    const tagRE = /@\{((?:.)+?)\}/g;
-
     /**
      * @typedef {Object} ParsedContext
      * @property {String} context - The context portion of the reference
@@ -3028,6 +3026,8 @@ const $fluidJSScope = function (fluid) {
         return {context, path, name, selector};
     };
 
+    const atTemplateRE = /@\{((?:.)+?)\}/g;
+
     /**
      * Takes a template string containing tokens in the form of "@{value}", "@{deep.path.to.value}",
      * or "@{{layerRec}.layerName}". Returns an array of token segments which are either plain strings
@@ -3042,10 +3042,9 @@ const $fluidJSScope = function (fluid) {
         let lastIndex = 0;
         let match;
 
-        // Helper to parse simple keys
-        const parseKey = key => ({context: "self", path: key});
+        const upgradeSimpleKey = key => ({context: "self", path: key});
 
-        while ((match = tagRE.exec(template))) {
+        while ((match = atTemplateRE.exec(template))) {
             const index = match.index;
             // Push text token
             if (index > lastIndex) {
@@ -3055,18 +3054,18 @@ const $fluidJSScope = function (fluid) {
             const exp = match[1].trim();
             if (exp.startsWith("{")) {
                 // Handle tokens of the form "@{{context}.path}"
-                const endIndex = template.indexOf("}", tagRE.lastIndex);
+                const endIndex = template.indexOf("}", atTemplateRE.lastIndex);
                 if (endIndex === -1) {
                     throw new Error("Unmatched '{' in template: " + template);
                 }
                 const fullBody = template.slice(index + 2, endIndex); // Include the full body
                 tokens.push({raw: fullBody, parsed: fluid.parseContextReference(fullBody)});
-                tagRE.lastIndex = endIndex + 1; // Move past the closing "}"
+                atTemplateRE.lastIndex = endIndex + 1; // Move past the closing "}"
             } else {
                 // Handle tokens of the form "@{value}" or "@{deep.path.to.value}"
-                tokens.push({raw: exp, parsed: parseKey(exp)});
+                tokens.push({raw: exp, parsed: upgradeSimpleKey(exp)});
             }
-            lastIndex = tagRE.lastIndex;
+            lastIndex = atTemplateRE.lastIndex;
         }
         if (lastIndex < template.length) {
             tokens.push(template.slice(lastIndex));
