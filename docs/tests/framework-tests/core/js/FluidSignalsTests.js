@@ -39,21 +39,21 @@ QUnit.test("Diamond tests", assert => {
 
     const seq = [];
 
-    const A = fluid.cell().compute(v => {
+    const A = fluid.cell().computed(v => {
         console.log("compute A (base * 2)");
         seq.push("A");
         return v * 2;
     }, [base]);
     A.name = "A";
 
-    const B = fluid.cell().compute(v => {
+    const B = fluid.cell().computed(v => {
         console.log("compute B (base + 3)");
         seq.push("B");
         return v + 3;
     }, [base]);
     B.name = "B";
 
-    const top = fluid.cell().compute((a, b) => {
+    const top = fluid.cell().computed((a, b) => {
         console.log("compute top (A + B)");
         seq.push("top");
         return a + b;
@@ -101,16 +101,12 @@ QUnit.test("Bidi tests", assert => {
     const fahrenheitCell = fluid.cell();
 
     const cSeq = [];
-    const cEffect = fluid.effect({
-        bind: celsius => cSeq.push(celsius)
-    }, [celsiusCell]);
+    const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell]);
 
     assert.deepEqual(cSeq, [15], "Startup notification");
 
     const fSeq = [];
-    const fEffect = fluid.effect({
-        bind: fahrenheit => fSeq.push(fahrenheit)
-    }, [fahrenheitCell]);
+    const fEffect = fluid.cell.effect(fahrenheit => fSeq.push(fahrenheit), [fahrenheitCell]);
 
     const reset = () => {
         fSeq.length = 0;
@@ -119,12 +115,12 @@ QUnit.test("Bidi tests", assert => {
 
     assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
-    fahrenheitCell.compute(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
 
     assert.deepEqual(fSeq, [59], "One notification on forward arc");
     assert.deepEqual(cSeq, [15], "No backward notification");
 
-    celsiusCell.compute(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+    celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
     assert.deepEqual(fSeq, [59], "No change on faithful inverse");
     assert.deepEqual(cSeq, [15], "No change on faithful inverse");
@@ -144,7 +140,7 @@ QUnit.test("Bidi tests", assert => {
     assert.deepEqual(cSeq, [100], "Relayed update");
 
     // Tear down one relation
-    fahrenheitCell.compute(null, [celsiusCell]);
+    fahrenheitCell.computed(null, [celsiusCell]);
 
     reset();
 
@@ -182,11 +178,11 @@ QUnit.test("Bidi tests with three nodes", assert => {
     const fahrenheitCell = fluid.cell();
     fahrenheitCell.name = "Fahrenheit";
 
-    kelvinCell.compute(celsius => celsius + 273.15, [celsiusCell]);
-    celsiusCell.compute(kelvin => kelvin - 273.15, [kelvinCell]);
+    kelvinCell.computed(celsius => celsius + 273.15, [celsiusCell]);
+    celsiusCell.computed(kelvin => kelvin - 273.15, [kelvinCell]);
 
-    fahrenheitCell.compute(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
-    celsiusCell.compute(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+    fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
     // Celsius value has spread in both directions
     assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
@@ -204,11 +200,11 @@ QUnit.test("findCause with three nodes", assert => {
     const C = fluid.cell(3, {name: "C"});
     let bCause = null,
         cCause = null;
-    B.compute(a => {
+    B.computed(a => {
         bCause = fluid.findCause();
         return a + 1;
     }, [A]);
-    C.compute(b => {
+    C.computed(b => {
         cCause = fluid.findCause();
         return b + 1;
     }, [B]);
@@ -219,13 +215,13 @@ QUnit.test("findCause with three nodes", assert => {
     };
 
     const Cval = C.get();
-    assert.equal(3, Cval, "value fetched");
+    assert.equal(Cval, 3, "value fetched");
     reset();
     A.set(2);
     const Cval2 = C.get();
-    assert.equal(4, Cval2, "updated value fetched");
-    assert.deepEqual([B, A], bCause, "B's update cause is A -> B");
-    assert.deepEqual([C, B, A], cCause, "C's update cause is A -> B -> C");
+    assert.equal(Cval2, 4, "updated value fetched");
+    assert.deepEqual(bCause, [B, A], "B's update cause is A -> B");
+    assert.deepEqual(cCause, [C, B, A], "C's update cause is A -> B -> C");
 });
 
 // kairo's "avoidable computation" test at https://github.com/milomg/js-reactivity-benchmark/blob/main/packages/core/src/benches/kairo/avoidable.ts
@@ -240,11 +236,11 @@ QUnit.test("Early cutoff tests", assert => {
     }
 
     const headCell = fluid.cell(0);
-    const c1Cell = fluid.cell().compute(head => head, [headCell]);
-    const c2Cell = fluid.cell().compute(() => { c1Cell.get(); return 0; });
-    const c3Cell = fluid.cell().compute(c2 => { busy(); return c2 + 1; }, [c2Cell]);
-    const c4Cell = fluid.cell().compute(c3 => c3 + 2, [c3Cell]);
-    const c5Cell = fluid.cell().compute(c4 => c4 + 3, [c4Cell]);
+    const c1Cell = fluid.cell().computed(head => head, [headCell]);
+    const c2Cell = fluid.cell().computed(() => { c1Cell.get(); return 0; });
+    const c3Cell = fluid.cell().computed(c2 => { busy(); return c2 + 1; }, [c2Cell]);
+    const c4Cell = fluid.cell().computed(c3 => c3 + 2, [c3Cell]);
+    const c5Cell = fluid.cell().computed(c4 => c4 + 3, [c4Cell]);
 
     // Initial computation
     headCell.set(1);
@@ -276,13 +272,13 @@ QUnit.test("Only propagates once with linear convergences", assert => {
 
     const dCell = fluid.cell(0);
 
-    const f1 = fluid.cell().compute(d => d, [dCell]);
-    const f2 = fluid.cell().compute(d => d, [dCell]);
-    const f3 = fluid.cell().compute(d => d, [dCell]);
-    const f4 = fluid.cell().compute(d => d, [dCell]);
-    const f5 = fluid.cell().compute(d => d, [dCell]);
+    const f1 = fluid.cell().computed(d => d, [dCell]);
+    const f2 = fluid.cell().computed(d => d, [dCell]);
+    const f3 = fluid.cell().computed(d => d, [dCell]);
+    const f4 = fluid.cell().computed(d => d, [dCell]);
+    const f5 = fluid.cell().computed(d => d, [dCell]);
 
-    const g = fluid.cell().compute(() => {
+    const g = fluid.cell().computed(() => {
         gcount++;
         return (
             f1.get() +
@@ -319,17 +315,17 @@ QUnit.test("Only propagates once with exponential convergence", assert => {
 
     const dCell = fluid.cell(0);
 
-    const f1 = fluid.cell().compute(d => d, [dCell]);
-    const f2 = fluid.cell().compute(d => d, [dCell]);
-    const f3 = fluid.cell().compute(d => d, [dCell]);
+    const f1 = fluid.cell().computed(d => d, [dCell]);
+    const f2 = fluid.cell().computed(d => d, [dCell]);
+    const f3 = fluid.cell().computed(d => d, [dCell]);
 
-    const g1 = fluid.cell().compute(() => f1.get() + f2.get() + f3.get());
-    const g2 = fluid.cell().compute(() => f1.get() + f2.get() + f3.get());
-    const g3 = fluid.cell().compute(() => f1.get() + f2.get() + f3.get());
+    const g1 = fluid.cell().computed(() => f1.get() + f2.get() + f3.get());
+    const g2 = fluid.cell().computed(() => f1.get() + f2.get() + f3.get());
+    const g3 = fluid.cell().computed(() => f1.get() + f2.get() + f3.get());
 
     let hcount = 0;
 
-    const h = fluid.cell().compute(() => {
+    const h = fluid.cell().computed(() => {
         hcount++;
         return g1.get() + g2.get() + g3.get();
     });
@@ -354,22 +350,22 @@ QUnit.test("Updates downstream pending computations", assert => {
 
     let order = "";
 
-    const t1 = fluid.cell().compute(s1v => {
+    const t1 = fluid.cell().computed(s1v => {
         order += "t1";
         return s1v === 0;
     }, [s1]);
 
-    const t2 = fluid.cell().compute(s1v => {
+    const t2 = fluid.cell().computed(s1v => {
         order += "c1";
         return s1v;
     }, [s1]);
 
-    const t3 = fluid.cell().compute(() => {
+    const t3 = fluid.cell().computed(() => {
         order += "c2";
         // force dependency on t1
         t1.get();
 
-        return fluid.cell().compute(s2v => {
+        return fluid.cell().computed(s2v => {
             order += "c2_1";
             return s2v;
         }, [s2]);
