@@ -1,4 +1,4 @@
-/* global QUnit, cytoscape */
+/* global QUnit, mermaid */
 
 "use strict";
 
@@ -21,55 +21,16 @@ fluid.untrapFluidCell = function () {
     fluid.cell = fluid.oldFluidCell;
 };
 
-fluid.initCytoscapeViz = function (testName) {
-    const id = "cyto-id-" + testName.replace(/\W/g, "_");
-    const existing = document.getElementById(id);
-    if (existing) {
-        return existing.cy;
-    } else {
-        const element = document.createElement("div");
-        element.id = id;
-        element.setAttribute("class", "cyto-signal-viz");
-        document.body.appendChild(element);
-        const cy = cytoscape({
-            container: element,
-            style: [
-                {
-                    selector: "node",
-                    style: {
-                        "label": "data(label)",
-                        "text-valign": "center",
-                        "text-halign": "center",
-                        "background-color": "data(color)",
-                        "width": 80,
-                        "height": 80,
-                        "border-width": 3,
-                        "border-color": "#333",
-                        "font-size": 14,
-                        "font-weight": "bold"
-                    }
-                },
-                {
-                    selector: "edge",
-                    style: {
-                        "width": 3,
-                        "line-color": "#666",
-                        "target-arrow-color": "#666",
-                        "target-arrow-shape": "triangle",
-                        "curve-style": "bezier"
-                    }
-                }
-            ],
-            layout: {
-                name: "dagre",
-                rankDir: "TB",
-                nodeSep: 50,
-                rankSep: 100
-            }
-        });
-        element.cy = cy;
-        return element.cy;
+fluid.initMermaidViz = function (testName) {
+    const id = "mermaid-id-" + testName.replace(/\W/g, "_");
+    let existing = document.getElementById(id);
+    if (!existing) {
+        existing = document.createElement("div");
+        existing.id = id;
+        existing.setAttribute("class", "mermaid-signal-viz");
+        document.body.appendChild(existing);
     }
+    return existing;
 };
 
 fluid.cellStateInfo = [{ // 0: CacheClean
@@ -83,17 +44,35 @@ fluid.cellStateInfo = [{ // 0: CacheClean
     colour: "#f99"
 }];
 
-fluid.toCytoData = function (cells) {
+fluid.toMermaidData = function (cells) {
     const nodes = new Map();
     const edges = [];
+
+    // First pass: create all nodes
     cells.forEach(cell => {
         const id = cell.name || `cell_${nodes.size}`;
         nodes.set(cell, id);
+    });
 
-        if (cell._sources) {
-            for (const source of cell._sources) {
-                const sourceId = nodes.get(source);
-                edges.push({ source: sourceId, target: id });
+    // Second pass: create edges from _inEdges
+    cells.forEach(cell => {
+        const targetId = nodes.get(cell);
+
+        if (cell._inEdges && cell._inEdges.length > 0) {
+            // Iterate through each edge
+            for (const edge of cell._inEdges) {
+                if (edge.sources) {
+                    // Add an edge from each source to this cell
+                    for (const source of edge.sources) {
+                        const sourceId = nodes.get(source);
+                        if (sourceId) {
+                            edges.push({
+                                source: sourceId,
+                                target: targetId
+                            });
+                        }
+                    }
+                }
             }
         }
     });
@@ -101,49 +80,64 @@ fluid.toCytoData = function (cells) {
     return { nodes, edges };
 };
 
-fluid.updateCytoViz = function (cy, cytoData) {
-    const { nodes, edges } = cytoData;
+fluid.sanitizeIdForMermaid = function (id) {
+    return id.replace(/[^a-zA-Z0-9_]/g, "_");
+};
 
-    const elements = [];
+fluid.sanitizeTextForMermaid = function (text) {
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+};
 
-    // Add nodes
+fluid.generateMermaidMarkdown = function (mermaidData) {
+    const { nodes, edges } = mermaidData;
+    let markdown = "graph LR\n";
+
+    // Add node definitions with labels and styling
     for (const [cell, id] of nodes.entries()) {
-        const value = cell._value !== undefined ? cell._value : "<u>";
-        // const stateName = fluid.cellStateInfo[cell._state].name;
-        elements.push({
-            data: {
-                id: id,
-                label: value,
-                color: fluid.cellStateInfo[cell._state].colour
-            }
-        });
+        const value = cell._value !== undefined ? cell._value : "undefined";
+        const colour = fluid.cellStateInfo[cell._state].colour;
+        const sanitizedId = fluid.sanitizeIdForMermaid(id);
+        const sanitizedValue = fluid.sanitizeTextForMermaid(value);
+        const sanitizedName = fluid.sanitizeTextForMermaid(id);
+
+        // Show value prominently with name smaller below
+        const label = `<b style='font-size:16px'>${sanitizedValue}</b><br/><small>${sanitizedName}</small>`;
+
+        markdown += `    ${sanitizedId}["${label}"]\n`;
+        markdown += `    style ${sanitizedId} fill:${colour},stroke:#333,stroke-width:3px\n`;
     }
 
     // Add edges
-    for (const edge of edges) {
-        elements.push({
-            data: {
-                source: edge.source,
-                target: edge.target
-            }
-        });
+    const cellToSanitizedId = new Map();
+    for (const [cell, id] of nodes.entries()) {
+        cellToSanitizedId.set(cell, fluid.sanitizeIdForMermaid(id));
     }
 
-    cy.elements().remove();
-    cy.add(elements);
-    cy.layout({
-        name: "dagre",
-        rankDir: "TB",
-        nodeSep: 50,
-        rankSep: 100
-    }).run();
+    for (const edge of edges) {
+        const sanitizedSource = fluid.sanitizeIdForMermaid(edge.source);
+        const sanitizedTarget = fluid.sanitizeIdForMermaid(edge.target);
+        markdown += `    ${sanitizedSource} --> ${sanitizedTarget}\n`;
+    }
+
+    return markdown;
 };
 
+fluid.updateMermaidViz = function (element, mermaidData, cells) {
+    const markdown = fluid.generateMermaidMarkdown(mermaidData, cells);
+    element.innerHTML = markdown;
+    element.removeAttribute("data-processed");
+
+    mermaid.init(undefined, element);
+};
 
 fluid.plotCells = function (testName, cells) {
-    const cytoData = fluid.toCytoData(cells);
-    const cy = fluid.initCytoscapeViz(testName);
-    fluid.updateCytoViz(cy, cytoData);
+    const mermaidData = fluid.toMermaidData(cells.filter(cell => !cell._isEffect));
+    const element = fluid.initMermaidViz(testName);
+    fluid.updateMermaidViz(element, mermaidData, cells);
 };
 
 QUnit.test = function (testName, testFunc) {

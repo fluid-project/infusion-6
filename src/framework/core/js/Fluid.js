@@ -822,7 +822,7 @@ const $fluidJSScope = function (fluid) {
      * Create a marker representing an "Unavailable" state with an associated array of causes potentially including their sites.
      * The marker is mutable.
      *
-     * @param {Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
+     * @param {String|Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
      * @param {String} [variety="error"] - The variety of unavailable value:
      * * "error" indicates a syntax issue that needs design intervention.
      * * "config" indicates configuration designed to short-circuit evaluation which is not required.

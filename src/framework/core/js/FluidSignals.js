@@ -82,6 +82,18 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Function} fn - The function to be called to compute the value
      */
 
+    /**
+     * Compares two values for equality, with special handling for numbers and NaN.
+     * - For non-number types, uses strict equality (===).
+     * - For numbers, considers them equal if:
+     *   - They are strictly equal, or
+     *   - Both are NaN, or
+     *   - Their relative error is less than 1e-12 (to account for floating-point precision).
+     *
+     * @param {Any} a - The first value to compare.
+     * @param {Any} b - The second value to compare.
+     * @return {Boolean} `true` if the values are considered equal, `false` otherwise.
+     */
     fluid.defaultEquality = function (a, b) {
         if (typeof(a) !== "number" || typeof(b) !== "number") {
             return a === b;
@@ -101,16 +113,28 @@ const $fluidSignalsScope = function (fluid) {
         targetsConsumed: []
     };
 
+    /** End the current "fit" (transaction) which is updating the reactive graph by resetting all the arcs which
+     * have been marked as consumed by one leg of bidirectional update arcs.
+     */
     fluid.endFit = function () {
         fluid.CurrentFit.targetsConsumed.forEach(target => target._consumedSources = null);
         fluid.CurrentFit.targetsConsumed.length = 0;
     };
 
-    fluid.findCause = function () {
+    /** Report the cause of any reaction which has updated a given cell, or else the one that is currently
+     * in progress, in the form of an array of nodes reaching back from the supplied cell to the one whose modification
+     * triggered the reaction.
+     * @param {Cell} [inTarget] - If supplied, the cell whose update cause should be reported. If absent, any current
+     * reaction will be used instead.
+     * @return {Cell[]|null} - An array of nodes starting with either [inTarget] or the one targetted by the current
+     * reaction, reaching back to the node whose update caused the reaction, or else `null` if no valid target was supplied.
+     */
+    fluid.findCause = function (inTarget) {
         const currentEdge = fluid.CurrentReaction;
-        if (currentEdge) {
+        const useTarget = inTarget || currentEdge?.target;
+        if (useTarget) {
             const cause = [];
-            let target = currentEdge.target;
+            let target = useTarget;
 
             do {
                 cause.push(target);
@@ -243,15 +267,18 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     /**
-     * Mark this cell as holding a value computed from a set of other reactive cell values.
+     * Establish a computed relation which will lazily and reactively compute this cell's value given the values of a number
+     * of other cells with which the relationship is made, or tear down such relation. These relations are keyed by the first
+     * member of any `staticSources` supplied as arguments of the relation, or `null` if there are no such sources.
      *
-     * @param {Function} fn - The function which will reactively evaluate this cell's value
+     * @param {Function|null} fn - The function which will reactively evaluate this cell's value, or null if an existing relation
+     * is to be torn down.
      * @param {Cell[]} [staticSources] - Any statically known cell dependencies whose reactively evaluated arguments will be supplied
      * to `fn` when it is called.
      * @return {Cell} This cell
      * @this {Cell}
      */
-    fluid.cell.prototype.compute = function (fn, staticSources) {
+    fluid.cell.prototype.computed = function (fn, staticSources) {
         // The edge's key is either its first source or null
         const key = staticSources && staticSources[0] || null;
         if (!this._inEdges) {
@@ -508,16 +535,19 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     // Effect implementation
-    fluid.effect = function (config, sources) {
+    fluid.cell.disposableEffect = function (config) {
         const effect = fluid.cell();
         effect._isEffect = true;
         effect._isDisposed = false;
 
-        const fn = function () {
+        const {fn, staticSources} = config.bind;
+
+        // Wrap the user's supplied function to short-circuit if any arguments are unavailable if effect is not marked "free"
+        const computeFn = config.free ? fn : function () {
             if (effect._isDisposed) {
                 return;
             }
-            const args = sources.map(s => s.get());
+            const args = staticSources.map(s => s.get());
 
             // Check if all sources are available
             const allAvailable = args.every(arg => !fluid.cell.isUnavailable(arg));
@@ -525,10 +555,11 @@ const $fluidSignalsScope = function (fluid) {
                 return;
             }
 
-            config.bind.apply(null, args);
+            fn.apply(null, args);
         };
 
-        effect.compute(fn, sources);
+        // Set up "computation" which will invoke us
+        effect.computed(computeFn, staticSources);
         // In original effect cell constructor there was stabilizeFn?.(this);
         // compute constructor will enqueue self since there has been a change in _fn and _state
 
@@ -536,6 +567,10 @@ const $fluidSignalsScope = function (fluid) {
         fluid.cell.updateIfNecessary(effect);
 
         effect.dispose = function () {
+            if (config?.unbind?.fn) {
+                // TODO: resolve any staticSources here for effects which require contextualised disposal
+                config.unbind.fn();
+            }
             effect._isDisposed = true;
             if (effect._inEdges) {
                 effect._inEdges.forEach(edge => fluid.cell.removeParentObservers(effect, edge, 0));
@@ -544,6 +579,25 @@ const $fluidSignalsScope = function (fluid) {
         };
 
         return effect;
+    };
+
+    /**
+     * Creates a reactive effect cell that runs the provided function when its dependencies change.
+     * The effect is managed as a disposable resource, allowing for cleanup via the `onDispose` property in `props`.
+     *
+     * @param {Function} fn - The function to execute reactively when any of the staticSources change.
+     * @param {Cell[]} staticSources - The array of source cells whose values are dependencies for the effect.
+     * @param {Object}   [props] - Optional properties to configure the effect.
+     * @param {Function} [props.onDispose] - Optional cleanup function to run when the effect is disposed.
+     * @param {Boolean}  [props.free] - If true, the effect will run even if some sources are unavailable.
+     * @return {Cell} The created effect cell.
+     */
+    fluid.cell.effect = function (fn, staticSources, props) {
+        return fluid.cell.disposableEffect({
+            bind: {fn, staticSources},
+            unbind: {fn: props?.onDispose},
+            free: props?.free
+        });
     };
 
     // Stabilize function to process effect queue
@@ -559,6 +613,19 @@ const $fluidSignalsScope = function (fluid) {
     };
 };
 
+// Signal to a global environment compositor what path this scope function should be applied to
+$fluidSignalsScope.$fluidScopePath = "fluid";
+
+// If we are standalone and in a browserlike, define namespace
+if (typeof(fluid) === "undefined" && typeof(window) !== "undefined") {
+    window.fluid = fluid || {};
+}
+
+// If there is a namespace in the global, bind to it
 if (typeof(fluid) !== "undefined") {
     $fluidSignalsScope(fluid);
 }
+
+// Note: for ES6 support, transform this to a file with suffix:
+// export $fluidSignalsScope
+// Client then needs to do compositing of its own global namespace
