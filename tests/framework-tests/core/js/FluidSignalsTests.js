@@ -376,6 +376,6 @@ QUnit.test("Updates downstream pending computations", assert => {
     // trigger recomputation
     t2.get();
     t3.get().get();
-    // Solid-signals order: "t1c1c2c2_1"
+    // Solid-signals November 2025 order: "t1c1c2c2_1"
     assert.equal(order, "c1c2t1c2_1", "Downstream computations run in Reactively order");
 });
