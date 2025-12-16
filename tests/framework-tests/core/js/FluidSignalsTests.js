@@ -92,6 +92,87 @@ QUnit.test("Diamond tests", assert => {
 
 });
 
+// Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L15
+
+QUnit.test("Diamond should not cause waterfalls on read (async)", async assert => {
+    //     s
+    //    / \
+    //   /   \
+    //  b     c
+    //   \   /
+    //    \ /
+    //     e
+
+    const s = fluid.cell(1, {name: "s"});
+
+    let async1Calls = 0, async2Calls = 0;
+    let effectCalls = 0, effectArgs = [];
+
+    const async1 = async (v) => {
+        async1Calls++;
+        const togo = await Promise.resolve(v);
+        console.log("b's compute resolved");
+        return togo;
+    };
+
+    const async2 = async (v) => {
+        async2Calls++;
+        const togo = await Promise.resolve(v);
+        console.log("c's compute resolved");
+        return togo;
+    };
+
+    const b = fluid.cell();
+    b.name = "b";
+    b.asyncComputed(async1, [s]);
+
+    const c = fluid.cell();
+    c.name = "c";
+    c.asyncComputed(async2, [s]);
+
+    const e = fluid.cell.effect((v1, v2) => {
+        effectCalls++;
+        effectArgs.push([v1, v2]);
+    }, [b, c], {name: "e"});
+
+    // At this point, async1/async2 should have been called once, effect not yet called
+    assert.equal(async1Calls, 1, "async1 called once initially");
+    assert.equal(async2Calls, 1, "async2 called once initially");
+    assert.equal(effectCalls, 0, "effect not called yet");
+
+    // Wait for asyncs to resolve
+    await new Promise(r => setTimeout(r, 0));
+
+    assert.equal(async1Calls, 1, "async1 still called once after resolve");
+    assert.equal(async2Calls, 1, "async2 still called once after resolve");
+    assert.equal(effectCalls, 1, "effect called once after resolve");
+    assert.deepEqual(effectArgs[0], [1, 1], "effect called with [1, 1]");
+
+    s.set(2);
+
+    // Weird asymmetry in original test - expectation that arcs execute immediately on setup, but not on update
+    // We don't have a "flush" phase but if we did it should work symmetrically
+    // assert.equal(async1Calls, 1, "async1 not called again after set before flush");
+    // assert.equal(async2Calls, 1, "async2 not called again after set before flush");
+    // assert.equal(effectCalls, 1, "effect not called again before flush");
+    // assert.equal(async1Calls, 2, "async1 called again after flush");
+    // assert.equal(async2Calls, 2, "async2 called again after flush");
+    // assert.equal(effectCalls, 1, "effect not called again until asyncs resolve");
+
+    // Wait for asyncs to resolve
+    await new Promise(r => setTimeout(r, 0));
+
+    assert.equal(async1Calls, 2, "async1 called twice after resolve");
+    assert.equal(async2Calls, 2, "async2 called twice after resolve");
+    assert.equal(effectCalls, 2, "effect called again after asyncs resolve, exactly twice in total");
+    assert.deepEqual(effectArgs[1], [2, 2], "effect called with [2, 2]");
+
+    e.dispose();
+
+});
+
+
+
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts
 // at https://www.ppig.org/files/2015-PPIG-26th-Basman.pdf
 
