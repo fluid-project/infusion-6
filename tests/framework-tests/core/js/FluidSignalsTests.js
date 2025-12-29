@@ -150,7 +150,7 @@ QUnit.test("Diamond should not cause waterfalls on read (async)", async assert =
 
     s.set(2);
 
-    // Weird asymmetry in original test - expectation that arcs execute immediately on setup, but not on update
+    // Weird asymmetry in Solid's test - expectation that arcs execute immediately on setup, but not on update
     // We don't have a "flush" phase but if we did it should work symmetrically
     // assert.equal(async1Calls, 1, "async1 not called again after set before flush");
     // assert.equal(async2Calls, 1, "async2 not called again after set before flush");
