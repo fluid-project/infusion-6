@@ -292,7 +292,7 @@ const $fluidSignalsScope = function (fluid) {
             }
 
             if (!fluid.isUnavailable(value)) {
-                // Why do we stabilize in this branch and not in updateComplete?
+                // Why did we stabilize in this branch and not in updateComplete? (now we do)
                 fluid.cell.stabilize();
             }
         }
@@ -633,14 +633,16 @@ const $fluidSignalsScope = function (fluid) {
     /**
      * Ensures that a reactive cell is up to date by checking and updating its dependencies as needed.
      * @param {Cell} cell - The reactive cell to update if necessary.
-     * @param {Cell[]} visited - Cells visited during recursive calls to updateIfNecessary
+     * @param {Cell[]} [visited] - Cells visited during recursive calls to updateIfNecessary
      */
     fluid.cell.updateIfNecessary = function (cell, visited) {
         let dirtyEdge = null;
         visited = visited || [];
         visited.push(cell);
         // If we are potentially dirty, see if we have a parent who has actually changed value
-        if (cell._state !== CacheClean || fluid.cell.isUnavailable(cell._value)) {
+        // Difference from Milo's implementation - recurse fully into CacheDirty nodes to ensure that we don't schedule
+        // a less nested one with an async dependency first
+        if (cell._state !== CacheClean) {
             if (cell._inEdges) {
                 outer: for (const edge of cell._inEdges) {
                     if (edge.sources) {
@@ -711,15 +713,6 @@ const $fluidSignalsScope = function (fluid) {
                 return;
             }
             const args = staticSources.map(s => s.get());
-
-            // Check if all sources are available
-            const allAvailable = args.every(arg => !fluid.cell.isUnavailable(arg));
-            if (!allAvailable) {
-                // Ensure that we get scheduled should any arg become available
-                // effect._state = CacheCheck;
-                console.log("Effect args unavailable when scheduled, skipped");
-                return;
-            }
 
             fn.apply(null, args);
         };
