@@ -50,14 +50,13 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Number} CacheDirty - The cache is dirty (changes detected).
      */
 
-    fluid.CacheClean = 0;
+    fluid.CacheClean = 0; // light blue
     fluid.CacheCheck = 1; // green
     fluid.CacheDirty = 2; // red
 
     const CacheClean = fluid.CacheClean,
         CacheCheck = fluid.CacheCheck,
         CacheDirty = fluid.CacheDirty;
-
 
     /**
      * @typedef {Object} Cell
@@ -76,6 +75,7 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Cell[]|null} _consumedSources - Sources from which arcs have been traversed during this fit
      * @property {CellUpdateRecord|null} _updateRecord - Record of any update for the cell which is currently in progress
      * @property {Boolean} _isEffect - Is this an effect node
+     * @property {Boolean} _isQueued - If an effect, are we queued?
      * @property {Error} _error - Error received evaluating the cell
      */
 
@@ -301,12 +301,21 @@ const $fluidSignalsScope = function (fluid) {
 
 
     fluid.cell.updateComplete = function (newValue, cell, syncUpdate) {
+        const availChange = !fluid.cell.isUnavailable(newValue) && fluid.cell.isUnavailable(cell._value);
+
         cell._value = newValue;
 
         const updateRecord = cell._updateRecord;
         if (!syncUpdate) {
             cell._updateRecord = null;
         }
+
+        // Don't mark ourselves as clean if value is not available since it may be computable from another relation
+        if (!fluid.cell.isUnavailable(newValue)) {
+            console.log("Update complete for " + cell.name + ", marking clean");
+            cell._state = CacheClean;
+        }
+
         // Misleading original comment:
         // handles diamond dependencies if we're the parent of a diamond.
         if (!fluid.cell.equals(updateRecord.oldValue, cell._value) && cell._observers) {
@@ -316,13 +325,13 @@ const $fluidSignalsScope = function (fluid) {
                 const observer = cell._observers[i];
                 if (!consumedSources?.includes(observer)) {
                     // Milo's implementation for some reason did this directly rather than recursively
-                    fluid.cell.markStale(observer, CacheDirty, cell);
+                    fluid.cell.markStale(observer, CacheDirty, cell, availChange);
                     // Note that markStale also sets _dirtyFrom
                     // observer._state = CacheDirty;
                     // observer._dirtyFrom = cell;
                 }
             }
-            if (!fluid.isUnavailable(newValue)) {
+            if (!fluid.cell.isUnavailable(newValue)) {
                 fluid.cell.stabilize();
             }
         }
@@ -418,16 +427,18 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell} cell - The reactive cell to mark as stale.
      * @param {CacheState} state - The new cache state to assign (e.g., CacheDirty or CacheCheck).
      * @param {Cell} [dirtyFrom] - A cell joined by an edge responsible for dirtiness
+     * @param {Boolean} [availChange] - `true` if a cell availability change is responsible for this marking
      */
-    fluid.cell.markStale = function (cell, state, dirtyFrom) {
+    fluid.cell.markStale = function (cell, state, dirtyFrom, availChange) {
         console.log("markStale for " + cell.name, " state ", state);
-        if (cell._state < state) {
-            // If we were previously clean, then we know that we may need to update to get the new value
-            if (cell._state === CacheClean && cell._isEffect) {
-                console.log("Pushing effect");
-                fluid.EffectQueue.push(cell);
-            }
+        // If we were previously clean, then we know that we may need to update to get the new value
+        if (cell._isEffect && !cell._isQueued) {
+            console.log("Pushing effect " + cell.name);
+            cell._isQueued = true;
+            fluid.EffectQueue.push(cell);
+        }
 
+        if (cell._state < state || availChange) {
             cell._state = state;
             cell._dirtyFrom = dirtyFrom;
             if (cell._observers) {
@@ -435,7 +446,7 @@ const $fluidSignalsScope = function (fluid) {
                 for (let i = 0; i < cell._observers.length; i++) {
                     const observer = cell._observers[i];
                     if (!consumedSources?.includes(observer)) {
-                        fluid.cell.markStale(observer, CacheCheck, cell);
+                        fluid.cell.markStale(observer, CacheCheck, cell, availChange);
                     }
 
                 }
@@ -609,17 +620,11 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell.findDirtyEdge = function (cell) {
         let bestCandidate;
-        if (cell._dirtyFrom) {
-            bestCandidate = cell._inEdges.find(edge =>
-                edge.sources?.includes(cell._dirtyFrom));
-        } else {
-            bestCandidate = cell._inEdges[0];
-            if (cell._inEdges.length > 1) {
-                cell._inEdges.forEach(edge => {
-                    if (!edge.sources?.some(source => fluid.cell.isUnavailable(source._value))) {
-                        bestCandidate = edge;
-                    }
-                });
+        for (let i = 0; i < cell._inEdges.length; ++i) {
+            const edge = cell._inEdges[i];
+            if (!edge.sources?.some(source => fluid.cell.isUnavailable(source._value))) {
+                bestCandidate = edge;
+                break;
             }
         }
         return bestCandidate;
@@ -628,16 +633,25 @@ const $fluidSignalsScope = function (fluid) {
     /**
      * Ensures that a reactive cell is up to date by checking and updating its dependencies as needed.
      * @param {Cell} cell - The reactive cell to update if necessary.
+     * @param {Cell[]} visited - Cells visited during recursive calls to updateIfNecessary
      */
-    fluid.cell.updateIfNecessary = function (cell) {
+    fluid.cell.updateIfNecessary = function (cell, visited) {
+        let dirtyEdge = null;
+        visited = visited || [];
+        visited.push(cell);
         // If we are potentially dirty, see if we have a parent who has actually changed value
-        if (cell._state === CacheCheck || !cell._isEffect && fluid.cell.isUnavailable(cell._value)) {
+        if (cell._state !== CacheClean || fluid.cell.isUnavailable(cell._value)) {
             if (cell._inEdges) {
                 outer: for (const edge of cell._inEdges) {
                     if (edge.sources) {
                         for (const source of edge.sources) {
-                            fluid.cell.updateIfNecessary(source);
-                            if (cell._state === CacheDirty) {
+                            if (!visited.includes(source)) {
+                                fluid.cell.updateIfNecessary(source, visited);  // updateIfNecessary() can change this.state
+                            }
+                        }
+                        if (cell._state === CacheDirty) {
+                            dirtyEdge = fluid.cell.findDirtyEdge(cell);
+                            if (dirtyEdge) {
                                 // Stop the loop here so we won't trigger updates on other parents unnecessarily
                                 // If our computation changes to no longer use some sources, we don't
                                 // want to update() a source we used last time, but now don't use.
@@ -648,18 +662,13 @@ const $fluidSignalsScope = function (fluid) {
                 }
             }
         }
-
-        if (cell._state === CacheDirty) {
-            const edge = fluid.cell.findDirtyEdge(cell);
-            if (edge) {
-                fluid.cell.update(cell, edge);
-            }
-        }
-        // Don't mark ourselves as clean if value is not available since it may be computable from another relation
-        if (!fluid.isUnavailable(cell._value)) {
-            cell._state = CacheClean;
+        if (!dirtyEdge && cell._state === CacheDirty) {
+            dirtyEdge = fluid.cell.findDirtyEdge(cell);
         }
 
+        if (dirtyEdge) {
+            fluid.cell.update(cell, dirtyEdge);
+        }
     };
 
     /**
@@ -690,6 +699,7 @@ const $fluidSignalsScope = function (fluid) {
     fluid.cell.disposableEffect = function (config) {
         const effect = fluid.cell();
         effect._isEffect = true;
+        effect._isQueued = false;
         effect._isDisposed = false;
         effect.name = config?.name;
 
@@ -746,6 +756,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Object}   [props] - Optional properties to configure the effect.
      * @param {Function} [props.onDispose] - Optional cleanup function to run when the effect is disposed.
      * @param {Boolean}  [props.free] - If true, the effect will run even if some sources are unavailable.
+     * @param {String}   [props.name] - Optional name for the effect
      * @return {Cell} The created effect cell.
      */
     fluid.cell.effect = function (fn, staticSources, props) {
@@ -764,7 +775,10 @@ const $fluidSignalsScope = function (fluid) {
             fluid.EffectQueue.length = 0;
 
             for (let i = 0; i < queue.length; i++) {
-                queue[i].get();
+                const effect = queue[i];
+                effect.get();
+                effect._isQueued = false;
+                console.log("Effect " + effect.name + " unqueued");
             }
         }
     };

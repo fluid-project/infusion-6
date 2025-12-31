@@ -171,6 +171,74 @@ QUnit.test("Diamond should not cause waterfalls on read (async)", async assert =
 
 });
 
+// JavaScript
+QUnit.test("Waterfall when dependent on another async with shared source", async assert => {
+    // Graph:
+    //    s
+    //   /|
+    //  a |
+    //   \|
+    //    b
+    //    |
+    //    e
+
+    const s = fluid.cell(1, {name: "s"});
+
+    let a;
+    let async1Calls = 0, async2Calls = 0;
+    let effectCalls = 0, effectArgs = [];
+
+    const async1 = async (sv) => {
+        async1Calls++;
+        const togo = await Promise.resolve(sv);
+        return togo;
+    };
+
+    const async2 = async (sv, av) => {
+        async2Calls++;
+        const togo = await Promise.resolve(sv + av);
+        return togo;
+    };
+
+    a = fluid.cell();
+    a.name = "a";
+    a.asyncComputed(async1, [s]);
+
+    const b = fluid.cell();
+    b.name = "b";
+    b.asyncComputed(async2, [s, a]);
+
+    const e = fluid.cell.effect(v => {
+        effectCalls++;
+        effectArgs.push(v);
+    }, [b], {name: "e"});
+
+    // Initial expectations: asyncs scheduled, effect not yet called
+    assert.equal(async1Calls, 1, "async1 called once initially");
+    assert.equal(async2Calls, 0, "async2 not called initially");
+    assert.equal(effectCalls, 0, "effect not called yet");
+
+    // Wait for asyncs to resolve: b should recompute after a resolves
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(async1Calls, 1, "async1 still called once after resolve");
+    // Milo has two calls here, but the 2nd is unnecessary
+    assert.equal(async2Calls, 1, "async2 called once after a resolves");
+    assert.equal(effectCalls, 1, "effect called once after resolve");
+    assert.equal(effectArgs[0], 2, "effect called with 2");
+
+    console.log("Starting update s to 2");
+    // Update source
+    s.set(2);
+
+    // Wait for asyncs to resolve
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(async1Calls, 2, "async1 called twice after update resolves");
+    assert.equal(async2Calls, 2, "async2 called twice after update resolves");
+    assert.equal(effectCalls, 2, "effect called twice in total after second resolve");
+    assert.equal(effectArgs[1], 4, "effect called with 4");
+
+    e.dispose();
+});
 
 
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts

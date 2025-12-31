@@ -378,7 +378,7 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
     cursor: pointer;
 }
 
-#fl-editor-inspect-overlay {
+#fl-inspect-overlay {
     pointer-events: none;
     cursor: default;
 }

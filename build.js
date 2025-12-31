@@ -208,7 +208,7 @@ const makeJSBundle = async function (buildIndex, key, fileName) {
 };
 
 const doBuild = async function (buildIndex) {
-    fs.rmSync("docs", { recursive: true });
+    fs.rmSync("docs", { recursive: true, force: true });
 
     buildIndex.copy.forEach(function (oneCopy) {
         copyDep(oneCopy.src, oneCopy.dest);
