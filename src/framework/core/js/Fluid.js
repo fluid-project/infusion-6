@@ -2,7 +2,7 @@
 
 "use strict";
 
-// noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
+// noinspection ES6ConvertVarToLetConst
 var {signal, effect, computed, untracked} = preactSignalsCore;
 
 const $fluidJSScope = function (fluid) {
@@ -3184,6 +3184,6 @@ const $fluidJSScope = function (fluid) {
 
 };
 
-// noinspection ES6ConvertVarToLetConst // otherwise this is a duplicate on minifying
+// noinspection ES6ConvertVarToLetConst
 var fluid = fluid || {}; // eslint-disable-line no-redeclare
 $fluidJSScope(fluid);

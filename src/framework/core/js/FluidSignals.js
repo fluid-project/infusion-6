@@ -63,8 +63,8 @@ const $fluidSignalsScope = function (fluid) {
      *
      * @property {function(): any} get - Retrieves the current value of the cell.
      * @property {function(any): void} set - Sets a new value for the cell.
-     * @property {function(Function, Array<Cell>, ComputedProps): Cell} computed - Sets up or tears down a reactive computation for the cell.
-     * @property {function(Function, Array<Cell>, ComputedProps): Cell} asyncComputed - Sets up or tears down an asynchyronous reactive computation for the cell.
+     * @property {function(Function, Array<Cell>, ComputedProps=): Cell} computed - Sets up or tears down a reactive computation for the cell.
+     * @property {function(Function, Array<Cell>, ComputedProps=): Cell} asyncComputed - Sets up or tears down an asynchyronous reactive computation for the cell.
      *
      * @property {Any} _value - The current value stored in the cell.
      * @property {String|undefined} [name] - A name or address for the cell.
@@ -82,6 +82,7 @@ const $fluidSignalsScope = function (fluid) {
     /**
      * @typedef {Object} ComputedProps
      * @property {Boolean} isAsync - Indicates if the computation is asynchronous.
+     * @property {Boolean} isFree - Indicates if this is a "free" computation that will deliver unavailable values
      */
 
     /** @typedef {Object} Edge
@@ -91,6 +92,7 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Cell[]|null} staticSources - Static sources supplied
      * @property {Function} fn - The function to be called to compute the value
      * @property {Boolean} isAsync - Indicates if the edge's computation is asynchronous.
+     * @property {Boolean} isFree - Indicates if the edge's computation should be invoked on unavailable values
      */
 
     /**
@@ -205,7 +207,7 @@ const $fluidSignalsScope = function (fluid) {
     /**
      * Creates a new reactive cell for managing state and computations.
      *
-     * @param {Any} [initialValue] - The initial value to store in the cell.
+     * @param {Any|undefined} [initialValue] - The initial value to store in the cell.
      * @param {Object} [props] - Additional properties to contextualise the cell
      * @return {Cell} The newly created cell object.
      */
@@ -213,7 +215,7 @@ const $fluidSignalsScope = function (fluid) {
         const cell = Object.create(fluid.cellPrototype);
         Object.assign(cell, props);
 
-        cell._value = initialValue;
+        cell._value = initialValue === undefined ? fluid.cell.initialUnavailable : initialValue;
         cell._dirtyFrom = null;
         cell._observers = null; // nodes that have us as sources (outgoing links)
         cell._inEdges = null;
@@ -227,13 +229,14 @@ const $fluidSignalsScope = function (fluid) {
         return cell;
     };
 
+    fluid.cell.initialUnavailable = Object.freeze(fluid.unavailable({
+        staleValue: undefined
+    }, "config"));
+
     // Separately capture this so that calls to fluid.cell can be wrapped
     fluid.cellPrototype = fluid.cell.prototype;
 
     fluid.cell.equals = fluid.defaultEquality;
-
-    // Stopgap until we port in genuine unavailable
-    fluid.cell.isUnavailable = val => val === undefined;
 
     /**
      * Reactively evaluate the current cell, ensuring its value is up to date with respect to all computed dependents,
@@ -272,6 +275,14 @@ const $fluidSignalsScope = function (fluid) {
         return this._value;
     };
 
+    fluid.cell.prototype.staleGet = function () {
+        return this.computed(
+            (sVal, aVal) => fluid.isUnavailable(aVal) ? sVal : sVal,
+            [s, a],
+            { isFree: true }
+        );
+    }
+
     /**
      * Update the value of this writeable cell.
      *
@@ -296,12 +307,11 @@ const $fluidSignalsScope = function (fluid) {
                 fluid.cell.stabilize();
             }
         }
-
     };
 
 
     fluid.cell.updateComplete = function (newValue, cell, syncUpdate) {
-        const availChange = !fluid.cell.isUnavailable(newValue) && fluid.cell.isUnavailable(cell._value);
+        const availChange = !fluid.isUnavailable(newValue) && fluid.isUnavailable(cell._value);
 
         cell._value = newValue;
 
@@ -311,7 +321,7 @@ const $fluidSignalsScope = function (fluid) {
         }
 
         // Don't mark ourselves as clean if value is not available since it may be computable from another relation
-        if (!fluid.cell.isUnavailable(newValue)) {
+        if (!fluid.isUnavailable(newValue)) {
             console.log("Update complete for " + cell.name + ", marking clean");
             cell._state = CacheClean;
         }
@@ -331,7 +341,7 @@ const $fluidSignalsScope = function (fluid) {
                     // observer._dirtyFrom = cell;
                 }
             }
-            if (!fluid.cell.isUnavailable(newValue)) {
+            if (!fluid.isUnavailable(newValue)) {
                 fluid.cell.stabilize();
             }
         }
@@ -379,6 +389,7 @@ const $fluidSignalsScope = function (fluid) {
             inEdge.sources = staticSources ? [...staticSources] : null;
             inEdge.target = this;
             inEdge.isAsync = props?.isAsync;
+            inEdge.isFree = props?.isFree;
             this._inEdges.push(inEdge);
 
             // Set up observer links from static sources to this cell immediately - this is from new signature
@@ -419,6 +430,24 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell.prototype.asyncComputed = function (fn, staticSources, props) {
         return this.computed(fn, staticSources, {...props, isAsync: true});
+    };
+
+    /**
+     * Refreshes the value of the cell by re-evaluating its computation for the specified static sources.
+     * Finds the incoming edge corresponding to the given static sources and triggers an update for this cell along that edge.
+     *
+     * @param {Cell[]} [staticSources] - An optional array of static source cells to identify the computation edge.
+     * @this {Cell}
+     */
+    fluid.cell.prototype.refresh = function (staticSources) {
+        // The edge's key is either its first source or null
+        if (this._inEdges) {
+            const key = staticSources && staticSources[0] || null;
+            const inEdge = this._inEdges.find(edge => edge.key === key);
+            if (inEdge) {
+                fluid.cell.update(this, inEdge);
+            }
+        }
     };
 
     /**
@@ -576,8 +605,8 @@ const $fluidSignalsScope = function (fluid) {
         let syncUpdate = !inEdge.isAsync;
 
         if (!syncUpdate) {
-            // In future construct an appropriate unavailable value - mark the cell as unavailable whilst it is updating
-            cell.set(undefined);
+            // Mark the cell as unavailable/stale whilst it is updating
+            cell.set(fluid.pending(cell._value, cell.name));
         }
 
         try {
@@ -622,7 +651,7 @@ const $fluidSignalsScope = function (fluid) {
         let bestCandidate;
         for (let i = 0; i < cell._inEdges.length; ++i) {
             const edge = cell._inEdges[i];
-            if (!edge.sources?.some(source => fluid.cell.isUnavailable(source._value))) {
+            if (edge.isFree || !edge.sources?.some(source => fluid.isUnavailable(source._value))) {
                 bestCandidate = edge;
                 break;
             }
@@ -644,7 +673,7 @@ const $fluidSignalsScope = function (fluid) {
         // a less nested one with an async dependency first
         if (cell._state !== CacheClean) {
             if (cell._inEdges) {
-                outer: for (const edge of cell._inEdges) {
+                for (const edge of cell._inEdges) {
                     if (edge.sources) {
                         for (const source of edge.sources) {
                             if (!visited.includes(source)) {
@@ -657,7 +686,7 @@ const $fluidSignalsScope = function (fluid) {
                                 // Stop the loop here so we won't trigger updates on other parents unnecessarily
                                 // If our computation changes to no longer use some sources, we don't
                                 // want to update() a source we used last time, but now don't use.
-                                break outer;
+                                break;
                             }
                         }
                     }
@@ -671,6 +700,8 @@ const $fluidSignalsScope = function (fluid) {
         if (dirtyEdge) {
             fluid.cell.update(cell, dirtyEdge);
         }
+        // TODO: If we are dirty, and all sources of all edges are unavailable, produce an unavailable value reporting this
+        // but only if there is a free effect upstream
     };
 
     /**
@@ -708,7 +739,7 @@ const $fluidSignalsScope = function (fluid) {
         const {fn, staticSources} = config.bind;
 
         // Wrap the user's supplied function to short-circuit if any arguments are unavailable if effect is not marked "free"
-        const computeFn = config.free ? fn : function () {
+        const computeFn = config.isFree ? fn : function () {
             if (effect._isDisposed) {
                 return;
             }
@@ -718,7 +749,7 @@ const $fluidSignalsScope = function (fluid) {
         };
 
         // Set up "computation" which will invoke us
-        effect.computed(computeFn, staticSources);
+        effect.computed(computeFn, staticSources, config);
         // In original effect cell constructor there was stabilizeFn?.(this);
         // compute constructor will enqueue self since there has been a change in _fn and _state
 
@@ -748,7 +779,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell[]} staticSources - The array of source cells whose values are dependencies for the effect.
      * @param {Object}   [props] - Optional properties to configure the effect.
      * @param {Function} [props.onDispose] - Optional cleanup function to run when the effect is disposed.
-     * @param {Boolean}  [props.free] - If true, the effect will run even if some sources are unavailable.
+     * @param {Boolean}  [props.isFree] - If true, the effect will run even if some sources are unavailable.
      * @param {String}   [props.name] - Optional name for the effect
      * @return {Cell} The created effect cell.
      */
@@ -756,7 +787,7 @@ const $fluidSignalsScope = function (fluid) {
         return fluid.cell.disposableEffect({
             bind: {fn, staticSources},
             unbind: {fn: props?.onDispose},
-            free: props?.free,
+            isFree: props?.isFree,
             name: props?.name
         });
     };
@@ -780,16 +811,11 @@ const $fluidSignalsScope = function (fluid) {
 // Signal to a global environment compositor what path this scope function should be applied to
 $fluidSignalsScope.$fluidScopePath = "fluid";
 
-// If we are standalone and in a browserlike, define namespace
-if (typeof(fluid) === "undefined" && typeof(window) !== "undefined") {
-    window.fluid = fluid || {};
-}
-
 // If there is a namespace in the global, bind to it
 if (typeof(fluid) !== "undefined") {
     $fluidSignalsScope(fluid);
 }
 
-// Note: for ES6 support, transform this to a file with suffix:
+// Note: for ES6 support, transform this to a file with coda:
 // export $fluidSignalsScope
 // Client then needs to do compositing of its own global namespace

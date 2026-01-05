@@ -1,8 +1,6 @@
 "use strict";
 
-const $fluidJSScope = function (scope) {
-
-    const fluid = scope.fluid = (scope.fluid || {});
+const $fluidCoreJSScope = function (fluid) {
 
     fluid.version = "Infusion 6.0.0";
 
@@ -12,43 +10,122 @@ const $fluidJSScope = function (scope) {
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
 
+    /**
+     * Check whether the argument is a primitive type
+     *
+     * @param {any} value - The value to be tested
+     * @return {Boolean} `true` if the supplied value is a JavaScript (ES5) primitive
+     */
+    fluid.isPrimitive = function (value) {
+        const valueType = typeof(value);
+        return !value || valueType === "string" || valueType === "boolean" || valueType === "number" || valueType === "function";
+    };
+
+    /**
+     * Converts the given argument into an array or shallow copies it.
+     * - If the argument is `null` or `undefined`, returns an empty array.
+     * - If the argument is a primitive value or not iterable, wraps it in a single-element array.
+     * - If the argument is iterable, converts it into an array using the spread operator.
+     * @param {any} arg - The value to be converted into an array.
+     * @return {Array} An array representation of the input value.
+     */
+    fluid.makeArray = function (arg) {
+        return arg === null || arg === undefined ? [] :
+            fluid.isPrimitive(arg) || typeof arg[Symbol.iterator] !== "function" ? [arg] : [...arg];
+    };
+
+    /** Determines whether the supplied object can be treated as an array (primarily, by iterating over numeric keys bounded from 0 to length).
+     * The strategy used is an optimised approach taken from an earlier version of jQuery - detecting whether the toString() version
+     * of the object agrees with the textual form [object Array]
+     *
+     * @param {any} totest - The value to be tested
+     * @return {Boolean} `true` if the supplied value is an array
+     */
+    fluid.isArrayable = function (totest) {
+        return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
+    };
+
+
     fluid.unavailablePriority = {
         "I/O": 1,
         "config": 2,
         "error": 3
     };
 
+    /** @typedef {Object} UnavailableCause
+     * A record explaining the cause that a value is unavailable.
+     * @property {String} message - A human-readable message describing the cause.
+     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * @property {String} [site] - An optional site associated with the cause of unavailability
+     */
+
     /**
-     * Create a marker representing an "Unavailable" state with an associated waitset.
+     * @typedef {UnavailableCause} Unavailable
+     * A marker representing an "Unavailable" state.
+     * @property {Any} staleValue - The most recently seen state of an unavailable value which is unavailable through
+     *   depending on pending I/O
+     */
+
+    /** @typedef {Unavailable} CausedUnavailable
+     * A marker representing an unavailable state which has multiple causes.
+     * @property {UnavailableCause[]} causes - An array of cause records.
+     */
+
+    fluid.upgradeCause = function (cause, defaultVariety) {
+        const upCause = typeof(cause) === "string" ? {message: cause} : cause;
+        if (!upCause.variety) {
+            upCause.variety = defaultVariety;
+        }
+        return upCause;
+    };
+
+    fluid.formatMultiUnavailable = function (unavailable) {
+        return "Value is unavailable: causes are " + unavailable.causes.map(cause => cause.message).join("\n");
+    };
+
+    /**
+     * Create a marker representing an "Unavailable" state with an associated cause or list of causes, which each
+     * contain an site address or external resource (e.g. URL) responsible for unavailability of this value.
      * The marker is mutable.
      *
      * @param {Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
      * @param {String} [variety="error"] - The variety of unavailable value:
-     * * "error" indicates a syntax issue that needs design intervention.
-     * * "config" indicates configuration designed to short-circuit evaluation which is not required.
-     * * "I/O" indicates pending I/O
-     * @return {fluid.marker} A marker of type "Unavailable".
+     * * "error" indicates a syntax or structural issue that needs design intervention.
+     * * "config" indicates the value is not available because it has been configured away
+     * * "I/O" indicates pending I/O - a stale value may be stored at `staleValue` representing a previous evaluation
+     * @return {Unavailable} A marker of type "Unavailable".
      */
     fluid.unavailable = function (cause = {}, variety = "error") {
         const togo = Object.create(fluid.unavailable.prototype);
-        togo.causes = fluid.makeArray(cause).map(oneCause => {
-            if (typeof(oneCause) === "string") {
-                oneCause = {message: oneCause};
-            }
-            if (!oneCause.variety) {
-                oneCause.variety = variety;
-            }
-            return oneCause;
-        });
-        togo.variety = togo.causes.reduce((acc, {variety}) => {
-            const priority = fluid.unavailablePriority[variety];
-            return priority > acc.priority ? {variety, priority} : acc;
-        }, {priority: -1}).variety;
+        if (fluid.isArrayable(cause)) {
+            togo.causes = fluid.makeArray(cause).map(oneCause => fluid.upgradeCause(oneCause, variety));
+            togo.variety = togo.causes.reduce((acc, {variety}) => {
+                const priority = fluid.unavailablePriority[variety];
+                return priority > acc.priority ? {variety, priority} : acc;
+            }, {priority: -1}).variety;
+            togo.message = fluid.formatMultiUnavailable(togo.causes);
+        } else {
+            const upCause = fluid.upgradeCause(cause, variety);
+            Object.assign(togo, upCause);
+        }
         return togo;
     };
 
-    fluid.formatUnavailable = function (unavailable) {
-        return "Value is unavailable: causes are " + unavailable.causes.map(cause => cause.message).join("\n");
+    /**
+     * Creates an "Unavailable" marker representing a value that is pending due to I/O.
+     * Sets the variety to "I/O", provides a standard message, and records the site and stale value.
+     *
+     * @param {Any} staleValue - The most recently seen value before it became unavailable due to pending I/O.
+     * @param {String} site - The site or resource (e.g. URL) responsible for the pending I/O.
+     * @return {Unavailable} An object representing the unavailable state due to pending I/O.
+     */
+    fluid.pending = function (staleValue, site) {
+        const togo = Object.create(fluid.unavailable.prototype);
+        togo.variety = "I/O";
+        togo.message = "Value is unavailable due to pending I/O";
+        togo.site = site;
+        togo.staleValue = staleValue;
+        return togo;
     };
 
     /**
@@ -60,6 +137,106 @@ const $fluidJSScope = function (scope) {
     fluid.isUnavailable = totest => totest instanceof fluid.unavailable;
 
     fluid.isErrorUnavailable = totest => fluid.isUnavailable(totest) && totest.variety === "error";
+
+    // Patched in core framework to unproxy unavailable values
+    fluid.deproxyUnavailable = target => target;
+
+    /**
+     * Merge two "unavailable" markers into a single marker, combining their causes.
+     * If the existing marker is `null` or `undefined`, the fresh marker is returned as-is.
+     *
+     * @param {Unavailable|null|undefined} existing - The existing "unavailable" marker, or `null`/`undefined` if none exists.
+     * @param {Unavailable} fresh - The new "unavailable" marker to merge with the existing one.
+     * @return {Unavailable} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
+     */
+    fluid.mergeUnavailable = function (existing, fresh) {
+        return !existing ? fresh : fluid.unavailable(fluid.deproxyUnavailable(existing).causes.concat(
+            fluid.deproxyUnavailable(fresh).causes));
+    };
+
+    fluid.missingPolicies = {
+        unavailable: (root, path) => fluid.unavailable({
+            message: `Path ${path} was not found`,
+            // TODO: Upgrade incoming data so that it always comes with a full site cursor
+            site: root
+        }),
+        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    };
+
+    fluid.getPathSegmentImpl = function (accept, path, i) {
+        let segment = "";
+        let escaped = false;
+        const limit = path.length;
+        for (; i < limit; ++i) {
+            const c = path.charAt(i);
+            if (!escaped) {
+                if (c === ".") {
+                    break;
+                } else if (c === "\\") {
+                    escaped = true;
+                } else {
+                    segment += c;
+                }
+            } else {
+                escaped = false;
+                segment += c;
+            }
+        }
+        accept[0] = segment;
+        return i;
+    };
+
+    /** Parse an IL path separated by periods (.) into its component segments.
+     * @param {String} path - The path expression to be split
+     * @return {String[]} Path parsed into segments.
+     */
+    fluid.parsePath = function (path) {
+        const togo = [], accept = [null];
+        let index = 0;
+        const limit = path.length;
+        while (index < limit) {
+            const firstdot = fluid.getPathSegmentImpl(accept, path, index);
+            togo.push(accept[0]);
+            index = firstdot + 1;
+        }
+        return togo;
+    };
+
+    /**
+     * Optionally parse a path expression into its component segments.
+     * If the input is a primitive value (e.g., a string), it is parsed into segments using `fluid.parsePath`.
+     * If the input is already an array of segments, it is returned unchanged.
+     *
+     * @param {String|String[]} path - The path expression to be split into segments,
+     *     or an array of path segments.
+     * @return {String[]} The path represented as an array of segments.
+     */
+    fluid.pathToSegs = function (path) {
+        return fluid.isPrimitive(path) ? fluid.parsePath(path) : path;
+    };
+
+    /**
+     * Retrieve the value at a specified path within a nested object structure.
+     * Traverses the object hierarchy based on the path segments.
+     *
+     * @param {Object} root - The root object to begin traversal from.
+     * @param {String|String[]} path - The path to the desired value, specified as a string or an array of path segments.
+     * @param {"unavailable"|"error"} [missingPolicy] - An optional policy from `fluid.missingPolicies` to be followed if a value is not found
+     * @return {any} The value at the specified path, or `undefined` if the path traverses beyond defined objects.
+     */
+    fluid.get = function (root, path, missingPolicy) {
+        const segs = fluid.pathToSegs(path);
+        const limit = segs.length;
+        for (let j = 0; j < limit; ++j) {
+            root = root ? root[segs[j]] : undefined;
+        }
+        if (root === undefined && missingPolicy) {
+            return fluid.missingPolicies[missingPolicy](root, path);
+        } else {
+            return root;
+        }
+    };
+
 
     /**
      * Set a value at a specified path within a nested object structure.
@@ -119,4 +296,19 @@ const $fluidJSScope = function (scope) {
     };
 };
 
-export {applyScope};
+// Signal to a global environment compositor what path this scope function should be applied to
+$fluidCoreJSScope.$fluidScopePath = "fluid";
+
+// If we are standalone and in a browserlike, define namespace
+if (typeof(fluid) === "undefined" && typeof(window) !== "undefined") {
+    window.fluid = {};
+}
+
+// If there is a namespace in the global, bind to it
+if (typeof(fluid) !== "undefined") {
+    $fluidCoreJSScope(fluid);
+}
+
+// Note: for ES6 support, transform this to a file with suffix:
+// export $fluidSignalsScope
+// Client then needs to do compositing of its own global namespace
