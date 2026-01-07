@@ -275,14 +275,6 @@ const $fluidSignalsScope = function (fluid) {
         return this._value;
     };
 
-    fluid.cell.prototype.staleGet = function () {
-        return this.computed(
-            (sVal, aVal) => fluid.isUnavailable(aVal) ? sVal : sVal,
-            [s, a],
-            { isFree: true }
-        );
-    }
-
     /**
      * Update the value of this writeable cell.
      *
@@ -304,44 +296,6 @@ const $fluidSignalsScope = function (fluid) {
 
             if (!fluid.isUnavailable(value)) {
                 // Why did we stabilize in this branch and not in updateComplete? (now we do)
-                fluid.cell.stabilize();
-            }
-        }
-    };
-
-
-    fluid.cell.updateComplete = function (newValue, cell, syncUpdate) {
-        const availChange = !fluid.isUnavailable(newValue) && fluid.isUnavailable(cell._value);
-
-        cell._value = newValue;
-
-        const updateRecord = cell._updateRecord;
-        if (!syncUpdate) {
-            cell._updateRecord = null;
-        }
-
-        // Don't mark ourselves as clean if value is not available since it may be computable from another relation
-        if (!fluid.isUnavailable(newValue)) {
-            console.log("Update complete for " + cell.name + ", marking clean");
-            cell._state = CacheClean;
-        }
-
-        // Misleading original comment:
-        // handles diamond dependencies if we're the parent of a diamond.
-        if (!fluid.cell.equals(updateRecord.oldValue, cell._value) && cell._observers) {
-            const consumedSources = cell._consumedSources;
-            // We've changed value, so mark our children as dirty so they'll reevaluate
-            for (let i = 0; i < cell._observers.length; i++) {
-                const observer = cell._observers[i];
-                if (!consumedSources?.includes(observer)) {
-                    // Milo's implementation for some reason did this directly rather than recursively
-                    fluid.cell.markStale(observer, CacheDirty, cell, availChange);
-                    // Note that markStale also sets _dirtyFrom
-                    // observer._state = CacheDirty;
-                    // observer._dirtyFrom = cell;
-                }
-            }
-            if (!fluid.isUnavailable(newValue)) {
                 fluid.cell.stabilize();
             }
         }
@@ -377,7 +331,6 @@ const $fluidSignalsScope = function (fluid) {
             }
             return this;
         } else {
-
             const oldFn = inEdge?._fn;
             if (!inEdge) {
                 inEdge = Object.create(null);
@@ -571,14 +524,61 @@ const $fluidSignalsScope = function (fluid) {
         }
     };
 
-    fluid.cell.bindIterable = function (cell, iterable) {
+    /**
+     * Completes the update process for a reactive cell by setting its new value and updating its state.
+     * If the value has changed, marks all observers (children) as dirty so they will reevaluate.
+     * Handles availability transitions and ensures that downstream effects are stabilized if necessary.
+     *
+     * @param {Any} newValue - The new value to assign to the cell.
+     * @param {Cell} cell - The reactive cell being updated.
+     * @param {Boolean} syncUpdate - Indicates if the update is synchronous.
+     */
+    fluid.cell.updateComplete = function (newValue, cell, syncUpdate) {
+        const availChange = !fluid.isUnavailable(newValue) && fluid.isUnavailable(cell._value);
+
+        cell._value = newValue;
+
+        const updateRecord = cell._updateRecord;
+        if (!syncUpdate) {
+            cell._updateRecord = null;
+        }
+
+        // Don't mark ourselves as clean if value is not available since it may be computable from another relation
+        if (!fluid.isUnavailable(newValue)) {
+            console.log("Update complete for " + cell.name + ", marking clean");
+            cell._state = CacheClean;
+        }
+
+        // Misleading original comment:
+        // handles diamond dependencies if we're the parent of a diamond.
+        if (!fluid.cell.equals(updateRecord.oldValue, cell._value) && cell._observers) {
+            const consumedSources = cell._consumedSources;
+            // We've changed value, so mark our children as dirty so they'll reevaluate
+            for (let i = 0; i < cell._observers.length; i++) {
+                const observer = cell._observers[i];
+                if (!consumedSources?.includes(observer)) {
+                    // Milo's implementation for some reason did this directly rather than recursively
+                    fluid.cell.markStale(observer, CacheDirty, cell, availChange);
+                    // Note that markStale also sets _dirtyFrom
+                    // observer._state = CacheDirty;
+                    // observer._dirtyFrom = cell;
+                }
+            }
+            if (!fluid.isUnavailable(newValue)) {
+                fluid.cell.stabilize();
+            }
+        }
+    };
+
+    fluid.cell.bindIterable = function (cell, inEdge, iterable) {
         // Guide at https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function*#declaring_an_async_generator_function
         const bindIterable = nextIt => {
             // TODO: Presumably set to undefined here to mark as unavailable
             nextIt.then(res => {
+                // Misuse syncUpdate flag to preserve cell._updateRecord in the case iteration is not done
+                fluid.cell.updateComplete(res.value, cell, !res.done);
                 if (!res.done) {
-                    fluid.cell.updateComplete(res.value, cell, false);
-                } else {
+                    cell._updateRecord.oldValue = res.value;
                     const nextIt = iterable.next();
                     bindIterable(nextIt);
                 }
@@ -623,7 +623,7 @@ const $fluidSignalsScope = function (fluid) {
                     },
                     e => cell._error = e);
                 } else if (result[Symbol.asyncIterator]) {
-                    fluid.cell.bindIterable(cell, result);
+                    fluid.cell.bindIterable(cell, inEdge, result);
                 } else { // Unexpected plain return from async edge
                     syncUpdate = true;
                 }
@@ -805,6 +805,22 @@ const $fluidSignalsScope = function (fluid) {
                 console.log("Effect " + effect.name + " unqueued");
             }
         }
+    };
+
+    /**
+     * Converts a signal into a Promise that resolves when the signal's value changes to an
+     * available value.
+     *
+     * @param {Cell<any>} valSignal - The signal to monitor.
+     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
+     */
+    fluid.cell.signalToPromise = function (valSignal) {
+        return new Promise( (resolve) => {
+            fluid.cell.effect(function (value) {
+                resolve(value);
+                this.dispose();
+            }, [valSignal]);
+        });
     };
 };
 

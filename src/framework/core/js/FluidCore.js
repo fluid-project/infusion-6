@@ -79,8 +79,15 @@ const $fluidCoreJSScope = function (fluid) {
         return upCause;
     };
 
-    fluid.formatMultiUnavailable = function (unavailable) {
-        return "Value is unavailable: causes are " + unavailable.causes.map(cause => cause.message).join("\n");
+    /**
+     * Formats an array of cause records into a human-readable string describing why a value is unavailable.
+     * Each cause's message is included, separated by newlines.
+     *
+     * @param {UnavailableCause[]} causes - An array of cause records explaining the unavailability.
+     * @return {string} A formatted string listing all cause messages.
+     */
+    fluid.formatCauses = function (causes) {
+        return "Value is unavailable: causes are " + causes.map(cause => cause.message).join("\n");
     };
 
     /**
@@ -88,7 +95,7 @@ const $fluidCoreJSScope = function (fluid) {
      * contain an site address or external resource (e.g. URL) responsible for unavailability of this value.
      * The marker is mutable.
      *
-     * @param {Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
+     * @param {Object|Array<UnavailableCause>} [cause={}] - A list of dependencies or reasons for unavailability.
      * @param {String} [variety="error"] - The variety of unavailable value:
      * * "error" indicates a syntax or structural issue that needs design intervention.
      * * "config" indicates the value is not available because it has been configured away
@@ -103,7 +110,7 @@ const $fluidCoreJSScope = function (fluid) {
                 const priority = fluid.unavailablePriority[variety];
                 return priority > acc.priority ? {variety, priority} : acc;
             }, {priority: -1}).variety;
-            togo.message = fluid.formatMultiUnavailable(togo.causes);
+            togo.message = fluid.formatCauses(togo.causes);
         } else {
             const upCause = fluid.upgradeCause(cause, variety);
             Object.assign(togo, upCause);
@@ -142,6 +149,18 @@ const $fluidCoreJSScope = function (fluid) {
     fluid.deproxyUnavailable = target => target;
 
     /**
+     * Extracts the array of causes from an "Unavailable" marker.
+     * If the marker has a `causes` property, returns it; otherwise, returns an array containing the unwrapped marker itself.
+     *
+     * @param {Unavailable} unavailable - The "Unavailable" marker to extract causes from.
+     * @return {UnavailableCause[]} An array of cause records explaining the unavailability.
+     */
+    fluid.unavailableToCauses = function (unavailable) {
+        const unwrapped = fluid.deproxyUnavailable(unavailable);
+        return unwrapped.causes ? unwrapped.causes : [unwrapped];
+    };
+
+    /**
      * Merge two "unavailable" markers into a single marker, combining their causes.
      * If the existing marker is `null` or `undefined`, the fresh marker is returned as-is.
      *
@@ -150,8 +169,7 @@ const $fluidCoreJSScope = function (fluid) {
      * @return {Unavailable} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
      */
     fluid.mergeUnavailable = function (existing, fresh) {
-        return !existing ? fresh : fluid.unavailable(fluid.deproxyUnavailable(existing).causes.concat(
-            fluid.deproxyUnavailable(fresh).causes));
+        return !existing ? fresh : fluid.unavailable(fluid.unavailableToCauses(existing).concat(fluid.unavailableToCauses(fresh)));
     };
 
     fluid.missingPolicies = {

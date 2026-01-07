@@ -312,7 +312,7 @@ QUnit.test("Should handle refreshes", async assert => {
     assert.equal(b.get(), 3, "Third resolved value");
 });
 
-// Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L154C1-L175C4
+// Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L154
 
 QUnit.test("Should show pending state", async assert => {
 
@@ -352,6 +352,140 @@ QUnit.test("Should show pending state", async assert => {
     // Allow async to settle
     await new Promise(r => setTimeout(r, 0));
     assert.equal(res, 2, "Value remains stable after async resolution");
+});
+
+// Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L177
+
+QUnit.test("Should resolve to a value with resolveAsync (untracked)", async assert => {
+
+    const s = fluid.cell(1);
+
+    const a = fluid.cell().asyncComputed(async () => {
+        return s.get();
+    });
+
+    let value;
+
+    // Effect with no reactive dependencies, runs exactly once
+    fluid.cell.effect(
+        () => {
+            (async () => { // Untracked async read
+                value = await fluid.signalToPromise(a);
+            })();
+        },
+        []
+    );
+
+    // Not yet resolved
+    assert.strictEqual(value, undefined, "Value is undefined before async resolution");
+
+    // Allow first async resolution
+    await new Promise(r => setTimeout(r, 0));
+    assert.strictEqual(value, 1, "Resolved to initial value");
+
+    // Update dependency
+    s.set(2);
+
+    // No refresh triggered, and effect is not tracking `a`
+    assert.strictEqual(value, 1, "Value unchanged after dependency update");
+
+    await new Promise(r => setTimeout(r, 0));
+    assert.strictEqual(value, 1, "Still unchanged because effect is untracked");
+});
+
+
+// Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L204
+
+QUnit.test("Should handle streams", async assert => {
+
+    let callCount = 0;
+    let lastValue;
+
+    const v = fluid.cell().asyncComputed(async function* () {
+        // Original had "yield await" which is redundant - https://stackoverflow.com/questions/77012368/is-yield-await-redundant-in-javascript-async-generator-functions
+        yield Promise.resolve(1);
+        yield Promise.resolve(2);
+        yield Promise.resolve(3);
+    });
+
+    fluid.cell.effect(
+        (vVal) => {
+            callCount++;
+            lastValue = vVal;
+        },
+        [v]
+    );
+
+    // No value yet - async not resolved
+    assert.equal(callCount, 0, "Effect not called before first yield");
+
+    // Note that due to skipping "yield await" our dispatch path is one shorter than solid's
+
+    // Allow first yield
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(callCount, 1, "Effect called once after first yield");
+    assert.equal(lastValue, 1, "First yielded value");
+
+    // Allow second yield
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(callCount, 2, "Effect called twice after second yield");
+    assert.equal(lastValue, 2, "Second yielded value");
+
+    // Allow third yield
+    await Promise.resolve();
+    assert.equal(callCount, 3, "Effect called three times after third yield");
+    assert.equal(lastValue, 3, "Third yielded value");
+});
+
+// Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L234
+
+QUnit.test("Should still resolve in untracked scopes", async assert => {
+
+    const s = fluid.cell(1);
+
+    let callCount = 0;
+    let lastValue;
+
+    const a = fluid.cell().asyncComputed(async () => {
+        return s.get();
+    });
+
+    // Effect that reads `a` but does NOT track it reactively
+    fluid.cell.effect(
+        () => {
+            // untracked read: no staticSources
+            fluid.signalToPromise(a).then(v => {
+                callCount++;
+                lastValue = v;
+            });
+        },
+        []
+    );
+
+    assert.equal(callCount, 0, "Effect not called synchronously");
+
+    // Allow async resolution
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(callCount, 1, "Async resolves once");
+    assert.equal(lastValue, 1, "Resolved to initial value");
+
+    // Update dependency
+    s.set(2);
+    assert.equal(callCount, 1, "No re-run after dependency change");
+
+    await Promise.resolve();
+    assert.equal(callCount, 1, "Still no re-run");
+
+    // Update again
+    s.set(3);
+    assert.equal(callCount, 1, "Still no re-run");
+
+    await Promise.resolve();
+    assert.equal(callCount, 1, "Async not re-triggered");
 });
 
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts

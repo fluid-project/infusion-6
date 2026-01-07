@@ -165,7 +165,7 @@ const $fluidJSScope = function (fluid) {
     };
 
     fluid.renderLoggingArg = function (arg) {
-        return arg === undefined ? "undefined" : fluid.isUnavailable(arg) ? fluid.renderUnavailable(arg) :
+        return arg === undefined ? "undefined" : fluid.isUnavailable(arg) ? arg.message :
             fluid.isPrimitive(arg) || !fluid.isPlainObject(arg) ? arg : JSON.stringify(arg);
     };
 
@@ -806,51 +806,6 @@ const $fluidJSScope = function (fluid) {
         "error": 3
     };
 
-    /**
-     * @typedef {Object} Unavailable
-     * A mutable marker representing an "Unavailable" state.
-     *
-     * @property {Object[]} causes - An array of cause records. Each cause may include:
-     * * `message` {String} — A human-readable message describing the cause.
-     * * `variety` {String} — The variety assigned to the cause (e.g., "error", "config", "I/O").
-     *
-     * @property {String} variety - The overall variety of the unavailable marker,
-     *   computed as the highest-priority variety among all causes.
-     */
-
-    /**
-     * Create a marker representing an "Unavailable" state with an associated array of causes potentially including their sites.
-     * The marker is mutable.
-     *
-     * @param {String|Object|Array} [cause={}] - A list of dependencies or reasons for unavailability.
-     * @param {String} [variety="error"] - The variety of unavailable value:
-     * * "error" indicates a syntax issue that needs design intervention.
-     * * "config" indicates configuration designed to short-circuit evaluation which is not required.
-     * * "I/O" indicates pending I/O
-     * @return {Unavailable} A marker of type "Unavailable".
-     */
-    fluid.unavailable = function (cause = {}, variety = "error") {
-        const togo = Object.create(fluid.unavailable.prototype);
-        togo.causes = fluid.makeArray(cause).map(oneCause => {
-            if (typeof(oneCause) === "string") {
-                oneCause = {message: oneCause};
-            }
-            if (!oneCause.variety) {
-                oneCause.variety = variety;
-            }
-            return oneCause;
-        });
-        togo.variety = togo.causes.reduce((acc, {variety}) => {
-            const priority = fluid.unavailablePriority[variety];
-            return priority > acc.priority ? {variety, priority} : acc;
-        }, {priority: -1}).variety;
-        return togo;
-    };
-
-    fluid.formatUnavailable = function (unavailable) {
-        return "Value is unavailable: causes are " + unavailable.causes.map(cause => cause.message).join("\n");
-    };
-
     fluid.unavailableProxy = function (target) {
         const proxy = new Proxy(target, {
             get: function (target, prop) {
@@ -875,29 +830,6 @@ const $fluidJSScope = function (fluid) {
     // Intended to be used for object which has already passed fluid.isUnavailable
     fluid.deproxyUnavailable = function (target) {
         return Object.getOwnPropertyDescriptor(target, $u) ? fluid.deSignal(target[$u]) : target;
-    };
-
-    /**
-     * Check if an object is a marker of type "Unavailable"
-     *
-     * @param {Object} totest - The object to test.
-     * @return {Boolean} `true` if the object is a marker of type "Unavailable", otherwise `false`.
-     */
-    fluid.isUnavailable = totest => totest instanceof fluid.unavailable;
-
-    fluid.isErrorUnavailable = totest => fluid.isUnavailable(totest) && totest.variety === "error";
-
-    /**
-     * Merge two "unavailable" markers into a single marker, combining their causes.
-     * If the existing marker is `null` or `undefined`, the fresh marker is returned as-is.
-     *
-     * @param {Unavailable|null|undefined} existing - The existing "unavailable" marker, or `null`/`undefined` if none exists.
-     * @param {Unavailable} fresh - The new "unavailable" marker to merge with the existing one.
-     * @return {Unavailable} A combined "unavailable" marker with merged causes, or the fresh marker if no existing marker is provided.
-     */
-    fluid.mergeUnavailable = function (existing, fresh) {
-        return !existing ? fresh : fluid.unavailable(fluid.deproxyUnavailable(existing).causes.concat(
-            fluid.deproxyUnavailable(fresh).causes));
     };
 
     /**
@@ -1001,6 +933,22 @@ const $fluidJSScope = function (fluid) {
     };
 
     /**
+     * Converts a signal into a Promise that resolves when the signal's value changes to an
+     * available value.
+     *
+     * @param {Signal<any>} valSignal - The signal to monitor.
+     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
+     */
+    fluid.signalToPromise = function (valSignal) {
+        return new Promise( (resolve) => {
+            fluid.effect(function (value) {
+                resolve(value);
+                this.dispose();
+            }, [valSignal]);
+        });
+    };
+
+    /**
      * Appends a site to the `site` array of the last element in the `causes` array of the given "unavailable" marker.
      * If the `site` array does not exist, it is allocated.
      * @param {Unavailable} unavailable - The "unavailable" marker containing the `causes` array.
@@ -1011,7 +959,8 @@ const $fluidJSScope = function (fluid) {
         // TODO: Causes should actually form independent chains rather than being in a linear array - can't guarantee
         // right now that the last cause is not an irrelevant failure
         if (site) {
-            const lastCause = unavailable.causes[0];
+            const unwrapped = fluid.deproxyUnavailable(unavailable);
+            const lastCause = unwrapped.causes ? unwrapped.causes[0] : unwrapped;
             if (!Array.isArray(lastCause.site)) {
                 lastCause.site = fluid.makeArray(lastCause.site);
             }
@@ -3151,22 +3100,6 @@ const $fluidJSScope = function (fluid) {
      */
     fluid.fetchJSON = function (url, options) {
         return fluid.fetch(url, options, async response => response.json());
-    };
-
-    /**
-     * Converts a signal into a Promise that resolves when the signal's value changes to an
-     * available value.
-     *
-     * @param {Signal<any>} valSignal - The signal to monitor.
-     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
-     */
-    fluid.signalToPromise = function (valSignal) {
-        return new Promise( (resolve) => {
-            fluid.effect(function (value) {
-                resolve(value);
-                this.dispose();
-            }, [valSignal]);
-        });
     };
 
     /**
