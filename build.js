@@ -22,11 +22,19 @@ const parseDocument = function (path) {
 
 const buildIndex = {
     coreSource: [
+        "src/framework/core/js/FluidCore.js",
+        "src/framework/core/js/FluidSignals.js",
         "src/framework/core/js/Fluid.js",
         "src/framework/core/js/FluidIL.js",
         "src/framework/core/js/FluidView.js"
     ],
 
+    // Experiment, but terser can't actually do ES6 bundling and we have decided that we don't actually need a bundler (for now)
+    signalModuleSource: [
+        "src/framework/core/mjs/FluidSignals.mjs"
+    ],
+
+    // Just to estimate minified size - have gone with Lezer for now
     acornSource: [
         "src/lib/acorn/acorn.js"
     ],
@@ -92,15 +100,6 @@ const buildIndex = {
         src: "node_modules/acorn/dist/acorn.js",
         dest: "src/lib/acorn/acorn.js"
     }, {
-        src: "src/lib/pell",
-        dest: "docs/pell"
-    }, {
-        src: "src/lib/codemirror",
-        dest: "docs/codemirror"
-    }, {
-        src: "src/lib/lezer",
-        dest: "docs/lezer"
-    }, {
         src: "demo/**",
         dest: "docs/"
     }, {
@@ -109,6 +108,18 @@ const buildIndex = {
     }, {
         src: "tests",
         dest: "docs/tests"
+    }, {
+        src: "src/framework/core/mjs/FluidCore.mjs",
+        dest: "dist/FluidSignals/FluidCore.mjs"
+    }, {
+        src: "src/framework/core/mjs/FluidCore.d.mts",
+        dest: "dist/FluidSignals/FluidCore.d.mts"
+    }, {
+        src: "src/framework/core/mjs/FluidSignals.mjs",
+        dest: "dist/FluidSignals/FluidSignals.mjs"
+    }, {
+        src: "src/framework/core/mjs/FluidSignals.d.mts",
+        dest: "dist/FluidSignals/FluidSignals.d.mts"
     }]
 };
 
@@ -185,11 +196,12 @@ const filesToContentHash = function (allFiles, extension) {
     return hash;
 };
 
-const minify = async function (hash, filename) {
+const minify = async function (hash, filename, isModule) {
     console.log("Minifying " + Object.keys(hash).length + " JS files to " + filename);
     return await terser.minify(hash, {
         mangle: false,
         compress: false, // https://github.com/terser/terser?tab=readme-ov-file#terser-fast-minify-mode
+        module: isModule,
         sourceMap: {
             filename,
             url: filename + ".map",
@@ -198,10 +210,10 @@ const minify = async function (hash, filename) {
     });
 };
 
-const makeJSBundle = async function (buildIndex, key, fileName) {
-    const jsHash = filesToContentHash(buildIndex[key], ".js");
+const makeJSBundle = async function (buildIndex, key, fileName, isModule) {
+    const jsHash = filesToContentHash(buildIndex[key], isModule ? ".mjs" : ".js");
     console.log(key + " ", buildIndex[key]);
-    const minBundle = await minify(jsHash, fileName);
+    const minBundle = await minify(jsHash, fileName, isModule);
 
     fs.writeFileSync(`dist/${fileName}`, minBundle.code, "utf8");
     fs.writeFileSync(`dist/${fileName}.map`, minBundle.map);

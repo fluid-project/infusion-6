@@ -2,6 +2,8 @@
 
 "use strict";
 
+// import fluid from "./FluidIL.js"
+
 const fluidViewScope = function (fluid) {
     const $m = fluid.metadataSymbol;
     const $t = fluid.proxySymbol;

@@ -2,12 +2,13 @@
 
 "use strict";
 
+// import fluid from "./FluidCore.js"
+// import "./FluidModules.js"
+
 // noinspection ES6ConvertVarToLetConst
 var {signal, effect, computed, untracked} = preactSignalsCore;
 
-const $fluidJSScope = function (fluid) {
-
-    fluid.version = "Infusion 6.0.0";
+const $fluidScope = function (fluid) {
 
     // Export this for use in environments like node.js, where it is useful for
     // configuring stack trace behaviour
@@ -3119,4 +3120,4 @@ const $fluidJSScope = function (fluid) {
 
 // noinspection ES6ConvertVarToLetConst
 var fluid = fluid || {}; // eslint-disable-line no-redeclare
-$fluidJSScope(fluid);
+$fluidScope(fluid);

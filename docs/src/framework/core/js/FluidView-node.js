@@ -1,6 +1,6 @@
-/* global */
-
 "use strict";
+
+// import fluid from "./FluidView.js"
 
 const $fluidViewNodeScope = function (fluid) {
 

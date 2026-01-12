@@ -2,6 +2,8 @@
 
 "use strict";
 
+// import fluid from "./FluidCore.js"
+
 const sfcParserScope = function (fluid) {
 
     const stopTokens = new Set(["ArrowFunction", "AssignmentExpression"]);

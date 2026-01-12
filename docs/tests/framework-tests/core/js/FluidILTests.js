@@ -226,7 +226,7 @@ fluid.def("fluid.tests.missingGradeComponent", {
 QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", function (assert) {
     const that = fluid.tests.missingGradeComponent();
     assert.ok(fluid.isUnavailable(that), "component with missing parent is unavailable");
-    assert.ok(that.causes[0].message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
+    assert.ok(that.message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
     // Now define the grade
     fluid.def("fluid.tests.nonexistentGrade", {$layers: "fluid.component"});
     // Evaluate the signal again and it should now be defined
@@ -244,7 +244,7 @@ fluid.def("fluid.tests.circularComponent", {
 QUnit.test("FLUID-7001 circularity", function (assert) {
     const that = fluid.tests.circularComponent();
     assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
-    assert.ok(that.causes[0].message.includes("circular"), "Received relevant message");
+    assert.ok(that.message.includes("circular"), "Received relevant message");
 });
 
 fluid.def("fluid.tests.indirectCircularComponent", {
@@ -259,7 +259,7 @@ fluid.def("fluid.tests.indirectCircularComponentParent", {
 QUnit.test("FLUID-7001 indirect circularity", function (assert) {
     const that = fluid.tests.indirectCircularComponent();
     assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
-    assert.ok(that.causes[0].message.includes("circular"), "Received relevant message");
+    assert.ok(that.message.includes("circular"), "Received relevant message");
 });
 
 /** FLUID-4930 retrunking test taken from fluid-authoring arrow rendering **/

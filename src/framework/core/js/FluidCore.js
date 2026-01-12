@@ -314,9 +314,6 @@ const $fluidCoreJSScope = function (fluid) {
     };
 };
 
-// Signal to a global environment compositor what path this scope function should be applied to
-$fluidCoreJSScope.$fluidScopePath = "fluid";
-
 // If we are standalone and in a browserlike, define namespace
 if (typeof(fluid) === "undefined" && typeof(window) !== "undefined") {
     window.fluid = {};
@@ -326,7 +323,3 @@ if (typeof(fluid) === "undefined" && typeof(window) !== "undefined") {
 if (typeof(fluid) !== "undefined") {
     $fluidCoreJSScope(fluid);
 }
-
-// Note: for ES6 support, transform this to a file with suffix:
-// export $fluidSignalsScope
-// Client then needs to do compositing of its own global namespace

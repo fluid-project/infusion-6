@@ -1,5 +1,7 @@
 "use strict";
 
+// import fluid from "./FluidCore.js"
+
 const $fluidSignalsScope = function (fluid) {
 
     /** Implementation taken from Reactively at https://github.com/milomg/reactively/blob/main/packages/core/src/core.ts
@@ -389,8 +391,8 @@ const $fluidSignalsScope = function (fluid) {
      * Refreshes the value of the cell by re-evaluating its computation for the specified static sources.
      * Finds the incoming edge corresponding to the given static sources and triggers an update for this cell along that edge.
      *
-     * @param {Cell[]} [staticSources] - An optional array of static source cells to identify the computation edge.
-     * @this {Cell}
+     * @param {Cell[]} [staticSources] - An optional array of static source cells to identify the computation edge to be refreshed
+     * @this {Cell} The cell for which an incoming edge is to be refreshed
      */
     fluid.cell.prototype.refresh = function (staticSources) {
         // The edge's key is either its first source or null

@@ -2,6 +2,8 @@
 
 "use strict";
 
+// import fluid from "./FluidView.js"
+
 const $fluidViewBrowserScope = function (fluid) {
 
     fluid.environment = "browser";
@@ -188,6 +190,4 @@ const $fluidViewBrowserScope = function (fluid) {
 
 };
 
-if (typeof(fluid) !== "undefined") {
-    $fluidViewBrowserScope(fluid);
-}
+$fluidViewBrowserScope(fluid);

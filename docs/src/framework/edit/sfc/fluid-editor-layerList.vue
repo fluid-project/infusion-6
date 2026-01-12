@@ -11,7 +11,7 @@ fluid.def("fluid.editor.layerList", {
         $component: {
             $layers: "fluid.templateViewComponent",
             layerName: "{layerRec}.layerName",
-            template: `<div class="fl-layerlist-layer fl-clickable fl-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)"
+            template: `<div class="fl-layerlist-layer fl-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)"
                 style="background-color: @{{layerRec}.colour}" title="@{layerName}">@{layerName}</div>`,
             $for: {
                 source: "{layerList}.layerList",
