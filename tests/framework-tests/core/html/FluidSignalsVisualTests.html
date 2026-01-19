@@ -7,21 +7,24 @@
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.min.js"></script>
 
     <link rel="stylesheet" media="screen" href="../../../lib/qunit/css/qunit.css" />
+    <link rel="stylesheet" media="screen" href="../../../test-core/qunit/css/qunit-visual-signals.css" />
 
-    <script src="../../../../src/lib/preact-signals/signals-core.min.js"></script>
-    <script src="../../../../src/framework/core/js/Fluid.js"></script>
+    <script src="../../../../src/framework/core/js/FluidCore.js"></script>
     <script src="../../../../src/framework/core/js/FluidSignals.js"></script>
     <script src="../../../../src/framework/core/js/FluidDebugging.js"></script>
 
+    <script src="../../../../src/lib/lezer/lezer-javascript-browser.js"></script>
+
     <script src="../../../lib/qunit/js/qunit.js"></script>
     <script src="../../../test-core/qunit/js/qunit-fluid.js"></script>
-    <script src="../../../test-core/qunit/js/qunit-visual-signals.js"></script>
+    <script src="../../../test-core/qunit/js/lezer-transform.js"></script>
+    <script src="../../../test-core/qunit/js/qunit-visual-signals-2.js"></script>
 
     <!-- Required to send coverage data at the end of the test run on this page -->
     <script src="/testem.js"></script>
     <script src="/coverage/client/coverageSender.js"></script>
 
-    <script src="../js/FluidSignalsTests.js"></script>
+    <script src="../js/FluidSignalsGraphTests.js"></script>
     <style>
         .mermaid-signal-viz {
             background: white;

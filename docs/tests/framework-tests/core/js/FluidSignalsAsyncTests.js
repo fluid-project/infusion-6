@@ -198,8 +198,8 @@ QUnit.test("Should handle refreshes", async assert => {
     });
 
     const b = fluid.cell().computed((aVal) =>
-            fluid.isUnavailable(aVal) ? "stale" : aVal
-        , [a], {isFree: true});
+        fluid.isUnavailable(aVal) ? "stale" : aVal
+    , [a], {isFree: true});
 
     assert.ok(b.get(), "stale", "b is stale/unavailable before first resolution");
 
@@ -305,10 +305,6 @@ QUnit.test("Should resolve to a value with resolveAsync (untracked)", async asse
     assert.strictEqual(value, 1, "Still unchanged because effect is untracked");
 });
 
-"use strict";
-
-/* global QUnit */
-
 // Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L204
 
 QUnit.test("Should handle streams", async assert => {
@@ -360,6 +356,7 @@ QUnit.test("Should handle streams", async assert => {
 QUnit.test("Should still resolve in untracked scopes", async assert => {
 
     const s = fluid.cell(1);
+    s.name = "s";
 
     let callCount = 0;
     let lastValue;
@@ -367,17 +364,21 @@ QUnit.test("Should still resolve in untracked scopes", async assert => {
     const a = fluid.cell().asyncComputed(async () => {
         return s.get();
     });
+    a.name = "a";
 
     // Effect that reads `a` but does NOT track it reactively
     fluid.cell.effect(
         () => {
-            // untracked read: no staticSources
-            fluid.cell.signalToPromise(a).then(v => {
-                callCount++;
-                lastValue = v;
+            fluid.cell.untracked( () => {
+                console.log("Effect wrapper called");
+                // untracked read: no staticSources
+                fluid.cell.signalToPromise(a).then(v => {
+                    callCount++;
+                    lastValue = v;
+                });
             });
         },
-        []
+        [], {name: "non-tracker"}
     );
 
     assert.equal(callCount, 0, "Effect not called synchronously");

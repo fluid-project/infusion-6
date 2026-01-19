@@ -763,6 +763,7 @@ import fluid from "./FluidCore.mjs";
                 // TODO: resolve any staticSources here for effects which require contextualised disposal
                 config.unbind.fn();
             }
+            effect.computed(null, staticSources);
             effect._isDisposed = true;
             if (effect._inEdges) {
                 effect._inEdges.forEach(edge => fluid.cell.removeParentObservers(effect, edge, 0));
@@ -821,7 +822,7 @@ import fluid from "./FluidCore.mjs";
             fluid.cell.effect(function (value) {
                 resolve(value);
                 this.dispose();
-            }, [valSignal]);
+            }, [valSignal], {name: "Resolution effect for cell " + valSignal.name});
         });
     };
 

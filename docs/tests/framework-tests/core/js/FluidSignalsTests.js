@@ -10,8 +10,8 @@ QUnit.module("Fluid Signals Tests");
 
 QUnit.test("Bidi tests", assert => {
 
-    const celsiusCell = fluid.cell(15);
-    const fahrenheitCell = fluid.cell();
+    const celsiusCell = fluid.cell(15, {name: "C"});
+    const fahrenheitCell = fluid.cell(undefined, {name: "F"});
 
     const cSeq = [];
     const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell]);

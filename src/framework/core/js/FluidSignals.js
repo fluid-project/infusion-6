@@ -290,9 +290,10 @@ const $fluidSignalsScope = function (fluid) {
 
             // Mark observers as dirty
             if (this._observers) {
+                const markedSources = [this];
                 for (let i = 0; i < this._observers.length; i++) {
                     const observer = this._observers[i];
-                    fluid.cell.markStale(observer, CacheDirty, this);
+                    fluid.cell.markStale(observer, CacheDirty, markedSources, this);
                 }
             }
 
@@ -359,9 +360,9 @@ const $fluidSignalsScope = function (fluid) {
                 }
             }
 
-            if (fn !== oldFn) {
+            if (oldFn && fn !== oldFn || fluid.isUnavailable(this._value)) {
                 // Note in this case we don't mark a _dirtyFrom, all incoming edges are in play?
-                fluid.cell.markStale(this, CacheDirty);
+                fluid.cell.markStale(this, CacheDirty, []);
             }
 
             fluid.cell.stabilize();
@@ -410,10 +411,11 @@ const $fluidSignalsScope = function (fluid) {
      *
      * @param {Cell} cell - The reactive cell to mark as stale.
      * @param {CacheState} state - The new cache state to assign (e.g., CacheDirty or CacheCheck).
+     * @param {Cell[]} markedSources - Array of sources which have already been marked dirty on this stack
      * @param {Cell} [dirtyFrom] - A cell joined by an edge responsible for dirtiness
      * @param {Boolean} [availChange] - `true` if a cell availability change is responsible for this marking
      */
-    fluid.cell.markStale = function (cell, state, dirtyFrom, availChange) {
+    fluid.cell.markStale = function (cell, state, markedSources, dirtyFrom, availChange) {
         console.log("markStale for " + cell.name, " state ", state);
         // If we were previously clean, then we know that we may need to update to get the new value
         if (cell._isEffect && !cell._isQueued) {
@@ -425,12 +427,13 @@ const $fluidSignalsScope = function (fluid) {
         if (cell._state < state || availChange) {
             cell._state = state;
             cell._dirtyFrom = dirtyFrom;
+            markedSources.push(cell);
             if (cell._observers) {
                 const consumedSources = cell._consumedSources;
                 for (let i = 0; i < cell._observers.length; i++) {
                     const observer = cell._observers[i];
-                    if (!consumedSources?.includes(observer)) {
-                        fluid.cell.markStale(observer, CacheCheck, cell, availChange);
+                    if (!consumedSources?.includes(observer) && !markedSources.includes(observer)) {
+                        fluid.cell.markStale(observer, CacheCheck, markedSources, cell, availChange);
                     }
 
                 }
@@ -445,7 +448,7 @@ const $fluidSignalsScope = function (fluid) {
      * nested or recursive updates in the reactive graph.
      *
      * @param {Cell} cell - The reactive cell being updated.
-     * @param {Edge} inEdge - The edge representing the computation or dependency being updated.
+     * @param {Edge|null} inEdge - The edge representing the computation or dependency being updated.
      */
     fluid.cell.beginTracking = function (cell, inEdge) {
         const updateRecord = {
@@ -527,6 +530,23 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     /**
+     * Executes a function in an "untracked" context, temporarily suspending the current reactive tracking.
+     * This allows code to run without capturing dependencies or affecting the reactive graph.
+     *
+     * @param {Function} fn - The function to execute in an untracked context.
+     */
+    fluid.cell.untracked = function (fn) {
+        // Create fake cell to hold reaction state
+        const stateCell = {};
+        fluid.cell.beginTracking(stateCell, null);
+        try {
+            fn();
+        } finally {
+            fluid.cell.endTracking(stateCell, true);
+        }
+    };
+
+    /**
      * Completes the update process for a reactive cell by setting its new value and updating its state.
      * If the value has changed, marks all observers (children) as dirty so they will reevaluate.
      * Handles availability transitions and ensures that downstream effects are stabilized if necessary.
@@ -560,7 +580,7 @@ const $fluidSignalsScope = function (fluid) {
                 const observer = cell._observers[i];
                 if (!consumedSources?.includes(observer)) {
                     // Milo's implementation for some reason did this directly rather than recursively
-                    fluid.cell.markStale(observer, CacheDirty, cell, availChange);
+                    fluid.cell.markStale(observer, CacheDirty, [], cell, availChange);
                     // Note that markStale also sets _dirtyFrom
                     // observer._state = CacheDirty;
                     // observer._dirtyFrom = cell;
@@ -653,7 +673,7 @@ const $fluidSignalsScope = function (fluid) {
         let bestCandidate;
         for (let i = 0; i < cell._inEdges.length; ++i) {
             const edge = cell._inEdges[i];
-            if (edge.isFree || !edge.sources?.some(source => fluid.isUnavailable(source._value))) {
+            if (edge.isFree || !edge.sources?.some(source => fluid.isUnavailable(source._value) || source._state !== CacheClean) ) {
                 bestCandidate = edge;
                 break;
             }
@@ -738,6 +758,19 @@ const $fluidSignalsScope = function (fluid) {
         effect._isDisposed = false;
         effect.name = config?.name;
 
+        effect.dispose = function () {
+            if (config?.unbind?.fn) {
+                // TODO: resolve any staticSources here for effects which require contextualised disposal
+                config.unbind.fn();
+            }
+            effect.computed(null, staticSources, config);
+            effect._isDisposed = true;
+            if (effect._inEdges) {
+                effect._inEdges.forEach(edge => fluid.cell.removeParentObservers(effect, edge, 0));
+                effect._inEdges = null;
+            }
+        };
+
         const {fn, staticSources} = config.bind;
 
         // Wrap the user's supplied function to short-circuit if any arguments are unavailable if effect is not marked "free"
@@ -747,7 +780,7 @@ const $fluidSignalsScope = function (fluid) {
             }
             const args = staticSources.map(s => s.get());
 
-            fn.apply(null, args);
+            fn.apply(effect, args);
         };
 
         // Set up "computation" which will invoke us
@@ -757,18 +790,6 @@ const $fluidSignalsScope = function (fluid) {
 
         // Run immediately
         fluid.cell.updateIfNecessary(effect);
-
-        effect.dispose = function () {
-            if (config?.unbind?.fn) {
-                // TODO: resolve any staticSources here for effects which require contextualised disposal
-                config.unbind.fn();
-            }
-            effect._isDisposed = true;
-            if (effect._inEdges) {
-                effect._inEdges.forEach(edge => fluid.cell.removeParentObservers(effect, edge, 0));
-                effect._inEdges = null;
-            }
-        };
 
         return effect;
     };
@@ -821,7 +842,7 @@ const $fluidSignalsScope = function (fluid) {
             fluid.cell.effect(function (value) {
                 resolve(value);
                 this.dispose();
-            }, [valSignal]);
+            }, [valSignal], {name: "Resolution effect for cell " + valSignal.name});
         });
     };
 };

@@ -1,0 +1,103 @@
+Given qunit-visual-signals.js  <>
+and FluidSignals.js <>
+
+Use Lezer's JavaScript syntax tree producing nodes of the type accepted by
+
+    fluid.pushLezerChildren = function (parent, cursor, text, state) {
+        // console.log(`Node ${cursor.name} from ${cursor.from} to ${cursor.to}`);
+        const token = {
+            name: cursor.name,
+            from: cursor.from,
+            to: cursor.to,
+            text: text.substring(cursor.from, cursor.to),
+            children: [],
+            parent
+        };
+        if (cursor.firstChild()) {
+            do {
+                if (!stopTokens.has(token.name)) {
+                    const newToken = fluid.pushLezerChildren(token, cursor, text, state);
+                    token.children.push(newToken);
+                }
+            } while (cursor.nextSibling());
+            cursor.parent();
+        }
+        return token;
+    };
+
+to parse test cases of the form
+
+QUnit.test("preact-signals: Should drop A->B->A updates", assert => {
+    //     A
+    //   / |
+    //  B  | <- Looks like a flag doesn't it? :D
+    //   \ |
+    //     C
+    //     |
+    //     D
+    const a = fluid.cell(2);
+
+    const b = fluid.cell().computed(aVal => aVal - 1, [a]);
+
+    const c = fluid.cell().computed((aVal, bVal) => aVal + bVal, [a, b]);
+
+    let computeCount = 0;
+
+    const d = fluid.cell().computed(
+        cVal => {
+            computeCount++;
+            return "d: " + cVal;
+        },
+        [c]
+    );
+
+    // Trigger read
+    assert.equal(d.get(), "d: 3");
+    assert.equal(computeCount, 1);
+    computeCount = 0;
+
+    a.set(4);
+    d.get();
+    assert.equal(computeCount, 1);
+});
+
+
+
+Extend the code in qunit-visual-signals to produce not only a rendered mermaid view of any current state of the signal graph, but also a linear sequence indicator and controls as follows:
+
+
+i) to break apart each separate statement into the test case into its own string, each of which produce one
+sequence point of "blue" type, which are
+
+ii) To convert each computed into an asyncComputed which produces a sequence point of "red" type which is
+executed when the arc is evaluated.
+
+Assemble all blue and red sequence points produced by a complete test run into a visible linear array of rectangles, together with an
+indicator of the current sequence point highlighted by an arrow pointing upwards to it, together with forward and
+backward buttons that will advance to the next or previous point. The forward button will simply either execute the
+next statement, if it is of blue type, or else await the next computation activation if it is of red type.
+The backward button will re-execute the entire sequence from the start and then pause at the appropriate point.
+
+
+Additional:
+
+Please actually use the lezer parser to parse the text properly - you can assume it is available as a global which can be invoked using
+
+ const lezerTree = LezerJS.parser.parse(text);
+
+Also - whenever you encounter any statement of the form
+
+    const b = fluid.cell().computed(aVal => aVal - 1, [a]);
+
+transform it to apply the variable name as the {name} option
+
+e.g.
+
+const b = fluid.vizReactive.asyncComputed(aVal => aVal - 1, [a], {name: "b"})
+
+Supply the wrapper with a distinct name as shown here rather than instrumenting fluid.cell.asyncComputed itself
+
+
+Additional 2:
+
+Focus on fluid.transformStatement - produce in a separate file transformStatement.js just an implementation of this which is improved to actually iterate over the syntax tree rather than bash on strings. Write an intermediate utility fluid.queryLezerNode(type, text) which can be invoked e.g. fluid.queryLezerNode("MemberExpression", "fluid.cell") to find the invocation, and then from this navigate up to the VariableDefinition node holding, e.g. a to find varName. Splice the extra node into the ArgList holding text: "{name: \"a\"} and add a field isStale: true to all nodes on the path to root. Then at the end serialise the tree back out again, after iterating downwards to find all nodes which have isStale: true and regenerating their text from their children.
