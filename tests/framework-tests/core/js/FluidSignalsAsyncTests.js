@@ -371,7 +371,6 @@ QUnit.test("Should still resolve in untracked scopes", async assert => {
         () => {
             fluid.cell.untracked( () => {
                 console.log("Effect wrapper called");
-                // untracked read: no staticSources
                 fluid.cell.signalToPromise(a).then(v => {
                     callCount++;
                     lastValue = v;

@@ -114,11 +114,11 @@ QUnit.test("findCause with three nodes", assert => {
     let bCause = null,
         cCause = null;
     B.computed(a => {
-        bCause = fluid.findCause();
+        bCause = fluid.cell.findCause();
         return a + 1;
     }, [A]);
     C.computed(b => {
-        cCause = fluid.findCause();
+        cCause = fluid.cell.findCause();
         return b + 1;
     }, [B]);
 

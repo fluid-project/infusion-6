@@ -47,8 +47,7 @@
 /* Sequence Points */
 .timeline-sequence {
     position: relative;
-    margin: 20px 0;
-    min-height: 80px;
+    margin-top: 20px;
 }
 
 .sequence-points {
@@ -167,14 +166,62 @@
     line-height: 1.6;
 }
 
-/* Mermaid Visualization */
-.mermaid-signal-viz {
-    margin: 20px 0;
+.timeline-body {
+    display: flex;
+}
+
+.signal-viz {
     padding: 20px;
     border: 1px solid #ddd;
     border-radius: 8px;
     background: white;
-    min-height: 200px;
+    min-height: 500px;
+    width: 60%;
+}
+
+.signal-code-holder {
+    width: 40%;
+}
+
+.statement-highlight {
+    background-color: #cce4ff;//#ccccff; // #fedada;
+}
+
+.node-label {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: -2px;
+}
+
+.node-name {
+    font-size: 24px;
+    margin-bottom: 4px;
+}
+
+.node-value {
+    font-size: 16px;
+    color: #555;
+}
+
+.node-cause {
+    filter: drop-shadow(0 0 5px #e11);
+}
+
+.vizreactive-source {
+    display: none;
+}
+
+.vizreactive-testname {
+    display: none;
+}
+
+.CodeMirror {
+    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font-size: 12px;
+    height: 100%;
+    max-height: 600px;
 }
 
 /* Responsive Design */

@@ -4,9 +4,6 @@ const $fluidCoreJSScope = function (fluid) {
 
     fluid.version = "Infusion 6.0.0";
 
-    // Export this for use in environments like node.js, where it is useful for configuring stack trace behaviour
-    fluid.Error = Error;
-
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
 
@@ -45,6 +42,24 @@ const $fluidCoreJSScope = function (fluid) {
         return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
     };
 
+    /**
+     * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
+     * not already allocated.
+     * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
+     * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
+     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
+     * If a non-array, it will be pushed to the end of the array using Array.push.
+     */
+    fluid.pushArray = function (holder, member, topush) {
+        const array = holder[member] ? holder[member] : (holder[member] = []);
+        if (Array.isArray(topush)) {
+            array.push.apply(array, topush);
+        } else {
+            array.push(topush);
+        }
+    };
+
+    /** Unavailable value support **/
 
     fluid.unavailablePriority = {
         "I/O": 1,
@@ -181,6 +196,8 @@ const $fluidCoreJSScope = function (fluid) {
         error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
     };
 
+    /** Support for traversing substrate via string paths **/
+
     fluid.getPathSegmentImpl = function (accept, path, i) {
         let segment = "";
         let escaped = false;
@@ -275,6 +292,8 @@ const $fluidCoreJSScope = function (fluid) {
         }
         root[segs[segs.length - 1]] = newValue;
     };
+
+    /** Managing the global namespace **/
 
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
      * @param {String|String[]} path - The global path from which the value is to be fetched

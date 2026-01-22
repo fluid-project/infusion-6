@@ -146,53 +146,6 @@ const $fluidSignalsScope = function (fluid) {
         targetsConsumed: []
     };
 
-    /** End the current "fit" (transaction) which is updating the reactive graph by resetting all the arcs which
-     * have been marked as consumed by one leg of bidirectional update arcs.
-     */
-    fluid.endFit = function () {
-        fluid.CurrentFit.targetsConsumed.forEach(target => target._consumedSources = null);
-        fluid.CurrentFit.targetsConsumed.length = 0;
-    };
-
-    /** Report the cause of any reaction which has updated a given cell, or else the one that is currently
-     * in progress, in the form of an array of nodes reaching back from the supplied cell to the one whose modification
-     * triggered the reaction.
-     * @param {Cell} [inTarget] - If supplied, the cell whose update cause should be reported. If absent, any current
-     * reaction will be used instead.
-     * @return {Cell[]|null} - An array of nodes starting with either [inTarget] or the one targetted by the current
-     * reaction, reaching back to the node whose update caused the reaction, or else `null` if no valid target was supplied.
-     */
-    fluid.findCause = function (inTarget) {
-        const currentEdge = fluid.CurrentReaction;
-        const useTarget = inTarget || currentEdge?.target;
-        if (useTarget) {
-            const cause = [];
-            let target = useTarget;
-
-            do {
-                cause.push(target);
-                target = target._dirtyFrom;
-            } while (target);
-            return cause;
-        } else {
-            return null;
-        }
-    };
-
-    /**
-     * Adds the given sources to the list of culled sources for a specific target cell. This signals that one
-     * leg of a bidirectional arc has been travelled and that the reverse arc should be ignored for this fit.
-     *
-     * @param {Cell} target - The target cell for which sources are being culled.
-     * @param {Array[Cell]} inSources - The array of source cells to be added to the culled sources list.
-     */
-    fluid.consumeSources = function (target, inSources) {
-        const sources = target._consumedSources || [];
-        Array.prototype.push.apply(sources, inSources);
-        target._consumedSources = sources;
-        fluid.CurrentFit.targetsConsumed.push(target);
-    };
-
     /**
      * Removes an element from an array at the specified index by replacing it with the last element,
      * then removing the last element. This is an efficient way to remove an item without preserving order.
@@ -229,6 +182,57 @@ const $fluidSignalsScope = function (fluid) {
         cell._updateRecord = null;
 
         return cell;
+    };
+
+    /** End the current "fit" (transaction) which is updating the reactive graph by resetting all the arcs which
+     * have been marked as consumed by one leg of bidirectional update arcs.
+     */
+    fluid.cell.endFit = function () {
+        fluid.CurrentFit.targetsConsumed.forEach(target => target._consumedSources = null);
+        fluid.CurrentFit.targetsConsumed.length = 0;
+    };
+
+    /** Report the cause of any reaction which has updated a given cell, or else the one that is currently
+     * in progress, in the form of an array of nodes reaching back from the supplied cell to the one whose modification
+     * triggered the reaction.
+     * @param {Cell} [inTarget] - If supplied, the cell whose update cause should be reported. If absent, any current
+     * reaction will be used instead.
+     * @return {Cell[]|null} - An array of nodes starting with either [inTarget] or the one targetted by the current
+     * reaction, reaching back to the node whose update caused the reaction, or else `null` if no valid target was supplied.
+     */
+    fluid.cell.findCause = function (inTarget) {
+        const currentEdge = fluid.CurrentReaction;
+        const useTarget = inTarget || currentEdge?.target;
+        if (useTarget) {
+            const cause = [];
+            let target = useTarget;
+            do {
+                // Don't currently try to report cyclic causes
+                if (!cause.includes(target)) {
+                    cause.push(target);
+                    target = target._dirtyFrom;
+                } else {
+                    target = null;
+                }
+            } while (target);
+            return cause;
+        } else {
+            return null;
+        }
+    };
+
+    /**
+     * Adds the given sources to the list of culled sources for a specific target cell. This signals that one
+     * leg of a bidirectional arc has been travelled and that the reverse arc should be ignored for this fit.
+     *
+     * @param {Cell} target - The target cell for which sources are being culled.
+     * @param {Array[Cell]} inSources - The array of source cells to be added to the culled sources list.
+     */
+    fluid.cell.consumeSources = function (target, inSources) {
+        const sources = target._consumedSources || [];
+        Array.prototype.push.apply(sources, inSources);
+        target._consumedSources = sources;
+        fluid.CurrentFit.targetsConsumed.push(target);
     };
 
     fluid.cell.initialUnavailable = Object.freeze(fluid.unavailable({
@@ -525,7 +529,7 @@ const $fluidSignalsScope = function (fluid) {
         // cell._dirtyFrom = null;
 
         if (fluid.CurrentReaction === null) {
-            fluid.endFit();
+            fluid.cell.endFit();
         }
     };
 
@@ -633,7 +637,7 @@ const $fluidSignalsScope = function (fluid) {
 
         try {
             const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
-            fluid.consumeSources(cell, inEdge.sources);
+            fluid.cell.consumeSources(cell, inEdge.sources);
 
             const result = inEdge.fn.apply(null, args);
 

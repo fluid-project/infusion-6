@@ -10,28 +10,8 @@ var {signal, effect, computed, untracked} = preactSignalsCore;
 
 const $fluidScope = function (fluid) {
 
-    // Export this for use in environments like node.js, where it is useful for
-    // configuring stack trace behaviour
-    fluid.Error = Error;
-
-    fluid.environment = {
-        fluid: fluid
-    };
-
-    fluid.global = fluid.global || typeof window !== "undefined" ?
-        window : typeof self !== "undefined" ? self : {};
-
     fluid.isBrowser = function () {
         return typeof(window) !== "undefined" && !!window.document;
-    };
-
-    // A standard utility to schedule the invocation of a function after the current
-    // stack returns. On browsers this defaults to setTimeout(func, 0) but in
-    // other environments can be customised - e.g. to process.nextTick in node.js
-    // In future, this could be optimised in the browser to not dispatch into the event queue
-    // See https://github.com/YuzuJS/setImmediate for a more verbose but very robust replacement
-    fluid.invokeLater = function (func) {
-        return queueMicrotask(func);
     };
 
     // The following flag defeats all logging/tracing activities in the most performance-critical parts of the framework.
@@ -303,17 +283,6 @@ const $fluidScope = function (fluid) {
         return !value || valueType === "string" || valueType === "boolean" || valueType === "number" || valueType === "function";
     };
 
-    /** Determines whether the supplied object can be treated as an array (primarily, by iterating over numeric keys bounded from 0 to length).
-     * The strategy used is an optimised approach taken from an earlier version of jQuery - detecting whether the toString() version
-     * of the object agrees with the textual form [object Array]
-     *
-     * @param {any} totest - The value to be tested
-     * @return {Boolean} `true` if the supplied value is an array
-     */
-    fluid.isArrayable = function (totest) {
-        return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
-    };
-
     /**
      * Determines whether the supplied object is a plain JSON-forming container - that is, it is either a plain Object
      * or a plain Array. Note that this differs from jQuery's isPlainObject which does not pass Arrays.
@@ -429,19 +398,6 @@ const $fluidScope = function (fluid) {
         } else {
             return fluid.transform(tocopy, copyMember);
         }
-    };
-
-    /**
-     * Converts the given argument into an array or shallow copies it.
-     * - If the argument is `null` or `undefined`, returns an empty array.
-     * - If the argument is a primitive value or not iterable, wraps it in a single-element array.
-     * - If the argument is iterable, converts it into an array using the spread operator.
-     * @param {any} arg - The value to be converted into an array.
-     * @return {Array} An array representation of the input value.
-     */
-    fluid.makeArray = function (arg) {
-        return arg === null || arg === undefined ? [] :
-            fluid.isPrimitive(arg) || typeof arg[Symbol.iterator] !== "function" ? [arg] : [...arg];
     };
 
     /**

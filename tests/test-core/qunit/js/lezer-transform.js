@@ -161,7 +161,7 @@ fluid.lezer.insertIntoArgList = function (argList, newText, position) {
 
     for (let i = 0; i < shortfall; ++i) {
         // Insert before closing (
-        nodes.splice(argList.children.length - 1, 0, {text: ","}, {text: "undefined"});
+        nodes.splice(argList.children.length - 1, 0, {text: ", "}, {text: "undefined"});
     }
     // If there's an existing name don't obliterate it
     if (nodes[expectedPos].text === "undefined") {
@@ -179,14 +179,13 @@ fluid.lezer.insertIntoArgList = function (argList, newText, position) {
 /**
  * Transform a statement to replace fluid.cell().computed() with fluid.vizReactive.asyncComputed()
  * and inject {name: "varName"} into the fluid.cell() call
- * @param {LezerNode} stmt - Statement object with token tree
- * @return {LezerNode} Transformed result with updated text
+ * @param {LezerNode} token - Statement object with token tree
  */
-fluid.lezer.transformStatement = function (stmt) {
-    const token = stmt.token;
+fluid.lezer.transformStatement = function (token) {
 
     const fluidCellCall = fluid.lezer.queryNode(token, "MemberExpression", "fluid.cell")[0];
-    if (fluidCellCall) {
+    // Skip other contexts such as fluid.cell.effect
+    if (fluidCellCall && fluidCellCall.parent.name !== "MemberExpression") {
         const varDecl = fluid.lezer.findAncestor(fluidCellCall, "VariableDeclaration");
         if (varDecl) {
             const def = fluid.lezer.queryNode(varDecl, "VariableDefinition")[0];
@@ -194,6 +193,9 @@ fluid.lezer.transformStatement = function (stmt) {
             const argList = fluid.lezer.queryNode(fluidCellCall.parent, "ArgList")[0];
             fluid.lezer.insertIntoArgList(argList, nodeText, 1);
         }
+        fluidCellCall.text = "fluid.vizReactive.cell";
+        delete fluidCellCall.children;
+        fluid.lezer.markStale(fluidCellCall);
     }
 
     // Not very exact - will hit any member of anything that is "computed", perhaps we want a time-boxed
@@ -213,9 +215,6 @@ fluid.lezer.transformStatement = function (stmt) {
         getParent.parent.children = [awaitFront, variableNode, awaitBack];
         fluid.lezer.markStale(getCall);
     }
-
-    return stmt;
-
 };
 
 // ============================================================================
@@ -229,7 +228,7 @@ fluid.lezer.transformStatement = function (stmt) {
  *
  * @param {LezerNode|null} parent - The parent node, or null if this is the root.
  * @param {LezerJS.TreeCursor} cursor - The Lezer tree cursor positioned at the current node.
- * @param {string} text - The full source text being parsed.
+ * @param {String} text - The full source text being parsed.
  * @param {Object} state - Additional state for parsing (unused here).
  * @return {LezerNode} The constructed node with its children.
  */
@@ -284,22 +283,16 @@ fluid.lezer.pushChildren = function (parent, cursor, text, state) {
  * Skips nested blocks such as "ArrowFunction" and "FunctionExpression" to avoid descending into inner functions.
  *
  * @param {LezerNode} bodyToken - The "Block" node representing the function body.
- * @param {String} fullText - The full source text being parsed.
  * @return {LezerNode[]} Array of statement nodes
  */
-fluid.lezer.parseStatements = function (bodyToken, fullText) {
+fluid.lezer.parseStatements = function (bodyToken) {
     const statements = [];
 
     const findStatements = (token) => {
         // Look for ExpressionStatement and VariableDeclaration at the top level
         if (token.name === "ExpressionStatement" ||
             token.name === "VariableDeclaration") {
-            statements.push({
-                token,
-                text: fullText.substring(token.from, token.to).trim(),
-                from: token.from,
-                to: token.to
-            });
+            statements.push(token);
         }
 
         // Recursively process children, but stop at nested blocks
@@ -319,13 +312,11 @@ fluid.lezer.parseStatements = function (bodyToken, fullText) {
  * and inserts an await statement after each transformed statement.
  * Regenerates the root node text to reflect changes and returns the root token and statements.
  *
- * @param {Function} testFunc - The test function to parse and transform.
+ * @param {String} funcText - The test function to parse and transform.
  * @return {{rootToken: LezerNode, statements: LezerNode[]}} An object containing the root token and the array of statement objects.
  */
-fluid.lezer.parseTestFunction = function (testFunc) {
-    const funcText = testFunc.toString();
+fluid.lezer.parseTestFunction = function (funcText) {
 
-    // Use Lezer to parse the function
     const lezerTree = LezerJS.parser.parse(funcText);
 
     // Build token tree
@@ -335,22 +326,34 @@ fluid.lezer.parseTestFunction = function (testFunc) {
     const blockNode = fluid.lezer.queryNode(rootToken, "Block")[0];
 
     // Parse statements from body
-    const statements = fluid.lezer.parseStatements(blockNode, funcText);
+    const statements = fluid.lezer.parseStatements(blockNode);
+    const clonedStatements = statements.map(token => ({...token}));
 
     // Transform statements that contain .computed or fluid.cell
-    statements.map(stmt => fluid.lezer.transformStatement(stmt));
+    statements.forEach(token => fluid.lezer.transformStatement(token));
 
-    statements.forEach((statement, index) => {
-        const waitNode = {text: `\n    await fluid.vizReactive.getStatementSequenceWait(${index});`, name: "WaitNode"};
-        const token = statement.token;
+    const makeWaitNode = index => ({
+        text: `\n    await fluid.vizReactive.getStatementSequenceWait(${index});` + (index === 0 ? "\n    " : ""),
+        name: "WaitNode"}
+    );
+
+    let firstStatementIndex = -1;
+
+    statements.forEach((token, index) => {
+        const waitNode = makeWaitNode(index + 1);
         const children = token.parent.children;
         const childIndex = children.findIndex(child => child === token);
+        if (firstStatementIndex === -1) {
+            firstStatementIndex = childIndex;
+        }
         children.splice(childIndex + 1, 0, waitNode);
     });
+
+    blockNode.children.splice(firstStatementIndex, 0, makeWaitNode(0));
 
     fluid.lezer.regenerateNodeText(blockNode);
     console.log("Transformed function to:\n" + blockNode.text);
     return {
-        blockNode, statements, transformed: blockNode.text
+        blockNode, statements: clonedStatements, funcText, transformed: blockNode.text
     };
 };
