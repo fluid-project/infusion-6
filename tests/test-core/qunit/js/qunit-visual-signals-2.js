@@ -425,7 +425,7 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint) {
     // Create a new directed graph
     const g = new dagreD3.graphlib.Graph()
         .setGraph({
-            rankdir: "TB",
+            rankdir: "LR", // "TB",
             align: "UL",
             nodesep: 30,
             ranksep: 50,
@@ -492,20 +492,26 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint) {
                 const dx = end.x - start.x;
                 const dy = end.y - start.y;
                 const len = Math.sqrt(dx * dx + dy * dy);
-                const offset = 20; // Curve offset
+                const midOffset = 20; // Curve offset
 
                 // Perpendicular vector (normalized)
-                const perpX = -dy / len * offset;
-                const perpY = dx / len * offset;
+                const perpX = -dy / len * midOffset;
+                const perpY = dx / len * midOffset;
 
                 // Determine which direction to curve based on edge direction
-                const direction = 1; // edgeId.v < edgeId.w ? 1 : -1;
+                const direction = dx > 0 ? 1 : -1; // 1
 
-                const midX = (start.x + end.x) / 2 + perpX * direction;
-                const midY = (start.y + end.y) / 2 + perpY * direction;
+                const midX = (start.x + end.x) / 2 + perpX;
+                const midY = (start.y + end.y) / 2 + perpY;
+
+                const sideOffset = 8;
+                const startX = start.x + perpX / midOffset * sideOffset;
+                const startY = start.y + perpY / midOffset * sideOffset;
+                const endX = end.x + perpX / midOffset * sideOffset;
+                const endY = end.y + perpY / midOffset * sideOffset;
 
                 // Create quadratic bezier curve
-                const pathData = `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`;
+                const pathData = `M ${startX} ${startY} Q ${midX} ${midY} ${endX} ${endY}`;
                 path.attr("d", pathData);
             }
         }
