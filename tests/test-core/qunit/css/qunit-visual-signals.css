@@ -93,14 +93,6 @@
     transform: scale(1.1);
 }
 
-.sequence-point.blue {
-    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
-}
-
-.sequence-point.red {
-    background: linear-gradient(135deg, #e24a4a 0%, #c93a3a 100%);
-}
-
 .sequence-arrow {
     position: absolute;
     bottom: -30px;
@@ -193,11 +185,15 @@
     flex-direction: column;
     align-items: center;
     margin-top: -2px;
+    /** Special override since bootstrap contains a bizarre definition targetting .label */
+    font-weight: 400;
 }
 
 .node-name {
     font-size: 24px;
     margin-bottom: 4px;
+    /** Special override since bootstrap contains a bizarre definition targetting .label */
+    color: black;
 }
 
 .node-value {
@@ -207,6 +203,11 @@
 
 .node-cause {
     filter: drop-shadow(0 0 5px #e11);
+}
+
+
+.label .node-label {
+    color: black;
 }
 
 .vizreactive-source {

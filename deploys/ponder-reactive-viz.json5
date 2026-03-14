@@ -1,0 +1,5 @@
+{
+    source: "tests/manual-tests/framework/html/visual-signal-test.html",
+    target: "../ponder/static/infusion-6",
+    snippet: "../ponder/snippets/reactive-viz.html"
+}

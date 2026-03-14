@@ -1,0 +1,149 @@
+/* eslint-env node */
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const JSON5 = require("json5");
+const { parseHTML } = require("linkedom");
+
+/**
+ * Read and parse a JSON5 file.
+ * @param {String} filePath - Path to the JSON5 file.
+ * @return {Object} Parsed object.
+ */
+const readJSON5 = function (filePath) {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON5.parse(raw);
+};
+
+/**
+ * Determine the subdirectory name ("js" or "css") for a given file extension.
+ * @param {String} ext - File extension including the dot, e.g. ".js".
+ * @return {String} Subdirectory name.
+ */
+const subdirForExt = function (ext) {
+    const map = {
+        ".js": "js",
+        ".css": "css"
+    };
+    return map[ext] || "assets";
+};
+
+/**
+ * Copy a file to the target directory, creating intermediate directories as needed.
+ * @param {String} src - Absolute path of the source file.
+ * @param {String} dest - Absolute path of the destination file.
+ */
+const copyFile = function (src, dest) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+    console.log("  Copied: " + src + " -> " + dest);
+};
+
+/**
+ * Derive a suitable basename for a CSS file sourced from a <link> element,
+ * using the original filename rather than inventing one.
+ * @param {String} filePath - The resolved source path.
+ * @return {String} The basename to use in the target.
+ */
+const cssBasename = function (filePath) {
+    return path.basename(filePath);
+};
+
+/**
+ * Main deploy routine. Reads the config, parses the source HTML <head>,
+ * resolves and copies all referenced assets, and writes a rewritten snippet.
+ * @param {String} configPath - Path to the JSON5 deploy config, relative to cwd.
+ */
+const deploy = function (configPath) {
+    const projectRoot = process.cwd();
+    const config = readJSON5(path.resolve(projectRoot, configPath));
+
+    const sourcePath = path.resolve(projectRoot, config.source);
+    const targetDir = path.resolve(projectRoot, config.target);
+    const snippetPath = path.resolve(projectRoot, config.snippet);
+
+    // The "prefix" used in Hugo pages to reach the asset directory — derived from
+    // the last path segment of the target, e.g. "infusion-6".
+    const hugoPrefix = "/" + path.basename(targetDir);
+
+    const sourceDir = path.dirname(sourcePath);
+    const html = fs.readFileSync(sourcePath, "utf8");
+    const { document } = parseHTML(html);
+
+    const head = document.querySelector("head");
+    if (!head) {
+        console.error("No <head> element found in " + sourcePath);
+        process.exit(1);
+    }
+
+    console.log("Deploying from: " + sourcePath);
+    console.log("Target dir:     " + targetDir);
+    console.log("Snippet:        " + snippetPath);
+    console.log("");
+
+    /** @type {String[]} */
+    const snippetLines = [];
+
+    const children = Array.from(head.children);
+
+    for (const el of children) {
+        const tag = el.tagName.toLowerCase();
+
+        if (tag === "script" && el.getAttribute("src")) {
+            const src = el.getAttribute("src");
+            if (src.startsWith("http://") || src.startsWith("https://")) {
+                // External CDN script — keep as-is in the snippet
+                snippetLines.push(el.outerHTML);
+                continue;
+            }
+            const resolved = path.resolve(sourceDir, src);
+            const basename = path.basename(resolved);
+            const ext = path.extname(resolved);
+            const subdir = subdirForExt(ext);
+            const destPath = path.join(targetDir, subdir, basename);
+
+            copyFile(resolved, destPath);
+            snippetLines.push("<script src=\"" + hugoPrefix + "/" + subdir + "/" + basename + "\"></script>");
+
+        } else if (tag === "link" && el.getAttribute("rel") === "stylesheet" && el.getAttribute("href")) {
+            const href = el.getAttribute("href");
+            if (href.startsWith("http://") || href.startsWith("https://")) {
+                snippetLines.push(el.outerHTML);
+                continue;
+            }
+            const resolved = path.resolve(sourceDir, href);
+            const basename = cssBasename(resolved);
+            const ext = path.extname(resolved);
+            const subdir = subdirForExt(ext);
+            const destPath = path.join(targetDir, subdir, basename);
+
+            copyFile(resolved, destPath);
+            snippetLines.push("<link rel=\"stylesheet\" href=\"" + hugoPrefix + "/" + subdir + "/" + basename + "\" />");
+
+        } else if (tag === "style") {
+            // Inline <style> blocks are preserved verbatim
+            snippetLines.push(el.outerHTML);
+
+        } else if (tag === "meta" || tag === "title") {
+            // Skip meta/title — the Hugo template provides these
+        }
+    }
+
+    const snippet = snippetLines.join("\n") + "\n";
+
+    fs.mkdirSync(path.dirname(snippetPath), { recursive: true });
+    fs.writeFileSync(snippetPath, snippet, "utf8");
+    console.log("\nSnippet written to: " + snippetPath);
+};
+
+// --- Entry point ---
+
+const configArg = process.argv[2];
+if (!configArg) {
+    console.error("Usage: node deploySnippet.js <config.json5>");
+    console.error("  e.g. node deploySnippet.js deploys/ponder-reactive-viz.json5");
+    process.exit(1);
+}
+
+deploy(configArg);

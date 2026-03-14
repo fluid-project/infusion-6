@@ -97,8 +97,6 @@ QUnit.test("Bidi tests with three nodes", assert => {
     fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
     celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
-    return;
-
     // Celsius value has spread in both directions
     assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
     assert.equal(fahrenheitCell.get(), 59, "Spread from Celsius to Fahrenheit");

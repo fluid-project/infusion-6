@@ -402,3 +402,36 @@ QUnit.test("Should still resolve in untracked scopes", async assert => {
     await Promise.resolve();
     assert.equal(callCount, 1, "Async not re-triggered");
 });
+
+QUnit.test("Bidi async tests with three nodes", async assert => {
+
+    const kelvinCell = fluid.cell();
+    kelvinCell.name = "Kelvin";
+    const celsiusCell = fluid.cell(15);
+    celsiusCell.name = "Celsius";
+    const fahrenheitCell = fluid.cell();
+    fahrenheitCell.name = "Fahrenheit";
+
+    kelvinCell.asyncComputed(celsius => celsius + 273.15, [celsiusCell]);
+    celsiusCell.asyncComputed(kelvin => kelvin - 273.15, [kelvinCell]);
+
+    fahrenheitCell.asyncComputed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    celsiusCell.asyncComputed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+
+    // Allow first async resolution
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    // Celsius value has spread in both directions
+    assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
+    assert.equal(fahrenheitCell.get(), 59, "Spread from Celsius to Fahrenheit");
+
+    kelvinCell.set(293.15);
+
+    // Allow first async resolution
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    assert.nearEqual(celsiusCell.get(), 20, "Spread from Kelvin to Celsius");
+    assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
+});

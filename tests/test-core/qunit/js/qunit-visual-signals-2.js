@@ -425,7 +425,7 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint) {
     // Create a new directed graph
     const g = new dagreD3.graphlib.Graph()
         .setGraph({
-            rankdir: "LR", // "TB",
+            rankdir: "TB", // "LR"
             align: "UL",
             nodesep: 30,
             ranksep: 50,
@@ -621,12 +621,12 @@ if (typeof(QUnit) !== "undefined") {
 
 fluid.vizReactive.bootVizReactiveUI = function () {
     const roots = [...document.querySelectorAll(".vizreactive-target")];
-    roots.forEach(root => {
+    roots.forEach(async root => {
         const textSource = root.querySelector(".vizreactive-source");
-        const funcText = textSource.innerText;
+        const sourceUrl = textSource.getAttribute("src");
+        const funcText = sourceUrl ? await (await fetch(sourceUrl)).text() : textSource.innerText;
         const testNameSource = root.querySelector(".vizreactive-testname");
         const testName = testNameSource.innerText;
-        // noinspection JSIgnoredPromiseFromCall
-        fluid.vizReactive.vizReactiveUI(root, testName, funcText, fluid.vizReactive.stubAssert);
+        await fluid.vizReactive.vizReactiveUI(root, testName, funcText, fluid.vizReactive.stubAssert);
     });
-}
+};
