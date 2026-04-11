@@ -548,7 +548,9 @@ fluid.vizReactive.stubAssert = {
     notEqual() {},
     strictEqual() {},
     notStrictEqual() {},
-    deepEqual() {},
+    deepEqual(actual, expected, message) {
+        console.log("QUnit.deepEqual(", actual, ", ", expected, ", ", message);
+    },
     notDeepEqual() {},
     propEqual() {},
     notPropEqual() {},

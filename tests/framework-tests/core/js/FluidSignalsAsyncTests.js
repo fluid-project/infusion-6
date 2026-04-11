@@ -418,20 +418,94 @@ QUnit.test("Bidi async tests with three nodes", async assert => {
     fahrenheitCell.asyncComputed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
     celsiusCell.asyncComputed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
-    // Allow first async resolution
-    await new Promise(r => setTimeout(r, 0));
-    await new Promise(r => setTimeout(r, 0));
-
     // Celsius value has spread in both directions
     assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
     assert.equal(fahrenheitCell.get(), 59, "Spread from Celsius to Fahrenheit");
 
     kelvinCell.set(293.15);
 
-    // Allow first async resolution
-    await new Promise(r => setTimeout(r, 0));
-    await new Promise(r => setTimeout(r, 0));
-
     assert.nearEqual(celsiusCell.get(), 20, "Spread from Kelvin to Celsius");
     assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
+});
+
+QUnit.test("Bidi async test tests", async assert => {
+
+    const celsiusCell = fluid.cell(15, {name: "C"});
+    const fahrenheitCell = fluid.cell(undefined, {name: "F"});
+
+    const cSeq = [];
+    const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell], {name: "cEffect"});
+
+    assert.deepEqual(cSeq, [15], "Startup notification");
+
+    const fSeq = [];
+    const fEffect = fluid.cell.effect(fahrenheit => fSeq.push(fahrenheit), [fahrenheitCell], {name: "fEffect"});
+
+    const reset = () => {
+        fSeq.length = 0;
+        cSeq.length = 0;
+    };
+
+    assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
+
+    fahrenheitCell.asyncComputed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
+
+    await fluid.returnAsync();
+
+    assert.deepEqual(fSeq, [59], "One notification on forward arc");
+    assert.deepEqual(cSeq, [15], "No backward notification");
+
+    celsiusCell.asyncComputed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
+
+    assert.deepEqual(fSeq, [59], "No change on faithful inverse");
+    assert.deepEqual(cSeq, [15], "No change on faithful inverse");
+
+    reset();
+
+    console.log("SET CELSIUS 20")
+
+    celsiusCell.set(20);
+
+    await fluid.returnAsync();
+
+    assert.deepEqual(cSeq, [20], "Original update");
+    assert.deepEqual(fSeq, [68], "Relayed update");
+
+    reset();
+
+    fahrenheitCell.set(212);
+
+    await fluid.returnAsync();
+
+    assert.deepEqual(fSeq, [212], "Original update");
+    assert.deepEqual(cSeq, [100], "Relayed update");
+
+    // Tear down one relation
+    fahrenheitCell.asyncComputed(null, [celsiusCell]);
+
+    reset();
+
+    celsiusCell.set(20);
+
+    assert.deepEqual(cSeq, [20], "Original update");
+    assert.deepEqual(fSeq, [], "No relay update");
+
+    reset();
+
+    fahrenheitCell.set(59);
+
+    assert.deepEqual(fSeq, [59], "Original update");
+    assert.deepEqual(cSeq, [15], "Relayed update");
+
+    reset();
+
+    // Dispose of the sequence logging effects
+    cEffect.dispose();
+    fEffect.dispose();
+
+    fahrenheitCell.set(68);
+
+    assert.deepEqual(fSeq, [], "No further notifications");
+    assert.deepEqual(cSeq, [], "No further notifications");
+
 });

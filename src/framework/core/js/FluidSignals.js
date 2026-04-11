@@ -295,9 +295,12 @@ const $fluidSignalsScope = function (fluid) {
             // Mark observers as dirty
             if (this._observers) {
                 const markedSources = [this];
+                const consumedSources = this._consumedSources;
                 for (let i = 0; i < this._observers.length; i++) {
                     const observer = this._observers[i];
-                    fluid.cell.markStale(observer, CacheDirty, markedSources, this);
+                    if (!consumedSources?.includes(observer)) {
+                        fluid.cell.markStale(observer, CacheDirty, markedSources, this);
+                    }
                 }
             }
 
@@ -410,6 +413,14 @@ const $fluidSignalsScope = function (fluid) {
         }
     };
 
+    fluid.cell.queueEffect = function (cell) {
+        if (cell._isEffect && !cell._isQueued) {
+            console.log("Pushing effect " + cell.name);
+            cell._isQueued = true;
+            fluid.EffectQueue.push(cell);
+        }
+    };
+
     /**
      * Marks a cell and its observers as stale, updating their cache state.
      *
@@ -421,13 +432,9 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell.markStale = function (cell, state, markedSources, dirtyFrom, availChange) {
         console.log("markStale for " + cell.name, " state ", state);
-        // If we were previously clean, then we know that we may need to update to get the new value
-        if (cell._isEffect && !cell._isQueued) {
-            console.log("Pushing effect " + cell.name);
-            cell._isQueued = true;
-            fluid.EffectQueue.push(cell);
-        }
+        fluid.cell.queueEffect(cell);
 
+        // If we were previously clean, then we know that we may need to update to get the new value
         if (cell._state < state || availChange) {
             cell._state = state;
             cell._dirtyFrom = dirtyFrom;
@@ -535,7 +542,7 @@ const $fluidSignalsScope = function (fluid) {
 
     /**
      * Executes a function in an "untracked" context, temporarily suspending the current reactive tracking.
-     * This allows code to run without capturing dependencies or affecting the reactive graph.
+     * This allows code to run without capturing dependencies.
      *
      * @param {Function} fn - The function to execute in an untracked context.
      */
@@ -630,15 +637,15 @@ const $fluidSignalsScope = function (fluid) {
 
         let syncUpdate = !inEdge.isAsync;
 
-        if (!syncUpdate) {
-            // Mark the cell as unavailable/stale whilst it is updating
-            cell.set(fluid.pending(cell._value, cell.name));
-        }
-
         try {
-            const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
             fluid.cell.consumeSources(cell, inEdge.sources);
 
+            if (!syncUpdate) {
+                // Mark the cell as unavailable/stale whilst it is updating
+                cell.set(fluid.pending(cell._value, cell.name));
+            }
+
+            const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
             const result = inEdge.fn.apply(null, args);
 
             if (!syncUpdate) {
@@ -777,14 +784,13 @@ const $fluidSignalsScope = function (fluid) {
 
         const {fn, staticSources} = config.bind;
 
-        // Wrap the user's supplied function to short-circuit if any arguments are unavailable if effect is not marked "free"
-        const computeFn = config.isFree ? fn : function () {
-            if (effect._isDisposed) {
-                return;
+        // Wrap user's function to track execution and neutering on disposal
+        const computeFn = function () {
+            if (!effect._isDisposed) {
+                fn.apply(effect, arguments);
             }
-            const args = staticSources.map(s => s.get());
-
-            fn.apply(effect, args);
+            // Return value so that stabilize can determine that we executed without short-circuiting
+            return true;
         };
 
         // Set up "computation" which will invoke us
@@ -819,19 +825,26 @@ const $fluidSignalsScope = function (fluid) {
         });
     };
 
+    fluid.cell.deferredEffects = [];
+
     // Stabilize function to process effect queue
     fluid.cell.stabilize = function () {
         while (fluid.EffectQueue.length > 0) {
             const queue = fluid.EffectQueue.slice();
             fluid.EffectQueue.length = 0;
 
-            for (let i = 0; i < queue.length; i++) {
-                const effect = queue[i];
-                effect.get();
+            const deferredEffects = queue.filter(effect => {
+                effect._value = undefined;
+                const activated = effect.get();
                 effect._isQueued = false;
                 console.log("Effect " + effect.name + " unqueued");
-            }
+                return !activated;
+            });
+            fluid.cell.deferredEffects.push(...deferredEffects);
         }
+        // Deduplicate any deferred effects and queue them for testing on the next cycle
+        fluid.cell.deferredEffects.forEach(cell => fluid.cell.queueEffect(cell));
+        fluid.cell.deferredEffects.length = 0;
     };
 
     /**
