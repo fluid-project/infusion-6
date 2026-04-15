@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>MicroSQL Performance Tests</title>
+
+    <script src="../../../../src/framework/core/js/FluidMicroSQL.js"></script>
+
+
+</head>
+<style>
+    .target {
+        display: none;
+    }
+</style>
+<body>
+<main>
+    <button id="run-tests">MicroSQL Tests</button>
+    <h1>Performance Tests: MicroSQL</h1>
+    <h2>Results</h2>
+    <ul class="results"></ul>
+    <div class="target"></div>
+</main>
+<script src="../js/microsql-perf-test.js"></script>
+<script>
+    document.querySelector("#run-tests").addEventListener("click", runBenchmarks);
+</script>
+</body>
+</html>

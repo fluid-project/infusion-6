@@ -131,7 +131,7 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (fn, staticSources, prop
             timeline.computeSequencePoints.push(sequencePoint);
             fluid.pushArray(timeline.edgeInvocations, edgeKey, {sequenceIndex, causeNames});
         }
-        const result = await fn.apply(this, args);
+        const result = fn.apply(this, args);
 
         if (!timeline.initialRun) {
             const invocations = timeline.edgeInvocations[edgeKey];
@@ -144,7 +144,7 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (fn, staticSources, prop
     };
 
     // Call the original asyncComputed with the wrapped function
-    return fluid.cellPrototype.asyncComputed.call(this, wrappedFn, staticSources, props);
+    return fluid.cellPrototype.asyncComputed.call(this, fn && wrappedFn, staticSources, props);
 };
 
 fluid.vizReactive.stepForward = function (timeline) {
@@ -259,15 +259,16 @@ fluid.vizReactive.updateCodeHighlight = function (timeline, token) {
     }
     if (token) {
         const cm = timeline.codeMirror;
-        timeline.codeMark = cm.markText(cm.posFromIndex(token.from),
-            cm.posFromIndex(token.to), {className: "statement-highlight"});
+        const startPos = cm.posFromIndex(token.from);
+        timeline.codeMark = cm.markText(startPos, cm.posFromIndex(token.to), {className: "statement-highlight"});
+        cm.scrollIntoView(startPos, 20);
     } else {
         timeline.codeMark = null;
     }
 };
 
 fluid.vizReactive.updateTimelineUI = function (timeline) {
-    const currentStatement = timeline.sequencePoints.findLast((point, index) => point.type === "statement" && index < timeline.currentIndex);
+    const currentStatement = timeline.sequencePoints.findLast((point, index) => point.type === "statement" && index <= timeline.currentIndex);
     const currentStatementToken = currentStatement && timeline.statements[currentStatement.statementIndex];
 
     const container = timeline.container;
@@ -283,14 +284,14 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
         const executed = point.executed || isActive ? "executed" : "";
         const active = isActive ? "active" : "";
         const label = point.type === "statement" ? "S" : "C"; // S=Statement, C=Computation
-        const title = point.type === "statement" ? idx === 0 ? "" : timeline.statements[point.statementIndex - 1].text : "";
+        const title = point.type === "statement" ? timeline.statements[point.statementIndex].text : "";
 
         html += `
             <div class="sequence-point ${point.type} ${executed} ${active}"
                  style="background-color: ${color}"
                  title="${title.replace(/"/g, "&quot;")}...">
                 <span class="point-label">${label}</span>
-                <span class="point-index">${idx}</span>
+                <span class="point-index">${idx + 1}</span>
             </div>
         `;
     });
@@ -298,22 +299,19 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
     html += "</div>";
 
     // Add arrow indicator
-    if (timeline.currentIndex >= 0) {
-        const pointWidth = 40; // Width + gap
-        html += "<div class=\"sequence-arrow\" style=\"left: " +
-            (timeline.currentIndex * pointWidth + 10) + "px\">▲</div>";
-    }
+    const pointWidth = 40; // Width + gap
+    html += "<div class=\"sequence-arrow\" style=\"left: " +
+        (timeline.currentIndex * pointWidth + 10) + "px\">▲</div>";
 
     sequenceDiv.innerHTML = html;
     let currentPoint;
 
     // Show current statement or computation
-    if (timeline.currentIndex > 0) {
-        currentPoint = timeline.sequencePoints[timeline.currentIndex];
-        const typeLabel = currentPoint.type === "statement" ? "Statement" : "Computation";
-        const typeColor = fluid.vizReactive.colours[currentPoint.type];
+    currentPoint = timeline.sequencePoints[timeline.currentIndex];
+    const typeLabel = currentPoint.type === "statement" ? "Statement" : "Computation";
+    const typeColor = fluid.vizReactive.colours[currentPoint.type];
 
-        let content = `
+    let content = `
             <div class="current-statement">
                 <div class="statement-header">
                     <strong style="color: ${typeColor}">Step ${timeline.currentIndex}: ${typeLabel}</strong>
@@ -322,18 +320,15 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
                 <div>${currentPoint.text}</div>
         `;
 
-        content += "</div>";
-        statementDiv.innerHTML = content;
-    } else {
-        statementDiv.innerHTML = `
-            <div class="current-statement">
-                <div class="statement-header">
-                    <strong>Not started</strong>
-                </div>
-                <p>Click "Next" to begin executing the test</p>
-            </div>
-        `;
-    }
+    content += "</div>";
+    statementDiv.innerHTML = content;
+
+    // After rendering the UI, update button states
+    const prevBtn = container.querySelector(".btn-prev");
+    const nextBtn = container.querySelector(".btn-next");
+
+    prevBtn.disabled = timeline.currentIndex <= 0;
+    nextBtn.disabled = timeline.currentIndex >= timeline.sequencePoints.length - 1;
 
     fluid.vizReactive.updateCodeHighlight(timeline, currentStatementToken);
 

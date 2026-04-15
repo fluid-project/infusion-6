@@ -535,9 +535,6 @@ const $fluidSignalsScope = function (fluid) {
         cell._state = CacheClean;
         // cell._dirtyFrom = null;
 
-        if (fluid.CurrentReaction === null) {
-            fluid.cell.endFit();
-        }
     };
 
     /**
@@ -578,7 +575,7 @@ const $fluidSignalsScope = function (fluid) {
 
         // Don't mark ourselves as clean if value is not available since it may be computable from another relation
         if (!fluid.isUnavailable(newValue)) {
-            console.log("Update complete for " + cell.name + ", marking clean");
+            console.log("Update complete for " + (cell._isEffect ? " effect " : "") + cell.name + ", marking clean");
             cell._state = CacheClean;
         }
 
@@ -651,7 +648,7 @@ const $fluidSignalsScope = function (fluid) {
             if (!syncUpdate) {
                 if (fluid.isPromise(result)) {
                     result.then(newValue => {
-                        console.log("Async update for value of cell ", cell.name);
+                        console.log("Async update for value of cell ", cell.name, " yielded value ", newValue);
                         fluid.cell.updateComplete(newValue, cell, false);
                     },
                     e => cell._error = e);
@@ -713,7 +710,8 @@ const $fluidSignalsScope = function (fluid) {
                                 fluid.cell.updateIfNecessary(source, visited);  // updateIfNecessary() can change this.state
                             }
                         }
-                        if (cell._state === CacheDirty) {
+                        // Second leg of this test is necessary otherwise "Should show pending state" leaves dirty fit state, try to understand implications
+                        if (cell._state === CacheDirty || cell._isEffect && cell._state === CacheCheck) {
                             dirtyEdge = fluid.cell.findDirtyEdge(cell);
                             if (dirtyEdge) {
                                 // Stop the loop here so we won't trigger updates on other parents unnecessarily
@@ -845,6 +843,13 @@ const $fluidSignalsScope = function (fluid) {
         // Deduplicate any deferred effects and queue them for testing on the next cycle
         fluid.cell.deferredEffects.forEach(cell => fluid.cell.queueEffect(cell));
         fluid.cell.deferredEffects.length = 0;
+        if (fluid.EffectQueue.length === 0) {
+            fluid.cell.endFit();
+        }
+    };
+
+    fluid.cell.isIdle = function () {
+        return fluid.EffectQueue.length === 0;
     };
 
     /**

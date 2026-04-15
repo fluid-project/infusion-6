@@ -90,6 +90,10 @@ QUnit.assert.nearEqual = function (actual, expected, message) {
     });
 };
 
+fluid.returnAsync = function (value) {
+    return new Promise(resolve => setTimeout(() => resolve(value), 0));
+};
+
 fluid.isIgnorableNode = function (node) {
     return node.nodeType === 3 && /^\s*$/.test(node.nodeValue); // Whitespace text node
 };

@@ -18,6 +18,7 @@
 /* Controls */
 .timeline-controls {
     margin: 10px 0;
+    user-select: none;
 }
 
 .timeline-btn {
@@ -38,6 +39,15 @@
     color: white;
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.timeline-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #eee;
+    color: #aaa;
+    border-color: #ccc;
+    pointer-events: none;
 }
 
 .timeline-btn:active {
@@ -91,14 +101,6 @@
     border: 3px solid #333;
     box-shadow: 0 0 10px rgba(0,0,0,0.3);
     transform: scale(1.1);
-}
-
-.sequence-point.blue {
-    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
-}
-
-.sequence-point.red {
-    background: linear-gradient(135deg, #e24a4a 0%, #c93a3a 100%);
 }
 
 .sequence-arrow {
@@ -193,11 +195,15 @@
     flex-direction: column;
     align-items: center;
     margin-top: -2px;
+    /** Special override since bootstrap contains a bizarre definition targetting .label */
+    font-weight: 400;
 }
 
 .node-name {
     font-size: 24px;
     margin-bottom: 4px;
+    /** Special override since bootstrap contains a bizarre definition targetting .label */
+    color: black;
 }
 
 .node-value {
@@ -207,6 +213,11 @@
 
 .node-cause {
     filter: drop-shadow(0 0 5px #e11);
+}
+
+
+.label .node-label {
+    color: black;
 }
 
 .vizreactive-source {

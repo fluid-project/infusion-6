@@ -18,6 +18,7 @@
 /* Controls */
 .timeline-controls {
     margin: 10px 0;
+    user-select: none;
 }
 
 .timeline-btn {
@@ -38,6 +39,15 @@
     color: white;
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.timeline-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #eee;
+    color: #aaa;
+    border-color: #ccc;
+    pointer-events: none;
 }
 
 .timeline-btn:active {

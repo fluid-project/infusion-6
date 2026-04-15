@@ -333,23 +333,21 @@ fluid.lezer.parseTestFunction = function (funcText) {
     statements.forEach(token => fluid.lezer.transformStatement(token));
 
     const makeWaitNode = index => ({
-        text: `\n    await fluid.vizReactive.getStatementSequenceWait(${index});` + (index === 0 ? "\n    " : ""),
+        text: `await fluid.vizReactive.getStatementSequenceWait(${index});\n    `,
         name: "WaitNode"}
     );
 
     let firstStatementIndex = -1;
 
     statements.forEach((token, index) => {
-        const waitNode = makeWaitNode(index + 1);
+        const waitNode = makeWaitNode(index);
         const children = token.parent.children;
         const childIndex = children.findIndex(child => child === token);
         if (firstStatementIndex === -1) {
             firstStatementIndex = childIndex;
         }
-        children.splice(childIndex + 1, 0, waitNode);
+        children.splice(childIndex, 0, waitNode);
     });
-
-    blockNode.children.splice(firstStatementIndex, 0, makeWaitNode(0));
 
     fluid.lezer.regenerateNodeText(blockNode);
     console.log("Transformed function to:\n" + blockNode.text);

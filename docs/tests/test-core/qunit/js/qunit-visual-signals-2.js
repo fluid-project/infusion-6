@@ -131,7 +131,7 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (fn, staticSources, prop
             timeline.computeSequencePoints.push(sequencePoint);
             fluid.pushArray(timeline.edgeInvocations, edgeKey, {sequenceIndex, causeNames});
         }
-        const result = await fn.apply(this, args);
+        const result = fn.apply(this, args);
 
         if (!timeline.initialRun) {
             const invocations = timeline.edgeInvocations[edgeKey];
@@ -144,7 +144,7 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (fn, staticSources, prop
     };
 
     // Call the original asyncComputed with the wrapped function
-    return fluid.cellPrototype.asyncComputed.call(this, wrappedFn, staticSources, props);
+    return fluid.cellPrototype.asyncComputed.call(this, fn && wrappedFn, staticSources, props);
 };
 
 fluid.vizReactive.stepForward = function (timeline) {
@@ -259,15 +259,16 @@ fluid.vizReactive.updateCodeHighlight = function (timeline, token) {
     }
     if (token) {
         const cm = timeline.codeMirror;
-        timeline.codeMark = cm.markText(cm.posFromIndex(token.from),
-            cm.posFromIndex(token.to), {className: "statement-highlight"});
+        const startPos = cm.posFromIndex(token.from);
+        timeline.codeMark = cm.markText(startPos, cm.posFromIndex(token.to), {className: "statement-highlight"});
+        cm.scrollIntoView(startPos, 20);
     } else {
         timeline.codeMark = null;
     }
 };
 
 fluid.vizReactive.updateTimelineUI = function (timeline) {
-    const currentStatement = timeline.sequencePoints.findLast((point, index) => point.type === "statement" && index < timeline.currentIndex);
+    const currentStatement = timeline.sequencePoints.findLast((point, index) => point.type === "statement" && index <= timeline.currentIndex);
     const currentStatementToken = currentStatement && timeline.statements[currentStatement.statementIndex];
 
     const container = timeline.container;
@@ -283,14 +284,14 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
         const executed = point.executed || isActive ? "executed" : "";
         const active = isActive ? "active" : "";
         const label = point.type === "statement" ? "S" : "C"; // S=Statement, C=Computation
-        const title = point.type === "statement" ? idx === 0 ? "" : timeline.statements[point.statementIndex - 1].text : "";
+        const title = point.type === "statement" ? timeline.statements[point.statementIndex].text : "";
 
         html += `
             <div class="sequence-point ${point.type} ${executed} ${active}"
                  style="background-color: ${color}"
                  title="${title.replace(/"/g, "&quot;")}...">
                 <span class="point-label">${label}</span>
-                <span class="point-index">${idx}</span>
+                <span class="point-index">${idx + 1}</span>
             </div>
         `;
     });
@@ -298,22 +299,19 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
     html += "</div>";
 
     // Add arrow indicator
-    if (timeline.currentIndex >= 0) {
-        const pointWidth = 40; // Width + gap
-        html += "<div class=\"sequence-arrow\" style=\"left: " +
-            (timeline.currentIndex * pointWidth + 10) + "px\">▲</div>";
-    }
+    const pointWidth = 40; // Width + gap
+    html += "<div class=\"sequence-arrow\" style=\"left: " +
+        (timeline.currentIndex * pointWidth + 10) + "px\">▲</div>";
 
     sequenceDiv.innerHTML = html;
     let currentPoint;
 
     // Show current statement or computation
-    if (timeline.currentIndex > 0) {
-        currentPoint = timeline.sequencePoints[timeline.currentIndex];
-        const typeLabel = currentPoint.type === "statement" ? "Statement" : "Computation";
-        const typeColor = fluid.vizReactive.colours[currentPoint.type];
+    currentPoint = timeline.sequencePoints[timeline.currentIndex];
+    const typeLabel = currentPoint.type === "statement" ? "Statement" : "Computation";
+    const typeColor = fluid.vizReactive.colours[currentPoint.type];
 
-        let content = `
+    let content = `
             <div class="current-statement">
                 <div class="statement-header">
                     <strong style="color: ${typeColor}">Step ${timeline.currentIndex}: ${typeLabel}</strong>
@@ -322,18 +320,15 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
                 <div>${currentPoint.text}</div>
         `;
 
-        content += "</div>";
-        statementDiv.innerHTML = content;
-    } else {
-        statementDiv.innerHTML = `
-            <div class="current-statement">
-                <div class="statement-header">
-                    <strong>Not started</strong>
-                </div>
-                <p>Click "Next" to begin executing the test</p>
-            </div>
-        `;
-    }
+    content += "</div>";
+    statementDiv.innerHTML = content;
+
+    // After rendering the UI, update button states
+    const prevBtn = container.querySelector(".btn-prev");
+    const nextBtn = container.querySelector(".btn-next");
+
+    prevBtn.disabled = timeline.currentIndex <= 0;
+    nextBtn.disabled = timeline.currentIndex >= timeline.sequencePoints.length - 1;
 
     fluid.vizReactive.updateCodeHighlight(timeline, currentStatementToken);
 
@@ -425,7 +420,7 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint) {
     // Create a new directed graph
     const g = new dagreD3.graphlib.Graph()
         .setGraph({
-            rankdir: "TB",
+            rankdir: "TB", // "LR"
             align: "UL",
             nodesep: 30,
             ranksep: 50,
@@ -492,20 +487,26 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint) {
                 const dx = end.x - start.x;
                 const dy = end.y - start.y;
                 const len = Math.sqrt(dx * dx + dy * dy);
-                const offset = 20; // Curve offset
+                const midOffset = 20; // Curve offset
 
                 // Perpendicular vector (normalized)
-                const perpX = -dy / len * offset;
-                const perpY = dx / len * offset;
+                const perpX = -dy / len * midOffset;
+                const perpY = dx / len * midOffset;
 
                 // Determine which direction to curve based on edge direction
-                const direction = 1; // edgeId.v < edgeId.w ? 1 : -1;
+                const direction = dx > 0 ? 1 : -1; // 1
 
-                const midX = (start.x + end.x) / 2 + perpX * direction;
-                const midY = (start.y + end.y) / 2 + perpY * direction;
+                const midX = (start.x + end.x) / 2 + perpX;
+                const midY = (start.y + end.y) / 2 + perpY;
+
+                const sideOffset = 8;
+                const startX = start.x + perpX / midOffset * sideOffset;
+                const startY = start.y + perpY / midOffset * sideOffset;
+                const endX = end.x + perpX / midOffset * sideOffset;
+                const endY = end.y + perpY / midOffset * sideOffset;
 
                 // Create quadratic bezier curve
-                const pathData = `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`;
+                const pathData = `M ${startX} ${startY} Q ${midX} ${midY} ${endX} ${endY}`;
                 path.attr("d", pathData);
             }
         }
@@ -542,7 +543,9 @@ fluid.vizReactive.stubAssert = {
     notEqual() {},
     strictEqual() {},
     notStrictEqual() {},
-    deepEqual() {},
+    deepEqual(actual, expected, message) {
+        console.log("QUnit.deepEqual(", actual, ", ", expected, ", ", message);
+    },
     notDeepEqual() {},
     propEqual() {},
     notPropEqual() {},
@@ -615,12 +618,12 @@ if (typeof(QUnit) !== "undefined") {
 
 fluid.vizReactive.bootVizReactiveUI = function () {
     const roots = [...document.querySelectorAll(".vizreactive-target")];
-    roots.forEach(root => {
+    roots.forEach(async root => {
         const textSource = root.querySelector(".vizreactive-source");
-        const funcText = textSource.innerText;
+        const sourceUrl = textSource.getAttribute("src");
+        const funcText = sourceUrl ? await (await fetch(sourceUrl)).text() : textSource.innerText;
         const testNameSource = root.querySelector(".vizreactive-testname");
         const testName = testNameSource.innerText;
-        // noinspection JSIgnoredPromiseFromCall
-        fluid.vizReactive.vizReactiveUI(root, testName, funcText, fluid.vizReactive.stubAssert);
+        await fluid.vizReactive.vizReactiveUI(root, testName, funcText, fluid.vizReactive.stubAssert);
     });
-}
+};
