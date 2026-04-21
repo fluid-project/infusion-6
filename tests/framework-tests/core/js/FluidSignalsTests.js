@@ -8,7 +8,7 @@ QUnit.module("Fluid Signals Tests");
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts
 // at https://www.ppig.org/files/2015-PPIG-26th-Basman.pdf
 
-QUnit.test("Bidi tests", assert => {
+QUnit.test("Bidirectional tests - two nodes", assert => {
 
     const celsiusCell = fluid.cell(15, {name: "C"});
     const fahrenheitCell = fluid.cell(undefined, {name: "F"});
@@ -82,7 +82,7 @@ QUnit.test("Bidi tests", assert => {
 
 });
 
-QUnit.test("Bidi tests with three nodes", assert => {
+QUnit.test("Bidirectional tests - three nodes", assert => {
 
     const kelvinCell = fluid.cell();
     kelvinCell.name = "Kelvin";

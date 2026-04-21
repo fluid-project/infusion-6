@@ -14,8 +14,7 @@ QUnit.test("preact-signals: Should run computeds once for multiple dep changes",
 
     let computeCount = 0;
 
-    const c = fluid.cell().computed(
-        (aVal, bVal) => {
+    const c = fluid.cell().computed(function (aVal, bVal) {
             computeCount++;
             return aVal + bVal;
         },

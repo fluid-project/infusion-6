@@ -59,6 +59,40 @@ const $fluidCoreJSScope = function (fluid) {
         }
     };
 
+    /* A special "marker object" representing that no value is present (where
+     * signalling using the value "undefined" is not possible - e.g. the return value from a "strategy"). This
+     * is intended for "ephemeral use", i.e. returned directly from strategies and transforms and should not be
+     * stored in data structures */
+    fluid.NoValue = Symbol("No Value");
+
+    /**
+     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
+     *
+     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
+     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String): The key of the current property .
+     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
+     */
+    fluid.transform = function (source, func) {
+        if (source) {
+            const togo = {};
+            for (const key in source) {
+                const ret = func(source[key], key);
+                if (ret !== fluid.NoValue) {
+                    togo[key] = ret;
+                }
+            }
+            return togo;
+        } else {
+            return source;
+        }
+    };
+
+    fluid.invokeLater = function (func) {
+        return setTimeout(func, 0);
+    };
+
     /** Unavailable value support **/
 
     fluid.unavailablePriority = {

@@ -137,6 +137,11 @@ fluid.lezer.serializeTree = function (rootNode) {
 };
 
 
+/* Helpful utility to prepare for visualising tree as JSON **/
+// eslint-disable-next-line no-unused-vars
+fluid.lezer.stripParents = ({parent, children, ...node}) =>
+    ({...node, ...(children && {children: children.map(fluid.lezer.stripParents)})});
+
 /**
  * Insert or update text node into an ArgList
  * @param {LezerNode} argList - The ArgList node
@@ -172,16 +177,61 @@ fluid.lezer.insertIntoArgList = function (argList, newText, position) {
 };
 
 
+/**
+ * Returns the first token in the array after the given index whose name is not "Skip".
+ *
+ * @param {LezerNode[]} tokens - Array of token objects to search.
+ * @param {Number} fromIndex - The index to start searching from.
+ * @return {LezerNode} The first non-"Skip" token after fromIndex, or undefined if none found.
+ */
+fluid.lezer.firstNonSkip = function (tokens, fromIndex) {
+    return tokens.slice(fromIndex).find(token => token.name !== "Skip");
+};
+
+/**
+ * Returns the function body node from a given function token.
+ * @param {LezerNode} token - The function node (ArrowFunction, FunctionExpression, or FunctionDeclaration).
+ * @return {LezerNode|null} The node representing the function body.
+ */
+fluid.lezer.getFunctionBody = function (token) {
+    if (token.name === "ArrowFunction") {
+        const arrow = token.children.findIndex(child => child.name === "Arrow");
+        return fluid.lezer.firstNonSkip(token.children, arrow + 1);
+    } else if (token.name === "FunctionExpression" || token.name === "FunctionDeclaration") {
+        return token.children.find(child => child.name === "Block");
+    } else { // There may be no body, if we are tearing down a relation
+        return null;
+    }
+};
+
 // ============================================================================
 // Main Statement Transformation Function
 // ============================================================================
 
 /**
- * Transform a statement to replace fluid.cell().computed() with fluid.vizReactive.asyncComputed()
- * and inject {name: "varName"} into the fluid.cell() call
- * @param {LezerNode} token - Statement object with token tree
+ * @typedef {Object} LezerTransformState
+ * @property {Number} arcId - Counter for generating unique arc IDs for asyncComputed calls.
+ * @property {LezerNode[]} arcTokens - Array to collect argument tokens for transformed asyncComputed calls.
  */
-fluid.lezer.transformStatement = function (token) {
+
+/**
+ * Transforms a statement node by:
+ *  - Replacing `fluid.cell().computed()` with `fluid.vizReactive.asyncComputed()`
+ *  - Injecting a `{name: "varName"}` argument into the `fluid.cell()` call
+ *  - Replacing `.computed` property names with `vizReactiveAsyncComputed`
+ *  - Inserting a unique arcId as the first argument to `vizReactiveAsyncComputed`
+ *  - Wrapping `.get` calls with `await fluid.cell.signalToPromise(...)`
+ *
+ * @param {LezerTransformState} state - Transformation state, including arcId and arcTokens.
+ * @param {LezerNode} token - The statement node to transform.
+ * @return {void}
+ */
+fluid.lezer.transformStatement = function (state, token) {
+    const expect = (token, name) => {
+        if (token.name !== name) {
+            throw (`Unexpected token type: found ${token.name} where ${name} was expected`);
+        }
+    };
 
     const fluidCellCall = fluid.lezer.queryNode(token, "MemberExpression", "fluid.cell")[0];
     // Skip other contexts such as fluid.cell.effect
@@ -204,6 +254,20 @@ fluid.lezer.transformStatement = function (token) {
     if (computedCall) {
         computedCall.text = "vizReactiveAsyncComputed";
         fluid.lezer.markStale(computedCall);
+        // Now insert a unique arcId into the first argument to vizReactiveAsyncComputed
+        const callExpression = computedCall.parent.parent;
+        expect(callExpression, "CallExpression");
+        const argList = callExpression.children[1];
+        expect(argList, "ArgList");
+        const arcToken = fluid.lezer.firstNonSkip(argList.children, 1);
+        const body = fluid.lezer.getFunctionBody(arcToken);
+        const pushArcId = body ? state.arcId : -1;
+        argList.children.splice(1, 0, {text: "" + pushArcId}, {text: ", "});
+        fluid.lezer.markStale(argList);
+        if (body) {
+            state.arcTokens.push(body);
+            ++state.arcId;
+        }
     }
 
     const getCall = fluid.lezer.queryNode(token, "PropertyName", "get")[0];
@@ -328,9 +392,13 @@ fluid.lezer.parseTestFunction = function (funcText) {
     // Parse statements from body
     const statements = fluid.lezer.parseStatements(blockNode);
     const clonedStatements = statements.map(token => ({...token}));
+    const state = {
+        arcId: 0,
+        arcTokens: []
+    };
 
     // Transform statements that contain .computed or fluid.cell
-    statements.forEach(token => fluid.lezer.transformStatement(token));
+    statements.forEach(token => fluid.lezer.transformStatement(state, token));
 
     const makeWaitNode = index => ({
         text: `await fluid.vizReactive.getStatementSequenceWait(${index});\n    `,
@@ -352,6 +420,6 @@ fluid.lezer.parseTestFunction = function (funcText) {
     fluid.lezer.regenerateNodeText(blockNode);
     console.log("Transformed function to:\n" + blockNode.text);
     return {
-        blockNode, statements: clonedStatements, funcText, transformed: blockNode.text
+        blockNode, statements: clonedStatements, funcText, transformed: blockNode.text, arcTokens: state.arcTokens
     };
 };

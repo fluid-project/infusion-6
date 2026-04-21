@@ -413,47 +413,6 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
-     * not already allocated.
-     * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
-     * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
-     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
-     * If a non-array, it will be pushed to the end of the array using Array.push.
-     */
-    fluid.pushArray = function (holder, member, topush) {
-        const array = holder[member] ? holder[member] : (holder[member] = []);
-        if (Array.isArray(topush)) {
-            array.push.apply(array, topush);
-        } else {
-            array.push(topush);
-        }
-    };
-
-    /**
-     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
-     *
-     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
-     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
-     *   - `value` (any): The value of the current property or element.
-     *   - `key` (String): The key of the current property .
-     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
-     */
-    fluid.transform = function (source, func) {
-        if (source) {
-            const togo = {};
-            for (const key in source) {
-                const ret = func(source[key], key);
-                if (ret !== fluid.NoValue) {
-                    togo[key] = ret;
-                }
-            }
-            return togo;
-        } else {
-            return source;
-        }
-    };
-
-    /**
      * Maps the elements of an array by applying a provided function to each item.
      * If the function returns `fluid.NoValue`, the item is excluded from the resulting array.
      *
@@ -699,6 +658,7 @@ const $fluidScope = function (fluid) {
      * accepts or returns any of these values, and if so, what its semantic is  - most are of private
      * use internal to the framework
      */
+
     fluid.marker = function () {};
     /**
      * Create a marker object with a specific type and additional properties.
@@ -753,7 +713,7 @@ const $fluidScope = function (fluid) {
 
     /* A structure holding all supported log levels as supplied as a possible first argument to fluid.log
      * Members with a higher value of the "priority" field represent lower priority logging levels */
-    fluid.logLevel = fluid.transform(fluid.logLevelsSpec, (key, value) => fluid.makeMarker(key, {priority: value}));
+    fluid.logLevel = fluid.transform(fluid.logLevelsSpec, (key, value) => fluid.makeMarker("logLevel", {priority: value, key}));
 
     fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
 
@@ -839,7 +799,7 @@ const $fluidScope = function (fluid) {
     };
 
     // TODO: Probably needs to be made available as a context name - there's support now as $oldValue
-    fluid.OldValue = fluid.makeMarker("Old Computed Value");
+    fluid.OldValue = Symbol("Old Computed Value");
 
     /**
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects

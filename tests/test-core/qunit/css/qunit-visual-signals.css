@@ -6,13 +6,18 @@
     border-radius: 8px;
     background: #f9f9f9;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    min-width: 900px;
 }
 
-.timeline-header h3 {
+.timeline-header .timeline-select {
     margin: 0 0 10px 0;
     color: #333;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 600;
+}
+
+.timeline-select:hover {
+    background-color: #f8f8f8;
 }
 
 /* Controls */
@@ -189,6 +194,10 @@
     background-color: #cce4ff;//#ccccff; // #fedada;
 }
 
+.computed-highlight {
+    background-color: #eeccff;//#ccccff; // #fedada;
+}
+
 .node-label {
     font-family: sans-serif;
     display: flex;
@@ -235,7 +244,53 @@
     max-height: 600px;
 }
 
-/* Responsive Design */
+
+.CodeMirror-lint-tooltip {
+    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+}
+
+.CodeMirror-lint-message {
+    padding-left: 22px;
+}
+
+.CodeMirror-lint-marker-multiple {
+    background: none;
+}
+
+.vizreactive-testmarker {
+    margin-left: 60px;
+    font-weight: bold;
+    position: relative;
+    top: -1px;
+}
+
+.vizreactive-testmarker.test-pass::before {
+    content: '✓';
+    color: #22c55e;
+}
+
+.vizreactive-testmarker.test-fail::before {
+    content: '✖';
+    color: #ef4444;
+}
+
+#vizreactive-tooltip {
+    position: fixed;
+    display: none;
+    background: white;
+    border: 1px solid black;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    padding: 6px 10px;
+    font-size: 13px;
+    color: black;
+    pointer-events: none;
+    z-index: 9999;
+    max-width: 260px;
+    line-height: 1.4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
 @media (max-width: 768px) {
     .timeline-container {
         padding: 10px;

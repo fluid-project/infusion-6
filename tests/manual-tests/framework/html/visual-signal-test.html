@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Visual Signals Tests</title>
+    <title>Visual Signals Test Gallery</title>
 
     <style>
         body, button, input, select, textarea {
@@ -10,13 +10,21 @@
         }
     </style>
 
+    <!-- 3rd party code -->
+
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dagre-d3@0.6.4/dist/dagre-d3.min.js"></script>
 
+    <script src="../../../../src/lib/codemirror/js/jshint.js"></script>
     <script src="../../../../src/lib/codemirror/js/codemirror.js"></script>
     <script src="../../../../src/lib/codemirror/js/javascript.js"></script>
+    <script src="../../../../src/lib/codemirror/js/lint.js"></script>
+    <script src="../../../../src/lib/codemirror/js/javascript-lint.js"></script>
 
     <link rel="stylesheet" media="screen" href="../../../../src/lib/codemirror/css/codemirror.css"></link>
+    <link rel="stylesheet" media="screen" href="../../../../src/lib/codemirror/css/lint.css"></link>
+
+    <!-- Local code -->
 
     <script src="../../../../src/lib/lezer/lezer-javascript-browser.js"></script>
 
@@ -25,56 +33,26 @@
     <script src="../../../../src/framework/core/js/FluidDebugging.js"></script>
 
     <script src="../../../test-core/qunit/js/lezer-transform.js"></script>
-    <script src="../../../test-core/qunit/js/qunit-visual-signals-2.js"></script>
+    <script src="../../../test-core/qunit/js/qunit-stub.js"></script>
+    <script src="../../../test-core/qunit/js/qunit-visual-signals.js"></script>
 
     <link rel="stylesheet" media="screen" href="../../../test-core/qunit/css/qunit-visual-signals.css" />
+
+    <!-- Test fixtures themselves -->
+    <script src="../js/visual-signals-test-gallery.js"></script>
+
+    <script src="../../../framework-tests/core/annotations/FluidSignalsTests-annotations.js"></script>
 
 </head>
 <body>
 <main>
-    <h1>Visual Signals Test</h1>
+    <h1>Visual Signals Test Gallery</h1>
 
     <div class="vizreactive-target">
-        <span class="vizreactive-testname">preact-signals: Should drop A->B->A updates</span>
-        <pre class="vizreactive-source">
-assert => {
-    //     A
-    //   / |
-    //  B  | <- Looks like a flag doesn't it? :D
-    //   \ |
-    //     C
-    //     |
-    //     D
-    const a = fluid.cell(2);
-
-    const b = fluid.cell().computed(aVal => aVal - 1, [a]);
-
-    const c = fluid.cell().computed((aVal, bVal) => aVal + bVal, [a, b]);
-
-    let computeCount = 0;
-
-    const d = fluid.cell().computed(
-        cVal => {
-            computeCount++;
-            return "d: " + cVal;
-        },
-        [c]
-    );
-
-    // Trigger read
-    assert.equal(d.get(), "d: 3");
-    assert.equal(computeCount, 1);
-    computeCount = 0;
-
-    a.set(4);
-    d.get();
-    assert.equal(computeCount, 1);
-}
-        </pre>
     </div>
 
     <script>
-        fluid.vizReactive.bootVizReactiveUI();
+        fluid.vizReactive.bootVizReactiveUI(".vizreactive-target");
     </script>
 </main>
 

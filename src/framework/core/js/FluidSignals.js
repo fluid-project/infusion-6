@@ -588,7 +588,7 @@ const $fluidSignalsScope = function (fluid) {
                 const observer = cell._observers[i];
                 if (!consumedSources?.includes(observer)) {
                     // Milo's implementation for some reason did this directly rather than recursively
-                    fluid.cell.markStale(observer, CacheDirty, [], cell, availChange);
+                    fluid.cell.markStale(observer, CacheDirty, [cell], cell, availChange);
                     // Note that markStale also sets _dirtyFrom
                     // observer._state = CacheDirty;
                     // observer._dirtyFrom = cell;

@@ -43,7 +43,7 @@
  * @property {Number|null} limit - LIMIT value
  */
 
-const $fluidMicroSQLScope = function(fluid) {
+const $fluidMicroSQLScope = function (fluid) {
 
     if (!fluid.microsql) {
         fluid.microsql = {};
@@ -76,7 +76,7 @@ const $fluidMicroSQLScope = function(fluid) {
      * //   limit: null
      * // }
      */
-    fluid.microsql.parse = function(sql) {
+    fluid.microsql.parse = function (sql) {
         sql = sql.trim().replace(/\s+/g, " ");
 
         if (!sql.toUpperCase().startsWith("SELECT")) {
@@ -397,7 +397,7 @@ const $fluidMicroSQLScope = function(fluid) {
      * const results = fluid.microsql.execute(ast, data);
      * // Returns: [{ name: "Alice", age: 30 }]
      */
-    fluid.microsql.execute = function(ast, data) {
+    fluid.microsql.execute = function (ast, data) {
         if (!Array.isArray(data)) {
             throw new Error("Data must be an array");
         }
@@ -490,7 +490,7 @@ const $fluidMicroSQLScope = function(fluid) {
      * //   { name: "Alice", age: 30 }
      * // ]
      */
-    fluid.microsql.query = function(sql, data) {
+    fluid.microsql.query = function (sql, data) {
         const ast = fluid.microsql.parse(sql);
         return fluid.microsql.execute(ast, data);
     };

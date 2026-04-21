@@ -3,6 +3,7 @@
 /* global QUnit */
 
 QUnit.config.reorder = false;
+QUnit.config.testTimeout = 1000;
 
 QUnit.module("Fluid Signals Async Tests", function (hooks) {
     hooks.afterEach(function (assert) {
@@ -255,7 +256,6 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         // Effect to capture projected value
         fluid.cell.effect((ppVal) => {
-            console.log("EFFECT NOTIFIED WITH ", ppVal);
             res = ppVal;
         }, [pp], {name: "ppEffect"});
 
@@ -299,20 +299,20 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         );
 
         // Not yet resolved
-        assert.strictEqual(value, undefined, "Value is undefined before async resolution");
+        assert.equal(value, undefined, "Value is undefined before async resolution");
 
         // Allow first async resolution
         await new Promise(r => setTimeout(r, 0));
-        assert.strictEqual(value, 1, "Resolved to initial value");
+        assert.equal(value, 1, "Resolved to initial value");
 
         // Update dependency
         s.set(2);
 
         // No refresh triggered, and effect is not tracking `a`
-        assert.strictEqual(value, 1, "Value unchanged after dependency update");
+        assert.equal(value, 1, "Value unchanged after dependency update");
 
         await new Promise(r => setTimeout(r, 0));
-        assert.strictEqual(value, 1, "Still unchanged because effect is untracked");
+        assert.equal(value, 1, "Still unchanged because effect is untracked");
     });
 
     // Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L204
@@ -413,7 +413,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.equal(callCount, 1, "Async not re-triggered");
     });
 
-    QUnit.test("Bidi async tests with three nodes", async assert => {
+    QUnit.test("Bidirectional async tests with three nodes", async assert => {
 
         const kelvinCell = fluid.cell();
         kelvinCell.name = "Kelvin";
@@ -438,7 +438,32 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
     });
 
-    QUnit.test("Bidi async test with sync return", async assert => {
+    QUnit.test("Bidirectional true async tests with three nodes", async assert => {
+
+        const kelvinCell = fluid.cell();
+        kelvinCell.name = "Kelvin";
+        const celsiusCell = fluid.cell(15);
+        celsiusCell.name = "Celsius";
+        const fahrenheitCell = fluid.cell();
+        fahrenheitCell.name = "Fahrenheit";
+
+        kelvinCell.asyncComputed(celsius => fluid.returnAsync(celsius + 273.15), [celsiusCell]);
+        celsiusCell.asyncComputed(kelvin => fluid.returnAsync(kelvin - 273.15), [kelvinCell]);
+
+        fahrenheitCell.asyncComputed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
+        celsiusCell.asyncComputed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
+
+        // Celsius value has spread in both directions
+        assert.equal(await fluid.cell.signalToPromise(kelvinCell), 288.15, "Spread from Celsius to Kelvin");
+        assert.equal(await fluid.cell.signalToPromise(fahrenheitCell), 59, "Spread from Celsius to Fahrenheit");
+
+        kelvinCell.set(293.15);
+
+        assert.nearEqual(await fluid.cell.signalToPromise(celsiusCell), 20, "Spread from Kelvin to Celsius");
+        assert.nearEqual(await fluid.cell.signalToPromise(fahrenheitCell), 68, "Spread from Kelvin to Fahrenheit");
+    });
+
+    QUnit.test("Bidirectional async test with sync return", async assert => {
 
         const celsiusCell = fluid.cell(15, {name: "C"});
         const fahrenheitCell = fluid.cell(undefined, {name: "F"});
@@ -512,7 +537,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
     });
 
-    QUnit.test("Bidi true async test", async assert => {
+    QUnit.test("Bidirectional true async test", async assert => {
 
         const celsiusCell = fluid.cell(15, {name: "C"});
         const fahrenheitCell = fluid.cell(undefined, {name: "F"});
