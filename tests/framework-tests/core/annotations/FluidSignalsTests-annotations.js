@@ -95,10 +95,17 @@ fluid.vizReactive.annotations.push({
 }, {
     testName: "Bidirectional tests - Temperature conversion with two nodes",
     notesSequence: [{
+        sequencePoint: 2,
+        cellNotes: {
+            C: `This test will set up two cells, C and F, to hold temperatures in Fahrenheit and Centigrade. The cells will\
+            initially be isolated, with C given an initial value of 15, and F not given an initial value. By step 20, we will\
+            have set up two computed arcs pointing backward and forward between them, allowing updates in one temperature\
+            to be converted to updates to the other.`
+        }
+    }, {
         sequencePoint: 11,
         cellNotes: {
-            F: `We have set up two cells, C and F, to hold temperatures in Fahrenheit and Centigrade. The cells were initially\
-            isolated, with C given an initial value of 15, and F not given an initial value. Because we have set up two\
+            F: `Because we have set up two\
             <a href="https://ponder.org.uk/docs/fluid-signals/#fluidcelleffectfn-staticsources-props">effects</a> which\
             actively pull values from C and F, and log them to sequences cSeq and fSeq, as soon as we set up the computed relation\
             computing F from C on this line, the computation executes and evalutes F to 59. Without the effect, F would have\
@@ -121,8 +128,32 @@ fluid.vizReactive.annotations.push({
     }, {
         sequencePoint: 23,
         cellNotes: {
-            F: `Now we propagate an update in the other direction - by setting F to 212, we activate the second arc
+            F: `Now we propagate an update in the other direction - by setting F to 212, we activate the second arc\
             computing C as 100.`
+        }
+    }, {
+        sequencePoint: 27,
+        cellNotes: {
+            F: `Now we will tear down the arc which leads from C to F, leaving only a unidirectional relationship which can\
+            compute F from C. Again this is not possible in a traditional reactive library, where the lifetime of a computed\
+            relationship must be the same as that of the cell it computes.`
+        }
+    }, {
+        sequencePoint: 31,
+        cellNotes: {
+            F: `Because the C->F arc is gone, the value of F does not update here and stays as it was from the update on line 40.`
+        }
+    }, {
+        sequencePoint: 34,
+        cellNotes: {
+            C: `However, the F->C arc remains, and because the effect pulling C's value is still active, the compute arc is now activated to\
+            compute the value of 15C`
+        }
+    }, {
+        sequencePoint: 41,
+        cellNotes: {
+            C: `Because we have now disposed of the effects pulling the values of F and C, after the update of F, the C cell\
+            remains stale, as shown in red, because its value is no longer demanded and the remaining F->C arc is not activated.`
         }
     }
     ]

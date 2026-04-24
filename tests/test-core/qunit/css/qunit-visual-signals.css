@@ -258,10 +258,9 @@
 }
 
 .vizreactive-testmarker {
-    margin-left: 60px;
+    margin-left: 45px;
     font-weight: bold;
     position: relative;
-    top: -1px;
 }
 
 .vizreactive-testmarker.test-pass::before {
@@ -272,6 +271,10 @@
 .vizreactive-testmarker.test-fail::before {
     content: '✖';
     color: #ef4444;
+}
+
+.vizreactive-assert-markers {
+    width: 0px;
 }
 
 #vizreactive-tooltip {

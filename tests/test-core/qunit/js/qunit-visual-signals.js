@@ -115,7 +115,8 @@ fluid.vizReactive.initTimeline = function () {
         steppingForward: false,
         // Updated in updateCodeHighlight
         currentStatementPosition: null,
-        initialRun: true
+        initialRun: true,
+        assertMarkers: []
     };
 };
 
@@ -148,7 +149,7 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (arcId, fn, staticSource
     // Create wrapper that injects red sequence points
     const wrappedFn = async function (...args) {
         const timeline = fluid.vizReactive.currentTimeline;
-        const edge = fluid.CurrentReaction;
+        const edge = fluid.trackingVars.CurrentReaction;
         const edgeTargetName = edge.target.name;
         const edgeKey = fluid.vizReactive.edgeToKey(edge);
         const computeIndex = timeline.computeSequencePoints.length;
@@ -206,6 +207,18 @@ fluid.vizReactive.stepBackward = function (timeline) {
     }
 };
 
+fluid.vizReactive.trimAssertMarks = function (timeline) {
+    const currentLine = timeline.currentStatementPosition?.line || 0;
+    timeline.assertMarkers = timeline.assertMarkers.filter(markerLine => {
+        if (markerLine >= currentLine - 1) {
+            timeline.codeMirror.setGutterMarker(markerLine, "vizreactive-assert-markers", null);
+            return false;
+        } else {
+            return true;
+        }
+    });
+};
+
 fluid.vizReactive.resetTimeline = async function (timeline, newIndex) {
     timeline.currentIndex = newIndex;
     timeline.edgeInvocationIndices = fluid.transform(timeline.edgeInvocations, () => 0);
@@ -230,7 +243,12 @@ fluid.vizReactive.resetTimeline = async function (timeline, newIndex) {
         if (index < timeline.currentIndex) {
             point.resolve();
         }
-        point.wait.then(() => point.executed = true, () => {
+        point.wait.then(() => {
+            point.executed = true;
+            if (index === newIndex - 1) { // We have reached the present
+                fluid.vizReactive.trimAssertMarks(timeline);
+            }
+        }, () => {
             console.log("Rejected");
         });
     });
@@ -320,7 +338,7 @@ fluid.vizReactive.createTimelineUI = function (targetContainer, timeline, allTes
         lineNumbers: true,
         matchBrackets: true,
         lineWrapping: true,
-        gutters: ["CodeMirror-lint-markers"],
+        gutters: ["CodeMirror-lint-markers", "vizreactive-assert-markers"],
         lint: {
             esversion: 2021,
             onUpdateLinting: annotations => pushAnnotations(annotations),
@@ -443,7 +461,7 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
 
     const annotations = timeline.annotations?.notesSequence.find(notes => notes.sequencePoint === timeline.currentIndex + 1);
 
-    fluid.vizReactive.plotCells(container, currentPoint, annotations?.cellNotes);
+    fluid.vizReactive.plotCells(container, currentPoint, annotations?.cellNotes, timeline.annotations);
 };
 
 fluid.vizReactive.cell = function (initialValue, props) {
@@ -624,7 +642,7 @@ fluid.vizReactive.renderNoteBubble = function (wrap, nodePos, text) {
  * @param {SequencePoint} currentPoint - The current sequence point, used to highlight active nodes/edges.
  * @param {Object<String, String>} [cellNotes] - Any notes to be rendered next to cells.
  */
-fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cellNotes) {
+fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cellNotes, annotations) {
     const { nodes, edges, bidirectional } = renderData;
 
     // Clear previous content
@@ -739,7 +757,7 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cel
     const svgWidth = element.clientWidth;
     const svgHeight = element.clientHeight;
 
-    const xCenterOffset = (svgWidth - graphWidth) / (cellNotes ? 4 : 2);
+    const xCenterOffset = (svgWidth - graphWidth) / (annotations ? 4 : 2);
     const yCenterOffset = (svgHeight - graphHeight) / 2;
 
     svgGroup.attr("transform", `translate(${xCenterOffset}, ${yCenterOffset})`);
@@ -762,12 +780,13 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cel
  * @param {HTMLElement} container - The container element for the timeline UI.
  * @param {SequencePoint} currentPoint - The current sequence point, used to highlight nodes/edges.
  * @param {Object<String, String>} [cellNotes] - Optional notes to display as SVG bubbles next to cells.
+ * @param {Boolean} [annotations] - Whether there are any annotations for this timeline
  */
-fluid.vizReactive.plotCells = function (container, currentPoint, cellNotes) {
+fluid.vizReactive.plotCells = function (container, currentPoint, cellNotes, annotations) {
     const cells = fluid.vizReactive.madeCells;
     const renderData = fluid.vizReactive.toRenderData(cells.filter(cell => !cell._isEffect));
     const vizNode = container.querySelector(".signal-viz");
-    fluid.vizReactive.updateD3Viz(vizNode, renderData, currentPoint, cellNotes);
+    fluid.vizReactive.updateD3Viz(vizNode, renderData, currentPoint, cellNotes, annotations);
 };
 
 // See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/AsyncFunction/AsyncFunction
@@ -783,7 +802,8 @@ fluid.vizReactive.stubAssert = StubQUnit.makeAssert((pass, actual, expected, mes
         const marker = document.createElement("div");
         marker.className = "vizreactive-testmarker vizreactive-basic-tooltip " + (pass ? "test-pass " : "test-fail ") + " line-" + line;
         marker.title = pass ? "Assertion passed" : ("Assertion failed: actual value " + JSON.stringify(actual));
-        timeline.codeMirror.setGutterMarker(line, "CodeMirror-lint-markers", marker);
+        timeline.codeMirror.setGutterMarker(line, "vizreactive-assert-markers", marker);
+        timeline.assertMarkers.push(line);
     }
 });
 
@@ -815,6 +835,7 @@ fluid.vizReactive.updateTestText = async function (timeline, testName, funcText,
 
     if (!textModified) {
         timeline.codeMirror.setValue(timeline.funcText);
+        timeline.assertMarkers = [];
     }
 
     // Reset and schedule dry run to collect sequence points

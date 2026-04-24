@@ -116,27 +116,24 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
 
 QUnit.test("Bidirectional tests - Temperature conversion with three nodes", assert => {
 
-    const kelvinCell = fluid.cell();
-    kelvinCell.name = "Kelvin";
-    const celsiusCell = fluid.cell(15);
-    celsiusCell.name = "Celsius";
-    const fahrenheitCell = fluid.cell();
-    fahrenheitCell.name = "Fahrenheit";
+    const K = fluid.cell();
+    const C = fluid.cell(15);
+    const F = fluid.cell();
 
-    kelvinCell.computed(celsius => celsius + 273.15, [celsiusCell]);
-    celsiusCell.computed(kelvin => kelvin - 273.15, [kelvinCell]);
+    K.computed(celsius => celsius + 273.15, [C]);
+    C.computed(kelvin => kelvin - 273.15, [K]);
 
-    fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
-    celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+    F.computed(celsius => 9 * celsius / 5 + 32, [C]);
+    C.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [F]);
 
     // Celsius value has spread in both directions
-    assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
-    assert.equal(fahrenheitCell.get(), 59, "Spread from Celsius to Fahrenheit");
+    assert.equal(K.get(), 288.15, "Spread from Celsius to Kelvin");
+    assert.equal(F.get(), 59, "Spread from Celsius to Fahrenheit");
 
-    kelvinCell.set(293.15);
+    K.set(293.15);
 
-    assert.nearEqual(celsiusCell.get(), 20, "Spread from Kelvin to Celsius");
-    assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
+    assert.nearEqual(C.get(), 20, "Spread from Kelvin to Celsius");
+    assert.nearEqual(F.get(), 68, "Spread from Kelvin to Fahrenheit");
 });
 
 // From https://github.com/preactjs/signals/blob/%40preact/signals%402.5.1/packages/core/test/signal.test.tsx#L1598
@@ -249,3 +246,58 @@ QUnit.test("solid-signals: Only propagates once with exponential convergence", a
     assert.equal(h.get(), 9, "h correctly recomputed from three converging g-cells");
     assert.equal(hcount, 1, "Only one propagation occurred");
 });
+
+/*
+const l = async assert => {
+
+    //     d
+    //     |
+    // +---+---+
+    // v   v   v
+    // f1  f2 f3
+    //   \ | /
+    //     O
+    //   / | \
+    // v   v   v
+    // g1  g2  g3
+    // +---+---+
+    //     v
+    //     h
+
+    await fluid.vizReactive.getStatementSequenceWait(0);
+    const dCell = fluid.vizReactive.cell(0, {name: "dCell"});
+
+    await fluid.vizReactive.getStatementSequenceWait(1);
+    const f1 = fluid.vizReactive.cell(undefined, {name: "f1"}).vizReactiveAsyncComputed(0, d => d, [dCell]);
+    await fluid.vizReactive.getStatementSequenceWait(2);
+    const f2 = fluid.vizReactive.cell(undefined, {name: "f2"}).vizReactiveAsyncComputed(1, d => d, [dCell]);
+    await fluid.vizReactive.getStatementSequenceWait(3);
+    const f3 = fluid.vizReactive.cell(undefined, {name: "f3"}).vizReactiveAsyncComputed(2, d => d, [dCell]);
+
+    await fluid.vizReactive.getStatementSequenceWait(4);
+    const g1 = fluid.vizReactive.cell(undefined, {name: "g1"}).vizReactiveAsyncComputed(3, () => await fluid.cell.signalToPromise(f1) + f2.get() + f3.get());
+    await fluid.vizReactive.getStatementSequenceWait(5);
+    const g2 = fluid.vizReactive.cell(undefined, {name: "g2"}).vizReactiveAsyncComputed(4, () => await fluid.cell.signalToPromise(f1) + f2.get() + f3.get());
+    await fluid.vizReactive.getStatementSequenceWait(6);
+    const g3 = fluid.vizReactive.cell(undefined, {name: "g3"}).vizReactiveAsyncComputed(5, () => await fluid.cell.signalToPromise(f1) + f2.get() + f3.get());
+
+    await fluid.vizReactive.getStatementSequenceWait(7);
+    let hcount = 0;
+
+    await fluid.vizReactive.getStatementSequenceWait(8);
+    const h = fluid.vizReactive.cell(undefined, {name: "h"}).vizReactiveAsyncComputed(6, () => {
+        hcount++;
+        return await fluid.cell.signalToPromise(g1) + g2.get() + g3.get();
+    });
+
+    await fluid.vizReactive.getStatementSequenceWait(9);
+    hcount = 0;
+    await fluid.vizReactive.getStatementSequenceWait(10);
+    dCell.set(1);
+
+    await fluid.vizReactive.getStatementSequenceWait(11);
+    assert.equal(await fluid.cell.signalToPromise(h), 9, "h correctly recomputed from three converging g-cells");
+    await fluid.vizReactive.getStatementSequenceWait(12);
+    assert.equal(hcount, 1, "Only one propagation occurred");
+}
+*/

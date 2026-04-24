@@ -96,7 +96,7 @@ const $fluidCoreJSScope = function (fluid) {
     /** Unavailable value support **/
 
     fluid.unavailablePriority = {
-        "I/O": 1,
+        "pending": 1,
         "config": 2,
         "error": 3
     };
@@ -104,7 +104,7 @@ const $fluidCoreJSScope = function (fluid) {
     /** @typedef {Object} UnavailableCause
      * A record explaining the cause that a value is unavailable.
      * @property {String} message - A human-readable message describing the cause.
-     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "pending").
      * @property {String} [site] - An optional site associated with the cause of unavailability
      */
 
@@ -121,7 +121,8 @@ const $fluidCoreJSScope = function (fluid) {
      */
 
     fluid.upgradeCause = function (cause, defaultVariety) {
-        const upCause = typeof(cause) === "string" ? {message: cause} : cause;
+        const upCause = typeof(cause) === "string" ? {message: cause} :
+            cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : cause;
         if (!upCause.variety) {
             upCause.variety = defaultVariety;
         }
@@ -169,7 +170,7 @@ const $fluidCoreJSScope = function (fluid) {
 
     /**
      * Creates an "Unavailable" marker representing a value that is pending due to I/O.
-     * Sets the variety to "I/O", provides a standard message, and records the site and stale value.
+     * Sets the variety to "pending", provides a standard message, and records the site and stale value.
      *
      * @param {Any} staleValue - The most recently seen value before it became unavailable due to pending I/O.
      * @param {String} site - The site or resource (e.g. URL) responsible for the pending I/O.
@@ -177,11 +178,19 @@ const $fluidCoreJSScope = function (fluid) {
      */
     fluid.pending = function (staleValue, site) {
         const togo = Object.create(fluid.unavailable.prototype);
-        togo.variety = "I/O";
+        togo.variety = "pending";
         togo.message = "Value is unavailable due to pending I/O";
         togo.site = site;
         togo.staleValue = staleValue;
         return togo;
+    };
+
+    fluid.isPending = function (value) {
+        return value instanceof fluid.unavailable && value.variety === "pending";
+    };
+
+    fluid.isConfigUnavailable = function (value) {
+        return value instanceof fluid.unavailable && value.variety === "config";
     };
 
     /**

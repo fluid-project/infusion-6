@@ -717,12 +717,6 @@ const $fluidScope = function (fluid) {
 
     fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
 
-    fluid.unavailablePriority = {
-        "I/O": 1,
-        "config": 2,
-        "error": 3
-    };
-
     fluid.unavailableProxy = function (target) {
         const proxy = new Proxy(target, {
             get: function (target, prop) {
@@ -837,6 +831,7 @@ const $fluidScope = function (fluid) {
         return {designalArgs, unavailable};
     };
 
+    // Used as a utility inside FluidView to determine if injections are done
     /**
      * Processes an array of signals or values and returns a value which is available if all of the values are available.
      * @param {Array} sigs - An array of signals or values to process.
@@ -2961,7 +2956,7 @@ const $fluidScope = function (fluid) {
      * @return {Signal<any>} A signal containing the processed data or an "unavailable" state.
      */
     fluid.fetch = function (url, options, strategy) {
-        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
+        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "pending"}));
         const assignResult = data => {
             try {
                 togo.value = data;

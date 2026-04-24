@@ -175,7 +175,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         fluid.cell.effect(() => {}, [a]); // ensure re-compute
 
-        const b = fluid.cell().computed(av => fluid.isUnavailable(av) ? "stale" : "not stale", [a], {isFree: true});
+        const b = fluid.cell().computed(av =>
+            fluid.isUnavailable(av) ? "stale" : "not stale", [a], {isFree: true});
 
         assert.equal(b.get(), "stale");
 
@@ -575,8 +576,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         await fluid.returnAsync();
 
-        assert.deepEqual(cSeq, [20], "Original update");
-        assert.deepEqual(fSeq, [68], "Relayed update");
+        assert.deepEqual(cSeq, [20], "Original update after 20");
+        assert.deepEqual(fSeq, [68], "Relayed update after 68");
 
         reset();
 
@@ -584,8 +585,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         await fluid.returnAsync();
 
-        assert.deepEqual(fSeq, [212], "Original update");
-        assert.deepEqual(cSeq, [100], "Relayed update");
+        assert.deepEqual(fSeq, [212], "Original update after 212");
+        assert.deepEqual(cSeq, [100], "Relayed update after 212");
 
         // Tear down one relation
         fahrenheitCell.asyncComputed(null, [celsiusCell]);
@@ -594,8 +595,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         celsiusCell.set(20);
 
-        assert.deepEqual(cSeq, [20], "Original update");
-        assert.deepEqual(fSeq, [], "No relay update");
+        assert.deepEqual(cSeq, [20], "Original update after 2nd 20");
+        assert.deepEqual(fSeq, [], "No relay update after 2nd 20");
 
         reset();
 
@@ -603,8 +604,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         await fluid.returnAsync();
 
-        assert.deepEqual(fSeq, [59], "Original update");
-        assert.deepEqual(cSeq, [15], "Relayed update");
+        assert.deepEqual(fSeq, [59], "Original update after 59");
+        assert.deepEqual(cSeq, [15], "Relayed update after 59");
 
         reset();
 
