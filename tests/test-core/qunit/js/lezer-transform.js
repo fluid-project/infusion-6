@@ -24,9 +24,10 @@ fluid.registerNamespace("fluid.lezer");
  * @param {LezerNode} node - The root token node to search from
  * @param {String} name - The node name to match (e.g., "MemberExpression", "VariableDefinition")
  * @param {String} [text] - Optional text content to match
+ * @param {Boolean} [intoBlocks] - Should search recurse into function bodies
  * @return {Array<Object>} Array of matching nodes
  */
-fluid.lezer.queryNode = function (node, name, text) {
+fluid.lezer.queryNode = function (node, name, text, intoBlocks) {
     const matches = [];
 
     const search = (currentNode) => {
@@ -34,6 +35,9 @@ fluid.lezer.queryNode = function (node, name, text) {
             if (text === undefined || currentNode.text === text) {
                 matches.push(currentNode);
             }
+        }
+        if (!intoBlocks && (currentNode.name === "ArrowFunction" || currentNode.name === "FunctionExpression")) {
+            return;
         }
 
         if (currentNode.children) {
@@ -387,7 +391,7 @@ fluid.lezer.parseTestFunction = function (funcText) {
     const cursor = lezerTree.cursor();
     const rootToken = fluid.lezer.pushChildren(null, cursor, funcText, {});
 
-    const blockNode = fluid.lezer.queryNode(rootToken, "Block")[0];
+    const blockNode = fluid.lezer.queryNode(rootToken, "Block", undefined, true)[0];
 
     // Parse statements from body
     const statements = fluid.lezer.parseStatements(blockNode);

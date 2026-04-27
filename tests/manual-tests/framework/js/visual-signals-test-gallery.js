@@ -39,7 +39,6 @@ QUnit.test("preact-signals: Should drop A->B->A updates", assert => {
 
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts
 // at https://www.ppig.org/files/2015-PPIG-26th-Basman.pdf
-
 QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert => {
 
     const C = fluid.cell(15);
@@ -169,6 +168,24 @@ QUnit.test("preact-signals: Should only update every signal once (diamond graph)
     assert.equal(spyCount, 2);
 });
 
+QUnit.test("Milo's test - glitching in a hexagon", assert => {
+    const A = fluid.cell(1);
+
+    const C = fluid.cell().computed(a => a + 1, [A]);
+    const B = fluid.cell().computed(a => a * 2, [A]);
+
+    const E = fluid.cell().computed(c => c + 1, [C]);
+    const D = fluid.cell().computed(b => b * 2, [B]);
+
+    const F = fluid.cell().computed((e, d) => e * d, [E, D]);
+
+    assert.equal(F.get(), 12);
+
+    A.set(2);
+
+    assert.equal(F.get(), 32);
+});
+
 // https://github.com/preactjs/signals/blob/%40preact/signals%402.5.1/packages/core/test/signal.test.tsx#L1790
 QUnit.test("preact-signals: Should ensure subs update even if one dep unmarks it", assert => {
     // In this scenario "C" always returns the same value. When "A"
@@ -202,7 +219,9 @@ QUnit.test("preact-signals: Should ensure subs update even if one dep unmarks it
     assert.equal(d.get(), "a c");
 
     a.set("aa");
+
     d.get();
+
     assert.equal(spyResult, "aa c");
 });
 
@@ -223,81 +242,29 @@ QUnit.test("solid-signals: Only propagates once with exponential convergence", a
     //     v
     //     h
 
-    const dCell = fluid.cell(0);
+    const d = fluid.cell(0);
 
-    const f1 = fluid.cell().computed(d => d, [dCell]);
-    const f2 = fluid.cell().computed(d => d, [dCell]);
-    const f3 = fluid.cell().computed(d => d, [dCell]);
+    const f1 = fluid.cell().computed(d => d, [d]);
+    const f2 = fluid.cell().computed(d => d, [d]);
+    const f3 = fluid.cell().computed(d => d, [d]);
 
-    const g1 = fluid.cell().computed(() => f1.get() + f2.get() + f3.get());
-    const g2 = fluid.cell().computed(() => f1.get() + f2.get() + f3.get());
-    const g3 = fluid.cell().computed(() => f1.get() + f2.get() + f3.get());
+    const g1 = fluid.cell().computed((f1, f2, f3) => f1 + f2 + f3,
+        [f1, f2, f3]);
+    const g2 = fluid.cell().computed((f1, f2, f3) => f1 + f2 + f3,
+        [f1, f2, f3]);
+    const g3 = fluid.cell().computed((f1, f2, f3) => f1 + f2 + f3,
+        [f1, f2, f3]);
 
     let hcount = 0;
 
-    const h = fluid.cell().computed(() => {
+    const h = fluid.cell().computed((g1, g2, g3) => {
         hcount++;
-        return g1.get() + g2.get() + g3.get();
-    });
+        return g1 + g2 + g3;
+    }, [g1, g2, g3]);
 
     hcount = 0;
-    dCell.set(1);
+    d.set(1);
 
     assert.equal(h.get(), 9, "h correctly recomputed from three converging g-cells");
     assert.equal(hcount, 1, "Only one propagation occurred");
 });
-
-/*
-const l = async assert => {
-
-    //     d
-    //     |
-    // +---+---+
-    // v   v   v
-    // f1  f2 f3
-    //   \ | /
-    //     O
-    //   / | \
-    // v   v   v
-    // g1  g2  g3
-    // +---+---+
-    //     v
-    //     h
-
-    await fluid.vizReactive.getStatementSequenceWait(0);
-    const dCell = fluid.vizReactive.cell(0, {name: "dCell"});
-
-    await fluid.vizReactive.getStatementSequenceWait(1);
-    const f1 = fluid.vizReactive.cell(undefined, {name: "f1"}).vizReactiveAsyncComputed(0, d => d, [dCell]);
-    await fluid.vizReactive.getStatementSequenceWait(2);
-    const f2 = fluid.vizReactive.cell(undefined, {name: "f2"}).vizReactiveAsyncComputed(1, d => d, [dCell]);
-    await fluid.vizReactive.getStatementSequenceWait(3);
-    const f3 = fluid.vizReactive.cell(undefined, {name: "f3"}).vizReactiveAsyncComputed(2, d => d, [dCell]);
-
-    await fluid.vizReactive.getStatementSequenceWait(4);
-    const g1 = fluid.vizReactive.cell(undefined, {name: "g1"}).vizReactiveAsyncComputed(3, () => await fluid.cell.signalToPromise(f1) + f2.get() + f3.get());
-    await fluid.vizReactive.getStatementSequenceWait(5);
-    const g2 = fluid.vizReactive.cell(undefined, {name: "g2"}).vizReactiveAsyncComputed(4, () => await fluid.cell.signalToPromise(f1) + f2.get() + f3.get());
-    await fluid.vizReactive.getStatementSequenceWait(6);
-    const g3 = fluid.vizReactive.cell(undefined, {name: "g3"}).vizReactiveAsyncComputed(5, () => await fluid.cell.signalToPromise(f1) + f2.get() + f3.get());
-
-    await fluid.vizReactive.getStatementSequenceWait(7);
-    let hcount = 0;
-
-    await fluid.vizReactive.getStatementSequenceWait(8);
-    const h = fluid.vizReactive.cell(undefined, {name: "h"}).vizReactiveAsyncComputed(6, () => {
-        hcount++;
-        return await fluid.cell.signalToPromise(g1) + g2.get() + g3.get();
-    });
-
-    await fluid.vizReactive.getStatementSequenceWait(9);
-    hcount = 0;
-    await fluid.vizReactive.getStatementSequenceWait(10);
-    dCell.set(1);
-
-    await fluid.vizReactive.getStatementSequenceWait(11);
-    assert.equal(await fluid.cell.signalToPromise(h), 9, "h correctly recomputed from three converging g-cells");
-    await fluid.vizReactive.getStatementSequenceWait(12);
-    assert.equal(hcount, 1, "Only one propagation occurred");
-}
-*/

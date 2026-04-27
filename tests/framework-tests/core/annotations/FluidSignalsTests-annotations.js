@@ -32,7 +32,7 @@ fluid.vizReactive.annotations.push({
             b: `The first reactive step C7, coloured in purple, executes as part of honouring the demand for d. Forward\
             execution of the host program will pause until the demand for d is satisfied.
             This is the first point at which a <a href="https://ponder.org.uk/term/glitch/">glitch</a> may have occurred\
-            in evaluating the dataflow graph. Faced with a choice of ordering, it is essential that the system evalutes\
+            in evaluating the dataflow graph. Faced with a choice of ordering, it is essential that the system evaluates\
             cell b before it evaluates c, which implies that a purely push-based reactive system runs the risk of glitching.
             Modern hybrid <a href="https://dev.to/playfulprogramming/derivations-in-reactivity-4fo1">push-pull</a>\
             systems efficiently avoid this risk.
@@ -107,8 +107,8 @@ fluid.vizReactive.annotations.push({
         cellNotes: {
             F: `Because we have set up two\
             <a href="https://ponder.org.uk/docs/fluid-signals/#fluidcelleffectfn-staticsources-props">effects</a> which\
-            actively pull values from C and F, and log them to sequences cSeq and fSeq, as soon as we set up the computed relation\
-            computing F from C on this line, the computation executes and evalutes F to 59. Without the effect, F would have\
+            actively pull values from C and F, and log them to sequences <code>cSeq</code> and <code>fSeq</code>, as soon as we set up the computed relation\
+            computing F from C on this line, the computation executes and evaluates F to 59. Without the effect, F would have\
             remained stale as in the previous A->B->A example.`
         }
     }, {
@@ -154,6 +154,78 @@ fluid.vizReactive.annotations.push({
         cellNotes: {
             C: `Because we have now disposed of the effects pulling the values of F and C, after the update of F, the C cell\
             remains stale, as shown in red, because its value is no longer demanded and the remaining F->C arc is not activated.`
+        }
+    }]
+}, {
+    testName: "Bidirectional tests - Temperature conversion with three nodes",
+    notesSequence: [{
+        sequencePoint: 2,
+        cellNotes: {
+            K: `Extending the previous example, and preparing for an idiom of open authorship as described in my <a href="https://www.ppig.org/files/2015-PPIG-26th-Basman.pdf">2015 paper</a>,\
+               this example allows temperatures to be converted between three scales, Kelvin, Centigrade and Fahrenheit. As before,\
+               the cells start out isolated, with C initialised to 15 and K and F not initialised.\
+               This kind of graph is particularly challenging for contemporary reactive systems since by the time the full graph is\
+               set up by step 8, the C node has two different arcs which may update it, from K and F.`
+        }
+    }, {
+        sequencePoint: 8,
+        cellNotes: {
+            C: `Note that at this point the C node has two arcs which can update its value, which most reactive systems do not support.`,
+            K: `All the conversion arcs are now set up. Note that since there are no effects in this example, the values of K and F stay stale\
+                and uninitialised until we pull values using <code>get()</code>.`
+        }
+    }, {
+        sequencePoint: 12,
+        cellNotes: {
+            K: `The graph is now clean. We will push an update at the top of K to 293.15, which makes C stale (red) since it is definitely\
+                invalidated as an adjacent node, and F is in state "check" (green) since it may have been invalidated but C's evaluation is required\
+                to be sure.`
+        }
+    }
+    ]
+}, {
+    testName: "Milo's test - glitching in a hexagon",
+    notesSequence: [{
+        sequencePoint: 2,
+        cellNotes: {
+            A: `Milo Mighdoll's classic hexagon graph, featuring in his <a href="https://milomg.dev/2022-12-01/reactivity#reactively">2022 posting</a>\
+                introducing his reactive library Reactively, whose elegant reactive core fluid.cell is built on. By step 7\
+                we will have set up a hexagonal graph with 6 nodes with two dataflow paths from A to F.`
+
+        }
+    }, {
+        sequencePoint: 7,
+        cellNotes: {
+            F: `All the arcs are now set up. Since there are no effects in this example, all nodes other than A remain stale (red) and uninitialised. We will now\
+            begin to pull value of F to evaluate the dataflow, which must not <a href="https://ponder.org.uk/term/glitch/">glitch</a> and so the value\
+            of F must not start to compute before both E and D are fresh.`
+        }
+    }, {
+        sequencePoint: 13,
+        cellNotes: {
+            A: `The graph is now clean. On the next step we will set up the conditions for Milo's example by invalidating the value of A.`
+        }
+    }, {
+        sequencePoint: 14,
+        cellNotes: {
+            A: `This corresponds to Milo's first diagram. A is fresh, B and C are stale since directly invalidated, and the rest of the graph is green (check) since\
+                it may have been invalidated but not provably so. This shows the "down" or "push" phase of the algorithm which propagates flags cheaply without evaluating any edges.`
+        }
+    }, {
+        sequencePoint: 16,
+        cellNotes: {
+            B: `The "up" or "pull" phase of the algorithm has begun to evaluate computed edges. At this point it is indeterminate whether we evaluate C or B and we can progress\
+            down the sides of the hexagon in any order. However, once we reach the bottom it is essential that we do not continue to pull from E to F until D is ready to avoid\
+            glitching by supplying stale data to F's computation. Our graph colouring has diverged from Milo's since we are operating an asynchronous algorithm which\
+            needs to suspend in order to display the user interface for the demo. The advantage of this approach is that in a genuinely asynchronous environment, our algorithm\
+            could make progress in parallel on work on both sides of the hexagon, but this means that it needs to do work locally in order to traverse the\
+            asynchronous part of the graph in order to schedule this remote work. In the case of a completely synchronous dataflow, our algorithm would produce the same\
+            colouring as Milo's and would traverse the graph as efficiently.`
+        }
+    }, {
+        sequencePoint: 20,
+        cellNotes: {
+            F: `The graph is fully clean again and the updated value of F has been evaluated as 32.`
         }
     }
     ]

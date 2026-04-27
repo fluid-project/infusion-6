@@ -140,7 +140,7 @@ fluid.vizReactive.getStatementSequenceWait = function (statementIndex) {
 };
 
 fluid.vizReactive.edgeToKey = function (edge) {
-    return edge.target.name + "-" + edge.key.name;
+    return edge.target.name + "-" + (edge.key ? edge.key.name : "null");
 };
 
 // Wrapper for asyncComputed that creates red sequence points
@@ -156,11 +156,12 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (arcId, fn, staticSource
         const sequenceIndex = timeline.sequencePoints.length;
         if (timeline.initialRun) {
             // Log original compute sequence point when computation executes
-            const cause = fluid.cell.findCause();
+            const cause = fluid.cell.findAllCauses();
             const causeNames = cause.map(cell => cell.name);
+            const nameSources = edge => edge.sources ? edge.sources.map(source => source.name).join(", ") : "null";
             const sequencePoint = fluid.vizReactive.SequencePoint({
                 type: "computed",
-                text: `→ Computing cell ${edgeTargetName} from sources ${edge.sources.map(source => source.name).join(", ")}`,
+                text: `→ Computing cell ${edgeTargetName} from sources ${nameSources(edge)}`,
                 edge,
                 edgeKey, computeIndex, sequenceIndex, causeNames}
             );
@@ -183,6 +184,12 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (arcId, fn, staticSource
 
     // Call the original asyncComputed with the wrapped function
     return fluid.cellPrototype.asyncComputed.call(this, fn && wrappedFn, staticSources, props);
+};
+
+fluid.vizReactive.cell = function (initialValue, props) {
+    const cell = fluid.cell(initialValue, props);
+    fluid.vizReactive.madeCells.push(cell);
+    return cell;
 };
 
 fluid.vizReactive.stepForward = function (timeline) {
@@ -268,6 +275,31 @@ fluid.vizReactive.renderSelect = function (allTests, currentTest) {
         "</select>";
 };
 
+fluid.vizReactive.normaliseTestName = function (testName) {
+    return encodeURIComponent(testName.trim().toLowerCase().replace(/\s+/g, "_"));
+};
+
+fluid.vizReactive.getSelectedTest = function (allTests) {
+    const params = new URLSearchParams(window.location.search);
+    const selectedTestParam = params.get("selectedTest");
+    let selectedTest = allTests[0];
+    if (selectedTestParam) {
+        const found = allTests.find(test => fluid.vizReactive.normaliseTestName(test.testName) === selectedTestParam);
+        if (found) {
+            selectedTest = found;
+        }
+    }
+    return selectedTest;
+};
+
+fluid.vizReactive.pushSelectedTest = function (testName) {
+    // Update the URL with the normalised test name
+    const normalised = fluid.vizReactive.normaliseTestName(testName);
+    const url = new URL(window.location);
+    url.searchParams.set("selectedTest", normalised);
+    history.pushState({}, "", url);
+};
+
 // ============================================================================
 // Timeline UI
 // ============================================================================
@@ -283,7 +315,7 @@ fluid.vizReactive.createTimelineUI = function (targetContainer, timeline, allTes
         targetContainer.appendChild(container);
         fluid.vizReactive.applyTooltips(container);
     }
-    const selectedTest = allTests[0];
+    const selectedTest = fluid.vizReactive.getSelectedTest(allTests);
 
     const selectText = fluid.vizReactive.renderSelect(allTests, selectedTest.testName);
 
@@ -319,6 +351,7 @@ fluid.vizReactive.createTimelineUI = function (targetContainer, timeline, allTes
         const testText = allTests.find(test => test.testName === testName).testText;
         // noinspection JSIgnoredPromiseFromCall
         fluid.vizReactive.updateTestText(timeline, testName, testText, false);
+        fluid.vizReactive.pushSelectedTest(testName);
     };
 
     const pushAnnotations = function (annotations) {
@@ -462,12 +495,6 @@ fluid.vizReactive.updateTimelineUI = function (timeline) {
     const annotations = timeline.annotations?.notesSequence.find(notes => notes.sequencePoint === timeline.currentIndex + 1);
 
     fluid.vizReactive.plotCells(container, currentPoint, annotations?.cellNotes, timeline.annotations);
-};
-
-fluid.vizReactive.cell = function (initialValue, props) {
-    const cell = fluid.cell(initialValue, props);
-    fluid.vizReactive.madeCells.push(cell);
-    return cell;
 };
 
 fluid.vizReactive.detectBidirectionalEdges = function (edges) {
@@ -641,6 +668,7 @@ fluid.vizReactive.renderNoteBubble = function (wrap, nodePos, text) {
  * @param {RenderData} renderData - The data for rendering, containing nodes, edges, and bidirectional edge keys.
  * @param {SequencePoint} currentPoint - The current sequence point, used to highlight active nodes/edges.
  * @param {Object<String, String>} [cellNotes] - Any notes to be rendered next to cells.
+ * @param {Boolean} [annotations] - Does this test have any annotations
  */
 fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cellNotes, annotations) {
     const { nodes, edges, bidirectional } = renderData;
@@ -660,7 +688,7 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cel
     const g = new dagreD3.graphlib.Graph()
         .setGraph({
             rankdir: "TB", // "LR"
-            align: "UL",
+            // align: "UL",
             nodesep: 30,
             ranksep: 50,
             marginx: 20,
@@ -888,7 +916,7 @@ document.addEventListener("DOMContentLoaded", fluid.vizReactive.applyTooltips);
 
 /* QUnit hosted boot */
 
-if (typeof(QUnit) !== "undefined") {
+if (typeof(QUnit) !== "undefined" && QUnit.version) {
     // Give enough time for tests to be queued
     window.setTimeout(() => {
         // noinspection JSIgnoredPromiseFromCall

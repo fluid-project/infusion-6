@@ -620,4 +620,42 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
     });
 
+    // https://github.com/preactjs/signals/blob/%40preact/signals%402.5.1/packages/core/test/signal.test.tsx#L1790
+    QUnit.test("preact-signals: Should ensure subs update even if one dep unmarks it - async", async assert => {
+        // In this scenario "C" always returns the same value. When "A"
+        // changes, "B" will update, then "C" at which point its update
+        // to "D" will be unmarked. But "D" must still update because
+        // "B" marked it. If "D" isn't updated, then we have a bug.
+        //     A
+        //   /   \
+        //  B     *C <- returns same value every time
+        //   \   /
+        //     D
+        const a = fluid.cell("a", {name: "a"});
+
+        const b = fluid.cell(undefined, {name: "b"}).asyncComputed(
+            aVal => fluid.returnAsync(aVal),
+            [a]
+        );
+
+        // establish dependency on A
+        const c = fluid.cell(undefined, {name: "c"}).asyncComputed(() => fluid.returnAsync("c"), [a]);
+
+        let spyResult;
+        const d = fluid.cell(undefined, {name: "d"}).asyncComputed(
+            (bVal, cVal) => fluid.invokeAsync(() => {
+                spyResult = bVal + " " + cVal;
+                return spyResult;
+            }),
+            [b, c]
+        );
+
+        assert.equal(await fluid.cell.signalToPromise(d), "a c");
+
+        a.set("aa");
+        console.log("AFTER SET AA");
+        await fluid.cell.signalToPromise(d);
+        assert.equal(spyResult, "aa c");
+    });
+
 });

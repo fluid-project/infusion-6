@@ -205,8 +205,7 @@ const $fluidSignalsScope = function (fluid) {
      * reaction, reaching back to the node whose update caused the reaction, or else `null` if no valid target was supplied.
      */
     fluid.cell.findCause = function (inTarget) {
-        const currentEdge = $t.CurrentReaction;
-        const useTarget = inTarget || currentEdge?.target;
+        const useTarget = inTarget || $t.CurrentReaction?.target;
         if (useTarget) {
             const cause = [];
             let target = useTarget;
@@ -223,6 +222,17 @@ const $fluidSignalsScope = function (fluid) {
         } else {
             return null;
         }
+    };
+
+    fluid.cell.findAllCauses = function (inEdge) {
+        const currentEdge = inEdge || $t.CurrentReaction;
+        let allCauses = [];
+        if (currentEdge.sources) {
+            // Gather causes from each source
+            const extraCauses = currentEdge.sources.flatMap(source => fluid.cell.findCause(source));
+            allCauses = allCauses.concat(extraCauses);
+        }
+        return Array.from(new Set(allCauses));
     };
 
     /**
@@ -298,6 +308,7 @@ const $fluidSignalsScope = function (fluid) {
 
         if (!fluid.cell.equals(this._value, value)) {
             this._value = value;
+            this._state = CacheClean;
 
             // Mark observers as dirty
             if (this._observers) {
@@ -543,7 +554,6 @@ const $fluidSignalsScope = function (fluid) {
         $t.CurrentGets = trackingRecord.prevGets;
         $t.CurrentReaction = trackingRecord.prevReaction;
         $t.CurrentGetsIndex = trackingRecord.prevIndex;
-        cell._state = CacheClean;
     };
 
     /**
@@ -563,6 +573,19 @@ const $fluidSignalsScope = function (fluid) {
         }
     };
 
+    fluid.cell.observableChange = function (oldValue, newValue) {
+        const oldUnavail = fluid.isUnavailable(oldValue);
+        const newUnavail = fluid.isUnavailable(newValue);
+        if (oldUnavail !== newUnavail) {
+            return true;  // availability class transition
+        }
+        if (oldUnavail) {
+            // Both unavailable: variety change is observable; otherwise treat as same
+            return oldValue.variety !== newValue.variety;
+        }
+        return !fluid.cell.equals(oldValue, newValue);
+    };
+
     /**
      * Completes the update process for a reactive cell by setting its new value and updating its state.
      * If the value has changed, marks all observers (children) as dirty so they will reevaluate.
@@ -570,9 +593,9 @@ const $fluidSignalsScope = function (fluid) {
      *
      * @param {any} newValue - The new value to assign to the cell.
      * @param {Cell} cell - The reactive cell being updated.
-     * @param {any} oldValue - Previous cell value
      */
-    fluid.cell.updateComplete = function (newValue, cell, oldValue) {
+    fluid.cell.updateComplete = function (newValue, cell) {
+        const observableChange = fluid.cell.observableChange(cell._value, newValue);
         cell._value = newValue;
 
         // Don't mark ourselves as clean if value is not available since it may be computable from another relation
@@ -583,7 +606,7 @@ const $fluidSignalsScope = function (fluid) {
 
         // Misleading original comment:
         // handles diamond dependencies if we're the parent of a diamond.
-        if (!fluid.cell.equals(oldValue, cell._value) && cell._observers) {
+        if (observableChange && cell._observers) {
             const consumedSources = cell._consumedSources;
             // We've changed value, so mark our children as dirty so they'll reevaluate
             for (let i = 0; i < cell._observers.length; i++) {
@@ -593,21 +616,19 @@ const $fluidSignalsScope = function (fluid) {
                     fluid.cell.markStale(observer, CacheDirty, [cell], cell);
                 }
             }
-            if (!fluid.isConfigUnavailable(newValue)) {
-                fluid.cell.stabilize();
-            }
+        }
+        if (!fluid.isConfigUnavailable(newValue)) {
+            fluid.cell.stabilize();
         }
     };
 
     fluid.cell.bindIterable = function (cell, inEdge, iterable) {
         // Guide at https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function*#declaring_an_async_generator_function
         const bindIterable = nextIt => {
-            // TODO: Presumably set to undefined here to mark as unavailable
             cell.set(fluid.pending(cell._value, cell.name));
             nextIt.then(res => {
-                fluid.cell.updateComplete(res.value, cell, cell._value.staleValue);
+                fluid.cell.updateComplete(res.value, cell);
                 if (!res.done) {
-                    // cell._updateRecord.oldValue = res.value;
                     const nextIt = iterable.next();
                     bindIterable(nextIt);
                 }
@@ -625,17 +646,32 @@ const $fluidSignalsScope = function (fluid) {
      *
      * @param {Array|any} args - The array of arguments or single argument to process.
      *     Arguments may include `preactSignalsCore.Signal` instances or plain values.
+     * @param {any} oldValue - Any previous value computed at the same site where arguments are being consumed
      * @return {Object} An object with the following properties:
-     *     - `unavailable` (Object|undefined): The most "unavailable" value (if any) based on priority,
-     *       or `undefined` if no unavailable values are found.
+     *     - `unavailable` (Object|null): The most "unavailable" value (if any) based on priority,
+     *       or `null` if no unavailable values are found.
      */
-    fluid.cell.mapSignalArgs = function (args) {
-        let unavailable = undefined;
+    fluid.cell.mapSignalArgs = function (args, oldValue) {
+        // Reuse a pending unavailable with its staleValue if there is one
+        let unavailable = fluid.isPending(oldValue) ? oldValue : null;
+        let causes = null;
         for (let i = 0; i < args.length; ++i) {
             let arg = args[i];
             if (fluid.isUnavailable(arg)) {
-                unavailable = fluid.mergeUnavailable(unavailable, arg);
+                if (causes === null) {
+                    causes = [];
+                }
+                causes.push(arg);
             }
+        }
+        if (causes) {
+            if (!unavailable) {
+                unavailable = fluid.unavailable(causes);
+            } else {
+                fluid.applyUnavailable(unavailable, causes);
+            }
+        } else {
+            unavailable = null;
         }
         return {unavailable};
     };
@@ -649,6 +685,7 @@ const $fluidSignalsScope = function (fluid) {
         if (cell._trackingRecord || !cell._inEdges) {
             return;
         }
+        console.log("Update beginning for cell ", cell.name);
 
         fluid.cell.beginTracking(cell, inEdge);
 
@@ -659,12 +696,16 @@ const $fluidSignalsScope = function (fluid) {
             fluid.cell.consumeSources(cell, inEdge.sources);
 
             if (!syncUpdate) {
+                const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
                 // Mark the cell as unavailable/stale whilst it is updating and push old value into staleValue
-                cell.set(fluid.pending(cell._value, cell.name));
+                cell.set(fluid.pending(oldValue, cell.name));
             }
 
             const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
-            const {unavailable} = fluid.cell.mapSignalArgs(args);
+            const {unavailable} = fluid.cell.mapSignalArgs(args, cell._value);
+            if (!unavailable) {
+                console.log("Update launched for cell ", cell.name);
+            }
             result = unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
         } catch (e) {
             result = fluid.unavailable(e);
@@ -674,13 +715,14 @@ const $fluidSignalsScope = function (fluid) {
                 if (fluid.isPromise(result)) {
                     result.then(newValue => {
                         console.log("Async update for value of cell ", cell.name, " yielded value ", newValue);
-                        fluid.cell.updateComplete(newValue, cell, cell._value.staleValue);
+                        fluid.cell.updateComplete(newValue, cell);
                     },
-                    e => fluid.cell.updateComplete(fluid.unavailable(e), cell, cell._value.staleValue)
+                    e => fluid.cell.updateComplete(fluid.unavailable(e), cell)
                     );
                 } else if (result[Symbol.asyncIterator]) {
                     fluid.cell.bindIterable(cell, inEdge, result);
                 } else { // Unexpected plain return from async edge
+                    console.log("Update concluded for cell ", cell.name);
                     syncUpdate = true;
                 }
             }
@@ -852,33 +894,40 @@ const $fluidSignalsScope = function (fluid) {
         }
     };
 
+    fluid.cell.stabilizeDepth = 0;
+
     // Stabilize function to process effect queue
     fluid.cell.stabilize = function () {
-        const pendingEffects = fluid.CurrentFit.pendingEffects;
-        while (fluid.EffectQueue.length > 0) {
-            const queue = fluid.EffectQueue.slice();
-            fluid.EffectQueue.length = 0;
-            queue.map(effect => {
-                const result = effect.get();
-                if (fluid.isPending(result)) {
-                    if (!effect._isPending) {
-                        effect._isPending = true;
-                        pendingEffects.push(effect);
-                    }
-                } else {
-                    if (effect._isPending) {
-                        effect._isPending = false;
-                        const index = pendingEffects.indexOf(effect);
-                        if (index !== -1) {
-                            pendingEffects.splice(index, 1);
+        fluid.cell.stabilizeDepth++;
+        try {
+            const pendingEffects = fluid.CurrentFit.pendingEffects;
+            while (fluid.EffectQueue.length > 0) {
+                const queue = fluid.EffectQueue.slice();
+                fluid.EffectQueue.length = 0;
+                queue.map(effect => {
+                    const result = effect.get();
+                    if (fluid.isPending(result)) {
+                        if (!effect._isPending) {
+                            effect._isPending = true;
+                            pendingEffects.push(effect);
+                        }
+                    } else {
+                        if (effect._isPending) {
+                            effect._isPending = false;
+                            const index = pendingEffects.indexOf(effect);
+                            if (index !== -1) {
+                                pendingEffects.splice(index, 1);
+                            }
                         }
                     }
-                }
-                effect._isQueued = false;
-                console.log("Effect " + effect.name + " unqueued");
-            });
+                    effect._isQueued = false;
+                    console.log("Effect " + effect.name + " unqueued - pending is " + effect._isPending);
+                });
+            }
+        } finally {
+            fluid.cell.stabilizeDepth--;
         }
-        if (pendingEffects.length === 0) {
+        if (fluid.cell.stabilizeDepth === 0 && fluid.CurrentFit.pendingEffects.length === 0) {
             fluid.cell.endFit();
         }
     };

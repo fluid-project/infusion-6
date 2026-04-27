@@ -140,6 +140,21 @@ const $fluidCoreJSScope = function (fluid) {
         return "Value is unavailable: causes are " + causes.map(cause => cause.message).join("\n");
     };
 
+    fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {
+        if (fluid.isArrayable(cause)) {
+            instance.causes = cause.map(oneCause => fluid.upgradeCause(oneCause, variety));
+            instance.variety = instance.causes.reduce((acc, {variety}) => {
+                const priority = fluid.unavailablePriority[variety];
+                return priority > acc.priority ? {variety, priority} : acc;
+            }, {priority: -1}).variety;
+            instance.message = fluid.formatCauses(instance.causes);
+        } else {
+            const upCause = fluid.upgradeCause(cause, variety);
+            Object.assign(instance, upCause);
+        }
+        return instance;
+    };
+
     /**
      * Create a marker representing an "Unavailable" state with an associated cause or list of causes, which each
      * contain an site address or external resource (e.g. URL) responsible for unavailability of this value.
@@ -154,17 +169,7 @@ const $fluidCoreJSScope = function (fluid) {
      */
     fluid.unavailable = function (cause = {}, variety = "error") {
         const togo = Object.create(fluid.unavailable.prototype);
-        if (fluid.isArrayable(cause)) {
-            togo.causes = fluid.makeArray(cause).map(oneCause => fluid.upgradeCause(oneCause, variety));
-            togo.variety = togo.causes.reduce((acc, {variety}) => {
-                const priority = fluid.unavailablePriority[variety];
-                return priority > acc.priority ? {variety, priority} : acc;
-            }, {priority: -1}).variety;
-            togo.message = fluid.formatCauses(togo.causes);
-        } else {
-            const upCause = fluid.upgradeCause(cause, variety);
-            Object.assign(togo, upCause);
-        }
+        fluid.applyUnavailable(togo, cause, variety);
         return togo;
     };
 
