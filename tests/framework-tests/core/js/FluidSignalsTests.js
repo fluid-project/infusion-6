@@ -137,6 +137,25 @@ QUnit.test("findCause with three nodes", assert => {
     assert.deepEqual(cCause, [C, B, A], "C's update cause is A -> B -> C");
 });
 
+QUnit.test("Source tracking and source exclusion", assert => {
+    const A = fluid.cell(1, {name: "A"});
+    const B = fluid.cell(2, {name: "B"}).computed(a => a + 1, [A]);
+    const Blog = [];
+    // See historical note at https://docs.fluidproject.org/infusion/development/ChangeApplierAPI#example-featuring-user-defined-change-source-filtering
+    const Beff = fluid.cell.effect(b => Blog.push(b), [B], {excludeSource: "scrollbar"});
+    assert.deepEqual(Blog, [2], "Startup effect");
+
+    Blog.length = 0;
+    A.set(2);
+    assert.deepEqual(Blog, [3], "Update effect");
+
+    Blog.length = 0;
+    A.set(3, {source: "scrollbar"});
+    assert.deepEqual(Blog, [], "Update skipped if source excluded");
+
+    Beff.dispose();
+});
+
 // kairo's "avoidable computation" test at https://github.com/milomg/js-reactivity-benchmark/blob/main/packages/core/src/benches/kairo/avoidable.ts
 // Which was ported to knockout (passes) and adapton (fails), probably fails in S as well.
 

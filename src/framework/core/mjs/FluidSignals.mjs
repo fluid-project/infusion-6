@@ -784,6 +784,7 @@ import fluid from "./FluidCore.mjs";
      * @param {Function} [props.onDispose] - Optional cleanup function to run when the effect is disposed.
      * @param {Boolean}  [props.isFree] - If true, the effect will run even if some sources are unavailable.
      * @param {String}   [props.name] - Optional name for the effect
+     * @param {String|String[]}   [props.excludeSource] - An optional list of source names whose updates will be excluded
      * @return {Cell} The created effect cell.
      */
     fluid.cell.effect = function (fn, staticSources, props) {

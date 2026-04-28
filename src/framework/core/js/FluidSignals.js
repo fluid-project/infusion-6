@@ -4,6 +4,66 @@
 
 const $fluidSignalsScope = function (fluid) {
 
+    /**
+     * Compares two values for equality, with special handling for numbers and NaN.
+     * - For non-number types, uses strict equality (===).
+     * - For numbers, considers them equal if:
+     *   - They are strictly equal, or
+     *   - Both are NaN, or
+     *   - Their relative error is less than 1e-12 (to account for floating-point precision).
+     *
+     * @param {Any} a - The first value to compare.
+     * @param {Any} b - The second value to compare.
+     * @return {Boolean} `true` if the values are considered equal, `false` otherwise.
+     */
+    fluid.defaultEquality = function (a, b) {
+        if (typeof(a) !== "number" || typeof(b) !== "number") {
+            return a === b;
+        } else {
+            // Don't use isNaN because of https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/isNaN#Confusing_special-case_behavior
+            if (a === b || a !== a && b !== b) { // Either the same concrete number or both NaN
+                return true;
+            } else {
+                const relError = Math.abs((a - b) / b);
+                return relError < 1e-12; // 64-bit floats have approx 16 digits accuracy, this should deal with most reasonable transforms
+            }
+        }
+    };
+
+    /** Any object with a member <code>then</code> of type <code>function</code> passes this test, essentially for
+     * a "foreign thenable".
+     * @param {any} totest - The value to test
+     * @return {Boolean} `true` if the value can be used as a promise
+     */
+    fluid.isPromise = function (totest) {
+        return totest && typeof(totest.then) === "function";
+    };
+
+    /**
+     * Removes an element from an array at the specified index by replacing it with the last element,
+     * then removing the last element. This is an efficient way to remove an item without preserving order.
+     *
+     * @param {Array} array - The array from which to remove the element.
+     * @param {Number} index - The index of the element to remove.
+     */
+    fluid.removeAtIndex = function (array, index) {
+        array[index] = array[array.length - 1];
+        array.pop();
+    };
+
+    /**
+     * Removes the first occurrence of a specified value from an array, if present.
+     *
+     * @param {Array} array - The array from which to remove the value.
+     * @param {any} value - The value to remove from the array.
+     */
+    fluid.removeArrayElement = function (array, value) {
+        const index = array.indexOf(value);
+        if (index !== -1) {
+            array.splice(index, 1);
+        }
+    };
+
     /** Implementation structure taken from Reactively at https://github.com/milomg/reactively/blob/main/packages/core/src/core.ts
      *
      * Nodes for constructing a reactive graph of reactive values and reactive computations.
@@ -12,14 +72,14 @@ const $fluidSignalsScope = function (fluid) {
      * but the distinction is based on the use of the graph, all nodes have the same internal structure.
      * Changes flow from roots to leaves. It would be effective but inefficient to immediately propagate
      * all changes from a root through the graph to descendant leaves. Instead we defer change
-     * most change progogation computation until a leaf is accessed. This allows us to coalesce computations
+     * most change propagation computation until a leaf is accessed. This allows us to coalesce computations
      * and skip altogether recalculating unused sections of the graph.
      *
      * Each reactive node tracks its sources and its observers (observers are other
      * elements that have this node as a source). Source and observer links are updated automatically
      * as observer reactive computations re-evaluate and call get() on their sources.
      *
-     * Each node stores a cache state to support the change propogation algorithm: 'clean', 'check', or 'dirty'
+     * Each node stores a cache state to support the change propagation algorithm: 'clean', 'check', or 'dirty'
      * In general, execution proceeds in three passes:
      *  1. set() propogates changes down the graph to the leaves
      *     direct children are marked as dirty and their deeper descendants marked as check
@@ -66,6 +126,15 @@ const $fluidSignalsScope = function (fluid) {
         CacheDirty = fluid.CacheDirty;
 
     /**
+     * A "fit" or connected region of updating graph
+     * @typedef {Object} Fit
+     * @property {Cell[]} targetsConsumed - An array of cells for which the _consumedSources member has been set during this fit.
+     * @property {Cell[]} pendingEffects - An array of effects which have suspended because they depend on pending I/O.
+     * @property {Boolean} isActive - Indicates if this fit is currently active.
+     */
+
+    /**
+     * A reactive cell
      * @typedef {Object} Cell
      *
      * @property {function(): any} get - Retrieves the current value of the cell.
@@ -83,7 +152,7 @@ const $fluidSignalsScope = function (fluid) {
      * @property {CellTrackingRecord|null} _trackingRecord - Captures dynamic dependency tracking information for an update which is in progress
      * @property {Boolean} _isEffect - Is this an effect node
      * @property {Boolean} _isQueued - If an effect, are we queued?
-     * @property {Error} _error - Error received evaluating the cell
+     * @property {Fit} _fit - The current update fit that the cell is enlisted in
      */
 
     /**
@@ -92,7 +161,8 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Boolean} isFree - Indicates if this is a "free" computation that will deliver unavailable values
      */
 
-    /** @typedef {Object} Edge
+    /** An edge between two reactive cells
+     * @typedef {Object} Edge
      * @property {Cell} target - The cell that we are the edge to (a computer for)
      * @property {Cell|null} key - The key for the edge, either the first staticSource or null if there are not any
      * @property {Cell[]|null} sources - Sources in reference order, not deduplicated (in links)
@@ -110,60 +180,6 @@ const $fluidSignalsScope = function (fluid) {
      */
 
     /**
-     * Compares two values for equality, with special handling for numbers and NaN.
-     * - For non-number types, uses strict equality (===).
-     * - For numbers, considers them equal if:
-     *   - They are strictly equal, or
-     *   - Both are NaN, or
-     *   - Their relative error is less than 1e-12 (to account for floating-point precision).
-     *
-     * @param {Any} a - The first value to compare.
-     * @param {Any} b - The second value to compare.
-     * @return {Boolean} `true` if the values are considered equal, `false` otherwise.
-     */
-    fluid.defaultEquality = function (a, b) {
-        if (typeof(a) !== "number" || typeof(b) !== "number") {
-            return a === b;
-        } else {
-            // Don't use isNaN because of https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/isNaN#Confusing_special-case_behavior
-            if (a === b || a !== a && b !== b) { // Either the same concrete number or both NaN
-                return true;
-            } else {
-                const relError = Math.abs((a - b) / b);
-                return relError < 1e-12; // 64-bit floats have approx 16 digits accuracy, this should deal with most reasonable transforms
-            }
-        }
-    };
-
-    /** Any object with a member <code>then</code> of type <code>function</code> passes this test, essentially for
-     * a "foreign thenable".
-     * @param {any} totest - The value to test
-     * @return {Boolean} `true` if the value can be used as a promise
-     */
-    fluid.isPromise = function (totest) {
-        return totest && typeof(totest.then) === "function";
-    };
-
-    fluid.CurrentFit = {
-        /** @type {Cell[]} An array of cells for which the _consumedSources member has been set during this fit */
-        targetsConsumed: [],
-        pendingEffects: []
-    };
-
-    /**
-     * Removes an element from an array at the specified index by replacing it with the last element,
-     * then removing the last element. This is an efficient way to remove an item without preserving order.
-     *
-     * @param {Array} array - The array from which to remove the element.
-     * @param {Number} index - The index of the element to remove.
-     */
-    fluid.removeAtIndex = function (array, index) {
-        array[index] = array[array.length - 1];
-        array.pop();
-    };
-
-
-    /**
      * Creates a new reactive cell for managing state and computations.
      *
      * @param {any|undefined} [initialValue] - The initial value to store in the cell.
@@ -179,8 +195,7 @@ const $fluidSignalsScope = function (fluid) {
         cell._observers = null; // nodes that have us as sources (outgoing links)
         cell._inEdges = null;
         cell._consumedSources = null;
-        cell._consumedEdge = null;
-        cell._error = null;
+        cell._fit = null;
 
         cell._state = CacheClean;
         cell._trackingRecord = null;
@@ -188,12 +203,43 @@ const $fluidSignalsScope = function (fluid) {
         return cell;
     };
 
+    fluid.cell.initialUnavailable = Object.freeze(fluid.unavailable({
+        staleValue: undefined
+    }, "config"));
+
+
+    /** @type {Fit[]} Array of all currently active fits */
+    fluid.CurrentFits = [];
+
+    fluid.cell.fitId = 0;
+
+    /** Allocate a new fit
+     * @return {Fit} A freshly allocated fit
+     */
+    fluid.cell.startFit = () => {
+        const fit = {
+            targetsConsumed: [],
+            pendingEffects: [],
+            sources: [],
+            isActive: true,
+            fitId: fluid.cell.fitId++
+        };
+        fluid.CurrentFits.push(fit);
+        return fit;
+    };
+
     /** End the current "fit" (transaction) which is updating the reactive graph by resetting all the arcs which
      * have been marked as consumed by one leg of bidirectional update arcs.
+     * @param {Fit} fit - The fit to end
      */
-    fluid.cell.endFit = function () {
-        fluid.CurrentFit.targetsConsumed.forEach(target => target._consumedSources = null);
-        fluid.CurrentFit.targetsConsumed.length = 0;
+    fluid.cell.endFit = function (fit) {
+        if (fit.isActive) {
+            console.log("***ENDFIT for fitId ", fit.fitId, " targetsConsumed ", fit.targetsConsumed);
+            fit.targetsConsumed.forEach(target => target._consumedSources.length = 0);
+            fit.targetsConsumed.length = 0;
+            fit.isActive = false;
+            fluid.removeArrayElement(fluid.CurrentFits, fit);
+        }
     };
 
     /** Report the cause of any reaction which has updated a given cell, or else the one that is currently
@@ -242,19 +288,42 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell} target - The target cell for which sources are being culled.
      * @param {Array[Cell]} inSources - The array of source cells to be added to the culled sources list.
      */
-    fluid.cell.consumeSources = function (target, inSources) {
-        const sources = target._consumedSources || [];
-        Array.prototype.push.apply(sources, inSources);
-        target._consumedSources = sources;
-        const targetsConsumed = fluid.CurrentFit.targetsConsumed;
+    fluid.cell.enlistInFit = function (target, inSources) {
+        const sourceFits = [];
+        if (inSources) {
+            for (let i = 0; i < inSources.length; ++i) {
+                const sourceFit = inSources[i]._fit;
+                if (sourceFit !== null && !sourceFits.includes(sourceFit)) {
+                    sourceFits.push(sourceFit);
+                }
+            }
+        }
+        let fit = null;
+        if (sourceFits.length === 0) {
+            fit = fluid.cell.startFit();
+        } else {
+            fit = sourceFits[0];
+            for (let i = 1; i < sourceFits.length; ++i) {
+                const extraFit = sourceFits[i];
+
+                Array.prototype.push.apply(fit.targetsConsumed, extraFit.targetsConsumed);
+                Array.prototype.push.apply(fit.pendingEffects, extraFit.pendingEffects);
+                Array.prototype.push.apply(fit.sources, extraFit.sources);
+                fluid.cell.endFit(extraFit);
+                console.log("***FIT ID ", extraFit.fitId, "coalesced into fit ", fit.fitId);
+            }
+        }
+        const targetsConsumed = fit.targetsConsumed;
         if (!targetsConsumed.includes(target)) {
             targetsConsumed.push(target);
         }
-    };
 
-    fluid.cell.initialUnavailable = Object.freeze(fluid.unavailable({
-        staleValue: undefined
-    }, "config"));
+        const sources = target._consumedSources || [];
+        Array.prototype.push.apply(sources, inSources);
+        target._consumedSources = sources;
+
+        target._fit = fit;
+    };
 
     // Separately capture this so that calls to fluid.cell can be wrapped
     fluid.cellPrototype = fluid.cell.prototype;
@@ -302,13 +371,24 @@ const $fluidSignalsScope = function (fluid) {
      * Update the value of this writeable cell.
      *
      * @param {any} value - The new cell value
+     * @param {Object} options - Optional options to contextualise the update
+     * @param {String} [options.source] - Optional source to mark the reactive propagation, accessible via effect's excludeSource
      * @this {Cell}
      */
-    fluid.cell.prototype.set = function (value) {
+    fluid.cell.prototype.set = function (value, options) {
 
         if (!fluid.cell.equals(this._value, value)) {
             this._value = value;
             this._state = CacheClean;
+            if (!this._fit || !this._fit.isActive) {
+                this._fit = fluid.cell.startFit();
+            }
+            const source = options && options.source;
+            if (source) {
+                if (!this._fit.sources.includes(source)) {
+                    this._fit.sources.push(source);
+                }
+            }
 
             // Mark observers as dirty
             if (this._observers) {
@@ -323,7 +403,6 @@ const $fluidSignalsScope = function (fluid) {
             }
 
             if (!fluid.isUnavailable(value)) {
-                // Why did we stabilize in this branch and not in updateComplete? (now we do)
                 fluid.cell.stabilize();
             }
         }
@@ -371,6 +450,7 @@ const $fluidSignalsScope = function (fluid) {
             inEdge.target = this;
             inEdge.isAsync = props?.isAsync;
             inEdge.isFree = props?.isFree;
+            inEdge.excludeSource = props?.excludeSource;
             this._inEdges.push(inEdge);
 
             // Set up observer links from static sources to this cell immediately - this is from new signature
@@ -633,7 +713,7 @@ const $fluidSignalsScope = function (fluid) {
                     bindIterable(nextIt);
                 }
             }, e => {
-                cell._error = e;
+                fluid.cell.updateComplete(fluid.unavailable(e), cell);
             });
         };
         const nextIt = iterable.next();
@@ -687,25 +767,30 @@ const $fluidSignalsScope = function (fluid) {
         }
         console.log("Update beginning for cell ", cell.name);
 
-        fluid.cell.beginTracking(cell, inEdge);
-
         let syncUpdate = !inEdge.isAsync;
         let result;
 
-        try {
-            fluid.cell.consumeSources(cell, inEdge.sources);
+        fluid.cell.beginTracking(cell, inEdge);
 
-            if (!syncUpdate) {
-                const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
-                // Mark the cell as unavailable/stale whilst it is updating and push old value into staleValue
-                cell.set(fluid.pending(oldValue, cell.name));
+        fluid.cell.enlistInFit(cell, inEdge.sources);
+
+        // Skip notification if the fit has an excluded source
+        if (inEdge.excludeSource) {
+            if (cell._fit.sources.includes(inEdge.excludeSource)) {
+                return;
             }
+        }
 
+        if (!syncUpdate) {
+            const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
+            // Mark the cell as unavailable/stale whilst it is updating and push old value into staleValue
+            cell.set(fluid.pending(oldValue, cell.name));
+        }
+
+        try {
             const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
             const {unavailable} = fluid.cell.mapSignalArgs(args, cell._value);
-            if (!unavailable) {
-                console.log("Update launched for cell ", cell.name);
-            }
+
             result = unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
         } catch (e) {
             result = fluid.unavailable(e);
@@ -716,8 +801,10 @@ const $fluidSignalsScope = function (fluid) {
                     result.then(newValue => {
                         console.log("Async update for value of cell ", cell.name, " yielded value ", newValue);
                         fluid.cell.updateComplete(newValue, cell);
-                    },
-                    e => fluid.cell.updateComplete(fluid.unavailable(e), cell)
+                    }).catch(e => {
+                        console.log("Async error update received ", e);
+                        fluid.cell.updateComplete(fluid.unavailable(e), cell);
+                    }
                     );
                 } else if (result[Symbol.asyncIterator]) {
                     fluid.cell.bindIterable(cell, inEdge, result);
@@ -796,8 +883,6 @@ const $fluidSignalsScope = function (fluid) {
         if (dirtyEdge) {
             fluid.cell.update(cell, dirtyEdge);
         }
-        // TODO: If we are dirty, and all sources of all edges are unavailable, produce an unavailable value reporting this
-        // but only if there is a free effect upstream
     };
 
     /**
@@ -876,6 +961,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Function} [props.onDispose] - Optional cleanup function to run when the effect is disposed.
      * @param {Boolean}  [props.isFree] - If true, the effect will run even if some sources are unavailable.
      * @param {String}   [props.name] - Optional name for the effect
+     * @param {String}   [props.excludeSource] - Optional source name (as supplied as last argument to cell.set) that will have its notification skipped
      * @return {Cell} The created effect cell.
      */
     fluid.cell.effect = function (fn, staticSources, props) {
@@ -883,40 +969,41 @@ const $fluidSignalsScope = function (fluid) {
             bind: {fn, staticSources},
             unbind: {fn: props?.onDispose},
             isFree: props?.isFree,
-            name: props?.name
+            name: props?.name,
+            excludeSource: props?.excludeSource
         });
-    };
-
-    fluid.removeArrayElement = function (array, value) {
-        const index = array.indexOf(value);
-        if (index !== -1) {
-            array.splice(index, 1);
-        }
     };
 
     fluid.cell.stabilizeDepth = 0;
 
     // Stabilize function to process effect queue
     fluid.cell.stabilize = function () {
+        const touchedFits = [];
         fluid.cell.stabilizeDepth++;
         try {
-            const pendingEffects = fluid.CurrentFit.pendingEffects;
             while (fluid.EffectQueue.length > 0) {
                 const queue = fluid.EffectQueue.slice();
                 fluid.EffectQueue.length = 0;
                 queue.map(effect => {
                     const result = effect.get();
-                    if (fluid.isPending(result)) {
-                        if (!effect._isPending) {
-                            effect._isPending = true;
-                            pendingEffects.push(effect);
+                    const activeFit = effect._fit;
+                    if (activeFit) { // Might be no fit if effect did not activate because of no valid inEdge
+                        if (!touchedFits.includes(activeFit)) {
+                            touchedFits.push(activeFit);
                         }
-                    } else {
-                        if (effect._isPending) {
-                            effect._isPending = false;
-                            const index = pendingEffects.indexOf(effect);
-                            if (index !== -1) {
-                                pendingEffects.splice(index, 1);
+                        const pendingEffects = activeFit.pendingEffects;
+                        if (fluid.isPending(result)) {
+                            if (!effect._isPending) {
+                                effect._isPending = true;
+                                pendingEffects.push(effect);
+                            }
+                        } else {
+                            if (effect._isPending) {
+                                effect._isPending = false;
+                                const index = pendingEffects.indexOf(effect);
+                                if (index !== -1) {
+                                    pendingEffects.splice(index, 1);
+                                }
                             }
                         }
                     }
@@ -927,13 +1014,18 @@ const $fluidSignalsScope = function (fluid) {
         } finally {
             fluid.cell.stabilizeDepth--;
         }
-        if (fluid.cell.stabilizeDepth === 0 && fluid.CurrentFit.pendingEffects.length === 0) {
-            fluid.cell.endFit();
+        if (fluid.cell.stabilizeDepth === 0) {
+            for (let i = fluid.CurrentFits.length - 1; i >= 0; --i) {
+                const oneFit = fluid.CurrentFits[i];
+                if (oneFit.pendingEffects.length === 0) {
+                    fluid.cell.endFit(oneFit);
+                }
+            }
         }
     };
 
     fluid.cell.isIdle = function () {
-        return fluid.EffectQueue.length === 0;
+        return fluid.CurrentFits.length === 0;
     };
 
     /**

@@ -137,7 +137,7 @@ const $fluidCoreJSScope = function (fluid) {
      * @return {string} A formatted string listing all cause messages.
      */
     fluid.formatCauses = function (causes) {
-        return "Value is unavailable: causes are " + causes.map(cause => cause.message).join("\n");
+        return "Value is unavailable - causes are:\n" + causes.map(cause => cause.message).join("\n");
     };
 
     fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {

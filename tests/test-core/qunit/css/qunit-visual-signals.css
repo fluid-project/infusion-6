@@ -215,6 +215,12 @@
     color: black;
 }
 
+@media (prefers-color-scheme: dark) {
+    .node-name {
+        color: black;
+    }
+}
+
 .node-value {
     font-size: 16px;
     color: #555;

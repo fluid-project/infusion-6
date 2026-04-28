@@ -173,7 +173,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             return await async1();
         });
 
-        fluid.cell.effect(() => {}, [a]); // ensure re-compute
+        fluid.cell.effect(() => {
+        }, [a]); // ensure re-compute
 
         const b = fluid.cell().computed(av =>
             fluid.isUnavailable(av) ? "stale" : "not stale", [a], {isFree: true});
@@ -206,8 +207,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         });
 
         const b = fluid.cell().computed((aVal) =>
-            fluid.isUnavailable(aVal) ? "stale" : aVal
-        , [a], {isFree: true});
+                fluid.isUnavailable(aVal) ? "stale" : aVal
+            , [a], {isFree: true});
 
         assert.ok(b.get(), "stale", "b is stale/unavailable before first resolution");
 
@@ -380,7 +381,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         // Effect that reads `a` but does NOT track it reactively
         fluid.cell.effect(
             () => {
-                fluid.cell.untracked( () => {
+                fluid.cell.untracked(() => {
                     console.log("Effect wrapper called");
                     fluid.cell.signalToPromise(a).then(v => {
                         callCount++;
@@ -617,7 +618,87 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         assert.deepEqual(fSeq, [], "No further notifications");
         assert.deepEqual(cSeq, [], "No further notifications");
+    });
 
+    QUnit.test("Fit decoupling test - cyclic algorithm can make progress if unrelated fit is active", async assert => {
+        const blockSource = fluid.cell(1, {name: "blockSource"});
+        // Create a promise with external resolve
+        let blockWaitResolve;
+        const blockWait = new Promise(resolve => {
+            blockWaitResolve = resolve;
+        });
+
+        // eslint-disable-next-line no-unused-vars
+        const blockTarget = fluid.cell(undefined, {name: "blockTarget"})
+            .asyncComputed(async bS => {
+                await blockWait;
+                return bS;
+            }, [blockSource]);
+        const C = fluid.cell(15);
+        const F = fluid.cell();
+
+        F.computed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [C]);
+        C.computed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [F]);
+
+        let blockTargetResult = null;
+
+        // eslint-disable-next-line no-unused-vars
+        const blockTargetPull = fluid.cell.effect(bT => blockTargetResult = bT, [blockTarget]);
+
+        assert.equal(await fluid.cell.signalToPromise(F), 59, "Spread from Celsius to Fahrenheit");
+
+        // This leg will fail because consumedSources does not clear.
+        F.set(68);
+
+        assert.equal(await fluid.cell.signalToPromise(C), 20, "Spread back Fahrenheit to Celsius");
+
+        blockWaitResolve();
+
+        await fluid.returnAsync();
+
+        assert.equal(blockTargetResult, 1, "Resolved late blocking effect");
+    });
+
+    QUnit.test("Error propagation across async graph", async assert => {
+        const A = fluid.cell(1, {name: "A"});
+        let returnIndex = 0;
+        const returns = [
+            0,
+            Error("Failure computing async arc")
+        ];
+        const B = fluid.cell(2, {name: "B"}).asyncComputed(() => {
+            const togo = returns[returnIndex++];
+            return togo instanceof Error ? new Promise((resolve, reject) => setTimeout(() => reject(togo), 0)) :
+                new Promise(resolve => setTimeout(() => resolve(togo), 0));
+        }, [A]);
+        const C = fluid.cell(3, {name: "C"}).asyncComputed(b => fluid.returnAsync(b), [B]);
+        const Clog = [];
+        const Ceff = fluid.cell.effect(c => Clog.push(c), [C], {isFree: true});
+
+        assert.deepEqual(Clog, [3], "Startup value");
+
+        Clog.length = 0;
+        A.set(2);
+
+        const nonPending = results => results.find(result => !fluid.isPending(result));
+
+        await fluid.returnAsync();
+        await fluid.returnAsync();
+
+        assert.deepEqual(nonPending(Clog), 0, "Initial plain value");
+
+        Clog.length = 0;
+        A.set(3);
+
+        await fluid.returnAsync();
+
+        const result = nonPending(Clog);
+
+        assert.ok(fluid.isUnavailable(result), "Got unavailable");
+        assert.equal(result.variety, "error", "Got error unavailable");
+        assert.ok(result.message.includes("Failure computing async arc"));
+
+        Ceff.dispose();
     });
 
     // https://github.com/preactjs/signals/blob/%40preact/signals%402.5.1/packages/core/test/signal.test.tsx#L1790
@@ -653,7 +734,6 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.equal(await fluid.cell.signalToPromise(d), "a c");
 
         a.set("aa");
-        console.log("AFTER SET AA");
         await fluid.cell.signalToPromise(d);
         assert.equal(spyResult, "aa c");
     });

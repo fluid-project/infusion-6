@@ -219,8 +219,8 @@ fluid.vizReactive.annotations.push({
             glitching by supplying stale data to F's computation. Our graph colouring has diverged from Milo's since we are operating an asynchronous algorithm which\
             needs to suspend in order to display the user interface for the demo. The advantage of this approach is that in a genuinely asynchronous environment, our algorithm\
             could make progress in parallel on work on both sides of the hexagon, but this means that it needs to do work locally in order to traverse the\
-            asynchronous part of the graph in order to schedule this remote work. In the case of a completely synchronous dataflow, our algorithm would produce the same\
-            colouring as Milo's and would traverse the graph as efficiently.`
+            asynchronous part of the graph in order to schedule this remote work. In the case of a completely synchronous dataflow, our algorithm would produce a similar\
+            colouring to Milo's and would traverse the graph comparably efficiently.`
         }
     }, {
         sequencePoint: 20,
