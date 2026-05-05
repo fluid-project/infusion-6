@@ -142,7 +142,7 @@ const deploy = function (configPath) {
 const configArg = process.argv[2];
 if (!configArg) {
     console.error("Usage: node deploySnippet.js <config.json5>");
-    console.error("  e.g. node deploySnippet.js deploys/ponder-reactive-viz.json5");
+    console.error("  e.g. node deploySnippet.js snippetDeploys/ponder-reactive-viz.json5");
     process.exit(1);
 }
 

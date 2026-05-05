@@ -214,11 +214,18 @@ fluid.vizReactive.annotations.push({
         cellNotes: {
             B: `The "up" or "pull" phase of the algorithm has begun to evaluate computed edges. At this point it is indeterminate whether we evaluate C or B and we can progress\
             down the sides of the hexagon in any order. However, once we reach the bottom it is essential that we do not continue to pull from E to F until D is ready to avoid\
-            glitching by supplying stale data to F's computation. Our graph colouring has diverged from Milo's since we are operating an asynchronous algorithm which\
-            needs to suspend in order to display the user interface for the demo. The advantage of this approach is that in a genuinely asynchronous environment, our algorithm\
-            could make progress in parallel on work on both sides of the hexagon, but this means that it needs to do work locally in order to traverse the\
-            asynchronous part of the graph in order to schedule this remote work. In the case of a completely synchronous dataflow, our algorithm would produce a similar\
-            colouring to Milo's and would traverse the graph comparably efficiently.`
+            glitching by supplying stale data to F's computation. We chose C, and arrive at Milo's second diagram from his <a href="https://milomg.dev/2022-12-01/reactivity#reactively">2022 posting</a>.`
+        }
+    }, {
+        sequencePoint: 17,
+        cellNotes: {
+            B: `At this point it is indeterminate whether we choose to evaluate B or E. In Milo's example, he chose E, whereas we choose B, resulting in a different diagram.\
+                Evaluation of E from C is coming up next.`
+        }
+    }, {
+        sequencePoint: 19,
+        cellNotes: {
+            F: `Finally all of F's arguments are marked as clean and it is safe to evaluate it.`
         }
     }, {
         sequencePoint: 20,
