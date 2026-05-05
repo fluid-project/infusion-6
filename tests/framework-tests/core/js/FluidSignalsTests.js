@@ -167,12 +167,12 @@ QUnit.test("Early cutoff tests", assert => {
         busyCount++;
     }
 
-    const headCell = fluid.cell(0);
-    const c1Cell = fluid.cell().computed(head => head, [headCell]);
-    const c2Cell = fluid.cell().computed(() => { c1Cell.get(); return 0; });
-    const c3Cell = fluid.cell().computed(c2 => { busy(); return c2 + 1; }, [c2Cell]);
-    const c4Cell = fluid.cell().computed(c3 => c3 + 2, [c3Cell]);
-    const c5Cell = fluid.cell().computed(c4 => c4 + 3, [c4Cell]);
+    const headCell = fluid.cell(0, {name: "head"});
+    const c1Cell = fluid.cell(undefined, {name: "c1"}).computed(head => head, [headCell]);
+    const c2Cell = fluid.cell(undefined, {name: "c2"}).computed(() => { c1Cell.get(); return 0; });
+    const c3Cell = fluid.cell(undefined, {name: "c3"}).computed(c2 => { busy(); return c2 + 1; }, [c2Cell]);
+    const c4Cell = fluid.cell(undefined, {name: "c4"}).computed(c3 => c3 + 2, [c3Cell]);
+    const c5Cell = fluid.cell(undefined, {name: "c5"}).computed(c4 => c4 + 3, [c4Cell]);
 
     // Initial computation
     headCell.set(1);

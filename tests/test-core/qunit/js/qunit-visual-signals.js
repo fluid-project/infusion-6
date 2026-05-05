@@ -569,7 +569,7 @@ fluid.vizReactive.labelForCell = function (cell) {
     const ultInner = fluid.isUnavailable(innerValue) ? undefined : innerValue;
     const renderedInner = JSON.stringify(ultInner);
     const label = `<div class="node-label"><div class="node-name">${cell.name}</div><div class="node-value">${renderedInner}</div></div>`;
-    const useState = unavailable ? 2 : cell._state;
+    const useState = unavailable ? (cell._prePendingState || 2) : cell._state;
     const colour = fluid.vizReactive.cellStateInfo[useState].colour;
     return {label, colour};
 };

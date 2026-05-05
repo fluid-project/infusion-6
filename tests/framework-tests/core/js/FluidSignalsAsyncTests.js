@@ -30,14 +30,12 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         const async1 = async (v) => {
             async1Calls++;
             const togo = await Promise.resolve(v);
-            console.log("b's compute resolved");
             return togo;
         };
 
         const async2 = async (v) => {
             async2Calls++;
             const togo = await Promise.resolve(v);
-            console.log("c's compute resolved");
             return togo;
         };
 
@@ -146,7 +144,6 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.equal(effectCalls, 1, "effect called once after resolve");
         assert.equal(effectArgs[0], 2, "effect called with 2");
 
-        console.log("Starting update s to 2");
         // Update source
         s.set(2);
 
@@ -207,8 +204,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         });
 
         const b = fluid.cell().computed((aVal) =>
-                fluid.isUnavailable(aVal) ? "stale" : aVal
-            , [a], {isFree: true});
+            fluid.isUnavailable(aVal) ? "stale" : aVal
+        , [a], {isFree: true});
 
         assert.ok(b.get(), "stale", "b is stale/unavailable before first resolution");
 
@@ -382,7 +379,6 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         fluid.cell.effect(
             () => {
                 fluid.cell.untracked(() => {
-                    console.log("Effect wrapper called");
                     fluid.cell.signalToPromise(a).then(v => {
                         callCount++;
                         lastValue = v;
@@ -737,5 +733,80 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         await fluid.cell.signalToPromise(d);
         assert.equal(spyResult, "aa c");
     });
+
+    QUnit.test("Early cutoff tests - asyncHead", async assert => {
+        // Exploratory test to see how effects are discovered
+
+        let busyCount = 0;
+
+        function busy() {
+            busyCount++;
+        }
+
+        const c5Log = [];
+
+        const headCell = fluid.cell(undefined, {name: "head"});
+        const c1Cell = fluid.cell(undefined, {name: "c1"}).asyncComputed(head => fluid.returnAsync(head), [headCell]);
+        const c2Cell = fluid.cell(undefined, {name: "c2"}).asyncComputed(() => fluid.returnAsync(0), [c1Cell]);
+        const c3Cell = fluid.cell(undefined, {name: "c3"}).asyncComputed(c2 => { busy(); return fluid.returnAsync(c2 + 1); }, [c2Cell]);
+        const c4Cell = fluid.cell(undefined, {name: "c4"}).asyncComputed(c3 => fluid.returnAsync(c3 + 2), [c3Cell]);
+        const c5Cell = fluid.cell(undefined, {name: "c5"}).asyncComputed(c4 => fluid.returnAsync(c4 + 3), [c4Cell]);
+
+        const c5Logger = fluid.cell.effect(c5 => c5Log.push(c5), [c5Cell], {name: "c5Logger"});
+
+        // Initial computation
+        headCell.set(1);
+
+        // Wait for 5 async turns for propagation through chain
+        for (let i = 0; i < 5; ++i) {
+            await fluid.returnAsync();
+        }
+        assert.deepEqual(c5Log, [6], "Pushed through chain");
+        assert.equal(busyCount, 1, "One lot of busy on init");
+
+        c5Log.length = 0;
+        // Update computation
+        headCell.set(2);
+        // Wait for 5 async turns for propagation through chain
+        await fluid.returnAsync();
+        await fluid.returnAsync();
+
+        await fluid.returnAsync();
+        await fluid.returnAsync();
+        await fluid.returnAsync();
+
+        assert.deepEqual(c5Log, [6], "Pushed through chain");
+        assert.equal(busyCount, 1, "No more busy eval");
+
+        c5Logger.dispose();
+
+    });
+
+    QUnit.test("Early cutoff tests - async", async assert => {
+
+        let busyCount = 0;
+
+        function busy() {
+            busyCount++;
+        }
+
+        const headCell = fluid.cell(undefined, {name: "head"});
+        const c1Cell = fluid.cell(undefined, {name: "c1"}).asyncComputed(head => fluid.returnAsync(head), [headCell]);
+        const c2Cell = fluid.cell(undefined, {name: "c2"}).asyncComputed(() => fluid.returnAsync(0), [c1Cell]);
+        const c3Cell = fluid.cell(undefined, {name: "c3"}).asyncComputed(c2 => { busy(); return fluid.returnAsync(c2 + 1); }, [c2Cell]);
+        const c4Cell = fluid.cell(undefined, {name: "c4"}).asyncComputed(c3 => fluid.returnAsync(c3 + 2), [c3Cell]);
+        const c5Cell = fluid.cell(undefined, {name: "c5"}).asyncComputed(c4 => fluid.returnAsync(c4 + 3), [c4Cell]);
+
+        // Initial computation
+        headCell.set(1);
+        assert.equal(await fluid.cell.signalToPromise(c5Cell), 6, "Computed value 6");
+        assert.equal(busyCount, 1, "One lot of busy on init");
+
+        headCell.set(0);
+        assert.equal(await fluid.cell.signalToPromise(c5Cell), 6, "No change in computed value");
+        assert.equal(busyCount, 1, "Busy censored through early cutoff");
+
+    });
+
 
 });

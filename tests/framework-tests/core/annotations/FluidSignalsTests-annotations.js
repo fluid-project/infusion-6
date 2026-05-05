@@ -71,12 +71,6 @@ fluid.vizReactive.annotations.push({
             updates upstream in the graph but no intervening pull of the derived data.`
         }
     }, {
-        sequencePoint: 15,
-        cellNotes: {
-            d: `Having refreshed c and observing that its value has indeed changed, note that the reactive algorithm\
-            has updated the state of d from green "Check" to red "Dirty" meaning that it will definitely need to be reevaluated.`
-        }
-    }, {
         sequencePoint: 16,
         cellNotes: {
             d: `During the final update of d, note that the path of glowing red nodes computed using\
@@ -177,9 +171,13 @@ fluid.vizReactive.annotations.push({
     }, {
         sequencePoint: 12,
         cellNotes: {
-            K: `The graph is now clean. We will push an update at the top of K to 293.15, which makes C stale (red) since it is definitely\
-                invalidated as an adjacent node, and F is in state "check" (green) since it may have been invalidated but C's evaluation is required\
-                to be sure.`
+            K: `The graph is now clean since all values have been pullled. We will now push an update at the top of K to 293.15.`
+        }
+    }, {
+        sequencePoint: 13,
+        cellNotes: {
+            C: `C is stale (red) since it is definitely invalidated as an adjacent node to K's update.`,
+            F: `F is in state "check" (green) since it may have been invalidated but C's evaluation is required to be sure.`
         }
     }
     ]
