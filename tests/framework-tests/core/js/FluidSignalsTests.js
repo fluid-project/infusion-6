@@ -159,7 +159,7 @@ QUnit.test("Source tracking and source exclusion", assert => {
 // kairo's "avoidable computation" test at https://github.com/milomg/js-reactivity-benchmark/blob/main/packages/core/src/benches/kairo/avoidable.ts
 // Which was ported to knockout (passes) and adapton (fails), probably fails in S as well.
 
-QUnit.test("Early cutoff tests", assert => {
+QUnit.test("Early cutoff", assert => {
 
     let busyCount = 0;
 
@@ -179,10 +179,53 @@ QUnit.test("Early cutoff tests", assert => {
     assert.equal(c5Cell.get(), 6, "Computed value 6");
     assert.equal(busyCount, 1, "One lot of busy on init");
 
-    console.log("Test start");
-
     headCell.set(0);
     assert.equal(c5Cell.get(), 6, "No change in computed value");
     assert.equal(busyCount, 1, "Busy censored through early cutoff");
 
+});
+
+
+QUnit.test("Early cutoff tests with effects", assert => {
+
+    let busyCount = 0;
+
+    function busy() {
+        busyCount++;
+    }
+
+    const c5Log = [];
+
+    function reset() {
+        busyCount = 0;
+        c5Log.length = 0;
+    }
+
+    const headCell = fluid.cell(0, {name: "head"});
+    const c1Cell = fluid.cell(undefined, {name: "c1"}).computed(head => head, [headCell]);
+    const c2Cell = fluid.cell(undefined, {name: "c2"}).computed(() => { c1Cell.get(); return 0; });
+    const c3Cell = fluid.cell(undefined, {name: "c3"}).computed(c2 => { busy(); return c2 + 1; }, [c2Cell]);
+    const c4Cell = fluid.cell(undefined, {name: "c4"}).computed(c3 => c3 + 2, [c3Cell]);
+    const c5Cell = fluid.cell(undefined, {name: "c5"}).computed(c4 => c4 + 3, [c4Cell]);
+
+    const c5Logger = fluid.cell.effect(c5 => {debugger;c5Log.push(c5)}, [c5Cell], {name: "c5Logger"});
+
+    assert.deepEqual(c5Log, [6], "Pushed through chain to effect");
+    assert.equal(busyCount, 1, "One lot of busy on init");
+    reset();
+
+    // Update computation 1
+    headCell.set(1);
+    assert.equal(c5Cell.get(), 6, "Computed value 6");
+    assert.deepEqual(c5Log, [], "No further effect through early cutoff");
+    assert.equal(busyCount, 0, "No further busy through early cutoff");
+
+    reset();
+    // Update computation 2
+    headCell.set(0);
+    assert.equal(c5Cell.get(), 6, "No change in computed value");
+    assert.deepEqual(c5Log, [], "No further effect through early cutoff");
+    assert.equal(busyCount, 0, "No further busy through early cutoff");
+
+    c5Logger.dispose();
 });

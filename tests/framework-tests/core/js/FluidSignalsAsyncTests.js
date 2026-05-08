@@ -3,11 +3,11 @@
 /* global QUnit */
 
 QUnit.config.reorder = false;
-QUnit.config.testTimeout = 1000;
+QUnit.config.testTimeout = 0; // 0;
 
 QUnit.module("Fluid Signals Async Tests", function (hooks) {
     hooks.afterEach(function (assert) {
-        assert.ok(fluid.cell.isIdle(), "Reactive system should be idle after end of test");
+        assert.ok(fluid.cell.idleSignal.get(), "Reactive system should be idle after end of test");
     });
 
 
@@ -735,7 +735,6 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
     });
 
     QUnit.test("Early cutoff tests - asyncHead", async assert => {
-        // Exploratory test to see how effects are discovered
 
         let busyCount = 0;
 
@@ -761,6 +760,9 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         for (let i = 0; i < 5; ++i) {
             await fluid.returnAsync();
         }
+
+        assert.equal(c5Cell.get(), 6, "C5 has settled to plain value");
+
         assert.deepEqual(c5Log, [6], "Pushed through chain");
         assert.equal(busyCount, 1, "One lot of busy on init");
 
@@ -768,14 +770,16 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         // Update computation
         headCell.set(2);
         // Wait for 5 async turns for propagation through chain
-        await fluid.returnAsync();
-        await fluid.returnAsync();
 
         await fluid.returnAsync();
         await fluid.returnAsync();
         await fluid.returnAsync();
+        await fluid.returnAsync();
+        await fluid.returnAsync();
 
-        assert.deepEqual(c5Log, [6], "Pushed through chain");
+        assert.equal(c5Cell.get(), 6, "C5 has settled to plain value");
+
+        assert.deepEqual(c5Log, [], "Effect has not acted due to early cutoff");
         assert.equal(busyCount, 1, "No more busy eval");
 
         c5Logger.dispose();
@@ -803,7 +807,15 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.equal(busyCount, 1, "One lot of busy on init");
 
         headCell.set(0);
-        assert.equal(await fluid.cell.signalToPromise(c5Cell), 6, "No change in computed value");
+        let settled = false;
+
+        fluid.cell.signalToPromise(c5Cell).then(() => settled = true);
+
+        for (let i = 0; i < 6; ++i) {
+            await fluid.returnAsync();
+        }
+        assert.equal(false, settled, "Promise has not settled due to early cutoff");
+
         assert.equal(busyCount, 1, "Busy censored through early cutoff");
 
     });

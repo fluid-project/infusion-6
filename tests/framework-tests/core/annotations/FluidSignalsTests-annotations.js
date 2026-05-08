@@ -213,7 +213,7 @@ fluid.vizReactive.annotations.push({
         sequencePoint: 16,
         cellNotes: {
             B: `The "up" or "pull" phase of the algorithm has begun to evaluate computed edges. At this point it is indeterminate whether we evaluate C or B and we can progress\
-            down the sides of the hexagon in any order. However, once we reach the bottom it is essential that we do not continue to pull from E to F until D is ready to avoid\
+            down the sides of the hexagon in any order. However, once we reach the bottom it is essential that we do not continue to pull from E to F until D is ready, to avoid\
             glitching by supplying stale data to F's computation. We chose C, and arrive at Milo's second diagram from his <a href="https://milomg.dev/2022-12-01/reactivity#reactively">2022 posting</a>.`
         }
     }, {
