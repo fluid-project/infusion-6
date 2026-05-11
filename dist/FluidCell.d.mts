@@ -1,4 +1,3 @@
-export default fluid;
 /**
  * A record explaining the cause that a value is unavailable.
  */
@@ -8,7 +7,7 @@ export type UnavailableCause = {
      */
     message: string;
     /**
-     * - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * - The variety assigned to the cause (e.g., "error", "config", "pending").
      */
     variety: string;
     /**
@@ -26,7 +25,6 @@ export type Unavailable = UnavailableCause;
 export type CausedUnavailable = Unavailable;
 declare namespace fluid {
     let version: string;
-    let Error: ErrorConstructor;
     let global: any;
     /**
      * Check whether the argument is a primitive type
@@ -52,15 +50,36 @@ declare namespace fluid {
      * @return {Boolean} `true` if the supplied value is an array
      */
     function isArrayable(totest: any): boolean;
-    let unavailablePriority: {
-        "I/O": number;
-        config: number;
-        error: number;
-    };
+    /**
+     * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
+     * not already allocated.
+     * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
+     * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
+     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
+     * If a non-array, it will be pushed to the end of the array using Array.push.
+     */
+    function pushArray(holder: any[] | any, member: string, topush: any[] | any): void;
+    let NoValue: symbol;
+    /**
+     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
+     *
+     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
+     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String): The key of the current property .
+     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
+     */
+    function transform(source: any, func: Function): any;
+    function invokeLater(func: any): NodeJS.Timeout;
+    namespace unavailablePriority {
+        let pending: number;
+        let config: number;
+        let error: number;
+    }
     /** @typedef {Object} UnavailableCause
      * A record explaining the cause that a value is unavailable.
      * @property {String} message - A human-readable message describing the cause.
-     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "pending").
      * @property {String} [site] - An optional site associated with the cause of unavailability
      */
     /**
@@ -82,6 +101,7 @@ declare namespace fluid {
      * @return {string} A formatted string listing all cause messages.
      */
     function formatCauses(causes: UnavailableCause[]): string;
+    function applyUnavailable(instance: any, cause?: {}, variety?: string): any;
     /**
      * Create a marker representing an "Unavailable" state with an associated cause or list of causes, which each
      * contain an site address or external resource (e.g. URL) responsible for unavailability of this value.
@@ -97,13 +117,15 @@ declare namespace fluid {
     function unavailable(cause?: any | Array<UnavailableCause>, variety?: string): Unavailable;
     /**
      * Creates an "Unavailable" marker representing a value that is pending due to I/O.
-     * Sets the variety to "I/O", provides a standard message, and records the site and stale value.
+     * Sets the variety to "pending", provides a standard message, and records the site and stale value.
      *
      * @param {Any} staleValue - The most recently seen value before it became unavailable due to pending I/O.
      * @param {String} site - The site or resource (e.g. URL) responsible for the pending I/O.
      * @return {Unavailable} An object representing the unavailable state due to pending I/O.
      */
     function pending(staleValue: Any, site: string): Unavailable;
+    function isPending(value: any): boolean;
+    function isConfigUnavailable(value: any): boolean;
     /**
      * Check if an object is a marker of type "Unavailable"
      *
@@ -131,9 +153,11 @@ declare namespace fluid {
      */
     function mergeUnavailable(existing: Unavailable | null | undefined, fresh: Unavailable): Unavailable;
     namespace missingPolicies {
-        function unavailable(root: any, path: any): UnavailableCause;
-        function error(root: any, path: any): any;
+        export function unavailable(root: any, path: any): UnavailableCause;
+        export function error_1(root: any, path: any): any;
+        export { error_1 as error };
     }
+    /** Support for traversing substrate via string paths **/
     function getPathSegmentImpl(accept: any, path: any, i: any): any;
     /** Parse an IL path separated by periods (.) into its component segments.
      * @param {String} path - The path expression to be split
@@ -169,6 +193,7 @@ declare namespace fluid {
      * @param {any} newValue - The value to set at the specified path.
      */
     function set(root: any, path: string | string[], newValue: any): void;
+    /** Managing the global namespace **/
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
      * @param {String|String[]} path - The global path from which the value is to be fetched
      * @return {any} The value that was stored at the path, or a fluid.unavailable value if there is none.
@@ -189,4 +214,155 @@ declare namespace fluid {
      */
     function registerNamespace(path: string | string[]): any;
 }
-//# sourceMappingURL=FluidCore.d.mts.map
+export type CacheState = number;
+/**
+ * A "fit" or connected region of updating graph
+ */
+export type Fit = {
+    /**
+     * - An array of cells for which the _consumedSources member has been set during this fit.
+     */
+    targetsConsumed: Cell[];
+    /**
+     * - An array of effects which have suspended because they depend on pending I/O.
+     */
+    pendingEffects: Cell[];
+    /**
+     * - Indicates if this fit is currently active.
+     */
+    isActive: boolean;
+};
+/**
+ * A reactive cell
+ */
+export type Cell = {
+    /**
+     * - Retrieves the current value of the cell.
+     */
+    get: () => any;
+    /**
+     * - Sets a new value for the cell.
+     */
+    set: (arg0: any) => void;
+    /**
+     * - Sets up or tears down a reactive computation for the cell.
+     */
+    computed: (arg0: Function, arg1: Array<Cell>, arg2: ComputedProps | undefined) => Cell;
+    /**
+     * - Sets up or tears down an asynchyronous reactive computation for the cell.
+     */
+    asyncComputed: (arg0: Function, arg1: Array<Cell>, arg2: ComputedProps | undefined) => Cell;
+    /**
+     * - The current value stored in the cell.
+     */
+    _value: any;
+    /**
+     * - A name or address for the cell.
+     */
+    name?: string | undefined;
+    /**
+     * - The cache state of the cell (clean, check, or dirty).
+     */
+    _state: CacheState;
+    /**
+     * - A "high watermark" of our _state at the point we went into a pending state
+     */
+    _prePendingState: CacheState;
+    /**
+     * - Cell from along which we were dirtied
+     */
+    _dirtyFrom: Cell | null;
+    /**
+     * - Cells that have us as sources (out links)
+     */
+    _observers: Cell[] | null;
+    /**
+     * - Array of incoming edges which could update this node
+     */
+    _inEdges: Edge[] | null;
+    /**
+     * - Sources from which arcs have been traversed during this fit
+     */
+    _consumedSources: Cell[] | null;
+    /**
+     * - Captures dynamic dependency tracking information for an update which is in progress
+     */
+    _trackingRecord: CellTrackingRecord | null;
+    /**
+     * - Is this an effect node
+     */
+    _isEffect: boolean;
+    /**
+     * - If an effect, are we queued?
+     */
+    _isQueued: boolean;
+    /**
+     * - The current update fit that the cell is enlisted in
+     */
+    _fit: Fit;
+};
+export type ComputedProps = {
+    /**
+     * - Indicates if the computation is asynchronous.
+     */
+    isAsync: boolean;
+    /**
+     * - Indicates if this is a "free" computation that will deliver unavailable values
+     */
+    isFree: boolean;
+};
+/**
+ * An edge between two reactive cells
+ */
+export type Edge = {
+    /**
+     * - The cell that we are the edge to (a computer for)
+     */
+    target: Cell;
+    /**
+     * - The key for the edge, either the first staticSource or null if there are not any
+     */
+    key: Cell | null;
+    /**
+     * - Sources in reference order, not deduplicated (in links)
+     */
+    sources: Cell[] | null;
+    /**
+     * - Static sources supplied
+     */
+    staticSources: Cell[] | null;
+    /**
+     * - The function to be called to compute the value
+     */
+    fn: Function;
+    /**
+     * - Indicates if the edge's computation is asynchronous.
+     */
+    isAsync: boolean;
+    /**
+     * - Indicates if the edge's computation should be invoked on unavailable values
+     */
+    isFree: boolean;
+};
+export type CellTrackingRecord = {
+    /**
+     * - The previous global reaction context.
+     */
+    prevReaction: Edge | null;
+    /**
+     * - The previous list of demanded source cells.
+     */
+    prevGets: Cell[] | null;
+    /**
+     * - The previous index in the sources array.
+     */
+    prevIndex: number;
+};
+declare namespace fluid {
+    /**
+     * *
+     */
+    type CacheClean = number;
+}
+export default fluid;
+//# sourceMappingURL=FluidCell.d.mts.map

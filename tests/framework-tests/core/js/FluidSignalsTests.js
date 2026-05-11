@@ -208,7 +208,7 @@ QUnit.test("Early cutoff tests with effects", assert => {
     const c4Cell = fluid.cell(undefined, {name: "c4"}).computed(c3 => c3 + 2, [c3Cell]);
     const c5Cell = fluid.cell(undefined, {name: "c5"}).computed(c4 => c4 + 3, [c4Cell]);
 
-    const c5Logger = fluid.cell.effect(c5 => {debugger;c5Log.push(c5)}, [c5Cell], {name: "c5Logger"});
+    const c5Logger = fluid.cell.effect(c5 => c5Log.push(c5), [c5Cell], {name: "c5Logger"});
 
     assert.deepEqual(c5Log, [6], "Pushed through chain to effect");
     assert.equal(busyCount, 1, "One lot of busy on init");

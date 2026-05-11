@@ -1,7 +1,7 @@
 {
     "name": "infusion-6",
     "description": "Infusion is an application framework for developing flexible stuff with JavaScript",
-    "version": "6.0.0-pre",
+    "version": "6.0.0",
     "author": "Fluid Project",
     "bugs": "https://issues.fluidproject.org/browse/FLUID",
     "homepage": "https://www.fluidproject.org/",
@@ -22,6 +22,7 @@
     "scripts": {
         "clean": "run-p clean:*",
         "clean:build": "rimraf build products",
+        "clean:tsc": "rimraf src/framework/core/mjs/*.d.mts && rimraf src/framework/core/mjs/*.d.mts.map",
         "deps": "run-p deps:*",
         "deps:preact-signals-core": "cpy node_modules/@preact/signals-core/dist/signals-core.min.js src/lib/preact-signals/",
         "deps:preact-signals-core-map": "cpy node_modules/@preact/signals-core/dist/signals-core.min.js.map src/lib/preact-signals/",
@@ -31,6 +32,10 @@
         "deps:preact-map": "cpy node_modules/preact/dist/preact.min.js.map src/lib/preact/",
         "deps:preact-hooks": "cpy node_modules/preact/hooks/dist/hooks.umd.js src/lib/preact/",
         "deps:preact-hooks/map": "cpy node_modules/preact/hooks/dist/hooks.umd.js.map src/lib/preact/",
+        "tsc": "tsc",
+        "es6-transform": "node es6-transform.js",
+        "build": "node build.js",
+        "build-fluid-cell": "run-s es6-transform clean:tsc tsc",
         "prepare": "run-s deps",
         "lint": "fluid-lint-all",
         "start": "serve"

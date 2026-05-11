@@ -6,9 +6,6 @@ const fluid = {};
 
     fluid.version = "Infusion 6.0.0";
 
-    // Export this for use in environments like node.js, where it is useful for configuring stack trace behaviour
-    fluid.Error = Error;
-
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
 
@@ -47,9 +44,61 @@ const fluid = {};
         return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
     };
 
+    /**
+     * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
+     * not already allocated.
+     * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
+     * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
+     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
+     * If a non-array, it will be pushed to the end of the array using Array.push.
+     */
+    fluid.pushArray = function (holder, member, topush) {
+        const array = holder[member] ? holder[member] : (holder[member] = []);
+        if (Array.isArray(topush)) {
+            array.push.apply(array, topush);
+        } else {
+            array.push(topush);
+        }
+    };
+
+    /* A special "marker object" representing that no value is present (where
+     * signalling using the value "undefined" is not possible - e.g. the return value from a "strategy"). This
+     * is intended for "ephemeral use", i.e. returned directly from strategies and transforms and should not be
+     * stored in data structures */
+    fluid.NoValue = Symbol("No Value");
+
+    /**
+     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
+     *
+     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
+     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String): The key of the current property .
+     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
+     */
+    fluid.transform = function (source, func) {
+        if (source) {
+            const togo = {};
+            for (const key in source) {
+                const ret = func(source[key], key);
+                if (ret !== fluid.NoValue) {
+                    togo[key] = ret;
+                }
+            }
+            return togo;
+        } else {
+            return source;
+        }
+    };
+
+    fluid.invokeLater = function (func) {
+        return setTimeout(func, 0);
+    };
+
+    /** Unavailable value support **/
 
     fluid.unavailablePriority = {
-        "I/O": 1,
+        "pending": 1,
         "config": 2,
         "error": 3
     };
@@ -57,7 +106,7 @@ const fluid = {};
     /** @typedef {Object} UnavailableCause
      * A record explaining the cause that a value is unavailable.
      * @property {String} message - A human-readable message describing the cause.
-     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "pending").
      * @property {String} [site] - An optional site associated with the cause of unavailability
      */
 
@@ -74,7 +123,8 @@ const fluid = {};
      */
 
     fluid.upgradeCause = function (cause, defaultVariety) {
-        const upCause = typeof(cause) === "string" ? {message: cause} : cause;
+        const upCause = typeof(cause) === "string" ? {message: cause} :
+            cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : cause;
         if (!upCause.variety) {
             upCause.variety = defaultVariety;
         }
@@ -89,7 +139,22 @@ const fluid = {};
      * @return {string} A formatted string listing all cause messages.
      */
     fluid.formatCauses = function (causes) {
-        return "Value is unavailable: causes are " + causes.map(cause => cause.message).join("\n");
+        return "Value is unavailable - causes are:\n" + causes.map(cause => cause.message).join("\n");
+    };
+
+    fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {
+        if (fluid.isArrayable(cause)) {
+            instance.causes = cause.map(oneCause => fluid.upgradeCause(oneCause, variety));
+            instance.variety = instance.causes.reduce((acc, {variety}) => {
+                const priority = fluid.unavailablePriority[variety];
+                return priority > acc.priority ? {variety, priority} : acc;
+            }, {priority: -1}).variety;
+            instance.message = fluid.formatCauses(instance.causes);
+        } else {
+            const upCause = fluid.upgradeCause(cause, variety);
+            Object.assign(instance, upCause);
+        }
+        return instance;
     };
 
     /**
@@ -106,23 +171,13 @@ const fluid = {};
      */
     fluid.unavailable = function (cause = {}, variety = "error") {
         const togo = Object.create(fluid.unavailable.prototype);
-        if (fluid.isArrayable(cause)) {
-            togo.causes = fluid.makeArray(cause).map(oneCause => fluid.upgradeCause(oneCause, variety));
-            togo.variety = togo.causes.reduce((acc, {variety}) => {
-                const priority = fluid.unavailablePriority[variety];
-                return priority > acc.priority ? {variety, priority} : acc;
-            }, {priority: -1}).variety;
-            togo.message = fluid.formatCauses(togo.causes);
-        } else {
-            const upCause = fluid.upgradeCause(cause, variety);
-            Object.assign(togo, upCause);
-        }
+        fluid.applyUnavailable(togo, cause, variety);
         return togo;
     };
 
     /**
      * Creates an "Unavailable" marker representing a value that is pending due to I/O.
-     * Sets the variety to "I/O", provides a standard message, and records the site and stale value.
+     * Sets the variety to "pending", provides a standard message, and records the site and stale value.
      *
      * @param {Any} staleValue - The most recently seen value before it became unavailable due to pending I/O.
      * @param {String} site - The site or resource (e.g. URL) responsible for the pending I/O.
@@ -130,11 +185,19 @@ const fluid = {};
      */
     fluid.pending = function (staleValue, site) {
         const togo = Object.create(fluid.unavailable.prototype);
-        togo.variety = "I/O";
+        togo.variety = "pending";
         togo.message = "Value is unavailable due to pending I/O";
         togo.site = site;
         togo.staleValue = staleValue;
         return togo;
+    };
+
+    fluid.isPending = function (value) {
+        return value instanceof fluid.unavailable && value.variety === "pending";
+    };
+
+    fluid.isConfigUnavailable = function (value) {
+        return value instanceof fluid.unavailable && value.variety === "config";
     };
 
     /**
@@ -182,6 +245,8 @@ const fluid = {};
         }),
         error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
     };
+
+    /** Support for traversing substrate via string paths **/
 
     fluid.getPathSegmentImpl = function (accept, path, i) {
         let segment = "";
@@ -277,6 +342,8 @@ const fluid = {};
         }
         root[segs[segs.length - 1]] = newValue;
     };
+
+    /** Managing the global namespace **/
 
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
      * @param {String|String[]} path - The global path from which the value is to be fetched

@@ -3,7 +3,7 @@
 /* global QUnit */
 
 QUnit.config.reorder = false;
-QUnit.config.testTimeout = 0; // 0;
+QUnit.config.testTimeout = 10000; // 0;
 
 QUnit.module("Fluid Signals Async Tests", function (hooks) {
     hooks.afterEach(function (assert) {

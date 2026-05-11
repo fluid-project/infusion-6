@@ -109,17 +109,8 @@ const buildIndex = {
         src: "tests",
         dest: "docs/tests"
     }, {
-        src: "src/framework/core/mjs/FluidCore.mjs",
-        dest: "dist/FluidSignals/FluidCore.mjs"
-    }, {
-        src: "src/framework/core/mjs/FluidCore.d.mts",
-        dest: "dist/FluidSignals/FluidCore.d.mts"
-    }, {
-        src: "src/framework/core/mjs/FluidSignals.mjs",
-        dest: "dist/FluidSignals/FluidSignals.mjs"
-    }, {
-        src: "src/framework/core/mjs/FluidSignals.d.mts",
-        dest: "dist/FluidSignals/FluidSignals.d.mts"
+        src: "src/",
+        dest: "dist/src"
     }]
 };
 

@@ -1,8 +1,8 @@
 "use strict";
 
-import fluid from "./FluidCore.mjs";
+// import fluid from "./FluidCore.js"
 
-
+const $fluidSignalsScope = function (fluid) {
 
     /**
      * Compares two values for equality, with special handling for numbers and NaN.
@@ -94,7 +94,7 @@ import fluid from "./FluidCore.mjs";
 
     fluid.trackingVars = {
         /** current capture context for identifying reactive elements
-        active while evaluating a reactive function body  */
+         active while evaluating a reactive function body  */
         // The current Edge whose _fn is in execution
         CurrentReaction: null,
         // Becomes set if the _fn begins to demand a source which is out of step with any of its previously recorded ones
@@ -236,6 +236,7 @@ import fluid from "./FluidCore.mjs";
      */
     fluid.cell.startFit = () => {
         const fit = fluid.cell.makeFit(false);
+        console.log("***STARTFIT for fitId ", fit.fitId);
         fluid.CurrentFits.push(fit);
         fluid.cell.idleSignal.set(false);
         return fit;
@@ -248,6 +249,7 @@ import fluid from "./FluidCore.mjs";
      */
     fluid.cell.endFit = function (fit, coalesce) {
         if (fit.isActive && !fit.staticFit) {
+            console.log("***ENDFIT for fitId ", fit.fitId, " targetsConsumed ", fit.targetsConsumed);
             fit.targetsConsumed.forEach(target => {
                 target._consumedSources.length = 0;
                 if (!coalesce) {
@@ -331,6 +333,7 @@ import fluid from "./FluidCore.mjs";
                 Array.prototype.push.apply(fit.pendingEffects, extraFit.pendingEffects);
                 Array.prototype.push.apply(fit.sources, extraFit.sources);
                 fluid.cell.endFit(extraFit, true);
+                console.log("***FIT ID ", extraFit.fitId, "coalesced into fit ", fit.fitId);
             }
         }
         const targetsConsumed = fit.targetsConsumed;
@@ -501,7 +504,6 @@ import fluid from "./FluidCore.mjs";
             this._inEdges = [];
         }
         const inEdgeIndex = this._inEdges.findIndex(edge => edge.key === key);
-        /** @type Edge **/
         let inEdge = inEdgeIndex === -1 ? null : this._inEdges[inEdgeIndex];
 
         if (!fn) {
@@ -512,7 +514,7 @@ import fluid from "./FluidCore.mjs";
             }
             return this;
         } else {
-            const oldFn = inEdge?.fn;
+            const oldFn = inEdge?._fn;
             if (!inEdge) {
                 inEdge = Object.create(null);
                 inEdge.key = key;
@@ -597,6 +599,7 @@ import fluid from "./FluidCore.mjs";
 
     fluid.cell.queueEffect = function (cell) {
         if (cell._isEffect && !cell._isQueued) {
+            console.log("Pushing effect " + cell.name);
             cell._isQueued = true;
             fluid.EffectQueue.push(cell);
         }
@@ -615,6 +618,7 @@ import fluid from "./FluidCore.mjs";
      * @param {Boolean} earlyCutoff - We are cleaning the graph in order to operate early cutoff for an unchanged pending value
      */
     fluid.cell.markStale = function (cell, state, markedSources, dirtyFrom, toPending, fromPending, earlyCutoff) {
+        console.log("markStale for " + cell.name, " state ", state, " earlyCutoff ", earlyCutoff);
         fluid.cell.queueEffect(cell);
 
         // If we were previously clean, then we know that we may need to update to get the new value
@@ -622,6 +626,7 @@ import fluid from "./FluidCore.mjs";
         if (cell._state < state || earlyCutoff || toPending) {
             // We've resolved with a genuine concrete value, clear prePending since its scope has ended
             if (!toPending && !fromPending && cell._prePendingState && state === CacheDirty) {
+                console.log("Cell ", cell.name, " clearing pre-pending state", cell._state);
                 cell._prePendingState = null;
             }
             if (!earlyCutoff) {
@@ -719,6 +724,7 @@ import fluid from "./FluidCore.mjs";
         // Don't mark ourselves as clean if value is not available since it may be computable from another relation
         if (!fluid.isConfigUnavailable(newValue)) {
             const newState = CacheClean;
+            console.log("Update complete for " + (cell._isEffect ? " effect " : "") + cell.name + ", marking state ", newState, "  with new value ", newValue);
             cell._state = newState;
         }
 
@@ -735,6 +741,7 @@ import fluid from "./FluidCore.mjs";
      */
     fluid.cell.prototype.set = function (value, options) {
         this._state = CacheClean;
+        console.log("SET acted for " + (this._isEffect ? " effect " : "") + this.name + ", marking state ", this._state, " with new value ", value);
         if (!fluid.cell.equals(this._value, value)) {
             if (!this._fit || !this._fit.isActive) {
                 this._fit = fluid.cell.startFit();
@@ -824,6 +831,7 @@ import fluid from "./FluidCore.mjs";
         if (cell._trackingRecord || !cell._inEdges) {
             return;
         }
+        console.log("Update beginning for cell ", cell.name);
 
         let syncUpdate = !inEdge.isAsync;
         let result;
@@ -857,14 +865,17 @@ import fluid from "./FluidCore.mjs";
             if (!syncUpdate) {
                 if (fluid.isPromise(result)) {
                     result.then(newValue => {
+                        console.log("Async update for value of cell ", cell.name, " yielded value ", newValue);
                         fluid.cell.updateComplete(newValue, cell);
                     }).catch(e => {
-                        fluid.cell.updateComplete(fluid.unavailable(e), cell);
-                    }
+                            console.log("Async error update received ", e);
+                            fluid.cell.updateComplete(fluid.unavailable(e), cell);
+                        }
                     );
                 } else if (result[Symbol.asyncIterator]) {
                     fluid.cell.bindIterable(cell, inEdge, result);
                 } else { // Unexpected plain return from async edge
+                    console.log("Update concluded for cell ", cell.name, " new value ", result);
                     syncUpdate = true;
                 }
             }
@@ -888,6 +899,7 @@ import fluid from "./FluidCore.mjs";
      */
     fluid.cell.findDirtyEdge = function (cell, targetState) {
         let bestCandidate;
+        console.log("findDirtyEdge for ", cell.name, " target state ", targetState);
         for (let i = 0; i < cell._inEdges.length; ++i) {
             const edge = cell._inEdges[i];
             if (edge.isFree ||
@@ -941,6 +953,8 @@ import fluid from "./FluidCore.mjs";
         if (dirtyEdge) {
             fluid.cell.update(cell, dirtyEdge);
         }
+        const newState = cell._prePendingState === null ? CacheClean : cell._prePendingState;
+        console.log("updateIfNecessary cleaning cell ", cell.name, " with state ", newState);
         cell._state = CacheClean;
     };
 
@@ -991,8 +1005,6 @@ import fluid from "./FluidCore.mjs";
         effect._isDisposed = false;
         effect.name = config?.name;
 
-        const {fn, staticSources} = config.bind;
-
         effect.dispose = function () {
             if (config?.unbind?.fn) {
                 // TODO: resolve any staticSources here for effects which require contextualised disposal
@@ -1005,6 +1017,8 @@ import fluid from "./FluidCore.mjs";
                 effect._inEdges = null;
             }
         };
+
+        const {fn, staticSources} = config.bind;
 
         // Wrap user's function to track execution and neutering on disposal
         const computeFn = function () {
@@ -1082,6 +1096,7 @@ import fluid from "./FluidCore.mjs";
                         }
                     }
                     effect._isQueued = false;
+                    console.log("Effect " + effect.name + " unqueued - pending is " + effect._isPending);
                 });
             }
         } finally {
@@ -1106,19 +1121,23 @@ import fluid from "./FluidCore.mjs";
      * @return {Promise<any>} A Promise that resolves with the signal's first available value.
      */
     fluid.cell.signalToPromise = function (valSignal) {
-        return new Promise( (resolve, reject) => {
+        return new Promise( (resolve) => {
             fluid.cell.effect(function (value) {
-                if (!fluid.isUnavailable(value)) {
-                    resolve(value);
-                } else if (value.variety === "error") {
-                    reject(value)
-                }
+                resolve(value);
                 this.dispose();
-            }, [valSignal], {
-                isFree: true,
-                name: "Resolution effect for cell " + valSignal.name + "/" + fluid.cell.fitId
-            });
+            }, [valSignal], {name: "Resolution effect for cell " + valSignal.name + "/" + fluid.cell.fitId});
         });
     };
+};
 
-export default fluid;
+// Signal to a global environment compositor what path this scope function should be applied to
+$fluidSignalsScope.$fluidScopePath = "fluid";
+
+// If there is a namespace in the global, bind to it
+if (typeof(fluid) !== "undefined") {
+    $fluidSignalsScope(fluid);
+}
+
+// Note: for ES6 support, transform this to a file with coda:
+// export $fluidSignalsScope
+// Client then needs to do compositing of its own global namespace

@@ -15,11 +15,9 @@ QUnit.test("preact-signals: Should run computeds once for multiple dep changes",
     let computeCount = 0;
 
     const c = fluid.cell().computed(function (aVal, bVal) {
-            computeCount++;
-            return aVal + bVal;
-        },
-        [a, b]
-    );
+        computeCount++;
+        return aVal + bVal;
+    }, [a, b]);
 
     assert.equal(c.get(), "ab", "Initial computed value");
     assert.equal(computeCount, 1, "Computed ran once initially");
@@ -654,7 +652,6 @@ QUnit.test("Updates downstream pending computations", assert => {
 
 
 // Lineage: Mini/micro-adapton diamond test added to amb's fork of Geoff Litt's port at https://github.com/geoffreylitt/mini-adapton
-// Produced by AI at https://chatgpt.com/c/68dfb7ef-d660-8333-80d6-d664f35b5798
 
 // --- Example: diamond-shaped graph with 4 nodes ---
 // Structure:
@@ -671,21 +668,18 @@ QUnit.test("Diamond with two updates", assert => {
     const seq = [];
 
     const A = fluid.cell().computed(v => {
-        console.log("compute A (base * 2)");
         seq.push("A");
         return v * 2;
     }, [base]);
     A.name = "A";
 
     const B = fluid.cell().computed(v => {
-        console.log("compute B (base + 3)");
         seq.push("B");
         return v + 3;
     }, [base]);
     B.name = "B";
 
     const top = fluid.cell().computed((a, b) => {
-        console.log("compute top (A + B)");
         seq.push("top");
         return a + b;
     }, [A, B]);

@@ -1,5 +1,25 @@
 export default fluid;
 export type CacheState = number;
+/**
+ * A "fit" or connected region of updating graph
+ */
+export type Fit = {
+    /**
+     * - An array of cells for which the _consumedSources member has been set during this fit.
+     */
+    targetsConsumed: Cell[];
+    /**
+     * - An array of effects which have suspended because they depend on pending I/O.
+     */
+    pendingEffects: Cell[];
+    /**
+     * - Indicates if this fit is currently active.
+     */
+    isActive: boolean;
+};
+/**
+ * A reactive cell
+ */
 export type Cell = {
     /**
      * - Retrieves the current value of the cell.
@@ -20,7 +40,7 @@ export type Cell = {
     /**
      * - The current value stored in the cell.
      */
-    _value: Any;
+    _value: any;
     /**
      * - A name or address for the cell.
      */
@@ -29,6 +49,10 @@ export type Cell = {
      * - The cache state of the cell (clean, check, or dirty).
      */
     _state: CacheState;
+    /**
+     * - A "high watermark" of our _state at the point we went into a pending state
+     */
+    _prePendingState: CacheState;
     /**
      * - Cell from along which we were dirtied
      */
@@ -46,9 +70,9 @@ export type Cell = {
      */
     _consumedSources: Cell[] | null;
     /**
-     * - Record of any update for the cell which is currently in progress
+     * - Captures dynamic dependency tracking information for an update which is in progress
      */
-    _updateRecord: CellUpdateRecord | null;
+    _trackingRecord: CellTrackingRecord | null;
     /**
      * - Is this an effect node
      */
@@ -58,9 +82,9 @@ export type Cell = {
      */
     _isQueued: boolean;
     /**
-     * - Error received evaluating the cell
+     * - The current update fit that the cell is enlisted in
      */
-    _error: Error;
+    _fit: Fit;
 };
 export type ComputedProps = {
     /**
@@ -72,6 +96,9 @@ export type ComputedProps = {
      */
     isFree: boolean;
 };
+/**
+ * An edge between two reactive cells
+ */
 export type Edge = {
     /**
      * - The cell that we are the edge to (a computer for)
@@ -102,11 +129,7 @@ export type Edge = {
      */
     isFree: boolean;
 };
-export type CellUpdateRecord = {
-    /**
-     * - The previous value of the cell before the update.
-     */
-    oldValue: any;
+export type CellTrackingRecord = {
     /**
      * - The previous global reaction context.
      */
@@ -119,10 +142,6 @@ export type CellUpdateRecord = {
      * - The previous index in the sources array.
      */
     prevIndex: number;
-    /**
-     * - The edge representing the computation or dependency being updated.
-     */
-    inEdge: Edge;
 };
 declare namespace fluid {
     /**

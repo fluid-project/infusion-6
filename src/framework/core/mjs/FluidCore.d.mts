@@ -8,7 +8,7 @@ export type UnavailableCause = {
      */
     message: string;
     /**
-     * - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * - The variety assigned to the cause (e.g., "error", "config", "pending").
      */
     variety: string;
     /**
@@ -26,7 +26,6 @@ export type Unavailable = UnavailableCause;
 export type CausedUnavailable = Unavailable;
 declare namespace fluid {
     let version: string;
-    let Error: ErrorConstructor;
     let global: any;
     /**
      * Check whether the argument is a primitive type
@@ -52,15 +51,36 @@ declare namespace fluid {
      * @return {Boolean} `true` if the supplied value is an array
      */
     function isArrayable(totest: any): boolean;
-    let unavailablePriority: {
-        "I/O": number;
-        config: number;
-        error: number;
-    };
+    /**
+     * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
+     * not already allocated.
+     * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
+     * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
+     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
+     * If a non-array, it will be pushed to the end of the array using Array.push.
+     */
+    function pushArray(holder: any[] | any, member: string, topush: any[] | any): void;
+    let NoValue: symbol;
+    /**
+     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
+     *
+     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
+     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String): The key of the current property .
+     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
+     */
+    function transform(source: any, func: Function): any;
+    function invokeLater(func: any): NodeJS.Timeout;
+    namespace unavailablePriority {
+        let pending: number;
+        let config: number;
+        let error: number;
+    }
     /** @typedef {Object} UnavailableCause
      * A record explaining the cause that a value is unavailable.
      * @property {String} message - A human-readable message describing the cause.
-     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "I/O").
+     * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "pending").
      * @property {String} [site] - An optional site associated with the cause of unavailability
      */
     /**
@@ -82,6 +102,7 @@ declare namespace fluid {
      * @return {string} A formatted string listing all cause messages.
      */
     function formatCauses(causes: UnavailableCause[]): string;
+    function applyUnavailable(instance: any, cause?: {}, variety?: string): any;
     /**
      * Create a marker representing an "Unavailable" state with an associated cause or list of causes, which each
      * contain an site address or external resource (e.g. URL) responsible for unavailability of this value.
@@ -97,13 +118,15 @@ declare namespace fluid {
     function unavailable(cause?: any | Array<UnavailableCause>, variety?: string): Unavailable;
     /**
      * Creates an "Unavailable" marker representing a value that is pending due to I/O.
-     * Sets the variety to "I/O", provides a standard message, and records the site and stale value.
+     * Sets the variety to "pending", provides a standard message, and records the site and stale value.
      *
      * @param {Any} staleValue - The most recently seen value before it became unavailable due to pending I/O.
      * @param {String} site - The site or resource (e.g. URL) responsible for the pending I/O.
      * @return {Unavailable} An object representing the unavailable state due to pending I/O.
      */
     function pending(staleValue: Any, site: string): Unavailable;
+    function isPending(value: any): boolean;
+    function isConfigUnavailable(value: any): boolean;
     /**
      * Check if an object is a marker of type "Unavailable"
      *
@@ -131,9 +154,11 @@ declare namespace fluid {
      */
     function mergeUnavailable(existing: Unavailable | null | undefined, fresh: Unavailable): Unavailable;
     namespace missingPolicies {
-        function unavailable(root: any, path: any): UnavailableCause;
-        function error(root: any, path: any): any;
+        export function unavailable(root: any, path: any): UnavailableCause;
+        export function error_1(root: any, path: any): any;
+        export { error_1 as error };
     }
+    /** Support for traversing substrate via string paths **/
     function getPathSegmentImpl(accept: any, path: any, i: any): any;
     /** Parse an IL path separated by periods (.) into its component segments.
      * @param {String} path - The path expression to be split
@@ -169,6 +194,7 @@ declare namespace fluid {
      * @param {any} newValue - The value to set at the specified path.
      */
     function set(root: any, path: string | string[], newValue: any): void;
+    /** Managing the global namespace **/
     /** Returns any value held at a particular global path. This may be an object or a function, depending on what has been stored there.
      * @param {String|String[]} path - The global path from which the value is to be fetched
      * @return {any} The value that was stored at the path, or a fluid.unavailable value if there is none.

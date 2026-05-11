@@ -5,28 +5,8 @@ import "./FluidModules.mjs";
 
 
 
-    // Export this for use in environments like node.js, where it is useful for
-    // configuring stack trace behaviour
-    fluid.Error = Error;
-
-    fluid.environment = {
-        fluid: fluid
-    };
-
-    fluid.global = fluid.global || typeof window !== "undefined" ?
-        window : typeof self !== "undefined" ? self : {};
-
     fluid.isBrowser = function () {
         return typeof(window) !== "undefined" && !!window.document;
-    };
-
-    // A standard utility to schedule the invocation of a function after the current
-    // stack returns. On browsers this defaults to setTimeout(func, 0) but in
-    // other environments can be customised - e.g. to process.nextTick in node.js
-    // In future, this could be optimised in the browser to not dispatch into the event queue
-    // See https://github.com/YuzuJS/setImmediate for a more verbose but very robust replacement
-    fluid.invokeLater = function (func) {
-        return queueMicrotask(func);
     };
 
     // The following flag defeats all logging/tracing activities in the most performance-critical parts of the framework.
@@ -298,17 +278,6 @@ import "./FluidModules.mjs";
         return !value || valueType === "string" || valueType === "boolean" || valueType === "number" || valueType === "function";
     };
 
-    /** Determines whether the supplied object can be treated as an array (primarily, by iterating over numeric keys bounded from 0 to length).
-     * The strategy used is an optimised approach taken from an earlier version of jQuery - detecting whether the toString() version
-     * of the object agrees with the textual form [object Array]
-     *
-     * @param {any} totest - The value to be tested
-     * @return {Boolean} `true` if the supplied value is an array
-     */
-    fluid.isArrayable = function (totest) {
-        return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
-    };
-
     /**
      * Determines whether the supplied object is a plain JSON-forming container - that is, it is either a plain Object
      * or a plain Array. Note that this differs from jQuery's isPlainObject which does not pass Arrays.
@@ -427,19 +396,6 @@ import "./FluidModules.mjs";
     };
 
     /**
-     * Converts the given argument into an array or shallow copies it.
-     * - If the argument is `null` or `undefined`, returns an empty array.
-     * - If the argument is a primitive value or not iterable, wraps it in a single-element array.
-     * - If the argument is iterable, converts it into an array using the spread operator.
-     * @param {any} arg - The value to be converted into an array.
-     * @return {Array} An array representation of the input value.
-     */
-    fluid.makeArray = function (arg) {
-        return arg === null || arg === undefined ? [] :
-            fluid.isPrimitive(arg) || typeof arg[Symbol.iterator] !== "function" ? [arg] : [...arg];
-    };
-
-    /**
      * Compares two arrays for equality by checking if they have the same length
      * and if all elements at corresponding indices are strictly equal.
      *
@@ -449,47 +405,6 @@ import "./FluidModules.mjs";
      */
     fluid.arrayEqual = function (array1, array2) {
         return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
-    };
-
-    /**
-     * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
-     * not already allocated.
-     * @param {Array|Object} holder - The holding object whose member is to receive the pushed element(s).
-     * @param {String} member - The member of the <code>holder</code> onto which the element(s) are to be pushed
-     * @param {Array|any} topush - If an array, these elements will be added to the end of the array using Array.push.apply.
-     * If a non-array, it will be pushed to the end of the array using Array.push.
-     */
-    fluid.pushArray = function (holder, member, topush) {
-        const array = holder[member] ? holder[member] : (holder[member] = []);
-        if (Array.isArray(topush)) {
-            array.push.apply(array, topush);
-        } else {
-            array.push(topush);
-        }
-    };
-
-    /**
-     * Transforms the properties of an object or elements of an array by applying a provided function to each item.
-     *
-     * @param {Object} source - The object to transform. If `null` or `undefined`, the function returns the input as-is.
-     * @param {Function} func - The transformation function to apply to each item. It is called with two arguments:
-     *   - `value` (any): The value of the current property or element.
-     *   - `key` (String): The key of the current property .
-     * @return {Object} A new object or array with transformed values. If `source` is `null` or `undefined`, it is returned unchanged.
-     */
-    fluid.transform = function (source, func) {
-        if (source) {
-            const togo = {};
-            for (const key in source) {
-                const ret = func(source[key], key);
-                if (ret !== fluid.NoValue) {
-                    togo[key] = ret;
-                }
-            }
-            return togo;
-        } else {
-            return source;
-        }
     };
 
     /**
@@ -738,6 +653,7 @@ import "./FluidModules.mjs";
      * accepts or returns any of these values, and if so, what its semantic is  - most are of private
      * use internal to the framework
      */
+
     fluid.marker = function () {};
     /**
      * Create a marker object with a specific type and additional properties.
@@ -792,15 +708,9 @@ import "./FluidModules.mjs";
 
     /* A structure holding all supported log levels as supplied as a possible first argument to fluid.log
      * Members with a higher value of the "priority" field represent lower priority logging levels */
-    fluid.logLevel = fluid.transform(fluid.logLevelsSpec, (key, value) => fluid.makeMarker(key, {priority: value}));
+    fluid.logLevel = fluid.transform(fluid.logLevelsSpec, (key, value) => fluid.makeMarker("logLevel", {priority: value, key}));
 
     fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
-
-    fluid.unavailablePriority = {
-        "I/O": 1,
-        "config": 2,
-        "error": 3
-    };
 
     fluid.unavailableProxy = function (target) {
         const proxy = new Proxy(target, {
@@ -878,7 +788,7 @@ import "./FluidModules.mjs";
     };
 
     // TODO: Probably needs to be made available as a context name - there's support now as $oldValue
-    fluid.OldValue = fluid.makeMarker("Old Computed Value");
+    fluid.OldValue = Symbol("Old Computed Value");
 
     /**
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects
@@ -916,6 +826,7 @@ import "./FluidModules.mjs";
         return {designalArgs, unavailable};
     };
 
+    // Used as a utility inside FluidView to determine if injections are done
     /**
      * Processes an array of signals or values and returns a value which is available if all of the values are available.
      * @param {Array} sigs - An array of signals or values to process.
@@ -3040,7 +2951,7 @@ import "./FluidModules.mjs";
      * @return {Signal<any>} A signal containing the processed data or an "unavailable" state.
      */
     fluid.fetch = function (url, options, strategy) {
-        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "I/O"}));
+        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "pending"}));
         const assignResult = data => {
             try {
                 togo.value = data;
