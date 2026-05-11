@@ -504,6 +504,7 @@ const $fluidSignalsScope = function (fluid) {
             this._inEdges = [];
         }
         const inEdgeIndex = this._inEdges.findIndex(edge => edge.key === key);
+        /** @type {Edge} **/
         let inEdge = inEdgeIndex === -1 ? null : this._inEdges[inEdgeIndex];
 
         if (!fn) {
@@ -514,7 +515,7 @@ const $fluidSignalsScope = function (fluid) {
             }
             return this;
         } else {
-            const oldFn = inEdge?._fn;
+            const oldFn = inEdge?.fn;
             if (!inEdge) {
                 inEdge = Object.create(null);
                 inEdge.key = key;
@@ -868,10 +869,9 @@ const $fluidSignalsScope = function (fluid) {
                         console.log("Async update for value of cell ", cell.name, " yielded value ", newValue);
                         fluid.cell.updateComplete(newValue, cell);
                     }).catch(e => {
-                            console.log("Async error update received ", e);
-                            fluid.cell.updateComplete(fluid.unavailable(e), cell);
-                        }
-                    );
+                        console.log("Async error update received ", e);
+                        fluid.cell.updateComplete(fluid.unavailable(e), cell);
+                    });
                 } else if (result[Symbol.asyncIterator]) {
                     fluid.cell.bindIterable(cell, inEdge, result);
                 } else { // Unexpected plain return from async edge
@@ -1003,7 +1003,10 @@ const $fluidSignalsScope = function (fluid) {
         effect._isEffect = true;
         effect._isQueued = false;
         effect._isDisposed = false;
+        effect._isFree = config.isFree;
         effect.name = config?.name;
+
+        const {fn, staticSources} = config.bind;
 
         effect.dispose = function () {
             if (config?.unbind?.fn) {
@@ -1018,14 +1021,17 @@ const $fluidSignalsScope = function (fluid) {
             }
         };
 
-        const {fn, staticSources} = config.bind;
-
         // Wrap user's function to track execution and neutering on disposal
         const computeFn = function () {
-            if (!effect._isDisposed && effect._prePendingState !== CacheCheck) {
-                fn.apply(effect, arguments);
+            // If the state was Check when going pending, bypass effect for early cutoff
+            // But if it is a free edge receiving an error, override this and pass the value on regardless
+            if (!effect._isDisposed && (effect._prePendingState !== CacheCheck || effect._isFree && fluid.isErrorUnavailable(arguments[0]))) {
+                const result = fn.apply(effect, arguments);
+                // It might be a pending status for a free edge, make sure to propagate it
+                return result === undefined ? true : result;
+            } else {
+                return true;
             }
-            return true;
         };
 
         // Set up "computation" which will invoke us
@@ -1121,11 +1127,22 @@ const $fluidSignalsScope = function (fluid) {
      * @return {Promise<any>} A Promise that resolves with the signal's first available value.
      */
     fluid.cell.signalToPromise = function (valSignal) {
-        return new Promise( (resolve) => {
+        return new Promise((resolve, reject) => {
             fluid.cell.effect(function (value) {
+                if (fluid.isUnavailable(value)) {
+                    if (value.variety === "error") {
+                        reject(value);
+                        this.dispose();
+                    }
+                    return value;  // keep effect pending so stabilize tracks it
+                }
                 resolve(value);
                 this.dispose();
-            }, [valSignal], {name: "Resolution effect for cell " + valSignal.name + "/" + fluid.cell.fitId});
+                return value;
+            }, [valSignal], {
+                isFree: true,
+                name: "Resolution effect for cell " + valSignal.name + "/" + fluid.cell.fitId
+            });
         });
     };
 };
@@ -1137,7 +1154,3 @@ $fluidSignalsScope.$fluidScopePath = "fluid";
 if (typeof(fluid) !== "undefined") {
     $fluidSignalsScope(fluid);
 }
-
-// Note: for ES6 support, transform this to a file with coda:
-// export $fluidSignalsScope
-// Client then needs to do compositing of its own global namespace

@@ -29,16 +29,6 @@ const buildIndex = {
         "src/framework/core/js/FluidView.js"
     ],
 
-    // Experiment, but terser can't actually do ES6 bundling and we have decided that we don't actually need a bundler (for now)
-    signalModuleSource: [
-        "src/framework/core/mjs/FluidSignals.mjs"
-    ],
-
-    // Just to estimate minified size - have gone with Lezer for now
-    acornSource: [
-        "src/lib/acorn/acorn.js"
-    ],
-
     copy: [{
         src: "node_modules/codemirror/lib/codemirror.js",
         dest: "src/lib/codemirror/js/codemirror.js"
@@ -218,7 +208,6 @@ const doBuild = async function (buildIndex) {
     });
 
     await makeJSBundle(buildIndex, "coreSource", "fluid.core.min.js");
-    await makeJSBundle(buildIndex, "acornSource", "acorn.min.js");
 };
 
 doBuild(buildIndex).then(null, function (error) {

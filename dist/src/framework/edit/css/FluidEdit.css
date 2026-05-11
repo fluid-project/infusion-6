@@ -1,0 +1,118 @@
+/* Adopted with thanks from Codestrates
+  https://github.com/Webstrates/WebstrateComponents/blob/master/edgedocker-component/scss/main.scss
+ */
+
+html[fl-docking-area-mode~="edge"] {
+    display: flex;
+}
+
+html[fl-docking-area-mode~="edge"] > *:not(.fl-resizer) {
+    flex: 1 1 auto;
+    contain: paint;
+    /* Temporarily get rid of this in favour of .fl-editor-root definition  */
+    /* height: 100%;*/
+}
+
+.fl-resizer:hover:before {
+    margin: -1px;
+    border: 1px solid rgba(128, 128, 128, 0.1);
+}
+
+.fl-resizer:before {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(128, 128, 128, 0.5);
+    content: "";
+}
+
+.fl-resizer {
+    flex: 0 0 auto;
+    min-height: 1px;
+    min-width: 1px;
+    cursor: ew-resize;
+    position: relative;
+    margin: -4px;
+    border: 4px solid transparent;
+    contain: none;
+    overflow: visible;
+    z-index: 5;
+}
+
+html[fl-docking-area-mode~="minimized"] > .fl-resizer {
+    display: none;
+}
+
+html[fl-docking-area-mode~="minimized"] > .fl-docking-area-component {
+    display: none;
+}
+
+.fl-editor-edit {
+    position: fixed;
+    top: 1em;
+    right: 1em;
+    z-index: 9999;
+}
+
+.fl-editor-root li, .fl-editor-root ul {
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+/* Just causes layout to jank on hover
+html[fl-docking-area-mode~="edge"] > .fl-docking-area-resizer:hover {
+    margin: -0.5em;
+    border: 0.5em solid transparent;
+}
+*/
+
+
+/* Shared definitions */
+
+/** Chrome greys:
+ * #eeeeee
+ * #c0c3c8
+ * #a9acb1
+ */
+
+.fl-clickable {
+    cursor: default;
+    user-select: none;
+}
+
+.fl-clickable.fl-for-layer:hover {
+    box-shadow: inset 0 0 0 10em rgba(255, 255, 255, 0.3);
+}
+
+.fl-clickable:hover {
+    background-color: #eeeeee;
+}
+
+.fl-clickable.fl-active {
+    background-color: #c0c3c8;
+}
+
+.fl-inline-svg {
+    height: 0px;
+    position: absolute;
+}
+
+.fl-error {
+    min-width: 300px;
+    min-height: 50px;
+
+    font-weight: 600;
+    text-shadow: 0 0 2px #fff;
+
+    background-image:
+        repeating-linear-gradient(45deg, #FCC 0, #FCC 1px, #FEE 1px, #FEE 7px ),
+        repeating-linear-gradient(315deg, #FCC 0, #FCC 4px, #FEE 4px, #FEE 7px );
+    background-blend-mode:lighten;
+    border: dashed 2px #F99;
+
+    margin: -2px;
+    padding: 0 2px;
+}

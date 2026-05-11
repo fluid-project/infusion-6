@@ -3,7 +3,7 @@
 /* global QUnit */
 
 QUnit.config.reorder = false;
-QUnit.config.testTimeout = 10000; // 0;
+QUnit.config.testTimeout = 1000; // 0;
 
 QUnit.module("Fluid Signals Async Tests", function (hooks) {
     hooks.afterEach(function (assert) {
@@ -695,6 +695,23 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.ok(result.message.includes("Failure computing async arc"));
 
         Ceff.dispose();
+    });
+
+    QUnit.test("Error propagation across async surfacing as promise rejection", async assert => {
+        const A = fluid.cell(1, {name: "A"});
+        const B = fluid.cell(2, {name: "B"}).asyncComputed(() =>
+            new Promise((resolve, reject) => setTimeout(() => reject(Error("Failure computing async arc")), 0)), [A]);
+
+        const C = fluid.cell(3, {name: "C"}).asyncComputed(b => fluid.returnAsync(b), [B]);
+
+        A.set(2);
+
+        try {
+            await fluid.cell.signalToPromise(C);
+            assert.notOk("Evaluation did not throw");
+        } catch (e) {
+            assert.ok(e.message.includes("Failure computing async arc"));
+        }
     });
 
     // https://github.com/preactjs/signals/blob/%40preact/signals%402.5.1/packages/core/test/signal.test.tsx#L1790

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Dist bundle tests for fluid.cell</title>
+
+    <script src="../js/dist-test.mjs" type="module"></script>
+
+    <script src="../js/fluid-code-box.js"></script>
+    <link rel="stylesheet" media="screen" href="../css/fluid-code-box.css" />
+</head>
+<body>
+<main>
+<textarea class="fluid-code-box">
+import fluid from "../../../../dist/FluidCell.mjs"
+
+const A = fluid.cell(1);
+
+const B = fluid.cell().computed(a => a + 1, [A]);
+
+console.log("B's value computed to ", B.get()); // Outputs 2
+
+</textarea>
+</main>
+</body>
+</html>

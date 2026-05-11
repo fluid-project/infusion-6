@@ -1,0 +1,54 @@
+.fluid-code-box-wrapper {
+    display: flex;
+    gap: 1em;
+    align-items: flex-start;
+    margin: 1em 0;
+}
+
+.fluid-code-box-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.fluid-code-box-editor textarea.fluid-code-box {
+    font-family: "Consolas", monospace;
+    font-size: 0.9em;
+    padding: 0.5em;
+}
+
+.fluid-code-box-run {
+    align-self: flex-start;
+    padding: 0.4em 1em;
+    cursor: pointer;
+}
+
+.fluid-code-box-results {
+    flex: 1;
+    min-width: 20em;
+    border: 1px solid #ccc;
+    background: #f7f7f7;
+    font-family: "Consolas", monospace;
+    font-size: 0.9em;
+}
+
+.fluid-code-box-results-header {
+    padding: 0.4em 0.6em;
+    background: #e4e4e4;
+    border-bottom: 1px solid #ccc;
+    font-weight: bold;
+}
+
+.fluid-code-box-results-panel {
+    padding: 0.5em 0.6em;
+    min-height: 4em;
+    white-space: pre-wrap;
+}
+
+.fluid-code-box-output-line {
+    padding: 0.1em 0;
+}
+
+.fluid-code-box-output-error {
+    color: #b00020;
+}
