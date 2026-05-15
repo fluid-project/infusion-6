@@ -36,7 +36,6 @@
         "es6-transform": "node es6-transform.js",
         "build": "node build.js",
         "build-fluid-cell": "run-s es6-transform clean:tsc tsc",
-        "prepare": "run-s deps",
         "lint": "fluid-lint-all",
         "start": "serve"
     },
