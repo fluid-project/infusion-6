@@ -160,6 +160,7 @@ const $fluidSignalsScope = function (fluid) {
      * @typedef {Object} ComputedProps
      * @property {Boolean} isAsync - Indicates if the computation is asynchronous.
      * @property {Boolean} isFree - Indicates if this is a "free" computation that will deliver unavailable values
+     * @property {Function} [mapArg] - Optional function to map arguments supplied to computation
      */
 
     /** An edge between two reactive cells
@@ -171,6 +172,9 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Function} fn - The function to be called to compute the value
      * @property {Boolean} isAsync - Indicates if the edge's computation is asynchronous.
      * @property {Boolean} isFree - Indicates if the edge's computation should be invoked on unavailable values
+     * @property {String} excludeSource - If an update with a particular source should not propagate across this edge
+     * @property {Function|null} mapArg - Optional function to be applied to map any arguments supplied to `fn`
+     * @property {Function|null} dispatcher - Optional function to take charge of dispatch to `fn`
      */
 
     /**
@@ -191,6 +195,7 @@ const $fluidSignalsScope = function (fluid) {
         const cell = Object.create(fluid.cellPrototype);
         Object.assign(cell, props);
 
+        cell.cellId = fluid.cell.cellId++;
         cell._value = initialValue === undefined ? fluid.cell.initialUnavailable : initialValue;
         cell._dirtyFrom = null;
         cell._observers = null; // nodes that have us as sources (outgoing links)
@@ -204,6 +209,8 @@ const $fluidSignalsScope = function (fluid) {
 
         return cell;
     };
+
+    fluid.cell.cellId = 0;
 
     // Separately capture this so that calls to fluid.cell can be wrapped
     fluid.cellPrototype = fluid.cell.prototype;
@@ -314,7 +321,7 @@ const $fluidSignalsScope = function (fluid) {
         if (inSources) {
             for (let i = 0; i < inSources.length; ++i) {
                 const sourceFit = inSources[i]._fit;
-                if (sourceFit !== null && !sourceFits.includes(sourceFit)) {
+                if (sourceFit !== null && sourceFit.isActive && !sourceFits.includes(sourceFit)) {
                     sourceFits.push(sourceFit);
                 }
             }
@@ -348,6 +355,10 @@ const $fluidSignalsScope = function (fluid) {
 
     fluid.cell.equals = fluid.defaultEquality;
 
+    const dumpCells = function (cells) {
+        return "\n" + cells?.map(cell => cell.name + " cellId " + cell.cellId).join("\n");
+    };
+
     // Dynamic dependency tracking logic
 
     /**
@@ -360,6 +371,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Edge|null} inEdge - The edge representing the computation or dependency being updated.
      */
     fluid.cell.beginTracking = function (cell, inEdge) {
+        console.log("beginTracking for cell ", cell, " stashed ", dumpCells($t.CurrentGets), " here");
         const trackingRecord = {
             prevReaction: $t.CurrentReaction,
             prevGets: $t.CurrentGets,
@@ -425,6 +437,10 @@ const $fluidSignalsScope = function (fluid) {
         $t.CurrentGets = trackingRecord.prevGets;
         $t.CurrentReaction = trackingRecord.prevReaction;
         $t.CurrentGetsIndex = trackingRecord.prevIndex;
+        console.log("endTracking for cell ", cell, " restored ", dumpCells($t.CurrentGets), " from here");
+        if ($t.CurrentGets?.find(cell => cell.cellId === 68)) {
+            debugger;
+        }
     };
 
     /**
@@ -432,13 +448,14 @@ const $fluidSignalsScope = function (fluid) {
      * This allows code to run without capturing dependencies.
      *
      * @param {Function} fn - The function to execute in an untracked context.
+     * @return {any} Original function's return
      */
     fluid.cell.untracked = function (fn) {
         // Create fake cell to hold reaction state
         const stateCell = {};
         fluid.cell.beginTracking(stateCell, null);
         try {
-            fn();
+            return fn();
         } finally {
             fluid.cell.endTracking(stateCell);
         }
@@ -520,36 +537,35 @@ const $fluidSignalsScope = function (fluid) {
 
             inEdge.fn = fn;
             inEdge.staticSources = staticSources ? [...staticSources] : null;
-            inEdge.sources = staticSources ? [...staticSources] : null;
+            inEdge.sources = staticSources ? staticSources.filter(source => source instanceof fluid.cell) : null;
             inEdge.target = this;
             inEdge.isAsync = props?.isAsync;
             inEdge.isFree = props?.isFree;
             inEdge.excludeSource = props?.excludeSource;
+            inEdge.mapArg = props?.mapArg || null;
+            inEdge.dispatcher = props?.dispatcher || null;
             this._inEdges.push(inEdge);
 
             // Set up observer links from static sources to this cell immediately - this is from new signature
             if (staticSources) {
                 for (let i = 0; i < staticSources.length; i++) {
                     const source = staticSources[i];
-                    if (!source._observers) {
-                        source._observers = [this];
-                    } else {
-                        source._observers.push(this);
+                    if (source instanceof fluid.cell) {
+                        if (!source._observers) {
+                            source._observers = [this];
+                        } else {
+                            source._observers.push(this);
+                        }
                     }
                 }
             }
 
             if (fn === oldFn) {
                 // No change, don't disturb anything
-            } else if (oldFn) {
-                // Case (a): replacing a live edge's fn.
-                // Run the new edge directly; updateComplete's equals check handles
-                // whether downstream propagation is needed.
-                fluid.cell.update(this, inEdge);
-            } else if (fluid.isUnavailable(this._value)) {
-                // Case (b): first wiring on an unsettled cell. Mark stale so
+            } else if (oldFn || fluid.isUnavailable(this._value)) {
+                // Change in function or possibly uninitialised
                 // updateIfNecessary will run this edge when the cell is next pulled.
-                fluid.cell.markStale(this, CacheDirty, []);
+                fluid.cell.markStale(this, CacheDirty, [], null, false, false, false);
             } else {
                 // First wiring on a settled cell: trust the user's assertion of consistency.
                 // No markStale. The cycle (if any) stays quiescent.
@@ -609,7 +625,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell} cell - The reactive cell to mark as stale.
      * @param {CacheState} state - The new cache state to assign (e.g., CacheDirty or CacheCheck).
      * @param {Cell[]} markedSources - Array of sources which have already been marked dirty on this stack
-     * @param {Cell} [dirtyFrom] - A cell joined by an edge responsible for dirtiness
+     * @param {Cell|null} dirtyFrom - A cell joined by an edge responsible for dirtiness
      * @param {Boolean} toPending - Was caused by a transition to a pending value
      * @param {Boolean} fromPending - Was caused by a transition away from pending value
      * @param {Boolean} earlyCutoff - We are cleaning the graph in order to operate early cutoff for an unchanged pending value
@@ -839,17 +855,23 @@ const $fluidSignalsScope = function (fluid) {
             }
         }
 
+        const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
+
         if (!syncUpdate) {
-            const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
             // Mark the cell as unavailable/stale whilst it is updating and push old value into staleValue
             fluid.cell.setPending(cell, oldValue);
         }
+        const mapArg = inEdge.mapArg === null ? x => x.get() : inEdge.mapArg;
 
         try {
-            const args = inEdge.staticSources ? inEdge.staticSources.map(s => s.get()) : [];
+            const args = inEdge.staticSources ? inEdge.staticSources.map(mapArg) : [];
             const {unavailable} = fluid.cell.mapSignalArgs(args, cell._value);
+            if (fluid.trap) {
+                console.log("Update executing for cell ", cell.name, " since dirtyFrom ", cell._dirtyFrom?.name, " along edge with key ", inEdge.key, " - unavailable is ", unavailable);
+            }
 
-            result = unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
+            result = inEdge.dispatcher !== null ? inEdge.dispatcher(inEdge.fn, args, unavailable, oldValue) :
+                unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
         } catch (e) {
             result = fluid.unavailable(e);
             syncUpdate = true;
@@ -940,7 +962,6 @@ const $fluidSignalsScope = function (fluid) {
         if (dirtyEdge) {
             fluid.cell.update(cell, dirtyEdge);
         }
-        const newState = cell._prePendingState === null ? CacheClean : cell._prePendingState;
         cell._state = CacheClean;
     };
 
@@ -977,20 +998,21 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Object} config - Configuration object for the effect.
      * @param {Object} config.bind - Binding configuration.
      * @param {Function} config.bind.fn - The function to execute reactively.
-     * @param {Cell[]} config.bind.staticSources - The array of source cells to observe.
-     * @param {Object} [config.unbind] - Unbinding configuration.
+     * @param {Cell[]}   config.bind.staticSources - The array of source cells to observe.
+     * @param {Object}   [config.unbind] - Unbinding configuration.
      * @param {Function} [config.unbind.fn] - Cleanup function to run on disposal.
-     * @param {Boolean} [config.isFree] - If true, the effect will run even if some sources are unavailable.
-     * @param {String} [config.name] - Optional name for the effect.
+     * @param {Boolean}  [config.isFree] - If true, the effect will run even if some sources are unavailable.
+     * @param {String}   [config.name] - Optional name for the effect.
+     * @param {String}   [config.excludeSource] - Optional source name (as supplied as last argument to cell.set) that will have its notification skipped
+     * @param {Function} [config.mapArg] - Optional function to map arguments supplied to `fn`
      * @return {Cell} The created disposable effect cell.
      */
     fluid.cell.disposableEffect = function (config) {
-        const effect = fluid.cell();
+        const effect = fluid.cell(undefined, {name: config?.name});
         effect._isEffect = true;
         effect._isQueued = false;
         effect._isDisposed = false;
         effect._isFree = config.isFree;
-        effect.name = config?.name;
 
         const {fn, staticSources} = config.bind;
 
@@ -1008,15 +1030,18 @@ const $fluidSignalsScope = function (fluid) {
         };
 
         // Wrap user's function to track execution and neutering on disposal
-        const computeFn = function () {
-            // If the state was Check when going pending, bypass effect for early cutoff
-            // But if it is a free edge receiving an error, override this and pass the value on regardless
-            if (!effect._isDisposed && (effect._prePendingState !== CacheCheck || effect._isFree && fluid.isErrorUnavailable(arguments[0]))) {
-                const result = fn.apply(effect, arguments);
-                // It might be a pending status for a free edge, make sure to propagate it
-                return result === undefined ? true : result;
-            } else {
+        const computeFn = function (...args) {
+            // Bypass effect for early cutoff if state was Check when going pending,
+            // unless it's a free edge receiving an error — then propagate the value.
+            const isErrorOnFreeEdge = effect._isFree && fluid.isErrorUnavailable(args[0]);
+            const shouldBypass = effect._prePendingState === CacheCheck && !isErrorOnFreeEdge;
+
+            if (effect._isDisposed || shouldBypass) {
                 return true;
+            } else {
+                const result = fn.apply(effect, args);
+                // Pending status on a free edge needs to propagate, pass through all values other than undefined
+                return result ?? true;
             }
         };
 
@@ -1042,6 +1067,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Boolean}  [props.isFree] - If true, the effect will run even if some sources are unavailable.
      * @param {String}   [props.name] - Optional name for the effect
      * @param {String}   [props.excludeSource] - Optional source name (as supplied as last argument to cell.set) that will have its notification skipped
+     * @param {Function} [props.mapArg] - Optional function to map arguments supplied to `fn`
      * @return {Cell} The created effect cell.
      */
     fluid.cell.effect = function (fn, staticSources, props) {
@@ -1050,7 +1076,8 @@ const $fluidSignalsScope = function (fluid) {
             unbind: {fn: props?.onDispose},
             isFree: props?.isFree,
             name: props?.name,
-            excludeSource: props?.excludeSource
+            excludeSource: props?.excludeSource,
+            mapArg: props?.mapArg
         });
     };
 
@@ -1064,7 +1091,7 @@ const $fluidSignalsScope = function (fluid) {
             while (fluid.EffectQueue.length > 0) {
                 const queue = fluid.EffectQueue.slice();
                 fluid.EffectQueue.length = 0;
-                queue.map(effect => {
+                queue.map(function pullOneEffect(effect) {
                     const result = effect.get();
                     const activeFit = effect._fit;
                     if (activeFit) { // Might be no fit if effect did not activate because of no valid inEdge

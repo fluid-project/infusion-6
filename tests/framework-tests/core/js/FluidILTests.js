@@ -122,21 +122,21 @@ QUnit.test("Effects resolution II - read/write and dispose via signals API", fun
     log.length = 0;
 
     // Get the real, signalised component instance from behind the proxy
-    const that = fluid.unProxy(proxy).value;
+    const that = fluid.unProxy(proxy).get();
     // Upgrade the "count" property from a definition layer computed signal to a live writeable signal
     const countSignal = fluid.pathToLive(that[fluid.metadataSymbol], "count");
 
     // Update the count via the signals API - more efficient than using the proxy
-    countSignal.value++;
+    countSignal.set(countSignal.get() + 1);
     assert.deepEqual(log, [2], "Effect on update");
     log.length = 0;
-    countSignal.value++;
+    countSignal.set(countSignal.get() + 1);
     assert.deepEqual(log, [3], "Effect on update");
     that.destroy();
     log.length = 0;
 
     // The signal can't be invalidated after destruction, but all effects allocated by the component will be disposed
-    countSignal.value++;
+    countSignal.set(countSignal.get() + 1);
     assert.deepEqual(log, [], "No effect after destruction");
 });
 
@@ -634,6 +634,7 @@ QUnit.test("Shape cognition test", function (assert) {
     checkObnoxious(that.holder.member);
     checkObnoxious(that.computed.member);
     checkObnoxious(that.fromEffect.member);
+    fluid.trap = true;
     that.method();
     checkObnoxious(that.fromMethod.member);
 });
