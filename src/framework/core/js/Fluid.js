@@ -395,18 +395,6 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Compares two arrays for equality by checking if they have the same length
-     * and if all elements at corresponding indices are strictly equal.
-     *
-     * @param {Array} array1 - The first array to compare.
-     * @param {Array} array2 - The second array to compare.
-     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
-     */
-    fluid.arrayEqual = function (array1, array2) {
-        return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
-    };
-
-    /**
      * Maps the elements of an array by applying a provided function to each item.
      * If the function returns `fluid.NoValue`, the item is excluded from the resulting array.
      *

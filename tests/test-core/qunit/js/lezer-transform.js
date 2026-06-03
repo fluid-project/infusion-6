@@ -283,6 +283,14 @@ fluid.lezer.transformStatement = function (state, token) {
         getParent.parent.children = [awaitFront, variableNode, awaitBack];
         fluid.lezer.markStale(getCall);
     }
+
+    // const stabilizeCall = fluid.lezer.queryNode(token, "PropertyName", "stabilize")[0];
+    const stabilizeCall = fluid.lezer.queryNode(token, "MemberExpression", "fluid.cell.stabilize")[0];
+    if (stabilizeCall) {
+        const statement = fluid.lezer.findAncestor(stabilizeCall, "ExpressionStatement");
+        statement.text = "await fluid.cell.stabilizeAsync();";
+        statement.children.length = 0;
+    }
 };
 
 // ============================================================================

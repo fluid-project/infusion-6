@@ -15,6 +15,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
 
     const cSeq = [];
     const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [15], "Startup notification");
 
@@ -25,15 +26,18 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
         fSeq.length = 0;
         cSeq.length = 0;
     };
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
     fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "One notification on forward arc");
     assert.deepEqual(cSeq, [15], "No backward notification");
 
     celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "No change on faithful inverse");
     assert.deepEqual(cSeq, [15], "No change on faithful inverse");
@@ -41,6 +45,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     celsiusCell.set(20);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [20], "Original update");
     assert.deepEqual(fSeq, [68], "Relayed update");
@@ -48,6 +53,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     fahrenheitCell.set(212);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [212], "Original update");
     assert.deepEqual(cSeq, [100], "Relayed update");
@@ -58,6 +64,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     celsiusCell.set(20);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [20], "Original update");
     assert.deepEqual(fSeq, [], "No relay update");
@@ -65,6 +72,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     fahrenheitCell.set(59);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "Original update");
     assert.deepEqual(cSeq, [15], "Relayed update");
@@ -76,6 +84,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     fEffect.dispose();
 
     fahrenheitCell.set(68);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [], "No further notifications");
     assert.deepEqual(cSeq, [], "No further notifications");
@@ -143,14 +152,17 @@ QUnit.test("Source tracking and source exclusion", assert => {
     const Blog = [];
     // See historical note at https://docs.fluidproject.org/infusion/development/ChangeApplierAPI#example-featuring-user-defined-change-source-filtering
     const Beff = fluid.cell.effect(b => Blog.push(b), [B], {excludeSource: "scrollbar"});
+    fluid.cell.stabilize();
     assert.deepEqual(Blog, [2], "Startup effect");
 
     Blog.length = 0;
     A.set(2);
+    fluid.cell.stabilize();
     assert.deepEqual(Blog, [3], "Update effect");
 
     Blog.length = 0;
     A.set(3, {source: "scrollbar"});
+    fluid.cell.stabilize();
     assert.deepEqual(Blog, [], "Update skipped if source excluded");
 
     Beff.dispose();
@@ -210,12 +222,15 @@ QUnit.test("Early cutoff tests with effects", assert => {
 
     const c5Logger = fluid.cell.effect(c5 => c5Log.push(c5), [c5Cell], {name: "c5Logger"});
 
+    fluid.cell.stabilize();
+
     assert.deepEqual(c5Log, [6], "Pushed through chain to effect");
     assert.equal(busyCount, 1, "One lot of busy on init");
     reset();
 
     // Update computation 1
     headCell.set(1);
+    fluid.cell.stabilize();
     assert.equal(c5Cell.get(), 6, "Computed value 6");
     assert.deepEqual(c5Log, [], "No further effect through early cutoff");
     assert.equal(busyCount, 0, "No further busy through early cutoff");
@@ -223,6 +238,7 @@ QUnit.test("Early cutoff tests with effects", assert => {
     reset();
     // Update computation 2
     headCell.set(0);
+    fluid.cell.stabilize();
     assert.equal(c5Cell.get(), 6, "No change in computed value");
     assert.deepEqual(c5Log, [], "No further effect through early cutoff");
     assert.equal(busyCount, 0, "No further busy through early cutoff");

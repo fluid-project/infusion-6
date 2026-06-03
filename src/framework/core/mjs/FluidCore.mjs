@@ -4,7 +4,11 @@ const fluid = {};
 
 
 
-    fluid.version = "Infusion 6.0.0";
+    fluid.version = "Infusion 6.1.0";
+
+    // Export this for use in environments like node.js, where it is useful for
+    // configuring stack trace behaviour
+    fluid.Error = Error;
 
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
@@ -42,6 +46,18 @@ const fluid = {};
      */
     fluid.isArrayable = function (totest) {
         return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
+    };
+
+    /**
+     * Compares two arrays for equality by checking if they have the same length
+     * and if all elements at corresponding indices are strictly equal.
+     *
+     * @param {Array} array1 - The first array to compare.
+     * @param {Array} array2 - The second array to compare.
+     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
+     */
+    fluid.arrayEqual = function (array1, array2) {
+        return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
     };
 
     /**
@@ -122,6 +138,12 @@ const fluid = {};
      * @property {UnavailableCause[]} causes - An array of cause records.
      */
 
+    /**
+     * Upgrades a cause value into a standardized cause object.
+     * @param {Object|String|Error} cause - The cause to upgrade. Can be a string, Error, or object.
+     * @param {String} defaultVariety - The default variety to assign if not present.
+     * @return {UnavailableCause} The upgraded cause object.
+     */
     fluid.upgradeCause = function (cause, defaultVariety) {
         const upCause = typeof(cause) === "string" ? {message: cause} :
             cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : cause;
@@ -142,6 +164,16 @@ const fluid = {};
         return "Value is unavailable - causes are:\n" + causes.map(cause => cause.message).join("\n");
     };
 
+    /**
+     * Applies a fresh set of causes and variety to an existing Unavailable instance. Single or multiple supplied
+     * cause will be upgraded via fluid.upgradeCause.
+     *
+     * @param {Unavailable} instance - The object to annotate with unavailability information.
+     * @param {Object|Array|String|Error} [cause={}] - The cause or array of causes for unavailability.
+     *        Can be a string, Error, object, or array of these.
+     * @param {String} [variety="error"] - The variety of unavailability (e.g., "error", "config", "pending").
+     * @return {Unavailable} The annotated instance.
+     */
     fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {
         if (fluid.isArrayable(cause)) {
             instance.causes = cause.map(oneCause => fluid.upgradeCause(oneCause, variety));

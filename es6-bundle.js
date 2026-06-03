@@ -1,8 +1,14 @@
 /* eslint-env node */
 "use strict";
 
-const Fs = require("fs");
-const Path = require("path");
+const path = require("path");
+const fs = require("fs-extra");
+
+const writeFile = function (filename, data) {
+    fs.writeFileSync(filename, data, "utf8");
+    const stats = fs.statSync(filename);
+    console.log("Written " + stats.size + " bytes to " + filename);
+};
 
 /**
  * Bundle a list of .mjs files (and their sibling .d.mts / .d.mts.map files)
@@ -16,19 +22,19 @@ const Path = require("path");
  */
 function bundle(inputs, outBase) {
     const distDir = "dist";
-    Fs.mkdirSync(distDir, { recursive: true });
+    fs.mkdirSync(distDir, { recursive: true });
 
-    const inputBaseNames = new Set(inputs.map(p => Path.basename(p)));
+    const inputBaseNames = new Set(inputs.map(p => path.basename(p)));
 
     // Phase 1 - bundle the .mjs files
     const mjsChunks = [];
-    const mapSections = []; // { offset, mapJson, sourcePath }
+    const mapSections = []; // { offset, mapJson, sourcepath }
     let lineOffset = 0;
     let sawUseStrict = false;
     let defaultExportSeen = false;
 
     for (const input of inputs) {
-        const raw = Fs.readFileSync(input, "utf8");
+        const raw = fs.readFileSync(input, "utf8");
         const sibMap = readIfExists(input + ".map");
 
         // Strip imports that resolve to other files in this bundle
@@ -55,7 +61,7 @@ function bundle(inputs, outBase) {
         mjsChunks.push(stripped);
         mapSections.push({
             offset: lineOffset,
-            sourcePath: input,
+            sourcepath: input,
             mapJson: sibMap ? safeJson(sibMap) : null,
             lineCount: countLines(stripped)
         });
@@ -66,9 +72,9 @@ function bundle(inputs, outBase) {
         mjsChunks.push("export default fluid;\n");
     }
 
-    const outMjs = Path.join(distDir, outBase + ".mjs");
+    const outMjs = path.join(distDir, outBase + ".mjs");
     const finalCode = mjsChunks.join("") + `//# sourceMappingURL=${outBase}.mjs.map\n`;
-    Fs.writeFileSync(outMjs, finalCode, "utf8");
+    writeFile(outMjs, finalCode);
 
     // Phase 2 - synthesise an aggregate source map.
     // We do not have token-level information; we produce a coarse "section" map
@@ -79,10 +85,10 @@ function bundle(inputs, outBase) {
         file: outBase + ".mjs",
         sections: mapSections.map(section => ({
             offset: { line: section.offset, column: 0 },
-            map: section.mapJson || identityMap(section.sourcePath, section.lineCount)
+            map: section.mapJson || identityMap(section.sourcepath, section.lineCount)
         }))
     };
-    Fs.writeFileSync(outMjs + ".map", JSON.stringify(aggregateMap), "utf8");
+    writeFile(outMjs + ".map", JSON.stringify(aggregateMap));
 
     // Phase 3 - bundle the .d.mts declaration files
     const dtsChunks = [];
@@ -91,13 +97,13 @@ function bundle(inputs, outBase) {
     let dtsDefaultSeen = false;
 
     for (const input of inputs) {
-        const dtsPath = input.replace(/\.mjs$/, ".d.mts");
-        const dtsMapPath = dtsPath + ".map";
-        if (!Fs.existsSync(dtsPath)) {
+        const dtspath = input.replace(/\.mjs$/, ".d.mts");
+        const dtsMappath = dtspath + ".map";
+        if (!fs.existsSync(dtspath)) {
             continue;
         }
-        let dts = Fs.readFileSync(dtsPath, "utf8");
-        const dtsMap = readIfExists(dtsMapPath);
+        let dts = fs.readFileSync(dtspath, "utf8");
+        const dtsMap = readIfExists(dtsMappath);
 
         // Drop import lines pointing at sibling inputs
         dts = stripInternalImports(dts, inputBaseNames);
@@ -114,7 +120,7 @@ function bundle(inputs, outBase) {
         dtsChunks.push(dts);
         dtsMapSections.push({
             offset: dtsLineOffset,
-            sourcePath: dtsPath,
+            sourcepath: dtspath,
             mapJson: dtsMap ? safeJson(dtsMap) : null,
             lineCount: countLines(dts)
         });
@@ -126,19 +132,19 @@ function bundle(inputs, outBase) {
     }
 
     if (dtsChunks.length > 0) {
-        const outDts = Path.join(distDir, outBase + ".d.mts");
+        const outDts = path.join(distDir, outBase + ".d.mts");
         const finalDts = dtsChunks.join("") + `//# sourceMappingURL=${outBase}.d.mts.map\n`;
-        Fs.writeFileSync(outDts, finalDts, "utf8");
+        writeFile(outDts, finalDts);
 
         const dtsAggregateMap = {
             version: 3,
             file: outBase + ".d.mts",
             sections: dtsMapSections.map(section => ({
                 offset: { line: section.offset, column: 0 },
-                map: section.mapJson || identityMap(section.sourcePath, section.lineCount)
+                map: section.mapJson || identityMap(section.sourcepath, section.lineCount)
             }))
         };
-        Fs.writeFileSync(outDts + ".map", JSON.stringify(dtsAggregateMap), "utf8");
+        writeFile(outDts + ".map", JSON.stringify(dtsAggregateMap));
     }
 }
 
@@ -154,7 +160,7 @@ function stripInternalImports(source, internalBasenames) {
     return source.replace(
         /^\s*import\s+[^;]*?from\s+["']([^"']+)["']\s*;\s*\n?/gm,
         (whole, spec) => {
-            const base = Path.basename(spec);
+            const base = path.basename(spec);
             if (internalBasenames.has(base)) {
                 return "";
             } else {
@@ -167,12 +173,12 @@ function stripInternalImports(source, internalBasenames) {
 /**
  * Read a file if it exists, otherwise return null.
  *
- * @param {String} p - Path to read.
+ * @param {String} p - path to read.
  * @return {String|null} File contents or null.
  */
 function readIfExists(p) {
-    if (Fs.existsSync(p)) {
-        return Fs.readFileSync(p, "utf8");
+    if (fs.existsSync(p)) {
+        return fs.readFileSync(p, "utf8");
     } else {
         return null;
     }
@@ -212,14 +218,14 @@ function countLines(s) {
  * Synthesise a trivial (empty mappings) source map referencing the original file.
  * Used when no real map is available alongside the input.
  *
- * @param {String} sourcePath - Path to the original source.
+ * @param {String} sourcepath - path to the original source.
  * @param {Number} lineCount - Number of lines contributed by this section.
  * @return {Object} A v3 source map object.
  */
-function identityMap(sourcePath, lineCount) {
+function identityMap(sourcepath, lineCount) {
     return {
         version: 3,
-        sources: [sourcePath],
+        sources: [sourcepath],
         names: [],
         mappings: new Array(lineCount).fill(";").join("")
     };
@@ -232,7 +238,7 @@ const bundles = {
     }
 };
 
-// CLI entry: node bundle.js FluidCell src/framework/core/mjs/FluidCore.mjs src/framework/core/mjs/FluidSignals.mjs
+// CLI entry: node es6-bundle.js FluidCell src/framework/core/mjs/FluidCore.mjs src/framework/core/mjs/FluidSignals.mjs
 if (require.main === module) {
     /*
     const [, , outBase, ...inputs] = process.argv;
@@ -245,7 +251,7 @@ if (require.main === module) {
     const bundleName = process.argv[2];
     const bundleDef = bundles[bundleName];
     if (!bundleDef) {
-        console.error("Usage: node bundle.js <bundleName> - supported are ", Object.keys(bundles).join(", "));
+        console.error("Usage: node es6-bundle.js <bundleName> - supported are ", Object.keys(bundles).join(", "));
     } else {
         bundle(bundleDef.inFiles, bundleDef.outBase);
     }

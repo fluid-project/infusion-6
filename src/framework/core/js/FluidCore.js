@@ -2,7 +2,7 @@
 
 const $fluidCoreJSScope = function (fluid) {
 
-    fluid.version = "Infusion 6.0.0";
+    fluid.version = "Infusion 6.1.0";
 
     // Export this for use in environments like node.js, where it is useful for
     // configuring stack trace behaviour
@@ -44,6 +44,18 @@ const $fluidCoreJSScope = function (fluid) {
      */
     fluid.isArrayable = function (totest) {
         return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
+    };
+
+    /**
+     * Compares two arrays for equality by checking if they have the same length
+     * and if all elements at corresponding indices are strictly equal.
+     *
+     * @param {Array} array1 - The first array to compare.
+     * @param {Array} array2 - The second array to compare.
+     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
+     */
+    fluid.arrayEqual = function (array1, array2) {
+        return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
     };
 
     /**

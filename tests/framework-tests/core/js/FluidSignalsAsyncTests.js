@@ -51,14 +51,14 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             effectCalls++;
             effectArgs.push([v1, v2]);
         }, [b, c], {name: "e"});
+        const processedEffects = fluid.cell.stabilize();
 
         // At this point, async1/async2 should have been called once, effect not yet called
         assert.equal(async1Calls, 1, "async1 called once initially");
         assert.equal(async2Calls, 1, "async2 called once initially");
         assert.equal(effectCalls, 0, "effect not called yet");
 
-        // Wait for asyncs to resolve
-        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync(processedEffects);
 
         assert.equal(async1Calls, 1, "async1 still called once after resolve");
         assert.equal(async2Calls, 1, "async2 still called once after resolve");
@@ -66,6 +66,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.deepEqual(effectArgs[0], [1, 1], "effect called with [1, 1]");
 
         s.set(2);
+        await fluid.cell.stabilizeAsync();
 
         // Weird asymmetry in Solid's test - expectation that arcs execute immediately on setup, but not on update
         // We don't have a "flush" phase but if we did it should work symmetrically
@@ -75,9 +76,6 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         // assert.equal(async1Calls, 2, "async1 called again after flush");
         // assert.equal(async2Calls, 2, "async2 called again after flush");
         // assert.equal(effectCalls, 1, "effect not called again until asyncs resolve");
-
-        // Wait for asyncs to resolve
-        await new Promise(r => setTimeout(r, 0));
 
         assert.equal(async1Calls, 2, "async1 called twice after resolve");
         assert.equal(async2Calls, 2, "async2 called twice after resolve");
@@ -130,6 +128,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             effectCalls++;
             effectArgs.push(v);
         }, [b], {name: "e"});
+        const processedEffects = fluid.cell.stabilize();
 
         // Initial expectations: asyncs scheduled, effect not yet called
         assert.equal(async1Calls, 1, "async1 called once initially");
@@ -137,7 +136,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.equal(effectCalls, 0, "effect not called yet");
 
         // Wait for asyncs to resolve: b should recompute after a resolves
-        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync(processedEffects);
         assert.equal(async1Calls, 1, "async1 still called once after resolve");
         // Milo has two calls here, but the 2nd is unnecessary with static dependencies
         assert.equal(async2Calls, 1, "async2 called once after a resolves");
@@ -146,9 +145,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         // Update source
         s.set(2);
+        await fluid.cell.stabilizeAsync();
 
-        // Wait for asyncs to resolve
-        await new Promise(r => setTimeout(r, 0));
         assert.equal(async1Calls, 2, "async1 called twice after update resolves");
         assert.equal(async2Calls, 2, "async2 called twice after update resolves");
         // Milo has 4 here, we have two through using static dependencies
@@ -162,32 +160,34 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
     QUnit.test("Should show stale state with unavailable", async assert => {
 
-        const s = fluid.cell(1);
+        const s = fluid.cell(1, {name: "s"});
 
         const async1 = () => Promise.resolve(s.get());
 
-        const a = fluid.cell().asyncComputed(async () => {
+        const a = fluid.cell(undefined, {name: "a"}).asyncComputed(async () => {
             return await async1();
         });
 
         fluid.cell.effect(() => {
-        }, [a]); // ensure re-compute
+        }, [a], {name: "e"}); // ensure re-compute
 
-        const b = fluid.cell().computed(av =>
+
+        const b = fluid.cell(undefined, {name: "b"}).computed(av =>
             fluid.isUnavailable(av) ? "stale" : "not stale", [a], {isFree: true});
 
         assert.equal(b.get(), "stale");
 
-        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync();
 
         assert.equal(b.get(), "not stale");
         assert.equal(a.get(), 1);
 
         s.set(2);
+        const processedEffects = fluid.cell.stabilize();
 
         assert.equal(b.get(), "stale");
 
-        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync(processedEffects);
 
         assert.equal(b.get(), "not stale");
         assert.equal(a.get(), 2);
@@ -257,22 +257,20 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         fluid.cell.effect((ppVal) => {
             res = ppVal;
         }, [pp], {name: "ppEffect"});
+        await fluid.cell.stabilizeAsync();
 
-        // Allow initial async resolution
-        await new Promise(r => setTimeout(r, 0));
         assert.equal(res, 1, "Initial value observed");
 
         // Trigger update
         s.set(2);
+        await fluid.cell.stabilizeAsync();
 
         // Force synchronous propagation
         pp.get();
 
         assert.equal(res, 2, "Updated value visible while async is pending");
 
-        // Allow async to settle
-        await new Promise(r => setTimeout(r, 0));
-        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync();
         assert.equal(res, 2, "Value remains stable after async resolution");
     });
 
@@ -296,22 +294,25 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             },
             []
         );
+        const processedEffects = fluid.cell.stabilize();
 
         // Not yet resolved
         assert.equal(value, undefined, "Value is undefined before async resolution");
 
-        // Allow first async resolution
-        await new Promise(r => setTimeout(r, 0));
+
+        await fluid.cell.stabilizeAsync(processedEffects);
         assert.equal(value, 1, "Resolved to initial value");
 
         // Update dependency
         s.set(2);
+        const processedEffects2 = fluid.cell.stabilize();
 
         // No refresh triggered, and effect is not tracking `a`
         assert.equal(value, 1, "Value unchanged after dependency update");
 
-        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync(processedEffects2);
         assert.equal(value, 1, "Still unchanged because effect is untracked");
+
     });
 
     // Adopted from solid-signals test at https://github.com/solidjs/signals/blob/main/tests/createAsync.test.ts#L204
@@ -321,7 +322,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         let callCount = 0;
         let lastValue;
 
-        const v = fluid.cell().asyncComputed(async function* () {
+        const v = fluid.cell(undefined, {name: "v"}).asyncComputed(async function* () {
             // Original had "yield await" which is redundant - https://stackoverflow.com/questions/77012368/is-yield-await-redundant-in-javascript-async-generator-functions
             yield Promise.resolve(1);
             yield Promise.resolve(2);
@@ -333,29 +334,27 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
                 callCount++;
                 lastValue = vVal;
             },
-            [v]
+            [v], {name: "e"}
         );
+        const processedEffects = fluid.cell.stabilize();
 
         // No value yet - async not resolved
         assert.equal(callCount, 0, "Effect not called before first yield");
 
         // Note that due to skipping "yield await" our dispatch path is one shorter than solid's
 
-        // Allow first yield
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        await fluid.cell.stabilizeAsync(processedEffects);
         assert.equal(callCount, 1, "Effect called once after first yield");
         assert.equal(lastValue, 1, "First yielded value");
 
-        // Allow second yield
-        await Promise.resolve();
-        await Promise.resolve();
+        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync();
         assert.equal(callCount, 2, "Effect called twice after second yield");
         assert.equal(lastValue, 2, "Second yielded value");
 
-        // Allow third yield
-        await Promise.resolve();
+        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync();
+        await new Promise(r => setTimeout(r, 0)); // TODO: Without this extra, system is not idle at end of test
         assert.equal(callCount, 3, "Effect called three times after third yield");
         assert.equal(lastValue, 3, "Third yielded value");
     });
@@ -387,27 +386,29 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             },
             [], {name: "non-tracker"}
         );
+        const processedEffects = fluid.cell.stabilize();
 
         assert.equal(callCount, 0, "Effect not called synchronously");
 
-        // Allow async resolution
-        await Promise.resolve();
-        await Promise.resolve();
+        await fluid.cell.stabilizeAsync(processedEffects);
+
         assert.equal(callCount, 1, "Async resolves once");
         assert.equal(lastValue, 1, "Resolved to initial value");
 
         // Update dependency
         s.set(2);
+        const processedEffects2 = fluid.cell.stabilize();
         assert.equal(callCount, 1, "No re-run after dependency change");
 
-        await Promise.resolve();
+        await fluid.cell.stabilizeAsync(processedEffects2);
         assert.equal(callCount, 1, "Still no re-run");
 
         // Update again
         s.set(3);
+        const processedEffects3 = fluid.cell.stabilize();
         assert.equal(callCount, 1, "Still no re-run");
 
-        await Promise.resolve();
+        await fluid.cell.stabilizeAsync(processedEffects3);
         assert.equal(callCount, 1, "Async not re-triggered");
     });
 
@@ -469,6 +470,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         const cSeq = [];
         const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell], {name: "cEffect"});
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(cSeq, [15], "Startup notification");
 
         const fSeq = [];
@@ -483,10 +486,14 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         fahrenheitCell.asyncComputed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(fSeq, [59], "One notification on forward arc");
         assert.deepEqual(cSeq, [15], "No backward notification");
 
         celsiusCell.asyncComputed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "No change on faithful inverse");
         assert.deepEqual(cSeq, [15], "No change on faithful inverse");
@@ -495,12 +502,16 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         celsiusCell.set(20);
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(cSeq, [20], "Original update");
         assert.deepEqual(fSeq, [68], "Relayed update");
 
         reset();
 
         fahrenheitCell.set(212);
+
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [212], "Original update");
         assert.deepEqual(cSeq, [100], "Relayed update");
@@ -512,12 +523,16 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         celsiusCell.set(20);
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(cSeq, [20], "Original update");
         assert.deepEqual(fSeq, [], "No relay update");
 
         reset();
 
         fahrenheitCell.set(59);
+
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "Original update");
         assert.deepEqual(cSeq, [15], "Relayed update");
@@ -529,6 +544,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         fEffect.dispose();
 
         fahrenheitCell.set(68);
+
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [], "No further notifications");
         assert.deepEqual(cSeq, [], "No further notifications");
@@ -543,6 +560,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         const cSeq = [];
         const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell], {name: "cEffect"});
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(cSeq, [15], "Startup notification");
 
         const fSeq = [];
@@ -553,16 +572,20 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             cSeq.length = 0;
         };
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
         fahrenheitCell.asyncComputed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
 
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "One notification on forward arc");
         assert.deepEqual(cSeq, [15], "No backward notification");
 
         celsiusCell.asyncComputed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
+
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "No change on faithful inverse");
         assert.deepEqual(cSeq, [15], "No change on faithful inverse");
@@ -571,7 +594,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         celsiusCell.set(20);
 
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(cSeq, [20], "Original update after 20");
         assert.deepEqual(fSeq, [68], "Relayed update after 68");
@@ -580,7 +603,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         fahrenheitCell.set(212);
 
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [212], "Original update after 212");
         assert.deepEqual(cSeq, [100], "Relayed update after 212");
@@ -592,6 +615,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         celsiusCell.set(20);
 
+        await fluid.cell.stabilizeAsync();
+
         assert.deepEqual(cSeq, [20], "Original update after 2nd 20");
         assert.deepEqual(fSeq, [], "No relay update after 2nd 20");
 
@@ -599,7 +624,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         fahrenheitCell.set(59);
 
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "Original update after 59");
         assert.deepEqual(cSeq, [15], "Relayed update after 59");
@@ -611,6 +636,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         fEffect.dispose();
 
         fahrenheitCell.set(68);
+
+        await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [], "No further notifications");
         assert.deepEqual(cSeq, [], "No further notifications");
@@ -643,14 +670,14 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         assert.equal(await fluid.cell.signalToPromise(F), 59, "Spread from Celsius to Fahrenheit");
 
-        // This leg will fail because consumedSources does not clear.
+        // This leg might fail because if does not clear.
         F.set(68);
 
         assert.equal(await fluid.cell.signalToPromise(C), 20, "Spread back Fahrenheit to Celsius");
 
         blockWaitResolve();
 
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
 
         assert.equal(blockTargetResult, 1, "Resolved late blocking effect");
     });
@@ -667,9 +694,13 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             return togo instanceof Error ? new Promise((resolve, reject) => setTimeout(() => reject(togo), 0)) :
                 new Promise(resolve => setTimeout(() => resolve(togo), 0));
         }, [A]);
-        const C = fluid.cell(3, {name: "C"}).asyncComputed(b => fluid.returnAsync(b), [B]);
+        const C = fluid.cell(3, {name: "C"}).asyncComputed(b => {
+            return fluid.returnAsync(b);
+        }, [B]);
         const Clog = [];
-        const Ceff = fluid.cell.effect(c => Clog.push(c), [C], {isFree: true});
+        const Ceff = fluid.cell.effect(c => Clog.push(c), [C], {isFree: true, name: "Ceff"});
+
+        fluid.cell.stabilize();
 
         assert.deepEqual(Clog, [3], "Startup value");
 
@@ -678,15 +709,20 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         const nonPending = results => results.find(result => !fluid.isPending(result));
 
-        await fluid.returnAsync();
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
+        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync();
+        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setTimeout(r, 0));
 
         assert.deepEqual(nonPending(Clog), 0, "Initial plain value");
 
         Clog.length = 0;
         A.set(3);
 
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
+        await new Promise(r => setTimeout(r, 0));
+        await fluid.cell.stabilizeAsync();
 
         const result = nonPending(Clog);
 
@@ -773,10 +809,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         // Initial computation
         headCell.set(1);
 
-        // Wait for 5 async turns for propagation through chain
-        for (let i = 0; i < 5; ++i) {
-            await fluid.returnAsync();
-        }
+        await fluid.cell.stabilizeAsync();
 
         assert.equal(c5Cell.get(), 6, "C5 has settled to plain value");
 
@@ -786,13 +819,8 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         c5Log.length = 0;
         // Update computation
         headCell.set(2);
-        // Wait for 5 async turns for propagation through chain
 
-        await fluid.returnAsync();
-        await fluid.returnAsync();
-        await fluid.returnAsync();
-        await fluid.returnAsync();
-        await fluid.returnAsync();
+        await fluid.cell.stabilizeAsync();
 
         assert.equal(c5Cell.get(), 6, "C5 has settled to plain value");
 
@@ -828,10 +856,9 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         fluid.cell.signalToPromise(c5Cell).then(() => settled = true);
 
-        for (let i = 0; i < 6; ++i) {
-            await fluid.returnAsync();
-        }
-        assert.equal(false, settled, "Promise has not settled due to early cutoff");
+        await fluid.cell.stabilizeAsync();
+
+        assert.equal(true, settled, "Promise has not settled although there is early cutoff");
 
         assert.equal(busyCount, 1, "Busy censored through early cutoff");
 

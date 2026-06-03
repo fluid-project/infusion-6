@@ -92,21 +92,21 @@ fluid.vizReactive.annotations.push({
         sequencePoint: 2,
         cellNotes: {
             C: `This test will set up two cells, C and F, to hold temperatures in Fahrenheit and Centigrade. The cells will\
-            initially be isolated, with C given an initial value of 15, and F not given an initial value. By step 20, we will\
+            initially be isolated, with C given an initial value of 15, and F not given an initial value. By step 18, we will\
             have set up two computed arcs pointing backward and forward between them, allowing updates in one temperature\
             to be converted to updates to the other.`
         }
     }, {
-        sequencePoint: 11,
+        sequencePoint: 14,
         cellNotes: {
             F: `Because we have set up two\
             <a href="https://ponder.org.uk/docs/fluid-signals/#fluidcelleffectfn-staticsources-props">effects</a> which\
-            actively pull values from C and F, and log them to sequences <code>cSeq</code> and <code>fSeq</code>, as soon as we set up the computed relation\
-            computing F from C on this line, the computation executes and evaluates F to 59. Without the effect, F would have\
+            actively pull values from C and F, and log them to sequences <code>cSeq</code> and <code>fSeq</code>, once we set up the computed relation\
+            computing F from C, we can use <a href="/docs/fluid-signals/#fluidcellstabilize"><code>fluid.cell.stabilize</code></a> to trigger the computation to execute and evaluates F to 59. Without the effect, F would have\
             remained stale as in the previous A->B->A example.`
         }
     }, {
-        sequencePoint: 14,
+        sequencePoint: 18,
         cellNotes: {
             F: `At this point, we set up a backward arc from F to C, allowing both cells to respond to updates to the other.\
             This is not possible in contemporary JavaScript reactive frameworks since their APIs and engines do not permit it,\
@@ -114,37 +114,37 @@ fluid.vizReactive.annotations.push({
             See my <a href="https://ponder.org.uk/post/2026-02-20-reactivity-for-malleability/">posting</a> for more details.`
         }
     }, {
-        sequencePoint: 18,
+        sequencePoint: 22,
         cellNotes: {
             F: `We reset the test fixture and update the value of the C temperature. This will activate the forward arc, computing\
             the corresponding value of 68F and making the graph clean once more.`
         }
     }, {
-        sequencePoint: 23,
+        sequencePoint: 28,
         cellNotes: {
             F: `Now we propagate an update in the other direction - by setting F to 212, we activate the second arc\
             computing C as 100.`
         }
     }, {
-        sequencePoint: 27,
+        sequencePoint: 33,
         cellNotes: {
             F: `Now we will tear down the arc which leads from C to F, leaving only a unidirectional relationship which can\
             compute F from C. Again this is not possible in a traditional reactive library, where the lifetime of a computed\
             relationship must be the same as that of the cell it computes.`
         }
     }, {
-        sequencePoint: 31,
+        sequencePoint: 37,
         cellNotes: {
-            F: `Because the C->F arc is gone, the value of F does not update here and stays as it was from the update on line 40.`
+            F: `Because the C->F arc is gone, the value of F does not update here and stays as it was from the update on line 48.`
         }
     }, {
-        sequencePoint: 34,
+        sequencePoint: 42,
         cellNotes: {
             C: `However, the F->C arc remains, and because the effect pulling C's value is still active, the compute arc is now activated to\
             compute the value of 15C`
         }
     }, {
-        sequencePoint: 41,
+        sequencePoint: 50,
         cellNotes: {
             C: `Because we have now disposed of the effects pulling the values of F and C, after the update of F, the C cell\
             remains stale, as shown in red, because its value is no longer demanded and the remaining F->C arc is not activated.`

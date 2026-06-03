@@ -9,9 +9,9 @@ export type Fit = {
      */
     targetsConsumed: Cell[];
     /**
-     * - An array of effects which have suspended because they depend on pending I/O.
+     * - An array of source names, supplied to fluid.set, with which this fit has been marked
      */
-    pendingEffects: Cell[];
+    sources: string[];
     /**
      * - Indicates if this fit is currently active.
      */
@@ -84,7 +84,7 @@ export type Cell = {
     /**
      * - The current update fit that the cell is enlisted in
      */
-    _fit: Fit;
+    _fit: Fit | null;
 };
 export type ComputedProps = {
     /**
@@ -95,6 +95,10 @@ export type ComputedProps = {
      * - Indicates if this is a "free" computation that will deliver unavailable values
      */
     isFree: boolean;
+    /**
+     * - Optional function to map arguments supplied to computation
+     */
+    mapArg?: Function;
 };
 /**
  * An edge between two reactive cells
@@ -128,6 +132,18 @@ export type Edge = {
      * - Indicates if the edge's computation should be invoked on unavailable values
      */
     isFree: boolean;
+    /**
+     * - If an update with a particular source should not propagate across this edge
+     */
+    excludeSource: string;
+    /**
+     * - Optional function to be applied to map any arguments supplied to `fn`
+     */
+    mapArg: Function | null;
+    /**
+     * - Optional function to take charge of dispatch to `fn`
+     */
+    dispatcher: Function | null;
 };
 export type CellTrackingRecord = {
     /**

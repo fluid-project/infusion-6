@@ -315,6 +315,8 @@ QUnit.test("preact-signals: Should only subscribe to signals listened to II", as
         [c]
     );
 
+    fluid.cell.stabilize();
+
     assert.equal(result, "a");
     assert.equal(d.get(), "a");
 
@@ -525,10 +527,10 @@ QUnit.test("solid-signals: Only propagates once with exponential convergence", a
 // From https://github.com/solidjs/signals/blob/b9e8e0bf7f2d08b4fbec1a5271b20c58b351cc38/tests/graph.test.ts#L338
 // This solid test is weird - why should computations trigger at all without effects to pull them?
 QUnit.test("solid-signals: Does not trigger downstream computations unless changed", assert => {
-    const s1 = fluid.cell(1);
+    const s1 = fluid.cell(1, {name: "s1"});
     let order = "";
 
-    const t1 = fluid.cell().computed(
+    const t1 = fluid.cell(undefined, {name: "t1"}).computed(
         s1Val => {
             order += "t1";
             return s1Val;
@@ -536,7 +538,7 @@ QUnit.test("solid-signals: Does not trigger downstream computations unless chang
         [s1]
     );
 
-    const t2 = fluid.cell().computed(
+    const t2 = fluid.cell(undefined, {name: "t2"}).computed(
         () => {
             order += "c1";
             t1.get();
@@ -544,7 +546,9 @@ QUnit.test("solid-signals: Does not trigger downstream computations unless chang
         [t1]
     );
 
-    const e = fluid.cell.effect(() => {}, [t2]);
+    const e = fluid.cell.effect(() => {}, [t2], {name: "e"});
+
+    fluid.cell.stabilize();
 
     assert.equal(order, "t1c1");
 
@@ -552,12 +556,16 @@ QUnit.test("solid-signals: Does not trigger downstream computations unless chang
 
     // Set to same value
     s1.set(1);
+    fluid.cell.stabilize();
+
     assert.equal(order, "");
 
     order = "";
 
     // Set to different value
     s1.set(2);
+    fluid.cell.stabilize();
+
     assert.equal(order, "t1c1");
 
     e.dispose();
@@ -596,11 +604,15 @@ QUnit.test("solid-signals: Applies updates to changed dependees in same order as
 
     const e = fluid.cell.effect(() => {}, [t3]);
 
+    fluid.cell.stabilize();
+
     assert.equal(order, "t1c2");
 
     order = "";
 
     s1.set(1);
+    fluid.cell.stabilize();
+
     assert.equal(order, "t1c2");
 
     e.dispose();
