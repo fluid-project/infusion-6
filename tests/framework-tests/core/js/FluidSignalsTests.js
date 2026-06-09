@@ -116,6 +116,65 @@ QUnit.test("Bidirectional tests - three nodes", assert => {
     assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
 });
 
+QUnit.test("Bidirectional tests - three nodes, circularly linked", assert => {
+
+    const kelvinCell = fluid.cell();
+    kelvinCell.name = "Kelvin";
+    const celsiusCell = fluid.cell(15);
+    celsiusCell.name = "Celsius";
+    const fahrenheitCell = fluid.cell();
+    fahrenheitCell.name = "Fahrenheit";
+
+    kelvinCell.computed(celsius => celsius + 273.15, [celsiusCell]);
+    celsiusCell.computed(kelvin => kelvin - 273.15, [kelvinCell]);
+
+    fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+
+    kelvinCell.computed(kelvin => (kelvin - 273.15) * 9 / 5 + 32, [kelvinCell]);
+    fahrenheitCell.computed(fahrenheit => (fahrenheit - 32) * 5 / 9 + 273.15, [fahrenheitCell]);
+
+    // Celsius value has spread in both directions
+    assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
+    assert.equal(fahrenheitCell.get(), 59, "Spread from Celsius to Fahrenheit");
+
+    kelvinCell.set(293.15);
+
+    assert.nearEqual(celsiusCell.get(), 20, "Spread from Kelvin to Celsius");
+    assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
+
+    fahrenheitCell.set(212);
+
+    assert.equal(celsiusCell.get(), 100, "Spread from Fahrenheit to Celsius");
+    assert.nearEqual(kelvinCell.get(), 373.15, "Spread from Fahrenheit to Kelvin");
+});
+
+/*
+QUnit.test("Genuine cyclicity with monotonicity is acceptable", assert => {
+
+    const layerCountCell = fluid.cell(0, {name: "layerCount"});
+
+    const layerSeq = [];
+    const layerEffect = fluid.cell.effect(layerCount => layerSeq.push(layerCount), [layerCountCell]);
+
+    const layerNextCell = fluid.cell(undefined, {name: "layerNext"}).computed(x => x, [layerCountCell]);
+
+    const layerReactor = fluid.cell(undefined, {name: "layerReactor"}).computed(layerCount => {
+        if (layerCount < 2) {
+            layerCountCell.set(layerCount + 1);
+        }
+        return layerCountCell._value;
+    }, [layerNextCell]);
+    layerReactor.get();
+    layerReactor.get();
+    layerReactor.get();
+    fluid.cell.stabilize();
+    // Currently only gets up to 1 since layer count is marked as clean after set
+    assert.deepEqual(layerSeq, [2], "Layer count has stabilized to 2");
+    layerEffect.dispose();
+});
+ */
+
 QUnit.test("findCause with three nodes", assert => {
     const A = fluid.cell(1, {name: "A"});
     const B = fluid.cell(2, {name: "B"});

@@ -256,6 +256,19 @@ const $fluidSignalsScope = function (fluid) {
         return fit;
     };
 
+    fluid.cell.flushFit = function (fit, coalesce, ending) {
+        fit.targetsConsumed.forEach(target => {
+            target._consumedSources.length = 0;
+            if (ending) {
+                target._fit = null;
+            }
+            if (!coalesce) {
+                target._prePendingState = null;
+            }
+        });
+        fit.targetsConsumed.length = 0;
+    };
+
     /** End the current "fit" (transaction) which is updating the reactive graph by resetting all the arcs which
      * have been marked as consumed by one leg of bidirectional update arcs.
      * @param {Fit} fit - The fit to end
@@ -263,14 +276,8 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell.endFit = function (fit, coalesce) {
         if (fit !== null && fit.isActive && !fit.staticFit) {
-            fit.targetsConsumed.forEach(target => {
-                target._consumedSources.length = 0;
-                target._fit = null;
-                if (!coalesce) {
-                    target._prePendingState = null;
-                }
-            });
-            fit.targetsConsumed.length = 0;
+            fluid.cell.flushFit(fit, coalesce, true);
+
             fit.isActive = false;
             fluid.removeArrayElement(fluid.cell.CurrentFits, fit);
             if (fluid.cell.CurrentFits.length === 0) {
@@ -673,7 +680,7 @@ const $fluidSignalsScope = function (fluid) {
 
         // If we were previously clean, then we know that we may need to update to get the new value
         // In early cutoff case we need to eagerly walk up the graph and trigger any effects on the unchanged values
-        if (cell._state < state || earlyCutoff || toPending) {
+        if ((cell._state < state || earlyCutoff || toPending) && !markedSources.includes(cell)) {
             // We've resolved with a genuine concrete value, clear prePending since its scope has ended
             if (!toPending && !fromPending && cell._prePendingState && state === CacheDirty) {
                 cell._prePendingState = null;
@@ -788,6 +795,9 @@ const $fluidSignalsScope = function (fluid) {
         if (!fluid.cell.equals(this._value, value)) {
             if (!this._fit || !this._fit.isActive) {
                 this._fit = fluid.cell.startFit();
+            }
+            if (this._fit && this._fit.isActive && !this._fit.staticFit) {
+                fluid.cell.flushFit(this._fit, false, true);
             }
             const source = options?.source;
             if (source && !this._fit.sources.includes(source)) {
@@ -937,16 +947,36 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell} cell - The reactive cell to update if necessary.
      * @param {CacheState} targetState - May be CacheCheck in the case we're trying to find a dirty edge for an effect, which
      * we might need to notify if it is free and requires notification of all transitions
-     * @return {Edge} edge - The edge to be activated
+     * @return {Edge|null} edge - The edge to be activated
      */
     fluid.cell.findDirtyEdge = function (cell, targetState) {
-        let bestCandidate;
+        let bestCandidate = null, bestScore = 0;
+        const scoreEdge = function (edge) {
+            let score = 0;
+            if (edge.isFree) {
+                score = 1;
+            } else if (targetState === CacheDirty) {
+                score = 1;
+                if (edge.sources) {
+                    for (let i = 0; i < edge.sources.length; ++i) {
+                        const source = edge.sources[i];
+                        if (fluid.isConfigUnavailable(source._value) || source._state !== CacheClean) {
+                            score = 0;
+                            break;
+                        } else if (source === cell._dirtyFrom) {
+                            score = 2;
+                        }
+                    }
+                }
+            }
+            return score;
+        };
         for (let i = 0; i < cell._inEdges.length; ++i) {
             const edge = cell._inEdges[i];
-            if (edge.isFree ||
-                targetState === CacheDirty && !edge.sources?.some(source => fluid.isConfigUnavailable(source._value) || source._state !== CacheClean) ) {
+            const score = scoreEdge(edge);
+            if (score > bestScore) {
+                bestScore = score;
                 bestCandidate = edge;
-                break;
             }
         }
         return bestCandidate;

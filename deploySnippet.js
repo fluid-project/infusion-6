@@ -137,13 +137,6 @@ const deploy = function (configPath) {
     console.log("\nSnippet written to: " + snippetPath);
 };
 
-// --- Entry point ---
-
-const configArg = process.argv[2];
-if (!configArg) {
-    console.error("Usage: node deploySnippet.js <config.json5>");
-    console.error("  e.g. node deploySnippet.js snippetDeploys/ponder-reactive-viz.json5");
-    process.exit(1);
-}
+const configArg = process.argv[2] || "snippetDeploys/ponder-reactive-viz.json5";
 
 deploy(configArg);
