@@ -11,6 +11,20 @@ const $fluidCoreJSScope = function (fluid) {
     fluid.global = fluid.global || typeof window !== "undefined" ?
         window : typeof self !== "undefined" ? self : {};
 
+    fluid._isLogging = false;
+
+    fluid.isLogging = () => fluid._isLogging;
+
+    fluid.setLogging = function (enabled) {
+        fluid._isLogging = enabled;
+    };
+
+    fluid.log = function (...args) {
+        if (fluid._isLogging) {
+            console.log.apply(console, args);
+        }
+    };
+
     /**
      * Check whether the argument is a primitive type
      *
@@ -33,17 +47,6 @@ const $fluidCoreJSScope = function (fluid) {
     fluid.makeArray = function (arg) {
         return arg === null || arg === undefined ? [] :
             fluid.isPrimitive(arg) || typeof arg[Symbol.iterator] !== "function" ? [arg] : [...arg];
-    };
-
-    /** Determines whether the supplied object can be treated as an array (primarily, by iterating over numeric keys bounded from 0 to length).
-     * The strategy used is an optimised approach taken from an earlier version of jQuery - detecting whether the toString() version
-     * of the object agrees with the textual form [object Array]
-     *
-     * @param {any} totest - The value to be tested
-     * @return {Boolean} `true` if the supplied value is an array
-     */
-    fluid.isArrayable = function (totest) {
-        return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
     };
 
     /**
@@ -173,7 +176,7 @@ const $fluidCoreJSScope = function (fluid) {
      * @return {Unavailable} The annotated instance.
      */
     fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {
-        if (fluid.isArrayable(cause)) {
+        if (Array.isArray(cause)) {
             instance.causes = cause.map(oneCause => fluid.upgradeCause(oneCause, variety));
             instance.variety = instance.causes.reduce((acc, {variety}) => {
                 const priority = fluid.unavailablePriority[variety];
@@ -196,7 +199,7 @@ const $fluidCoreJSScope = function (fluid) {
      * @param {String} [variety="error"] - The variety of unavailable value:
      * * "error" indicates a syntax or structural issue that needs design intervention.
      * * "config" indicates the value is not available because it has been configured away
-     * * "I/O" indicates pending I/O - a stale value may be stored at `staleValue` representing a previous evaluation
+     * * "pending" indicates pending I/O - a stale value may be stored at `staleValue` representing a previous evaluation
      * @return {Unavailable} A marker of type "Unavailable".
      */
     fluid.unavailable = function (cause = {}, variety = "error") {

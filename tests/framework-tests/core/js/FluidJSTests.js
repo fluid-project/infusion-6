@@ -43,25 +43,6 @@ fluid.tests.plainObjectFalseArrayable = {
     "component": false
 };
 
-fluid.tests.arrayableFalse = {
-    fakeJquery: {jquery: true},
-    fakeArray: {length: 10}
-};
-
-QUnit.test("fluid.isArrayable tests", assert => {
-    fluid.each(fluid.tests.plainObjectTrue, function (totest, key) {
-        assert.equal(fluid.isArrayable(totest), false, "Expected not isArrayable: " + key);
-    });
-    fluid.each(fluid.tests.plainObjectFalse, function (totest, key) {
-        assert.equal(fluid.isArrayable(totest), fluid.tests.plainObjectFalseArrayable[key], "Expected isArrayable: " + key);
-    });
-    fluid.each(fluid.tests.arrayableFalse, function (totest, key) {
-        assert.equal(fluid.isArrayable(totest), false, "Expected not isArrayable: " + key);
-    });
-    assert.equal(fluid.isArrayable([]), true, "Array is arrayable");
-});
-
-
 QUnit.test("fluid.makeArray tests", assert => {
     assert.deepEqual(fluid.makeArray(1), [1], "fluid.makeArray on non-array");
     assert.deepEqual(fluid.makeArray(null), [], "fluid.makeArray on null");

@@ -288,13 +288,15 @@ const $fluidSignalsScope = function (fluid) {
 
     fluid.cell.endFits = function (touchedFits) {
         const pendingFits = [];
-        touchedFits.forEach(oneFit => {
-            const pendingEffects = fluid.cell.filterPendingEffects(oneFit.targetsConsumed);
-            if (pendingEffects.length === 0) {
-                fluid.cell.endFit(oneFit);
-            } else {
-                pendingFits.push(oneFit);
-            }
+        fluid.cell.untracked( () => {
+            touchedFits.forEach(oneFit => {
+                const pendingEffects = fluid.cell.filterPendingEffects(oneFit.targetsConsumed);
+                if (pendingEffects.length === 0) {
+                    fluid.cell.endFit(oneFit);
+                } else {
+                    pendingFits.push(oneFit);
+                }
+            });
         });
         return pendingFits;
     };
@@ -915,6 +917,9 @@ const $fluidSignalsScope = function (fluid) {
             result = inEdge.dispatcher !== null ? inEdge.dispatcher(inEdge.fn, args, unavailable, oldValue) :
                 unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
         } catch (e) {
+            if (fluid.isLogging()) {
+                fluid.log(`Failure during update of ${cell.name}: `, e);
+            }
             result = fluid.unavailable(e);
             syncUpdate = true;
         } finally {

@@ -37,6 +37,8 @@ QUnit.test("Basic construction and destruction", function (assert) {
 
     assert.ok(that.destroy, "Component has a destroy method");
     that.destroy();
+    fluid.cell.stabilize();
+
     assert.ok(fluid.isDestroyed(that), "Component successfully destroyed");
 });
 
@@ -76,9 +78,11 @@ QUnit.test("Effects resolution I", function (assert) {
     const that = fluid.tests.effectsI({
         log: bounds => log.push(bounds)
     });
+    fluid.cell.stabilize();
     assert.deepEqual(log, [[0, 10]], "Initial effect on startup");
     log.length = 0;
     that.gridBounds = [0, 20];
+    fluid.cell.stabilize();
     assert.deepEqual(log, [[0, 20]], "Effect on update");
 });
 
@@ -96,15 +100,19 @@ QUnit.test("Effects resolution II - read/write and dispose", function (assert) {
     const that = fluid.tests.effectsII({
         log: count => log.push(count)
     });
+    fluid.cell.stabilize();
     assert.deepEqual(log, [1], "Initial effect on startup");
     log.length = 0;
 
     that.count++;
+    fluid.cell.stabilize();
     assert.deepEqual(log, [2], "Effect on update");
     log.length = 0;
     that.count++;
+    fluid.cell.stabilize();
     assert.deepEqual(log, [3], "Effect on update");
     that.destroy();
+    fluid.cell.stabilize();
     assert.throws( () => {
         that.count++;
     }, (err) => err.message.includes("destroyed"),
@@ -118,6 +126,7 @@ QUnit.test("Effects resolution II - read/write and dispose via signals API", fun
     const proxy = fluid.tests.effectsII({
         log: count => log.push(count)
     });
+    fluid.cell.stabilize();
     assert.deepEqual(log, [1], "Initial effect on startup");
     log.length = 0;
 
@@ -128,9 +137,11 @@ QUnit.test("Effects resolution II - read/write and dispose via signals API", fun
 
     // Update the count via the signals API - more efficient than using the proxy
     countSignal.set(countSignal.get() + 1);
+    fluid.cell.stabilize();
     assert.deepEqual(log, [2], "Effect on update");
     log.length = 0;
     countSignal.set(countSignal.get() + 1);
+    fluid.cell.stabilize();
     assert.deepEqual(log, [3], "Effect on update");
     that.destroy();
     log.length = 0;
@@ -146,6 +157,7 @@ QUnit.test("Effects resolution II - no notification on unrelated update", functi
     const that = fluid.tests.effectsII({
         log: count => log.push(count)
     });
+    fluid.cell.stabilize();
     assert.deepEqual(log, [1], "Initial effect on startup");
     log.length = 0;
 
@@ -182,8 +194,13 @@ fluid.def("fluid.tests.selfUpdate", {
 
 QUnit.test("Computed arg sensitivity", function (assert) {
     const that = fluid.tests.selfUpdate();
+    // fluid.cell.stabilize();
     that.updated = 1;
+    fluid.cell.stabilize();
     assert.equal(globalHolder.effectCount, 1, "Just one update to effect");
+    that.otherUpdated = 1;
+    fluid.cell.stabilize();
+    assert.equal(globalHolder.computedCount, 1, "Computed for {self} does not update");
 });
 
 /** FLUID-4914 derived grade resolution tests **/
@@ -211,6 +228,7 @@ fluid.def("fluid.tests.URLDataSource", {
 
 QUnit.test("FLUID-4914: resolve grade as context name", function (assert) {
     const dataSource = fluid.tests.URLDataSource();
+    fluid.cell.stabilize();
     const url = dataSource.resolve();
     assert.equal(url, dataSource.url, "Resolved grade context name via invoker");
     const data = dataSource.get();
@@ -225,10 +243,13 @@ fluid.def("fluid.tests.missingGradeComponent", {
 
 QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", function (assert) {
     const that = fluid.tests.missingGradeComponent();
+    fluid.cell.stabilize();
     assert.ok(fluid.isUnavailable(that), "component with missing parent is unavailable");
     assert.ok(that.message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
     // Now define the grade
     fluid.def("fluid.tests.nonexistentGrade", {$layers: "fluid.component"});
+    fluid.cell.stabilize();
+
     // Evaluate the signal again and it should now be defined
     assert.ok(fluid.isComponent(that), "Component has sprung into life after missing grade defined");
     // Clean up layer registry
@@ -243,6 +264,7 @@ fluid.def("fluid.tests.circularComponent", {
 
 QUnit.test("FLUID-7001 circularity", function (assert) {
     const that = fluid.tests.circularComponent();
+    fluid.cell.stabilize();
     assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
     assert.ok(that.message.includes("circular"), "Received relevant message");
 });
@@ -258,6 +280,7 @@ fluid.def("fluid.tests.indirectCircularComponentParent", {
 
 QUnit.test("FLUID-7001 indirect circularity", function (assert) {
     const that = fluid.tests.indirectCircularComponent();
+    fluid.cell.stabilize();
     assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
     assert.ok(that.message.includes("circular"), "Received relevant message");
 });
@@ -307,6 +330,7 @@ fluid.tests.retrunking.verify = function (assert, arrowGeometry) {
 QUnit.test("FLUID-4930: Options retrunking test", function (assert) {
     assert.expect(3);
     const that = fluid.tests.retrunking({assert});
+    fluid.cell.stabilize();
     assert.ok(that.renderPoints);
     assert.deepEqual(that.arrowGeometry, fluid.tests.retrunking.expected, "Successfully evaluated all options");
 });
@@ -486,12 +510,14 @@ fluid.def("fluid.tests.FLUID4930.verify.api", {
 fluid.def("fluid.tests.FLUID4930.verify.resend", {
     $layers: "fluid.component",
     urls: {
-        read: "$compute:fluid.oldStringTemplate(%userDbUrl/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
+        read: "$compute:fluid.percStringTemplate(%userDbUrl/_design/lookup/_view/byUsernameOrEmail, {self}.couch)"
     }
 });
 
 QUnit.test("FLUID-4930: Retrunking IV", function (assert) {
     const that = fluid.tests.FLUID4930.verify.api();
+    // Issue here: We can't construct subcomponents without an effect - need FDS
+    fluid.cell.stabilize();
     const resend = that.resend;
     assert.ok(resend, "Successfully constructed subcomponent");
     assert.ok(fluid.hasLayer(resend, "fluid.tests.FLUID4930.verify.resend"), "Constructed subcomponent with layer");
@@ -551,6 +577,8 @@ fluid.def("fluid.tests.FLUID7000scope", {
 
 QUnit.test("FLUID-7000 scoping test", function (assert) {
     const that = fluid.tests.FLUID7000scope();
+    // Oddity here - we can't construct subcomponents without resolving effects! Needs FDS.
+    fluid.cell.stabilize();
     assert.equal(that.joined.joinedResolution, "root", "Same-named scope resolved to root in its own material");
     // Can't actually support this for FLUID-7000 without stopping scope chain from being a chain - would need to
     // traverse manually which likely degrade performance a lot. See diagram from 6/5/25
@@ -631,6 +659,7 @@ QUnit.test("Shape cognition test", function (assert) {
         assert.equal(unwrapped.child, unwrapped, "Child property equals parent");
     };
     const that = fluid.tests.shapeCognition();
+    fluid.cell.stabilize();
     checkObnoxious(that.holder.member);
     checkObnoxious(that.computed.member);
     checkObnoxious(that.fromEffect.member);

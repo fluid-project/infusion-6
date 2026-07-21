@@ -1,5 +1,3 @@
-/* global signal, computed, effect, untracked */
-
 "use strict";
 
 // import fluid from "./FluidIL.js"
@@ -96,13 +94,13 @@ const fluidViewScope = function (fluid) {
      * @return {Signal<Array<Element>>} A signal containing the current list of matching elements.
      */
     fluid.liveQuerySelectorAll = function (selector, root = null, dokkument = document) {
-        const togo = signal([]);
+        const togo = fluid.cell([], {name: "liveQuerySelectorAll for " + selector});
         const context = root || dokkument;
 
         const updateMatches = () => {
             const upcoming = Array.from(context.querySelectorAll(selector));
-            if (!fluid.arrayEqual(togo.value, upcoming)) {
-                togo.value = upcoming;
+            if (!fluid.arrayEqual(togo.get(), upcoming)) {
+                togo.set(upcoming);
             }
         };
         const window = dokkument.defaultView;
@@ -137,9 +135,10 @@ const fluidViewScope = function (fluid) {
      */
     fluid.liveQuerySelector = function (selector, root = null, dokkument = document) {
         const noElement = fluid.unavailable({cause: "No element matches selector " + selector, variety: "I/O"});
-        const query = fluid.liveQuerySelectorAll(selector, root, dokkument);
-        const togo = computed( () => query.value.length === 0 ? noElement : query.value[0]);
-        togo.dispose = query.dispose;
+        const querySignal = fluid.liveQuerySelectorAll(selector, root, dokkument);
+        const togo = fluid.cell(undefined, {name: `{liveQuerySelector for ${selector}`})
+            .computed( (query) => query.length === 0 ? noElement : query[0], [querySignal]);
+        togo.dispose = querySignal.dispose;
         return togo;
     };
 
@@ -206,7 +205,7 @@ const fluidViewScope = function (fluid) {
 
     fluid.importUrlResource = function (layerName, relPath) {
         return typeof(relPath) === "string" ? fluid.importOneUrlResource(layerName, relPath) :
-            fluid.isArrayable(relPath) ? relPath.map(oneRelPath => fluid.importOneUrlResource(layerName, oneRelPath)) : null;
+            Array.isArray(relPath) ? relPath.map(oneRelPath => fluid.importOneUrlResource(layerName, oneRelPath)) : null;
     };
 
     /**
@@ -224,7 +223,7 @@ const fluidViewScope = function (fluid) {
     };
 
     // TODO: see if we can make this read-only
-    fluid.trueSignal = signal(true);
+    fluid.trueSignal = fluid.cell(true, {name: "True signal"});
 
     /**
      * @typedef {Object} InjectionStyle
@@ -283,9 +282,10 @@ const fluidViewScope = function (fluid) {
             }),
             update: (node, rec, dokkument) => {
                 const resolved = fluid.module.resolveRelativePath(dokkument.location, rec.url);
-                const togo = signal(fluid.unavailable(`Script at url ${resolved} is loading`, "I/O"));
+                const togo = fluid.cell(fluid.unavailable(`Script at url ${resolved} is loading`, "I/O"),
+                    {name: `Script injection for path ${resolved}`});
                 node.setAttribute("src", resolved);
-                node.onload = () => togo.value = true;
+                node.onload = () => togo.set(true);
                 node.async = false;
                 return togo;
             }
@@ -701,8 +701,8 @@ const fluidViewScope = function (fluid) {
             console.log("**** Beginning to parse SFC for layer ", layerName);
             oldText = text;
             const vTree = fluid.parseHTMLToTree(text);
-            rec.injRecsSignal.value = fluid.sfcToInjRecs(vTree, layerName);
-            rec.loadCompletion.value = true;
+            rec.injRecsSignal.set(fluid.sfcToInjRecs(vTree, layerName));
+            rec.loadCompletion.set(true);
 
         }, [rec.textSignal]);
     };
@@ -739,20 +739,21 @@ const fluidViewScope = function (fluid) {
             } else {
                 existingRecs.push(injDone);
             }
-            existing.injRecsSignal.value = existingRecs;
+            existing.injRecsSignal.set(existingRecs);
         } else {
             /** @type {DocLayerInjectionRec} **/
             const rec = {
-                injRecsSignal: signal([])
+                injRecsSignal: fluid.cell([], {name: "Document injections for ${document.location}"})
             };
-            rec.injectionsComplete = computed( () => fluid.signalsToAvailable(rec.injRecsSignal.value).value);
+            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${document.location}`})
+                .computed( injRecs => fluid.signalsToAvailable(injRecs), [rec.injRecsSignal]);
             fluid.documentInjections.set(injDone.dokkument, rec);
         }
     };
 
     fluid.fetchParsedTemplate = function (layerName) {
         // TODO: fall back to the layer's templateTree if it is not in the store
-        return fluid.templateStore[layerName].value;
+        return fluid.templateStore[layerName].get();
     };
 
     /**
@@ -763,9 +764,9 @@ const fluidViewScope = function (fluid) {
     fluid.writeParsedTemplate = function (layerName, template) {
         const existing = fluid.templateStore[layerName];
         if (existing) {
-            existing.value = template;
+            existing.set(template);
         } else {
-            fluid.templateStore[layerName] = signal(template);
+            fluid.templateStore[layerName] = fluid.cell(template, {name: `template store for layer ${layerName}`});
         }
     };
 
@@ -783,8 +784,8 @@ const fluidViewScope = function (fluid) {
         } else {
             const unavailable = fluid.unavailable(`SFC for ${layerName} is not available`);
             return fluid.sfcStore[layerName] = {
-                textSignal: signal(unavailable),
-                injRecsSignal: signal(unavailable),
+                textSignal: fluid.cell(unavailable, {name: `text signal for layer ${layerName}`}),
+                injRecsSignal: fluid.cell(unavailable, {name: `injections signal for layer ${layerName}`}),
                 /** @type {Map<Document, Effect>} **/
                 docInjectEffects: new Map()
             };
@@ -811,11 +812,13 @@ const fluidViewScope = function (fluid) {
         console.log("loadSFC for ", layerName);
         const rec = fluid.readSFC(layerName);
         if (!rec.parseEffect) {
-            rec.loadCompletion = signal(fluid.unavailable(`SFC for ${layerName} is loading`, "I/O"));
+            rec.loadCompletion = fluid.cell(fluid.unavailable(`SFC for ${layerName} is loading`, "I/O"),
+                {name: `load completion for SFC for layer ${layerName}`});
             rec.url = url;
             // TODO: Currently starts fetch immediately but in future will be initiated by fluid.ensureImportsLoaded
             rec.fetchSignal = fluid.fetchText(url);
-            rec.fetchEffect = effect(() => rec.textSignal.value = rec.fetchSignal.value);
+            // Probably some good reason this was cod in the old days
+            rec.fetchEffect = fluid.cell.effect((text) => rec.fetchSignal.set(text), [rec.textSignal]);
             rec.parseEffect = fluid.parseSFC(rec, layerName);
         }
         return rec;
@@ -835,7 +838,7 @@ const fluidViewScope = function (fluid) {
         if (!docEffect) {
             /** @type {Object<String, InjectRecord>} **/
             let oldInjRecs = {};
-            const injDone = signal(fluid.unavailable("Injection in progress"));
+            const injDone = fluid.cell(fluid.unavailable("Injection in progress"), {name: `Injections for layer ${layerName}`});
             injDone.layerName = layerName;
             injDone.dokkument = dokkument;
             const newDocEffect = fluid.effect(async function docInjectEffect(injRecs) {
@@ -851,14 +854,14 @@ const fluidViewScope = function (fluid) {
                     // Do this now because the await is going to pitch us onto a different one of our stack frames.
                     fluid.endCaptureBufferDefs();
                     const injsDoneSignal = fluid.signalsToAvailable(injsDone);
-                    const res = fluid.signalToPromise(injsDoneSignal);
+                    const res = fluid.cell.signalToPromise(injsDoneSignal);
                     await res;
                     console.log(`Await for ${layerName} is done`);
                 } finally {
                     console.log(`Finally for ${layerName} is starting`);
                     // Don't actually register layers until all the rest of the code has executed
                     fluid.writeBufferDefs(defBuffer);
-                    injDone.value = true;
+                    injDone.set(true);
                 }
 
                 Object.keys(oldInjRecs).forEach(nodeId => {
@@ -891,7 +894,7 @@ const fluidViewScope = function (fluid) {
         if (importRec) {
             return fluid.subscribeDocToInjections(layerName, dokkument);
         } else {
-            return signal(true);
+            return fluid.cell(true, {name: `Imports loaded for ${layerName}`});
         }
         // TODO: Return currently ignored - we react to injections through effects on layer store
     };
@@ -973,11 +976,10 @@ const fluidViewScope = function (fluid) {
         }
     };
 
-
-    fluid.unavailableElement = fluid.unavailable("DOM element not available");
+    fluid.unavailableElement = fluid.unavailable("DOM element not available", "config");
 
     fluid.allocateVNodeEffect = function (vnode, effectMaker) {
-        vnode.elementSignal ||= signal(fluid.unavailableElement);
+        vnode.elementSignal ||= fluid.cell(fluid.unavailableElement, {name: `Element signal for vnode ${vnode._id}`});
         const renderEffect = effectMaker(vnode);
 
         fluid.pushArray(vnode, "renderEffects", renderEffect);
@@ -1001,7 +1003,7 @@ const fluidViewScope = function (fluid) {
     fluid.bindDomTokens = function (templateEffects, vnode, rendered, applyFunc) {
         if (fluid.isSignal(rendered)) {
             const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
-                const togo = fluid.effect( function (element, text) {
+                const togo = fluid.cell.effect( function (element, text) {
                     if (!fluid.isUnavailable(element)) {
                         if (fluid.isUnavailable(text)) {
                             fluid.renderError(element, text);
@@ -1009,7 +1011,7 @@ const fluidViewScope = function (fluid) {
                             applyFunc(element, text);
                         }
                     }
-                }, [vnode.elementSignal, rendered], {free: true});
+                }, [vnode.elementSignal, rendered], {isFree: true, name: "bindDomTokens"});
                 togo.$variety = "bindDomTokens";
                 togo.$vnode = vnode;
                 return togo;
@@ -1018,9 +1020,15 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    let domId = 1;
+
+    fluid.allocateDomId = function (el) {
+        el.flDomId = el.flDomId || domId++;
+    };
+
     fluid.bindContainer = function (templateEffects, vnode, self) {
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
-            const togo = fluid.effect(function (element) {
+            const togo = fluid.cell.effect(function (element) {
                 fluid.noteViewContainerRegistry(element, self[$m]);
             }, [vnode.elementSignal]);
             togo.$variety = "bindContainer";
@@ -1045,13 +1053,21 @@ const fluidViewScope = function (fluid) {
     fluid.allocateEventBindingEffect = function (templateEffects, vnode) {
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
             const vTreeRec = [];
-            const togo = fluid.effect(function (element) {
+            const togo = fluid.cell.effect(function (element) {
+                fluid.allocateDomId(element);
+                // console.log("Event binding effect activating for vnode " + vnode._id + " element ", element.flDomId, " on ", vnode.on);
                 fluid.applyOns(vnode, vnode.shadow, element, vnode.on, vTreeRec);
-                return () => fluid.removeDomListeners(vTreeRec);
-            }, [vnode.elementSignal]);
+            }, [vnode.elementSignal], {
+                onDispose: () => {
+                    // console.log("Disposed event binding effect for vnode " + vnode._id);
+                    fluid.removeDomListeners(vTreeRec);
+                },
+                name: `eventBindingEffect for vnode ${vnode._id}`
+            });
             togo.$variety = "bindEvents";
             togo.$vnode = vnode;
             togo.vTreeRec = vTreeRec;
+            console.log("Allocated event binding effect for vnode id " + vnode._id + " cell id " + togo.cellId + " with on ", vnode.on);
             return togo;
         });
         templateEffects.push(bindEffect);
@@ -1071,9 +1087,37 @@ const fluidViewScope = function (fluid) {
      * @param {Function} func - The transformation function to apply to the signal's value.
      * @return {Signal<any>} A computed signal reflecting the transformed value.
      */
-    fluid.mapSignal = (sig, func) => func === fluid.identity ? sig : fluid.computed( value => func(value), [sig]);
+    fluid.mapSignal = (sig, func) => func === fluid.identity ? sig : fluid.cell(undefined, {name: "fluid.mapSignal"})
+        .computed( value => {
+            return func(value);
+        }, [sig], {mapArg: fluid.deproxyAndDesignal});
 
     fluid.filterObjKeys = (obj, func) => Object.fromEntries(Object.entries(obj).filter(([key]) => func(key)));
+
+    /**
+     * Renders a parsed string template against the local component tree by replacing tokens with their corresponding values.
+     * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
+     * string concatenated.
+     *
+     * @param {Array<string|ParsedContext>} tokens - An array of tokens, where each token is either a string
+     *        or an object with a `key` property indicating a path in the source.
+     * @param {Shadow} shadow - The shadow record of the component where the reference is held
+     * @return {String|Signal<string>} A computed signal representing the resolved string.
+     */
+    fluid.renderComputedStringTemplate = function (tokens, shadow) {
+        if (tokens.length === 0) {
+            return "";
+        } else if (tokens.length === 1 && typeof(tokens[0]) === "string") {
+            return tokens[0];
+        } else {
+            const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.fetchContextReference(token.parsed, shadow));
+            const togo = fluid.cell(undefined, {name: "renderComputedStringTemplate"}).computed(function (...tokens) {
+                return tokens.join("");
+            }, liveTokens, {mapArg: fluid.deSignal});
+            togo.$tokens = liveTokens;
+            return togo;
+        }
+    };
 
     /**
      * Processes an attribute directive found on a virtual node.
@@ -1237,9 +1281,9 @@ const fluidViewScope = function (fluid) {
         const shadow = self[$m];
         // Awful hack to get around surplus notification problem for now
         const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReferenceSoft("fluid.editorRoot", ["selfEditing"], shadow));
-        const selfEditing = selfEditingRef.value;
+        const selfEditing = selfEditingRef.get();
 
-        return untracked( () => {
+        return fluid.cell.untracked( () => {
 
             const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
             /**
@@ -1267,11 +1311,11 @@ const fluidViewScope = function (fluid) {
                                 fluid.pushPotentia(shadow, idValue, [{mergeRecordType: "template"}]);
                             };
                             disposable.$variety = "$component";
-                            const parentTemplate = signal({
+                            const parentTemplate = fluid.cell({
                                 tag: vnode.tag,
                                 attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
                                 children: vnode.children.map(fluid.retemplatise)
-                            });
+                            }, {name: `parentTemplate signal for vnode ${vnode._id}`});
                             delete vnode.children;
                             vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
 
@@ -1291,15 +1335,17 @@ const fluidViewScope = function (fluid) {
                     fluid.each(vnode.attrs, (value, key) => {
                         fluid.processVNodeAttribute(vnode, value, key, shadow, templateEffects);
                     });
+                    // Special marker put on the VNode by fluid.processVNodeAttribute for @class
                     if (vnode["class"]) {
                         // Grab a reference to any static source of classes before this node was signalised
                         const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
-                        const allClass = computed( () => {
-                            const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
-                                .filter(([, value]) => value && !fluid.isUnavailable(value))
-                                .map(([key]) => key);
-                            return clazzSource + " " + classes;
-                        });
+                        const allClass = fluid.cell(undefined, {name: `allClass computer for vnode ${vnode._id}`})
+                            .computed( () => {
+                                const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
+                                    .filter(([, value]) => value && !fluid.isUnavailable(value))
+                                    .map(([key]) => key);
+                                return clazzSource + " " + classes;
+                            });
                         allClass.$variety = "$allClass";
                         allClass.$source = clazzSource;
                         fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => node.setAttribute("class", text));
@@ -1313,6 +1359,7 @@ const fluidViewScope = function (fluid) {
             }
 
             const activateTemplate = tree => {
+                console.log("Disposing old templateEffects for " + shadow.path);
                 fluid.disposeEffects(templateEffects);
                 const togo = processVNode(tree);
                 // TODO: In the end this will be done on parse of the SFC and folding its provenance onto the $imports layer property
@@ -1349,7 +1396,7 @@ const fluidViewScope = function (fluid) {
             // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
             const activatedTree = activateTemplate(compositedTree);
 
-            const filteredTree = selfEditing ? selfEditingRef.$component.filterForSelfEditing(activatedTree, self) : activatedTree;
+            const filteredTree = !fluid.isUnavailable(selfEditing) ? selfEditingRef.$component.filterForSelfEditing(activatedTree, self) : activatedTree;
 
             fluid.bindContainer(templateEffects, filteredTree, self);
             return filteredTree;
@@ -1371,8 +1418,8 @@ const fluidViewScope = function (fluid) {
      */
     fluid.bindDom = function (vnode, element) {
         if (vnode.elementSignal) {
-            fluid.unbindDom(vnode, vnode.elementSignal.peek());
-            vnode.elementSignal.value = element;
+            fluid.unbindDom(vnode, vnode.elementSignal._value);
+            vnode.elementSignal.set(element);
         }
     };
 
@@ -1462,6 +1509,7 @@ const fluidViewScope = function (fluid) {
      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
      */
     fluid.renderView = function (self, container, vTree) {
+        fluid.allocateDomId(container);
         console.log(`renderView beginning for ${self[$m].path} with vTree ${vTree._id} container `, container.flDomId);
         fluid.patchChildren(vTree, container, true);
     };
@@ -1474,6 +1522,7 @@ const fluidViewScope = function (fluid) {
         $layers: "fluid.component",
         elideParent: true,
         container: "$compute:fluid.unavailable(Container not specified)",
+        // Mashed in live by bindContainer called at the end of activateTemplate
         renderedContainer: fluid.unavailable({cause: "Component not rendered", variety: "config"}),
         templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
         vTree: "$compute:fluid.activateTemplate({self}.templateTree, {self})",
@@ -1542,12 +1591,13 @@ const fluidViewScope = function (fluid) {
     fluid.def("fluid.viewComponentList", {
         $layers: "fluid.viewComponent",
         elideParent: false,
+        // Note that this is activateTemplate in a regular viewComponent
         vTree: "$compute:fluid.listViewTree({self}.list)",
         $variety: "framework"
     });
 
     fluid.listViewTree = function (list) {
-        return fluid.computed(componentList => {
+        return fluid.cell(undefined, {name: "fluid.listViewTree"}).computed(componentList => {
             const {designalArgs: components, unavailable: compUnavailable} = fluid.processSignalArgs(componentList);
             if (compUnavailable) {
                 return compUnavailable;
@@ -1558,10 +1608,11 @@ const fluidViewScope = function (fluid) {
                 } = fluid.processSignalArgs(components.map(component => component.vTree));
                 return treesUnavailable || {
                     tag: "template",
-                    children: childTrees
+                    children: childTrees,
+                    _id: vnode_id++
                 };
             }
-        }, [list]);
+        }, [list], {mapArg: fluid.deproxyAndDesignal});
     };
 
     fluid.def("fluid.templateViewComponent", {
@@ -1593,8 +1644,8 @@ const fluidViewScope = function (fluid) {
     fluid.makeSelfBootEffect = function (dokkument) {
         // Many thanks to Hugo Daniel https://hugodaniel.com/pages/boredom/ for inspiration for this concept
         const selfBootQuery = fluid.liveQuerySelectorAll("*[fluid-layers]", dokkument, dokkument);
-        return effect( () => {
-            const elements = selfBootQuery.value;
+        return fluid.cell.effect( () => {
+            const elements = selfBootQuery.get();
             elements.forEach(element => {
                 const existing = fluid.viewContainerRegistry.get(element);
                 if (!existing) {
@@ -1628,7 +1679,9 @@ const fluidViewScope = function (fluid) {
             fluid.acquireModules(dokkument, dokkument.documentElement);
             fluid.docToImportMap(dokkument, dokkument.documentElement);
         });
-        return fluid.makeSelfBootEffect(dokkument);
+        const effect = fluid.makeSelfBootEffect(dokkument);
+        fluid.cell.stabilize();
+        return effect;
     };
 
 };

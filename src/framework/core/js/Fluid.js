@@ -156,7 +156,7 @@ const $fluidScope = function (fluid) {
      * Signals an error to the framework. The default behaviour is to log a structured error message and throw an exception. This strategy may be configured
      * by adding and removing suitably namespaced listeners to the special event <code>fluid.failureEvent</code>
      *
-     * @param {...String} messages - The error messages to log.
+     * @param {...any} messages - The error messages to log.
      *
      * All arguments after the first are passed on to (and should be suitable to pass on to) the native console.log
      * function.
@@ -288,27 +288,28 @@ const $fluidScope = function (fluid) {
      * @return {Boolean} - `true` if `totest` is a plain object, `false` otherwise.
      */
     fluid.isPlainObject = function (totest, strict) {
-        const string = Object.prototype.toString.call(totest);
-        if (string === "[object Array]") {
+        if (Array.isArray(totest)) {
             return !strict;
-        } else if (string !== "[object Object]") {
+        } else if (typeof totest === "object" && totest !== null) {
+            // Adapted from https://stackoverflow.com/a/76387885/1381443
+            const prototype = Object.getPrototypeOf(totest);
+            return prototype === Object.prototype || prototype === null || Object.getPrototypeOf(prototype) === null;
+        } else {
             return false;
-        } // Adapted from https://stackoverflow.com/a/76387885/1381443
-        const prototype = Object.getPrototypeOf(totest);
-        return prototype === null || prototype === Object.prototype || Object.getPrototypeOf(prototype) === null;
+        }
     };
 
     /**
      * Returns a string typeCode representing the type of the supplied value at a coarse level.
      * Returns <code>primitive</code>, <code>array</code> or <code>object</code> depending on whether the supplied object has
-     * one of those types, by use of the <code>fluid.isPrimitive</code>, <code>fluid.isPlainObject</code> and <code>fluid.isArrayable</code> utilities
+     * one of those types, by use of the <code>fluid.isPrimitive</code>, <code>fluid.isPlainObject</code> and <code>Array.isArraye</code> utilities
      *
      * @param {any} totest - The value to be tested
      * @return {String} Either `primitive`, `array` or `object` depending on the type of the supplied value
      */
     fluid.typeCode = function (totest) {
         return fluid.isPrimitive(totest) || !fluid.isPlainObject(totest) ? "primitive" :
-            fluid.isArrayable(totest) ? "array" : "object";
+            Array.isArray(totest) ? "array" : "object";
     };
 
     /** Determine whether the supplied value is an IL reference. The test is passed if the value is a string whose
@@ -340,6 +341,10 @@ const $fluidScope = function (fluid) {
         return fluid.isPrimitive(totest) || !fluid.isPlainObject(totest);
     };
 
+    fluid.coerceToPrimitive = function (string) {
+        return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{[\w|${]/.test(string) ? JSON.parse(string) : string;
+    };
+
     // Functional programming utilities.
 
     /** A function which raises a failure if executed */
@@ -357,7 +362,7 @@ const $fluidScope = function (fluid) {
      * @return {Object|Array} A fresh object of the same type as `tocopy`
      */
     fluid.freshContainer = function (tocopy) {
-        return fluid.isArrayable(tocopy) ? [] : {};
+        return Array.isArray(tocopy) ? [] : {};
     };
 
     /**
@@ -448,7 +453,7 @@ const $fluidScope = function (fluid) {
         const target = find_if ? false : undefined;
         return function (source, func, deffolt) {
             let disp;
-            if (fluid.isArrayable(source)) {
+            if (Array.isArray(source)) {
                 for (let i = 0; i < source.length; ++i) {
                     disp = func(source[i], i);
                     if (disp !== target) {
@@ -469,7 +474,7 @@ const $fluidScope = function (fluid) {
 
     /** Scan through an array or hash of objects, terminating on the first member which
      * matches a predicate function.
-     * @param {Arrayable|Object} source - The array or hash of objects to be searched.
+     * @param {Object[]|Object} source - The array or hash of objects to be searched.
      * @param {Function} func - A predicate function, acting on a member. A predicate which
      * returns any value which is not <code>undefined</code> will terminate
      * the search. The function accepts (object, index).
@@ -497,7 +502,7 @@ const $fluidScope = function (fluid) {
      * modified by the operation of removing the matched elements.
      */
     fluid.remove_if = function (source, fn, target) {
-        if (fluid.isArrayable(source)) {
+        if (Array.isArray(source)) {
             for (let i = source.length - 1; i >= 0; --i) {
                 if (fn(source[i], i)) {
                     if (target) {
@@ -699,6 +704,19 @@ const $fluidScope = function (fluid) {
 
     fluid.logLevelStack = [fluid.logLevel.IMPORTANT]; // The stack of active logging levels, with the current level at index 0
 
+
+    /*** FORWARD DEFS OF PROXY AND UNAVAILABLE SUPPORT **/
+
+    fluid.proxySymbol = Symbol("fluid.proxyTarget");
+    const $t = fluid.proxySymbol;
+
+    fluid.unavailableSymbol = Symbol("fluid.unavailableTarget");
+    const $u = fluid.unavailableSymbol;
+
+    // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
+    fluid.metadataSymbol = Symbol("fluid.metadata");
+    const $m = fluid.metadataSymbol;
+
     fluid.unavailableProxy = function (target) {
         const proxy = new Proxy(target, {
             get: function (target, prop) {
@@ -709,6 +727,8 @@ const $fluidScope = function (fluid) {
                 } else if (prop === "toString") {
                     return () => fluid.formatUnavailable(target);
                 } else {
+                    // Properly this should wrap the updated path of the unavailable to give better provenance for the site
+                    // but we have enough unavailable garbage as it is
                     return proxy;
                 }
             },
@@ -723,6 +743,13 @@ const $fluidScope = function (fluid) {
     // Intended to be used for object which has already passed fluid.isUnavailable
     fluid.deproxyUnavailable = function (target) {
         return Object.getOwnPropertyDescriptor(target, $u) ? fluid.deSignal(target[$u]) : target;
+    };
+
+    fluid.unProxy = target => target?.[$t] ? target[$t] : target;
+
+    fluid.deproxyAndDesignal = function (target) {
+        const holder = target?.[$t];
+        return holder === undefined ? fluid.deSignal(target) : fluid.deSignal(holder);
     };
 
     /**
@@ -741,10 +768,6 @@ const $fluidScope = function (fluid) {
 
     /*** SIGNAL PROCESSING ***/
 
-    fluid.coerceToPrimitive = function (string) {
-        return /^(true|false|null)$/.test(string) || /^[\[{0-9]/.test(string) && !/^{[\w|\${]/.test(string) ? JSON.parse(string) : string;
-    };
-
     /**
      * Check whether a given value is an instance of a `fluid.cell`.
      * @param {any} value - The value to test.
@@ -753,7 +776,7 @@ const $fluidScope = function (fluid) {
     fluid.isSignal = value => value instanceof fluid.cell;
 
     /**
-     * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
+     * Resolve a value from a `Signal`, potentially recursively, or return the value as-is if it is not a `Signal`.
      *
      * @param {any} ref - The value to resolve. May be a `Signal` or a plain value.
      * @return {any} The resolved value if `ref` is a `Signal`, or the original value if it is not.
@@ -849,6 +872,7 @@ const $fluidScope = function (fluid) {
     fluid.notEvaluated = fluid.unavailable("Computed not yet evaluated", "config");
 
     fluid.disposeEffects = function (effectStructure) {
+        console.log("Disposing effects in ", effectStructure);
         if (effectStructure instanceof fluid.cell) {
             effectStructure.dispose();
         } else if (Array.isArray(effectStructure)) {
@@ -997,50 +1021,6 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Traverse a nested object structure, resolving `Signal` values as encountered,
-     * and returning a computed or plain value representing the resolved path.
-     *
-     * @param {any} root - The root object to begin traversal from.
-     * @param {String[]} segs - An array of segment names representing the path to traverse.
-     * @param {Object} extra - Metadata to be assigned to the returned signal, including a $variety element
-     * @return {Computed<any>} A computed value that resolves the path through any `Signal` encountered, a plain value if
-     * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
-     */
-    fluid.getThroughSignals = function (root, segs, extra) {
-        const siteName = extra?.site ? ` for site ${fluid.renderSite(extra.site)}` : "";
-        const togo = fluid.cell(undefined, {name: "getThroughSignals" + siteName}).computed(function getThroughSignals() {
-            if (window.cycleImminent) {
-                debugger;
-            }
-            let move = fluid.deSignal(root);
-            for (let j = 0; j < segs.length; ++j) {
-                if (!move || fluid.isUnavailable(move)) {
-                    break;
-                }
-                const seg = segs[j];
-                if (!(seg in move) && move[$m]) {
-                    const shadow = move[$m];
-                    move = fluid.unavailable({
-                        message: `Component at path ${shadow.path} has no member ${seg}`,
-                        site: {shadow, segs}
-                    });
-                    break;
-                }
-                move = fluid.deSignal(move[seg]);
-                // This is from the explore-retrunking branch - we should sometimes try to leave a terminal signal
-                // exposed to support tracing provenance but this breaks most effects currently
-                // move = move[seg];
-                // if (j < segs.length - 1) {
-                //    move = fluid.deSignal(move);
-                // }
-            }
-            return move;
-        });
-        Object.assign(togo, extra);
-        return togo;
-    };
-
-    /**
      * Set a value at a specified path within a nested object structure.
      * Creates intermediate objects as needed to ensure the path exists.
      *
@@ -1108,7 +1088,7 @@ const $fluidScope = function (fluid) {
     /**
      * Retrieves a nested object within the specified root by path segments, creating it if it does not exist.
      * @param {Object} root - The root object to begin traversal from.
-     * @param {String[]|Symbol[]} segs - An array of path segments to traverse.
+     * @param {String[]|symbol[]} segs - An array of path segments to traverse.
      * @return {Object} The existing or newly created nested object associated with the path.
      */
     fluid.getRecInsist = function (root, segs) {
@@ -1168,7 +1148,7 @@ const $fluidScope = function (fluid) {
         if (fluid.isUnavailable(func)) {
             return fluid.mergeUnavailable(fluid.unavailable({message: "Error invoking global function: " + functionPath + " could not be located"}), func);
         } else {
-            const argsArray = fluid.isArrayable(args) ? args : fluid.makeArray(args);
+            const argsArray = Array.isArray(args) ? args : fluid.makeArray(args);
             return func.apply(null, argsArray);
         }
     };
@@ -1627,7 +1607,7 @@ const $fluidScope = function (fluid) {
     // unsupported, NON-API function
     fluid.event.addListenerToFirer = function (firer, value, namespace, wrapper) {
         wrapper = wrapper || (x => x);
-        if (fluid.isArrayable(value)) {
+        if (Array.isArray(value)) {
             for (let i = 0; i < value.length; ++i) {
                 fluid.event.addListenerToFirer(firer, value[i], namespace, wrapper);
             }
@@ -1705,7 +1685,7 @@ const $fluidScope = function (fluid) {
     fluid.makeMergeListenersPolicy = function (merger, modelRelay) {
         return function (target, source) {
             target = target || {};
-            if (modelRelay && (fluid.isArrayable(source) || "target" in source && (typeof(source.target) === "string" || source.target.segs))) { // This form allowed for modelRelay
+            if (modelRelay && (Array.isArray(source) || "target" in source && (typeof(source.target) === "string" || source.target.segs))) { // This form allowed for modelRelay
                 target[""] = merger(target[""], source, "");
             } else {
                 fluid.each(source, function (listeners, key) {
@@ -1777,18 +1757,6 @@ const $fluidScope = function (fluid) {
 
     /*** DEFAULTS AND OPTIONS MERGING SYSTEM ***/
 
-    fluid.proxySymbol = Symbol("fluid.proxyTarget");
-    const $t = fluid.proxySymbol;
-
-    fluid.unavailableSymbol = Symbol("fluid.unavailableTarget");
-    const $u = fluid.unavailableSymbol;
-
-    fluid.unProxy = target => target?.[$t] ? target[$t] : target;
-
-    // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
-    fluid.metadataSymbol = Symbol("fluid.metadata");
-    const $m = fluid.metadataSymbol;
-
     fluid.makeLayer = function (memberName, parent) {
         const togo = Object.create(null);
         togo[$m] = {type: "layer", memberName, parent};
@@ -1797,10 +1765,13 @@ const $fluidScope = function (fluid) {
 
     // Lookup of layer names to signal<{raw: layer}>
     // where "raw" has not yet been readerExpanded
+    /** @type {Cell} */
     fluid.layerStore = fluid.cell({});
 
+    /** @type {Cell} */
     fluid.layerHistory = fluid.cell([]);
 
+    /** @type {Cell} */
     fluid.layerHistoryIndex = fluid.cell(0);
 
     fluid.pushHistory = function (record) {
@@ -2664,8 +2635,8 @@ const $fluidScope = function (fluid) {
     // Reference parsing and templating
 
     /**
-     * Simple string template system.  Takes a template string containing tokens in the form of "%value" or
-     * "%deep.path.to.value".  Returns a new string with the tokens replaced by the specified values.  Keys and values
+     * Simple string template system.  Takes a template string containing tokens in the form of "%value"
+     * Returns a new string with the tokens replaced by the specified values. Keys and values
      * can be of any data type that can be coerced into a string.
      *
      * @param {String} template - A string that contains placeholders for tokens of the form `%token` embedded into it.

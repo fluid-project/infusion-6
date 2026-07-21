@@ -1,5 +1,3 @@
-/* global signal */
-
 "use strict";
 
 // import fluid from "./FluidView.js"
@@ -133,6 +131,7 @@ const $fluidViewBrowserScope = function (fluid) {
         }
 
         const rawHandler = e => {
+            console.log("Activating event handler for ", event, " for vnode id ", vnode._id, " for DOM element ", el.flDomId);
             if (modifiers) {
                 if ("key" in e && !(fluid.hyphenate(e.key) in modifiers)) {
                     return;
@@ -152,7 +151,7 @@ const $fluidViewBrowserScope = function (fluid) {
         vTreeRec.push({el, event, rawHandler, modifiers, vnodeId: vnode._id});
     };
 
-    fluid.globalDismissalSignal = signal(0);
+    fluid.globalDismissalSignal = fluid.cell(0, {name: "Global dismissal signal"});
 
     fluid.def("fluid.globalDismissal", {
         $layers: ["fluid.resolveRoot", "fluid.viewComponent"],
