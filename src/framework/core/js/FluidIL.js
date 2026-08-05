@@ -37,7 +37,7 @@ const $fluidILScope = function (fluid) {
         }
 
         shadow = shadow || Object.create(fluid.shadow.prototype);
-        shadow.unavailableLayers = shadow.unavailableLayers || fluid.cell(Object.create(null));
+        shadow.unavailableLayerMap = shadow.unavailableLayerMap || fluid.cell(Object.create(null));
         shadow.that = instance;
         instance[$m] = shadow;
         return instance;
@@ -353,8 +353,12 @@ const $fluidILScope = function (fluid) {
      * @property {Object} frameworkEffects - A possibly deep structure of effects allocated by the framework which
      * which need to be disposed when the component is destroyed. Any user effects are disposed as layers come and go.
      * @property {Signal<String[]>} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
-     * @property {Signal<Object<String, Unavailable>>} unavailableLayers - Map of layers which are currently unavailable
+     * @property {Signal<Object<String, Unavailable>>} unavailableLayerMap - Map of layers which are currently unavailable
      * @property {Boolean} [resolveRoot] - Whether this shadow's scope names will resolve globally
+     */
+
+    /** @typedef {Object} Instantiator
+     * @property {Object<String, Shadow>} pathToComponent - Mapping of global path to shadow for each component
      */
 
     /**
@@ -366,7 +370,7 @@ const $fluidILScope = function (fluid) {
      */
 
     /** Clear indexes held of the location of an injected or concrete component.
-     * @param {fluid.instantiator} instantiator - The instantiator holding records to be cleared
+     * @param {Instantiator} instantiator - The instantiator holding records to be cleared
      * @param {DestroyRec} destroyRec - A "destroy record" as allocated within instantiator.clearComponent
      */
     fluid.clearComponentIndexes = function (instantiator, destroyRec) {
@@ -386,7 +390,7 @@ const $fluidILScope = function (fluid) {
      *  - Events and appliers are destroyed
      *  - The `afterDestroy` event is fired on the component
      *  - We remove the lookup of this component's id in instantiator.idToShadow
-     * @param {fluid.instantiator} instantiator - The instantiator holding records to be cleared
+     * @param {Instantiator} instantiator - The instantiator holding records to be cleared
      * @param {DestroyRec} destroyRec - A "destroy record" as allocated within instantiator.clearComponent
      */
     fluid.doDestroy = function (instantiator, destroyRec) {
@@ -416,7 +420,7 @@ const $fluidILScope = function (fluid) {
     };
 
     fluid.instantiator = function () {
-        /** @type {fluid.instantiator} */
+        /** @type {Instantiator} */
         const that = {
             /**
              * A map that associates component paths with their corresponding shadow records.
@@ -727,13 +731,14 @@ const $fluidILScope = function (fluid) {
      * or $component signal, otherwise the final resolved value.
      *
      * @param {any} ref - The value to resolve. May be a `Signal` or a plain value.
+     * @param {Boolean} soft - If true, don't register a raw $component as a dependency
      * @return {any} The ultimate resolved value of the reference
      */
-    fluid.deSignalToSite = function (ref) {
+    fluid.deSignalToSite = function (ref, soft = false) {
         let prev = null;
         while (fluid.isSignal(ref)) {
             prev = ref;
-            ref = ref.get();
+            ref = ref.get(soft && ref.$variety === "$component");
         }
         if (prev !== null && (prev.$variety === "$sitedRef" || prev.$variety === "$component")) {
             return prev;
@@ -742,6 +747,14 @@ const $fluidILScope = function (fluid) {
         }
     };
 
+    fluid.deSignalSoft = function (ref) {
+        while (fluid.isSignal(ref)) {
+            ref = ref.get(ref.$variety === "$component");
+        }
+        return ref;
+    };
+
+    // Note every current site has penultimate = true
     /**
      * Traverses a nested object structure, resolving signals as encountered, and returns the value at the specified path.
      * @param {any} root - The root object or signal to begin traversal from.
@@ -751,7 +764,7 @@ const $fluidILScope = function (fluid) {
      */
     fluid.getThroughSignalsImpl = function (root, segs, penultimate) {
         // Always fully designal the root so it is concrete
-        let move = fluid.deSignal(root);
+        let move = penultimate && segs.length === 0 ? fluid.deSignalSoft(root) : fluid.deSignal(root);
         for (let j = 0; j < segs.length; ++j) {
             if (!move || fluid.isUnavailable(move)) {
                 break;
@@ -988,14 +1001,14 @@ const $fluidILScope = function (fluid) {
      * @return {any} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
      */
     fluid.flattenSignals = function (root, segs = []) {
-        const deref = fluid.deSignalToSite(root);
+        const deref = fluid.deSignalToSite(root, true);
         if (typeof(segs) === "number") { // Currently receive iteration from fluid.cell.update's mapArg
             segs = ["" + segs];
         }
         if (fluid.isSignal(deref)) { // It must be a $sitedRef or $component
             // If it is a $sitedRef, retraverse it carefully step by step to discover the final site
             const ult = deref.variety === "$sitedRef" ? fluid.deSignalToUltimate(deref) : deref;
-            const value = ult.get();
+            const value = ult.get(ult.$variety === "$component");
             if (fluid.isUnavailable(value)) {
                 return value;
             } else {
@@ -1306,7 +1319,7 @@ const $fluidILScope = function (fluid) {
                 if (array) {
                     record.forEach( (linkage, i) => fluid.deregisterCoOccurrence(`${siteString}-${i}`));
                 } else {
-                    fluid.deregisterCoOccurrence(siteString, record);
+                    fluid.deregisterCoOccurrence(siteString);
                 }
             }
         });
@@ -1685,27 +1698,16 @@ const $fluidILScope = function (fluid) {
         });
     };
 
-    /**
-     * Return the "effective unavailable" value of a component if it should be so for user purposes by checking
-     * for any entries in shadow.unavailableLayers.
-     *
-     * @param {Shadow} shadow - The shadow record of the component to check.
-     * @return {Unavailable|undefined} Returns a merged unavailable value if any layers are unavailable, otherwise undefined
-     */
-    fluid.checkUnavailableComponent = function (shadow) {
-        const unavailableLayerVals = Object.values(shadow.unavailableLayers._value);
-        return unavailableLayerVals.length > 0 ? fluid.mergeUnavailables(unavailableLayerVals) : undefined;
-    };
-
-    /**
-     * Records an unavailable value for a given layer in the component's shadow.
-     * @param {Shadow} shadow - The shadow record of the component being updated.
-     * @param {String} layerName - The name of the layer to mark as unavailable.
-     * @param {Unavailable} value - The value or reason indicating why the layer is unavailable.
-     */
-    fluid.noteUnavailableLayer = function (shadow, layerName, value) {
-        const existing = shadow.unavailableLayers._value;
-        shadow.unavailableLayers.set({...existing, [layerName]: value});
+    fluid.updateUnavailableLayers = function (shadow, unavailableLayerMap) {
+        const oldUnavailableLayers = Object.keys(shadow.unavailableLayerMap._value);
+        const newUnavailableLayers = Object.keys(unavailableLayerMap);
+        const availChange = (oldUnavailableLayers.length === 0) !== (newUnavailableLayers.length === 0);
+        if (availChange) {
+            shadow.unavailableLayerMap.set(unavailableLayerMap);
+        } else {
+            // No change in overall availability - quietly update the map so that derived signals do not update
+            shadow.unavailableLayerMap._value = unavailableLayerMap;
+        }
     };
 
     /**
@@ -1715,12 +1717,10 @@ const $fluidILScope = function (fluid) {
      * @param {Shadow} shadow - The shadow record of the component which is merging.
      * @param {fluid.HierarchyResolver} hierarchyResolver - The resolver used to store and resolve layered definitions.
      * @param {String[]} layerNames - An array of layer names to be merged and resolved.
-     * @return {LayerDef} The resolved merged definition for the computed instance
+     * @return {MergedHierarchyResolution | Unavailable} The resolved merged definition for the computed instance
      */
     fluid.flatMergedRound = function (shadow, hierarchyResolver, layerNames) {
-        if (layerNames.length === 0) {
-            fluid.noteUnavailableLayer(shadow, "fluid.noLayers", fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config"));
-        }
+
         layerNames.forEach(layerName => hierarchyResolver.storeLayer(layerName));
         return hierarchyResolver.resolve(layerNames);
     };
@@ -1744,7 +1744,7 @@ const $fluidILScope = function (fluid) {
 
     fluid.flatMergedComputer = function (shadow) {
         return fluid.cell(undefined, {name: `flatMergedComputer for path ${shadow.path}`}).computed(function flatMergedComputer() {
-            shadow.unavailableLayers.set(Object.create(null));
+            const unavailableLayerMap = Object.create(null);
 
             const {layerNames, mergeRecords} = shadow.potentia.get();
             const dynamicMergeRecord = shadow.dynamicMergeRecord.get();
@@ -1770,7 +1770,10 @@ const $fluidILScope = function (fluid) {
             });
             const resolved = fluid.flatMergedRound(shadow, hierarchyResolver, uniqueStaticNames); // <= WILL READ LAYER REGISTRY
             // Copy in any layers the resolver marked unavailable, will be through circularity
-            fluid.each(hierarchyResolver.unavailableLayers, (value, layerName) => fluid.noteUnavailableLayer(shadow, layerName, value));
+            fluid.each(hierarchyResolver.unavailableLayers, (value, layerName) => unavailableLayerMap[layerName] = value);
+            if (layerNames.length === 0) {
+                unavailableLayerMap["fluid.noLayers"] = fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
+            }
 
             const layers = resolved.mergeRecords.concat(mergeRecords).concat({
                 mergeRecordType: "live",
@@ -1782,6 +1785,7 @@ const $fluidILScope = function (fluid) {
 
             const flatMerged = fluid.makeLayer("flatMerged", shadow);
             shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
+            fluid.updateUnavailableLayers(shadow, unavailableLayerMap);
             return flatMerged;
         });
     };
@@ -1811,7 +1815,7 @@ const $fluidILScope = function (fluid) {
             layer: {}
         }, {name: `dynamicMergeRecord for path ${shadow.path}`});
         shadow.dynamicLayerNames = fluid.cell([], {name: `dynamicLayerNames for path ${shadow.path}`});
-        shadow.unavailableLayers = fluid.cell(Object.create(null), {name: `unavailableLayers for path ${shadow.path}`});
+        shadow.unavailableLayerMap = fluid.cell(Object.create(null), {name: `unavailableLayerMap for path ${shadow.path}`});
 
         shadow.instanceId = 0;
         shadow.flatMerged = fluid.flatMergedComputer(shadow);
@@ -1842,8 +1846,8 @@ const $fluidILScope = function (fluid) {
         computer.shadow = shadow;
 
         shadow.availableInstance = fluid.cell(undefined, {name: `availableInstance for path ${shadow.path}`}).computed( () => {
-            const unavailableLayerVals = Object.values(shadow.unavailableLayers.get());
-            return unavailableLayerVals.length > 0 ? fluid.mergeUnavailables(unavailableLayerVals) : computer.get();
+            const unavailableLayerVals = Object.values(shadow.unavailableLayerMap.get());
+            return unavailableLayerVals.length > 0 ? fluid.mergeUnavailables(unavailableLayerVals) : computer;
         });
 
         // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
@@ -1872,6 +1876,9 @@ const $fluidILScope = function (fluid) {
 
     fluid.possiblyRenderError = x => x;
 
+    /** Schedules framework effects for a component shadow once the instance becomes available.
+     * @param {Shadow} shadow - The component shadow to schedule effects for
+     */
     fluid.scheduleEffects = function (shadow) {
         // We would like this effect to act later than scopeEffect which is why it is scheduled now
         if (shadow.dynamicLayerNames._value.length > 0 && !shadow.frameworkEffects.dynamicLayerEffect) {
@@ -1899,7 +1906,7 @@ const $fluidILScope = function (fluid) {
         fluid.possiblyRenderError(shadow); // Callout to FluidView.js
 
         // Only proceed to allocate any effects if the component has no unavailable layers
-        if (Object.keys(shadow.unavailableLayers._value).length === 0) {
+        if (Object.keys(shadow.unavailableLayerMap._value).length === 0) {
 
             const expandEffect = (newRecord, segs) => {
                 newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow, segs);
@@ -2036,8 +2043,7 @@ const $fluidILScope = function (fluid) {
             fluid.unavailableComponentMap.set(newMap);
         };
         return fluid.cell.effect(() => {
-            const instance = fluid.checkUnavailableComponent(shadow) || shadow.computer?.get() || shadow.that;
-            updateAvailability(instance);
+            updateAvailability(shadow.availableInstance);
         }, [], {
             onDispose: () => {
                 // Remove it from tracking since it wholeheartedly does not exist rather than existing and being unavailable
@@ -2140,12 +2146,12 @@ const $fluidILScope = function (fluid) {
                 set: setHandler,
                 // Pattern described at https://stackoverflow.com/a/50139861/1381443
                 ownKeys: () => {
-                    return Reflect.ownKeys(fluid.deSignal(target));
+                    return Reflect.ownKeys(fluid.deSignalSoft(target));
                 },
                 getOwnPropertyDescriptor: function (target, prop) {
-                    return Reflect.getOwnPropertyDescriptor(fluid.deSignal(target), prop);
+                    return Reflect.getOwnPropertyDescriptor(fluid.deSignalSoft(target), prop);
                 },
-                getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignal(target))
+                getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignalSoft(target))
             });
             return rec.proxy = proxy;
         }

@@ -242,7 +242,7 @@ const $fluidSignalsScope = function (fluid) {
 
     fluid.cell.filterPendingEffects = function (effects) {
         return effects.filter((oneEffect) => {
-            return oneEffect._isEffect ? fluid.isPending(oneEffect.get(true)) : false;
+            return oneEffect._isEffect ? fluid.isPending(oneEffect.get(false, true)) : false;
         });
     };
 
@@ -503,13 +503,15 @@ const $fluidSignalsScope = function (fluid) {
      * within the current reactive context
      *
      * @return {any} The evaluated cell value
-     * @param {Boolean} [internal] - If `true` this is a framework-internal dispatch, perhaps for pulling effects, and
+     * @param {Boolean} [defeatTracking] - If `true`, this cell will not be enrolled as a dependency of any other whose
+     * value is currently being computed by a reaction
+     * @param {Boolean} [retainFits] - If `true` this is a framework-internal dispatch, perhaps for pulling effects, and
      * any fit this cell is part of will not be closed
      * @this {Cell}
      */
-    fluid.cell.prototype.get = function (internal = false) {
+    fluid.cell.prototype.get = function (defeatTracking = false, retainFits = false) {
         // Track this get in the current reaction context
-        if ($t.CurrentReaction) {
+        if ($t.CurrentReaction && !defeatTracking) {
             if (
                 !$t.CurrentGets &&
                 $t.CurrentReaction.sources &&
@@ -534,7 +536,7 @@ const $fluidSignalsScope = function (fluid) {
             fluid.cell.updateIfNecessary(this);
         }
 
-        if (!internal && this._fit) {
+        if (!retainFits && this._fit) {
             fluid.cell.endFits([this._fit]);
         }
 
@@ -908,7 +910,7 @@ const $fluidSignalsScope = function (fluid) {
             // Mark the cell as unavailable/stale whilst it is updating and push old value into staleValue
             fluid.cell.setPending(cell, oldValue);
         }
-        const mapArg = inEdge.mapArg === null ? x => x.get(true) : inEdge.mapArg;
+        const mapArg = inEdge.mapArg === null ? x => x.get(false, true) : inEdge.mapArg;
 
         try {
             const args = inEdge.staticSources ? inEdge.staticSources.map(mapArg) : [];
@@ -1149,7 +1151,7 @@ const $fluidSignalsScope = function (fluid) {
         const EffectQueue = fluid.cell.EffectQueue;
         for (let i = 0; i < EffectQueue.length; i++) {
             function pullOneEffect(effect) {
-                effect.get(true);
+                effect.get(false, true);
                 effect._isQueued = false;
             };
             const effect = EffectQueue[i];

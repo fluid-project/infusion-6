@@ -165,6 +165,10 @@ QUnit.test("Effects resolution II - no notification on unrelated update", functi
     assert.deepEqual(log, [], "No effect on unrelated update");
 });
 
+
+// Crucial but somewhat arguable test - a $computed whose arg is bare {self} should not be notified on updates which
+// change the overall component contents. Future behaviour will probably restore tracking for members dereferenced.
+
 const globalHolder = {
     computedCount: 0,
     effectCount: 0
@@ -194,10 +198,11 @@ fluid.def("fluid.tests.selfUpdate", {
 
 QUnit.test("Computed arg sensitivity", function (assert) {
     const that = fluid.tests.selfUpdate();
-    // fluid.cell.stabilize();
+    fluid.cell.stabilize();
     that.updated = 1;
     fluid.cell.stabilize();
     assert.equal(globalHolder.effectCount, 1, "Just one update to effect");
+    assert.equal(globalHolder.computedCount, 1, "Just one update to computed");
     that.otherUpdated = 1;
     fluid.cell.stabilize();
     assert.equal(globalHolder.computedCount, 1, "Computed for {self} does not update");
