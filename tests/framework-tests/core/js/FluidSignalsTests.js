@@ -1,9 +1,10 @@
 "use strict";
 
+fluid.registerNamespace("fluid.tests");
+
 /* global QUnit */
 
 QUnit.module("Fluid Signals Tests");
-
 
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts
 // at https://www.ppig.org/files/2015-PPIG-26th-Basman.pdf
@@ -303,4 +304,63 @@ QUnit.test("Early cutoff tests with effects", assert => {
     assert.equal(busyCount, 0, "No further busy through early cutoff");
 
     c5Logger.dispose();
+});
+
+/**
+ * Construct a fixture holding a cell computed from two sources, one of which permanently holds a
+ * config-unavailable value, with the sources declared in a supplied order. A dispatcher takes charge of
+ * the computation so that the edge yields a concrete value despite the unavailable argument, and records
+ * each activation.
+ *
+ * @param {Boolean} unconfiguredFirst - `true` if the config-unavailable source is to be declared first.
+ * @return {Object} A record holding the `trigger` source cell, the computed `target` cell, and an
+ * `evaluations` array recording the value produced by each activation of the computing edge.
+ */
+fluid.tests.makeUnconfiguredFixture = function (unconfiguredFirst) {
+    const trigger = fluid.cell(1, {name: "trigger"});
+    const unconfigured = fluid.cell(fluid.unavailable("Never configured", "config"),
+        {name: "unconfigured"});
+    const evaluations = [];
+    const dispatcher = function (func, args) {
+        const concrete = args.find(arg => !fluid.isUnavailable(arg));
+        evaluations.push(concrete);
+        return func(concrete);
+    };
+    const sources = unconfiguredFirst ? [unconfigured, trigger] : [trigger, unconfigured];
+    // Seed with a concrete value so that the first wiring does not itself mark the cell stale
+    const target = fluid.cell(1, {name: "target"}).computed(x => x, sources, {dispatcher});
+    return {trigger, unconfigured, target, evaluations};
+};
+
+QUnit.test("Update along an edge holding an unconfigured source", function (assert) {
+    [false, true].forEach(function (unconfiguredFirst) {
+        const order = unconfiguredFirst ? "unconfigured source declared first" :
+            "unconfigured source declared last";
+        const fixture = fluid.tests.makeUnconfiguredFixture(unconfiguredFirst);
+
+        assert.equal(fixture.target.get(), 1, `Seeded value undisturbed - ${order}`);
+        assert.deepEqual(fixture.evaluations, [], `Settled cell not recomputed on first pull - ${order}`);
+
+        fixture.trigger.set(2);
+        assert.equal(fixture.target.get(), 2, `Recomputed along the edge which dirtied it - ${order}`);
+        assert.deepEqual(fixture.evaluations, [2], `Edge activated exactly once - ${order}`);
+
+        fixture.trigger.set(3);
+        assert.equal(fixture.target.get(), 3, `Recomputed again on further update - ${order}`);
+        assert.deepEqual(fixture.evaluations, [2, 3], `Edge activated once per update - ${order}`);
+    });
+});
+
+QUnit.test("Unconfigured source demotes an edge which did not carry the update", function (assert) {
+    const unconfigured = fluid.cell(fluid.unavailable("Never configured", "config"),
+        {name: "unconfigured"});
+    const other = fluid.cell("fallback", {name: "other"});
+    const target = fluid.cell(undefined, {name: "target"});
+
+    // Declared first, so it would win on a tie under findDirtyEdge's strict improvement test
+    target.computed(x => x, [unconfigured]);
+    target.computed(x => x, [other]);
+
+    assert.equal(target.get(), "fallback",
+        "Edge holding an unconfigured source passed over in favour of a configured alternative");
 });

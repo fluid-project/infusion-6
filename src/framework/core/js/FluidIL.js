@@ -697,17 +697,18 @@ const $fluidILScope = function (fluid) {
             message: "Cannot resolve context " + context,
             errorSite: {shadow}
         });
-        return fluid.cell(undefined, {name: `resolveContext for ${context} at ${shadow.path}`}).computed( () => {
-            if (context === "self") {
-                // TODO: We have to return instance/proxy so that it doesn't seem to change when component changes
-                return shadow.that;
-            } else if (context === "/") {
-                return shadow.instantiator.rootComponent;
-            } else if (context === "global") {
-                return fluid.global;
-            } else if (context === "$oldValue") {
-                return fluid.OldValue;
-            } else {
+        if (context === "self") {
+            // TODO: We have to return instance/proxy so that it doesn't seem to change when component changes
+            return fluid.proxyMat(shadow.computer, shadow, []);
+            // return shadow.that;
+        } else if (context === "/") {
+            return shadow.instantiator.rootComponent;
+        } else if (context === "global") {
+            return fluid.global;
+        } else if (context === "$oldValue") {
+            return fluid.OldValue;
+        } else {
+            return fluid.cell(undefined, {name: `resolveContext for ${context} at ${shadow.path}`}).computed(() => {
                 const local = resolver ? resolver(context) : fluid.NoValue;
                 if (local === fluid.NoValue) {
                     // eslint-disable-next-line no-unused-vars
@@ -722,8 +723,8 @@ const $fluidILScope = function (fluid) {
                 } else {
                     return local;
                 }
-            }
-        });
+            });
+        }
     };
 
     /**
@@ -736,11 +737,11 @@ const $fluidILScope = function (fluid) {
      */
     fluid.deSignalToSite = function (ref, soft = false) {
         let prev = null;
-        while (fluid.isSignal(ref)) {
+        while (fluid.isSignal(ref) && ref.$variety !== "$component") {
             prev = ref;
             ref = ref.get(soft && ref.$variety === "$component");
         }
-        if (prev !== null && (prev.$variety === "$sitedRef" || prev.$variety === "$component")) {
+        if (prev !== null && prev.$variety === "$sitedRef") {
             return prev;
         } else {
             return ref;
@@ -749,7 +750,7 @@ const $fluidILScope = function (fluid) {
 
     fluid.deSignalSoft = function (ref) {
         while (fluid.isSignal(ref)) {
-            ref = ref.get(ref.$variety === "$component");
+            ref = ref.get(ref.$variety === "$component" || ref.$variety === "$availableInstance");
         }
         return ref;
     };
@@ -921,9 +922,9 @@ const $fluidILScope = function (fluid) {
      */
     fluid.fetchContextReference = function (ref, shadow, segs, resolver) {
         const parsed = fluid.isPrimitive(ref) ? fluid.parseContextReference(ref) : ref;
-        const refComputer = fluid.cell(undefined, {name: `fetchContextReference for ${JSON.stringify(ref)} at path ${shadow.path}`}).computed( function fetchContextReference() {
+        const refComputer = fluid.cell(undefined, {name: `fetchContextReference for ${JSON.stringify(ref)} at path ${shadow.path}`}).computed(function fetchContextReference() {
             // TODO: Need to cache these per site
-            const target = fluid.resolveContext(parsed.context, shadow, resolver).get();
+            const target = fluid.deSignal(fluid.resolveContext(parsed.context, shadow, resolver));
             if (fluid.isUnavailable(target)) {
                 return fluid.mergeUnavailable(fluid.unavailable({
                     message: "Cannot fetch path " + parsed.path + " of context " + parsed.context + " which didn't resolve",
@@ -943,7 +944,7 @@ const $fluidILScope = function (fluid) {
             } else {
                 return fluid.get(target, parsed.path, "unavailable");
             }
-        });
+        }, null, {isBind: true});
         return Object.assign(refComputer, {parsed, site: {shadow, segs}, $variety: "$contextRef"});
     };
 
@@ -994,6 +995,9 @@ const $fluidILScope = function (fluid) {
         return upSignals || inReactive;
     };
 
+    // TODO: flattenSignals is currently just a crude approximation to its final form - really needs to be divided into
+    // flattenSignalsPre which maps out the structure to determine the paths of signals and then flattenSignalsImpl,
+    // by close analogy with old Infusion's fluid.preExpand/fluid.expandImmediateImpl
     /**
      * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
      * @param {any|Signal<any>} root - The root data structure to process.
@@ -1007,13 +1011,15 @@ const $fluidILScope = function (fluid) {
         }
         if (fluid.isSignal(deref)) { // It must be a $sitedRef or $component
             // If it is a $sitedRef, retraverse it carefully step by step to discover the final site
+            // TODO: Error here, deSignalToUltimate is actually broken and will deref a bare $sitedRef
             const ult = deref.variety === "$sitedRef" ? fluid.deSignalToUltimate(deref) : deref;
             const value = ult.get(ult.$variety === "$component");
+
             if (fluid.isUnavailable(value)) {
                 return value;
             } else {
                 return deref.$variety === "$sitedRef" ?
-                    (fluid.isMatForming(deref.site.shadow, deref.site.segs) ? fluid.proxyMat(ult, ult.site.shadow, ult.site.segs) : value) :
+                    (fluid.isMatForming(deref.site.shadow, deref.site.segs) && fluid.isPlainObject(value) ? fluid.proxyMat(ult, ult.site.shadow, ult.site.segs) : value) :
                     fluid.proxyMat(ult, deref.shadow, []);
             }
         }
@@ -1074,6 +1080,18 @@ const $fluidILScope = function (fluid) {
         return that;
     };
 
+    fluid.makeMethodFuncResolver = function (shadow, segs, funcSignal) {
+        const captureSegs = [...segs]; // Copy this since it is mutable during iteration
+        // TODO: turn this into a computed of funcSignal to deal with the rare case it gets rebound
+        return () => {
+            const resolvedFunc = fluid.deSignal(funcSignal);
+            if (fluid.isUnavailable(resolvedFunc)) {
+                fluid.fail("Couldn't invoke method at path ", captureSegs, " of component ", shadow, resolvedFunc);
+            }
+            return resolvedFunc;
+        };
+    };
+
     /**
      * Expands a method record and returns a function that can be called with arguments. The function dispatches the invocation
      * of the resolved method (either directly or with computed arguments).
@@ -1089,15 +1107,8 @@ const $fluidILScope = function (fluid) {
      */
     fluid.expandMethodRecord = function (record, shadow, segs) {
         const funcSignal = fluid.resolveFuncReference(record, shadow, segs);
-        const captureSegs = [...segs]; // Copy this since it is mutable during iteration
-        // TODO: turn this into a computed of funcSignal to deal with the rare case it gets rebound
-        const resolveFunc = () => {
-            const resolvedFunc = fluid.deSignal(funcSignal);
-            if (fluid.isUnavailable(resolvedFunc)) {
-                fluid.fail("Couldn't invoke method at path ", captureSegs, " of component ", shadow, resolvedFunc);
-            }
-            return resolvedFunc;
-        };
+        const funcResolver = fluid.makeMethodFuncResolver(shadow, segs, funcSignal);
+
         let togo;
         if (record.args) {
             const resolver = fluid.makeArgResolver();
@@ -1109,12 +1120,12 @@ const $fluidILScope = function (fluid) {
                 // TODO: if it is unavailable, await a promise for them
                 const flatArgs = fluid.flattenSignals(resolvedArgs);
 
-                return resolveFunc().apply(shadow, flatArgs);
+                return funcResolver().apply(shadow, flatArgs);
             };
         } else { // Fast path just directly dispatches args
             togo = function applyDirectMethod(...args) {
                 // TODO: Should it instead dispatch with shadow.shadowMap[$m].proxy?
-                return resolveFunc().apply(shadow.that, [shadow.that, ...args]);
+                return funcResolver().apply(shadow.that, [shadow.that, ...args]);
             };
         }
         return togo;
@@ -1179,7 +1190,7 @@ const $fluidILScope = function (fluid) {
             if (fluid.isUnavailable(resolvedFunc)) {
                 return resolvedFunc;
             } else {
-                return fluid.cell.untracked(() => resolvedFunc.apply(null, args));
+                return resolvedFunc.apply(null, args);
             }
         };
     };
@@ -1222,6 +1233,7 @@ const $fluidILScope = function (fluid) {
         const bindSegs = [...segs, "$bindable", "bind"];
         const expBind = fluid.expandCompactSubelement(record.bind);
         const {func, resolvedArgs} = fluid.resolveFuncRecord(expBind, shadow, bindSegs);
+        const funcResolver = fluid.makeMethodFuncResolver(shadow, segs, func);
 
         const unbindSegs = [...segs, "$bindable", "unbind"];
         const expUnbind = fluid.expandCompactSubelement(record.unbind);
@@ -1246,18 +1258,20 @@ const $fluidILScope = function (fluid) {
                 }
                 return unavailable;
             } else {
-                if (fluid.isUnavailable(oldValue)) {
+                if (fluid.isUnavailable(oldValue)) { // It's a transition from unavailable to available
                     const resolvedArgs = designalArgs.map(arg => fluid.flattenSignals(arg));
-                    return func.apply(null, resolvedArgs);
+                    return funcResolver().apply(null, resolvedArgs);
                 } else {
-                    return oldValue;
                     // Conceivably we might want to unbind and rebind the thing, but only once we are on top of excess notifications
                     console.log("Ignoring attempt to rebind bindable value at ", shadow.path, bindSegs);
+                    return oldValue;
                 }
             }
         };
 
-        const togo = fluid.computed(func, resolvedArgs, {dispatcher});
+        // TODO: Inconsistency, note that this should presumably be marked as isFree in order to get notified of transition back to unavailable,
+        // but no doubt anything that supplies a dispatcher should
+        const togo = fluid.cell(undefined, {name: `bindable for record at path ${segs} of ${shadow.path}`}).computed(func, resolvedArgs, {dispatcher});
         togo.$variety = "$bindable";
         togo.dispose = () => {
             unbind();
@@ -1355,7 +1369,7 @@ const $fluidILScope = function (fluid) {
      * @param {Object} expanded - The expanded component definition for the subcomponent, expected to contain a `$layers` field.
      * @param {ScopeRecord|null} [scope] - The scope record tracking references and their resolution priorities during expansion.
      * @param {String} [source] - The layer name in which this subcomponent definition appeared
-     * @return {ComponentComputer} The result of invoking `fluid.pushPotentia`, representing the effect or pending instantiation of the subcomponent.
+     * @return {ComponentComputer} Computer for the pushed subcomponent
      */
     fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, scope, source) {
         const subLayerRecord = {
@@ -1364,7 +1378,7 @@ const $fluidILScope = function (fluid) {
             layer: expanded
         };
         // TODO: detect injected reference and take direct path to instantiator
-        return fluid.pushPotentia(shadow, memberName, [subLayerRecord], expanded.$layers, scope);
+        return fluid.pushPotentia(shadow, memberName, [subLayerRecord], expanded.$layers, scope).computer;
     };
 
     /**
@@ -1483,13 +1497,13 @@ const $fluidILScope = function (fluid) {
         key: "$compute",
         handler: fluid.expandComputeRecord
     }, {
-        key: "$bindable",
-        handler: fluid.expandBindableRecord,
-        isBindable: true
-    }, {
         key: "$effect",
         handler: fluid.expandEffectRecord,
         isEffect: true
+    }, {
+        key: "$bindable",
+        handler: fluid.expandBindableRecord,
+        isBindable: true
     }, {
         key: "$linkage",
         handler: fluid.expandLinkageRecord,
@@ -1771,9 +1785,7 @@ const $fluidILScope = function (fluid) {
             const resolved = fluid.flatMergedRound(shadow, hierarchyResolver, uniqueStaticNames); // <= WILL READ LAYER REGISTRY
             // Copy in any layers the resolver marked unavailable, will be through circularity
             fluid.each(hierarchyResolver.unavailableLayers, (value, layerName) => unavailableLayerMap[layerName] = value);
-            if (layerNames.length === 0) {
-                unavailableLayerMap["fluid.noLayers"] = fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
-            }
+
 
             const layers = resolved.mergeRecords.concat(mergeRecords).concat({
                 mergeRecordType: "live",
@@ -1785,6 +1797,9 @@ const $fluidILScope = function (fluid) {
 
             const flatMerged = fluid.makeLayer("flatMerged", shadow);
             shadow.layerMap = fluid.mergeLayerRecords(flatMerged, layers);
+            if (flatMerged.$layers.length === 0) {
+                unavailableLayerMap["fluid.noLayers"] = fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
+            }
             fluid.updateUnavailableLayers(shadow, unavailableLayerMap);
             return flatMerged;
         });
@@ -1849,6 +1864,7 @@ const $fluidILScope = function (fluid) {
             const unavailableLayerVals = Object.values(shadow.unavailableLayerMap.get());
             return unavailableLayerVals.length > 0 ? fluid.mergeUnavailables(unavailableLayerVals) : computer;
         });
+        shadow.availableInstance.$variety = "$availableInstance";
 
         // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
         const instantiator = parentShadow.instantiator;
@@ -1989,7 +2005,7 @@ const $fluidILScope = function (fluid) {
      * @param {MergeRecord[]} mergeRecords - An array of merge records representing the component's configuration.
      * @param {String[]} [layerNames] - An array of direct layer names applied to the component
      * @param {Object} [variableScope] - A record of scope values to be applied as a result of structural iteration
-     * @return {ComponentComputer} The updated or newly computed component.
+     * @return {Shadow} Shadow for the updated or newly designated component.
      */
     fluid.pushPotentia = function (parentShadow, memberName, mergeRecords, layerNames = [], variableScope) {
         const existing = parentShadow.childComponents[memberName];
@@ -2005,9 +2021,9 @@ const $fluidILScope = function (fluid) {
             const potentia = {mergeRecords: newMergeRecords, layerNames: newLayerNames};
             shadow.potentia.set(potentia);
             fluid.applyScope(shadow.variableScope, variableScope);
-            return shadow.computer;
+            return shadow;
         } else {
-            return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName, variableScope);
+            return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName, variableScope).shadow;
         }
     };
     fluid.busyUnavailable = fluid.unavailable("System is busy", "I/O");
@@ -2087,7 +2103,7 @@ const $fluidILScope = function (fluid) {
                 }
                 fluid.expectLiveComponent(shadow, prop);
                 // Use "Symbol.toStringTag" to make sure that tricks like Qunit's plain object detection work on the target
-                const deTarget = fluid.deSignal(target);
+                const deTarget = fluid.deSignalSoft(target);
                 if (prop === Symbol.toStringTag) {
                     return Array.isArray(deTarget) ? "Array" : deTarget[Symbol.toStringTag];
                 } else {
@@ -2126,7 +2142,7 @@ const $fluidILScope = function (fluid) {
                         // If it is another component, hand off to fresh lineage of proxy
                         return fluid.isUnavailable(upcoming) ? fluid.unavailableProxy(upcoming) :
                             next.$variety === "$component" ? fluid.proxyMat(next, next.shadow, []) :
-                                fluid.isPrimitive(upcoming) || !proxyNext ? upcoming :
+                                !fluid.isPlainObject(upcoming) || !proxyNext ? upcoming :
                                     fluid.proxyMat(next, shadow, nextSegs);
                     } else {
                         return next;

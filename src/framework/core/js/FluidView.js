@@ -168,7 +168,8 @@ const fluidViewScope = function (fluid) {
         }
     };
 
-    // Now unused - we use templateParser to parse
+    // No longer used on templates supplied in string form, which uses template-parser.js,
+    // but used in fluid.captureViewTemplate for in-DOM templates
     /**
      * Converts a DOM tree into a virtual DOM representation.
      *
@@ -1036,8 +1037,8 @@ const fluidViewScope = function (fluid) {
             return togo;
         });
         templateEffects.push(bindEffect);
-        self.renderedContainer = vnode.elementSignal;
-        self[$m].layerMap.renderedContainer.source = "fluid.viewComponent";
+        const renderedContainer = self[$m].that.renderedContainer;
+        renderedContainer.computed(x => x, [vnode.elementSignal]);
     };
 
     fluid.removeDomListeners = function (vTreeRec) {
@@ -1283,125 +1284,124 @@ const fluidViewScope = function (fluid) {
         const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReferenceSoft("fluid.editorRoot", ["selfEditing"], shadow));
         const selfEditing = selfEditingRef.get();
 
-        return fluid.cell.untracked( () => {
+        const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
+        /**
+         * Recursively processes a VNode by rendering any template strings found in its text or attributes
+         * @param {VNode} vnode - The VNode to be processed.
+         * @return {VNode} The processed VNode with rendered content in text and attributes.
+         */
+        function processVNode(vnode) {
+            vnode.shadow = shadow;
+            vnode._id = vnode._id || vnode_id++;
+            if (vnode.text !== undefined) {
+                const tokens = fluid.parseAtStringTemplate(vnode.text);
+                const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+                fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
+                return Object.assign(vnode, {text: rendered});
+            } else {
+                // Process id attribute first since it may cause others to be slung to another component
+                const idValue = vnode.attrs?.["@id"];
+                if (idValue) {
+                    // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
+                    // We likely don't want to use this in practice since a template update is going to update this live and
+                    // we'd prefer to reuse whatever is in the DOM without tearing it down.
+                    fluid.allocateVNodeEffect(vnode, vnode => {
+                        const disposable = function () {
+                            fluid.pushPotentia(shadow, idValue, [{mergeRecordType: "template"}]);
+                        };
+                        disposable.$variety = "$component";
+                        const parentTemplate = fluid.cell({
+                            tag: vnode.tag,
+                            attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
+                            children: vnode.children.map(fluid.retemplatise)
+                        }, {name: `parentTemplate signal for vnode ${vnode._id}`});
+                        delete vnode.children;
+                        vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
 
-            const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
-            /**
-             * Recursively processes a VNode by rendering any template strings found in its text or attributes
-             * @param {VNode} vnode - The VNode to be processed.
-             * @return {VNode} The processed VNode with rendered content in text and attributes.
-             */
-            function processVNode(vnode) {
-                vnode.shadow = shadow;
-                vnode._id = vnode._id || vnode_id++;
-                if (vnode.text !== undefined) {
-                    const tokens = fluid.parseAtStringTemplate(vnode.text);
-                    const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
-                    fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
-                    return Object.assign(vnode, {text: rendered});
-                } else {
-                    // Process id attribute first since it may cause others to be slung to another component
-                    const idValue = vnode.attrs?.["@id"];
-                    if (idValue) {
-                        // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
-                        // We likely don't want to use this in practice since a template update is going to update this live and
-                        // we'd prefer to reuse whatever is in the DOM without tearing it down.
-                        fluid.allocateVNodeEffect(vnode, vnode => {
-                            const disposable = function () {
-                                fluid.pushPotentia(shadow, idValue, [{mergeRecordType: "template"}]);
-                            };
-                            disposable.$variety = "$component";
-                            const parentTemplate = fluid.cell({
-                                tag: vnode.tag,
-                                attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
-                                children: vnode.children.map(fluid.retemplatise)
-                            }, {name: `parentTemplate signal for vnode ${vnode._id}`});
-                            delete vnode.children;
-                            vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
+                        const templateRecord = {
+                            mergeRecordType: "template",
+                            layer: {
+                                $layers: "fluid.viewComponent",
+                                container: vnode.elementSignal,
+                                parentTemplate
+                            }
+                        };
 
-                            const templateRecord = {
-                                mergeRecordType: "template",
-                                layer: {
-                                    $layers: "fluid.viewComponent",
-                                    container: vnode.elementSignal,
-                                    parentTemplate
-                                }
-                            };
-
-                            fluid.pushPotentia(shadow, idValue, [templateRecord]);
-                            return disposable;
-                        });
-                    }
-                    fluid.each(vnode.attrs, (value, key) => {
-                        fluid.processVNodeAttribute(vnode, value, key, shadow, templateEffects);
+                        const childShadow = fluid.pushPotentia(shadow, idValue, [templateRecord]);
+                        // Establish dependency on availability of child component so we re-render if its availability changes
+                        childShadow.availableInstance.get();
+                        return disposable;
                     });
-                    // Special marker put on the VNode by fluid.processVNodeAttribute for @class
-                    if (vnode["class"]) {
-                        // Grab a reference to any static source of classes before this node was signalised
-                        const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
-                        const allClass = fluid.cell(undefined, {name: `allClass computer for vnode ${vnode._id}`})
-                            .computed( () => {
-                                const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
-                                    .filter(([, value]) => value && !fluid.isUnavailable(value))
-                                    .map(([key]) => key);
-                                return clazzSource + " " + classes;
-                            });
-                        allClass.$variety = "$allClass";
-                        allClass.$source = clazzSource;
-                        fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => node.setAttribute("class", text));
-                        vnode.attrs["class"] = allClass;
-                    }
-                    if (vnode.children !== undefined) {
-                        vnode.children = vnode.children.map(processVNode);
-                    }
                 }
-                return vnode;
-            }
-
-            const activateTemplate = tree => {
-                console.log("Disposing old templateEffects for " + shadow.path);
-                fluid.disposeEffects(templateEffects);
-                const togo = processVNode(tree);
-                // TODO: In the end this will be done on parse of the SFC and folding its provenance onto the $imports layer property
-                // TODO: This path is now broken - fluid.findDocument returns a signal and this function accepts a Document.
-                // We can't actually asynchronise this here and this whole process of acquiring imports from template documents is broken
-                // Use layer imports for now until we can have a big reform - either do this processing on parse, or attach machinery to templates directly etc.
-                fluid.acquireLoadDirectives(fluid.findDocument(shadow), vtemplate);
-                templateEffects.forEach(effect => effect.$site = self);
-                return togo;
-            };
-
-            const assignParents = (vnode, parentNode = null) => {
-                vnode.parentNode = parentNode;
-                if (vnode.children) {
-                    vnode.children.forEach(child => assignParents(child, vnode));
-                }
-                return vnode;
-            };
-            if (!vtemplate) {
-                // TODO: looks like this can only occur through reference like {self}.parentTemplate which should produce unavailable by itself
-                return fluid.unavailable("Template not configured");
-            }
-
-            const tree = fluid.copy(vtemplate);
-            const useTree = fluid.effVTree(tree, self.elideParent);
-            let compositedTree = assignParents(useTree);
-
-            if (fluid.hasLayer(self, "fluid.partialViewComponent")) {
-                fluid.each(self.partialTemplateLayers, (rec, layerName) => {
-                    compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
+                fluid.each(vnode.attrs, (value, key) => {
+                    fluid.processVNodeAttribute(vnode, value, key, shadow, templateEffects);
                 });
+                // Special marker put on the VNode by fluid.processVNodeAttribute for @class
+                if (vnode["class"]) {
+                    // Grab a reference to any static source of classes before this node was signalised
+                    const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
+                    const allClass = fluid.cell(undefined, {name: `allClass computer for vnode ${vnode._id}`})
+                        .computed( () => {
+                            const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
+                                .filter(([, value]) => value && !fluid.isUnavailable(value))
+                                .map(([key]) => key);
+                            return clazzSource + " " + classes;
+                        });
+                    allClass.$variety = "$allClass";
+                    allClass.$source = clazzSource;
+                    fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => node.setAttribute("class", text));
+                    vnode.attrs["class"] = allClass;
+                }
+                if (vnode.children !== undefined) {
+                    vnode.children = vnode.children.map(processVNode);
+                }
             }
+            return vnode;
+        }
 
-            // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
-            const activatedTree = activateTemplate(compositedTree);
+        const activateTemplate = tree => {
+            console.log("Disposing old templateEffects for " + shadow.path);
+            fluid.disposeEffects(templateEffects);
+            const togo = processVNode(tree);
+            // TODO: In the end this will be done on parse of the SFC and folding its provenance onto the $imports layer property
+            // TODO: This path is now broken - fluid.findDocument returns a signal and this function accepts a Document.
+            // We can't actually asynchronise this here and this whole process of acquiring imports from template documents is broken
+            // Use layer imports for now until we can have a big reform - either do this processing on parse, or attach machinery to templates directly etc.
+            fluid.acquireLoadDirectives(fluid.findDocument(shadow), vtemplate);
+            templateEffects.forEach(effect => effect.$site = self);
+            return togo;
+        };
 
-            const filteredTree = !fluid.isUnavailable(selfEditing) ? selfEditingRef.$component.filterForSelfEditing(activatedTree, self) : activatedTree;
+        const assignParents = (vnode, parentNode = null) => {
+            vnode.parentNode = parentNode;
+            if (vnode.children) {
+                vnode.children.forEach(child => assignParents(child, vnode));
+            }
+            return vnode;
+        };
+        if (!vtemplate) {
+            // TODO: looks like this can only occur through reference like {self}.parentTemplate which should produce unavailable by itself
+            return fluid.unavailable("Template not configured");
+        }
 
-            fluid.bindContainer(templateEffects, filteredTree, self);
-            return filteredTree;
+        const tree = fluid.copy(vtemplate);
+        const useTree = fluid.effVTree(tree, self.elideParent);
+        let compositedTree = assignParents(useTree);
 
-        });
+        if (fluid.hasLayer(self, "fluid.partialViewComponent")) {
+            fluid.each(self.partialTemplateLayers, (rec, layerName) => {
+                compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
+            });
+        }
+
+        // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
+        const activatedTree = activateTemplate(compositedTree);
+
+        const filteredTree = !fluid.isUnavailable(selfEditing) ? selfEditingRef.$component.filterForSelfEditing(activatedTree, self) : activatedTree;
+
+        fluid.bindContainer(templateEffects, filteredTree, self);
+        return filteredTree;
+
     };
 
     fluid.unbindDom = function (/*vnode, element*/) {
@@ -1523,13 +1523,36 @@ const fluidViewScope = function (fluid) {
         elideParent: true,
         container: "$compute:fluid.unavailable(Container not specified)",
         // Mashed in live by bindContainer called at the end of activateTemplate
-        renderedContainer: fluid.unavailable({cause: "Component not rendered", variety: "config"}),
+        renderedContainer: {
+            $reactiveRoot: fluid.unavailable({cause: "Component not rendered", variety: "config"})
+        },
         templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
         vTree: "$compute:fluid.activateTemplate({self}.templateTree, {self})",
         renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree)",
         $variety: "framework"
     });
 
+    // A self-templating component that uses the existing DOM document contents as its template
+    fluid.def("fluid.selfTemplateRoot", {
+        $layers: "fluid.viewComponent",
+        templateContainer: fluid.unavailable({cause: "No template container is configured", variety: "config"}),
+        container: "{self}.templateContainer",
+        templateTree: {
+            $bindable: {
+                bind: "fluid.captureViewTemplate({self}.container)"
+            }
+        },
+        elideParent: false
+    });
+
+    fluid.captureViewTemplate = function (container) {
+        return fluid.domToVDom(container);
+    };
+
+    // TODO: fold selfTemplateRoot and selfTemplate together - requires advanced feature of reacting to whether
+    // container was sourced as a direct user argument or from the templateRecord pushPotentia from a parent component
+    // - we'd probably prefer this to be done by being able to expose the provenance of a value as a reactive quantity
+    // A self-templating component that uses markup supplied by its parent
     fluid.def("fluid.selfTemplate", {
         $layers: "fluid.viewComponent",
         templateTree: "{self}.parentTemplate",

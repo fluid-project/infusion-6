@@ -8,6 +8,8 @@ fluid.registerNamespace("fluid.tests");
 
 QUnit.module("Fluid View Tests");
 
+QUnit.config.reorder = false;
+
 QUnit.test("Layer name extraction test", function (assert) {
     const layerName = fluid.pathToLayerName("%todoApp/sfc/fluid-demos-todoApp.vue");
     assert.equal("fluid.demos.todoApp", layerName, "Layer name extracted");
@@ -19,8 +21,9 @@ fluid.def("fluid.tests.basicRender", {
     template: "<div>@{text}</div>"
 });
 
-const qs = (sel, parent) => (parent || document).querySelector(sel);
+const qs =  (sel, parent) => (parent || document).querySelector(sel);
 const qsa = (sel, parent) => [...(parent || document).querySelectorAll(sel)];
+
 
 QUnit.test("Basic static rendering test", function (assert) {
     const container = qs(".container");
@@ -158,7 +161,6 @@ fluid.tests.updateRestoreDef = function (layerName, def) {
         fluid.def(layerName, oldDef);
     };
 };
-
 
 QUnit.test("Nested render test - adapt inner", function (assert) {
     const container = qs(".container");
@@ -465,14 +467,14 @@ fluid.def("fluid.tests.fullPageEditor", {
         $component: {
             $layers: "fluid.templateViewComponent",
             template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
-            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.template, {fullPageEditor}.renderedContainer)"
+            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.templateTree, {fullPageEditor}.renderedContainer)"
         }
     }
 });
 
 QUnit.test("Reference up through rendering effect", function (assert) {
     const container = qs(".container");
-    fluid.tests.fullPageEditor({container});
+    fluid.tests.fullPageEditor({container, $layers: "fluid.selfTemplateRoot"});
     fluid.cell.stabilize();
 
     const button = qs("button", container);
@@ -520,6 +522,7 @@ fluid.def("fluid.tests.assigneeIf", {
     }
 });
 
+
 QUnit.test("Conditional rendering", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.assigneeIf({container});
@@ -530,6 +533,14 @@ QUnit.test("Conditional rendering", function (assert) {
     that.enabled = true;
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct");
+
+    that.enabled = false;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+
+    that.enabled = true;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct 2");
 
     that.enabled = false;
     fluid.cell.stabilize();

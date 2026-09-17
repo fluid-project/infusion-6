@@ -169,6 +169,7 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Function} fn - The function to be called to compute the value
      * @property {Boolean} isAsync - Indicates if the edge's computation is asynchronous.
      * @property {Boolean} isFree - Indicates if the edge's computation should be invoked on unavailable values
+     * @property {Boolean} isBind - Indicates if the edge may refer to another cell which needs tracking
      * @property {String} excludeSource - If an update with a particular source should not propagate across this edge
      * @property {Function|null} mapArg - Optional function to be applied to map any arguments supplied to `fn`
      * @property {Function|null} dispatcher - Optional function to take charge of dispatch to `fn`
@@ -510,25 +511,8 @@ const $fluidSignalsScope = function (fluid) {
      * @this {Cell}
      */
     fluid.cell.prototype.get = function (defeatTracking = false, retainFits = false) {
-        // Track this get in the current reaction context
-        if ($t.CurrentReaction && !defeatTracking) {
-            if (
-                !$t.CurrentGets &&
-                $t.CurrentReaction.sources &&
-                $t.CurrentReaction.sources[$t.CurrentGetsIndex] === this
-            ) {
-                // No divergence with previous _sources and none is requested - simply step along the array of _sources
-                $t.CurrentGetsIndex++;
-            } else {
-                // Divergence needs to begin - allocate a fresh array and record this source as demanded
-                if (!$t.CurrentGets) {
-                    $t.CurrentGets = [this];
-                }
-                else {
-                    // Divergence in progress, record this source as demanded
-                    $t.CurrentGets.push(this);
-                }
-            }
+        if (!defeatTracking) {
+            fluid.cell.trackRead(this);
         }
 
         // Update if we have in edges and might be stale
@@ -541,6 +525,32 @@ const $fluidSignalsScope = function (fluid) {
         }
 
         return this._value;
+    };
+
+    /**
+     * Tracks a read operation on a cell within the current reaction context.
+     * @param {Object} cell - The cell object being read.
+     */
+    fluid.cell.trackRead = function (cell) {
+        if ($t.CurrentReaction) {
+            if (
+                !$t.CurrentGets &&
+                $t.CurrentReaction.sources &&
+                $t.CurrentReaction.sources[$t.CurrentGetsIndex] === cell
+            ) {
+                // No divergence with previous _sources and none is requested - simply step along the array of _sources
+                $t.CurrentGetsIndex++;
+            } else {
+                // Divergence needs to begin - allocate a fresh array and record this source as demanded
+                if (!$t.CurrentGets) {
+                    $t.CurrentGets = [cell];
+                }
+                else {
+                    // Divergence in progress, record this source as demanded
+                    $t.CurrentGets.push(cell);
+                }
+            }
+        }
     };
 
     /**
@@ -584,9 +594,10 @@ const $fluidSignalsScope = function (fluid) {
             inEdge.staticSources = staticSources ? [...staticSources] : null;
             inEdge.sources = staticSources ? staticSources.filter(source => source instanceof fluid.cell) : null;
             inEdge.target = this;
-            inEdge.isAsync = props?.isAsync;
-            inEdge.isFree = props?.isFree;
-            inEdge.excludeSource = props?.excludeSource;
+            inEdge.isAsync = props?.isAsync || false;
+            inEdge.isFree = props?.isFree || false;
+            inEdge.isBind = props?.isBind || false;
+            inEdge.excludeSource = props?.excludeSource || false;
             inEdge.mapArg = props?.mapArg || null;
             inEdge.dispatcher = props?.dispatcher || null;
             this._inEdges.push(inEdge);
@@ -885,10 +896,12 @@ const $fluidSignalsScope = function (fluid) {
      * Updates the value of a reactive cell by re-evaluating its computation function and updating any changed dynamic dependencies.
      * @param {Cell} cell - The reactive cell to update.
      * @param {Edge} inEdge - The edge along which we should update
+     * @return {Boolean} settled - Whether the update succeeded in settling the cell (currently unused - always true)
      */
     fluid.cell.update = function (cell, inEdge) {
+        let settled = true;
         if (cell._trackingRecord || !cell._inEdges) {
-            return;
+            return settled;
         }
         let syncUpdate = !inEdge.isAsync;
         let result;
@@ -900,7 +913,8 @@ const $fluidSignalsScope = function (fluid) {
         // Skip notification if the fit has an excluded source
         if (inEdge.excludeSource) {
             if (cell._fit.sources.includes(inEdge.excludeSource)) {
-                return;
+                fluid.cell.endTracking(cell);
+                return settled;
             }
         }
 
@@ -916,7 +930,7 @@ const $fluidSignalsScope = function (fluid) {
             const args = inEdge.staticSources ? inEdge.staticSources.map(mapArg) : [];
             const {unavailable} = fluid.cell.mapSignalArgs(args, cell._value);
 
-            result = inEdge.dispatcher !== null ? inEdge.dispatcher(inEdge.fn, args, unavailable, oldValue) :
+            result = inEdge.dispatcher !== null ? inEdge.dispatcher(inEdge.fn, args, unavailable, cell._value) :
                 unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
         } catch (e) {
             if (fluid.isLogging()) {
@@ -942,10 +956,24 @@ const $fluidSignalsScope = function (fluid) {
                 // It was a plain value, update now
                 fluid.cell.updateComplete(result, cell);
             }
+            if (inEdge.isBind && syncUpdate && result instanceof fluid.cell) {
+                fluid.cell.trackRead(result);
+            }
 
             fluid.cell.updateDynamicDependencies(cell, inEdge);
             fluid.cell.endTracking(cell);
+
+            if (inEdge.isBind && syncUpdate && result instanceof fluid.cell &&
+                result._state !== CacheClean) {
+                // A bind edge selects a referent rather than computing a value. The cleaning pass which
+                // preceded this update could not have covered a source which the update itself acquired,
+                // so it must be repeated for the referent before we can be considered settled.
+                fluid.cell.updateIfNecessary(result);
+                // Suggested by Claude to prevent "oscillation" but in fact breaks most of FluidIL.js
+                // settled = cell._state === CacheClean;
+            }
         }
+        return settled;
     };
 
     /**
@@ -960,19 +988,30 @@ const $fluidSignalsScope = function (fluid) {
         let bestCandidate = null, bestScore = 0;
         const scoreEdge = function (edge) {
             let score = 0;
-            if (edge.isFree) {
+            if (edge.isFree || edge.isBind) {
                 score = 1;
             } else if (targetState === CacheDirty) {
                 score = 1;
                 if (edge.sources) {
                     for (let i = 0; i < edge.sources.length; ++i) {
                         const source = edge.sources[i];
-                        if (fluid.isConfigUnavailable(source._value) || source._state !== CacheClean) {
+                        if (source._state !== CacheClean) {
                             score = 0;
                             break;
+                        } else {
+                            if (source === cell._dirtyFrom) {
+                                score = 2;
+                            } else if (fluid.isConfigUnavailable(source._value) && score !== 2) {
+                                score = 0;
+                            }
+                        }
+                        /*
+                        if (fluid.isConfigUnavailable(source._value) || source._state !== CacheClean) {
+                            score = 0;
+                            // break;
                         } else if (source === cell._dirtyFrom) {
                             score = 2;
-                        }
+                        }*/
                     }
                 }
             }
@@ -995,6 +1034,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell[]} [visited] - Cells visited during recursive calls to updateIfNecessary
      */
     fluid.cell.updateIfNecessary = function (cell, visited) {
+        /** @type {Edge|null} **/
         let dirtyEdge = null;
         visited = visited || [];
         visited.push(cell);
@@ -1010,15 +1050,15 @@ const $fluidSignalsScope = function (fluid) {
                                 fluid.cell.updateIfNecessary(source, visited);  // updateIfNecessary() can change this.state
                             }
                         }
-                        // Second leg of this test is necessary so that we notify free effects in all cases
-                        if (cell._state === CacheDirty || cell._isEffect && cell._state === CacheCheck) {
-                            dirtyEdge = fluid.cell.findDirtyEdge(cell, cell._state);
-                            if (dirtyEdge) {
-                                // Stop the loop here so we won't trigger updates on other parents unnecessarily
-                                // If our computation changes to no longer use some sources, we don't
-                                // want to update() a source we used last time, but now don't use.
-                                break;
-                            }
+                    }
+                    // Second leg of this test is necessary so that we notify free effects in all cases
+                    if (cell._state === CacheDirty || cell._isEffect && cell._state === CacheCheck) {
+                        dirtyEdge = fluid.cell.findDirtyEdge(cell, cell._state);
+                        if (dirtyEdge) {
+                            // Stop the loop here so we won't trigger updates on other parents unnecessarily
+                            // If our computation changes to no longer use some sources, we don't
+                            // want to update() a source we used last time, but now don't use.
+                            break;
                         }
                     }
                 }
@@ -1028,10 +1068,13 @@ const $fluidSignalsScope = function (fluid) {
             dirtyEdge = fluid.cell.findDirtyEdge(cell, cell._state);
         }
 
+        let settled = true;
         if (dirtyEdge) {
-            fluid.cell.update(cell, dirtyEdge);
+            settled = fluid.cell.update(cell, dirtyEdge);
         }
-        cell._state = CacheClean;
+        if (settled) {
+            cell._state = CacheClean;
+        }
     };
 
     /**

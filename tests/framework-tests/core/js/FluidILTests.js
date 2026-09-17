@@ -35,11 +35,22 @@ QUnit.test("Basic construction and destruction", function (assert) {
     assert.notUndefined(that, "Got a value as component instance");
     assert.ok(fluid.isComponent(that), "Got a component as component instance");
 
+    const path = that[fluid.metadataSymbol].path;
+
+    const shadow1 = fluid.globalInstantiator.pathToComponent[path];
+    assert.notUndefined(shadow1, "Component's shadow should be present");
+
     assert.ok(that.destroy, "Component has a destroy method");
     that.destroy();
     fluid.cell.stabilize();
 
     assert.ok(fluid.isDestroyed(that), "Component successfully destroyed");
+
+    // White-box testing: assure that component is genuinely destroyed and its shadow has been cleaned up
+
+    const shadow2 = fluid.globalInstantiator.pathToComponent[path];
+    assert.undefined(shadow2, "Component's shadow should have been destroyed");
+
 });
 
 // Method argument resolution
@@ -668,7 +679,44 @@ QUnit.test("Shape cognition test", function (assert) {
     checkObnoxious(that.holder.member);
     checkObnoxious(that.computed.member);
     checkObnoxious(that.fromEffect.member);
-    fluid.trap = true;
     that.method();
     checkObnoxious(that.fromMethod.member);
+});
+
+// Higher-order reference tracking. A $contextRef's *value* is a $sitedRef cell.
+// These probe whether that indirection is represented in the graph, or merely
+// re-derived by each consumer through flattenSignals.
+
+fluid.def("fluid.tests.lateRef.watcher", {
+    $layers: "fluid.component",
+    log: () => {},
+    watch: "$effect:fluid.tests.logValue({holder}.late, {self}.log)"
+});
+
+fluid.def("fluid.tests.lateRef.holder", {
+    $layers: "fluid.component",
+    log: () => {},
+    late: "$compute:fluid.unavailable(Not yet supplied, config)",
+    watcher: {
+        $component: {
+            $layers: "fluid.tests.lateRef.watcher",
+            log: "{holder}.log"
+        }
+    }
+});
+
+QUnit.test("Late-arriving cross-component reference", function (assert) {
+    const log = [];
+    const that = fluid.tests.lateRef.holder({log: v => log.push(v)});
+    fluid.cell.stabilize();
+    assert.deepEqual(log, [], "No notification whilst target is unavailable");
+
+    that.late = 1;              // upgrades the path into the live layer
+    fluid.cell.stabilize();
+    assert.deepEqual(log, [1], "Notified once target becomes available");
+
+    log.length = 0;
+    that.late = 2;              // path already live - no potentia turnover
+    fluid.cell.stabilize();
+    assert.deepEqual(log, [2], "Notified on update to an already-live path");
 });
