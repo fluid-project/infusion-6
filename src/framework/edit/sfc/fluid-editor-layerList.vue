@@ -43,8 +43,8 @@ fluid.editor.layerList.newLayer = function (self) {
  */
 fluid.editor.layerList.fromStore = function (store, userOnly, colourManager) {
     const layers = fluid.map(Object.entries(store), ([layerName, recSignal]) => {
-        const rec = recSignal.value;
-        if (fluid.isUnavailable(rec) || fluid.isUnavailable(rec.raw)) {
+        const rec = recSignal.get();
+        if (fluid.isUnavailable(rec) || fluid.isUnavailable(fluid.deSignal(rec.raw))) {
             return recSignal.demanded ? {
                 layerName,
                 layerDef: rec,

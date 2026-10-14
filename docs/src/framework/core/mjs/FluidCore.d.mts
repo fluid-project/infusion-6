@@ -26,6 +26,7 @@ export type Unavailable = UnavailableCause;
 export type CausedUnavailable = Unavailable;
 declare namespace fluid {
     let version: string;
+    let Error: ErrorConstructor;
     let global: any;
     /**
      * Check whether the argument is a primitive type
@@ -51,6 +52,15 @@ declare namespace fluid {
      * @return {Boolean} `true` if the supplied value is an array
      */
     function isArrayable(totest: any): boolean;
+    /**
+     * Compares two arrays for equality by checking if they have the same length
+     * and if all elements at corresponding indices are strictly equal.
+     *
+     * @param {Array} array1 - The first array to compare.
+     * @param {Array} array2 - The second array to compare.
+     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
+     */
+    function arrayEqual(array1: any[], array2: any[]): boolean;
     /**
      * Pushes an element or elements onto an array, initialising the array as a member of a holding object if it is
      * not already allocated.
@@ -93,7 +103,13 @@ declare namespace fluid {
      * A marker representing an unavailable state which has multiple causes.
      * @property {UnavailableCause[]} causes - An array of cause records.
      */
-    function upgradeCause(cause: any, defaultVariety: any): any;
+    /**
+     * Upgrades a cause value into a standardized cause object.
+     * @param {Object|String|Error} cause - The cause to upgrade. Can be a string, Error, or object.
+     * @param {String} defaultVariety - The default variety to assign if not present.
+     * @return {UnavailableCause} The upgraded cause object.
+     */
+    function upgradeCause(cause: any | string | Error, defaultVariety: string): UnavailableCause;
     /**
      * Formats an array of cause records into a human-readable string describing why a value is unavailable.
      * Each cause's message is included, separated by newlines.
@@ -102,7 +118,17 @@ declare namespace fluid {
      * @return {string} A formatted string listing all cause messages.
      */
     function formatCauses(causes: UnavailableCause[]): string;
-    function applyUnavailable(instance: any, cause?: {}, variety?: string): any;
+    /**
+     * Applies a fresh set of causes and variety to an existing Unavailable instance. Single or multiple supplied
+     * cause will be upgraded via fluid.upgradeCause.
+     *
+     * @param {Unavailable} instance - The object to annotate with unavailability information.
+     * @param {Object|Array|String|Error} [cause={}] - The cause or array of causes for unavailability.
+     *        Can be a string, Error, object, or array of these.
+     * @param {String} [variety="error"] - The variety of unavailability (e.g., "error", "config", "pending").
+     * @return {Unavailable} The annotated instance.
+     */
+    function applyUnavailable(instance: Unavailable, cause?: any | any[] | string | Error, variety?: string): Unavailable;
     /**
      * Create a marker representing an "Unavailable" state with an associated cause or list of causes, which each
      * contain an site address or external resource (e.g. URL) responsible for unavailability of this value.

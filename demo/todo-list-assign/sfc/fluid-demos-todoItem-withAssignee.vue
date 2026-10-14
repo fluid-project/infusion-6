@@ -18,9 +18,12 @@ fluid.def("fluid.demos.todoItem.withAssignee", {
                 },
             },
             selectEffect: {
+                // Whole effect is an epicycle from the fact we can't yet simply assign straight back to the source data through the projection of it
+                // Then we further need the "includeSource" to get around the fact that reference sliding amongst members of the list will activate this
                 $effect: {
                     func: (selection, itemIndex, assignItem) => assignItem(itemIndex, selection === "<none>" ? null : selection),
-                    args: ["{self}.selection", "{itemIndex}", "{todoList}.assignItem"]
+                    args: ["{self}.selection", "{itemIndex}", "{todoList}.assignItem"],
+                    includeSource: "dom"
                 }
             }
         }

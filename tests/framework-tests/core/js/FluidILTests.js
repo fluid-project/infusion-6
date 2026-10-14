@@ -122,8 +122,10 @@ QUnit.test("Effects resolution II - read/write and dispose", function (assert) {
     that.count++;
     fluid.cell.stabilize();
     assert.deepEqual(log, [3], "Effect on update");
+    log.length = 0;
     that.destroy();
     fluid.cell.stabilize();
+    assert.deepEqual(log, [], "No attempt to log anything on destruction");
     assert.throws( () => {
         that.count++;
     }, (err) => err.message.includes("destroyed"),
@@ -254,7 +256,13 @@ QUnit.test("FLUID-4914: resolve grade as context name", function (assert) {
 /** Taken from FLUID-5288: Improved diagnostic for incomplete grade hierarchy **/
 
 fluid.def("fluid.tests.missingGradeComponent", {
-    $layers: ["fluid.tests.nonexistentGrade"]
+    $layers: ["fluid.tests.nonexistentGrade"],
+    fetchValue: {
+        $compute: {
+            args: "{self}.childValue",
+            func: x => x
+        }
+    }
 });
 
 QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", function (assert) {
@@ -262,12 +270,22 @@ QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", func
     fluid.cell.stabilize();
     assert.ok(fluid.isUnavailable(that), "component with missing parent is unavailable");
     assert.ok(that.message.includes("fluid.tests.nonexistentGrade is not defined"), "Received relevant message");
+
+    // Whitebox: Attempt to jam $compute by evaluating it early
+    const realThat = that[fluid.proxySymbol].get();
+    const earlyV = realThat.fetchValue.get();
+    assert.ok(fluid.isUnavailable(earlyV), "Early attempt to compute value should produce unavailable");
+
     // Now define the grade
-    fluid.def("fluid.tests.nonexistentGrade", {$layers: "fluid.component"});
+    fluid.def("fluid.tests.nonexistentGrade", {
+        $layers: "fluid.component",
+        childValue: 2
+    });
     fluid.cell.stabilize();
 
     // Evaluate the signal again and it should now be defined
     assert.ok(fluid.isComponent(that), "Component has sprung into life after missing grade defined");
+    assert.equal(that.fetchValue, 2, "Successfully computed value via supplied definition");
     // Clean up layer registry
     fluid.deleteLayer("fluid.tests.nonexistentGrade");
 });
@@ -605,32 +623,35 @@ QUnit.test("FLUID-7000 scoping test", function (assert) {
 
 // Async computation test
 
-fluid.def("fluid.tests.fetchCompute", {
-    $layers: "fluid.component",
-    first: "$compute:fluid.fetchJSON(../testData/data-2.json)",
-    second: "$compute:fluid.fetchJSON(../testData/data-3.json)",
-    result: {
-        "$compute": {
-            func: (a, b) => a + b,
-            args: ["{self}.first.value", "{self}.second.value"]
-        }
-    }
-});
+if (typeof(document) !== "undefined") {
 
-QUnit.test("Async computation test", async function (assert) {
-    const log = [];
-    const that = fluid.tests.fetchCompute({
-        logResult: {
-            "$effect": {
-                func: result => log.push(result),
-                args: "{self}.result"
+    fluid.def("fluid.tests.fetchCompute", {
+        $layers: "fluid.component",
+        first: "$compute:fluid.fetchJSON(../testData/data-2.json)",
+        second: "$compute:fluid.fetchJSON(../testData/data-3.json)",
+        result: {
+            "$compute": {
+                func: (a, b) => a + b,
+                args: ["{self}.first.value", "{self}.second.value"]
             }
         }
     });
-    await fluid.siteToPromise(that, "result");
-    assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
-});
 
+    QUnit.test("Async computation test", async function (assert) {
+        const log = [];
+        const that = fluid.tests.fetchCompute({
+            logResult: {
+                "$effect": {
+                    func: result => log.push(result),
+                    args: "{self}.result"
+                }
+            }
+        });
+        await fluid.siteToPromise(that, "result");
+        assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
+    });
+
+}
 // Shape cognition test - framework should only travere and flatten signals in material which is derived from configuration
 
 const $tv = Symbol("fluid.testValue");
@@ -719,4 +740,249 @@ QUnit.test("Late-arriving cross-component reference", function (assert) {
     that.late = 2;              // path already live - no potentia turnover
     fluid.cell.stabilize();
     assert.deepEqual(log, [2], "Notified on update to an already-live path");
+});
+
+// lensing and liveQueryILSelector tests
+
+fluid.def("fluid.tests.editor", {
+    $layers: "fluid.component"
+});
+
+fluid.def("fluid.tests.editorHolder", {
+    $layers: "fluid.component",
+    names: {
+        $reactiveRoot: []
+    },
+    editors: {
+        $component: {
+            $layers: "fluid.tests.editor",
+            $for: {
+                source: "{editorHolder}.names",
+                value: "name"
+            },
+            editorName: "{name}"
+        }
+    }
+});
+
+/**
+ * Stabilise and read the names of the editors currently matched by a live IL selector query.
+ *
+ * @param {Cell} query - A live query cell as returned from `fluid.liveQueryILSelector`.
+ * @return {String[]|Unavailable} The `editorName` of each matched component, in tree order, or any
+ * unavailable value which the query yielded.
+ */
+fluid.tests.queryEditorNames = function (query) {
+    fluid.cell.stabilize();
+    const editors = query.get();
+    let togo;
+    if (fluid.isUnavailable(editors)) {
+        togo = editors;
+    } else {
+        togo = editors.map(editor => editor.editorName);
+    }
+    return togo;
+};
+
+QUnit.test("Live query over a $for-driven component list", function (assert) {
+    const that = fluid.tests.editorHolder();
+    const query = fluid.liveQueryILSelector(that, "fluid.tests.editor");
+
+    assert.deepEqual(fluid.tests.queryEditorNames(query), [],
+        "No editors are matched for an empty collection");
+
+    that.names.push("alpha");
+    assert.deepEqual(fluid.tests.queryEditorNames(query), ["alpha"],
+        "One editor matched after first push");
+
+    that.names.push("beta");
+    assert.deepEqual(fluid.tests.queryEditorNames(query), ["alpha", "beta"],
+        "Two editors matched after second push");
+
+    that.names.splice(0, 1);
+    assert.deepEqual(fluid.tests.queryEditorNames(query), ["beta"],
+        "One editor remains matched after splice");
+
+    that.destroy();
+});
+
+
+// Raw (non-framework) signals supplied directly as $compute arguments - e.g. a global registry such as fluid.layerStore.
+// fluid.flattenSignals dereferences a bare cell through fluid.deSignalToSite and then treats its value as "arg material",
+// recursing through every member. Since the value is not configuration-derived, it may be arbitrarily linked (here, back
+// to the store itself through nested raw cells), and the traversal never terminates.
+
+fluid.tests.rawStore = fluid.cell(undefined, {name: "Raw test layer store"});
+
+fluid.tests.rawStoreEntry = fluid.cell({
+    layerName: "fluid.tests.someLayer",
+    store: fluid.tests.rawStore // Back-link: entry -> store -> entry -> ...
+}, {name: "Raw test layer store entry"});
+
+fluid.tests.rawStore.set({
+    layers: {
+        "fluid.tests.someLayer": fluid.tests.rawStoreEntry
+    }
+});
+
+fluid.tests.rawStoreReceived = [];
+
+/**
+ * Stand-in for fluid.editor.layerList.fromStore - records what it was supplied and lists the store's layer names.
+ * @param {Object} store - The layer store as delivered by the framework.
+ * @param {Boolean} showUserLayersOnly - Filtering flag, resolved from a genuine IL reference.
+ * @return {String[]} The names of the layers held in the store.
+ */
+fluid.tests.layerListFromStore = function (store, showUserLayersOnly) {
+    fluid.tests.rawStoreReceived.push({store, showUserLayersOnly});
+    return Object.keys(store.layers);
+};
+
+fluid.def("fluid.tests.rawSignalArg", {
+    $layers: "fluid.component",
+    showUserLayersOnly: false,
+    layerList: {
+        $compute: {
+            func: "fluid.tests.layerListFromStore",
+            args: [fluid.tests.rawStore, "{self}.showUserLayersOnly"]
+        }
+    }
+});
+
+QUnit.test("Raw signal supplied as $compute argument is not traversed", function (assert) {
+    fluid.tests.rawStoreReceived.length = 0;
+    const that = fluid.tests.rawSignalArg();
+    fluid.cell.stabilize();
+
+    // With the bug, flattenSignals overflows the stack inside fluid.cell.update, which catches the RangeError and
+    // commits it as an unavailable value - so the suite survives but this assertion fails
+    const layerList = that.layerList;
+    assert.notOk(fluid.isUnavailable(layerList), "Computation with raw signal argument evaluated without error");
+    assert.deepEqual(layerList, ["fluid.tests.someLayer"], "Computed result derived from store");
+    assert.equal(fluid.tests.rawStoreReceived.length, 1, "Compute function invoked exactly once");
+
+    if (fluid.tests.rawStoreReceived.length > 0) {
+        const received = fluid.tests.rawStoreReceived[0].store;
+        assert.equal(received, fluid.tests.rawStore._value,
+            "Store value delivered by identity - material from a raw signal is not cloned or expanded");
+        assert.equal(received.layers["fluid.tests.someLayer"], fluid.tests.rawStoreEntry,
+            "Nested raw cells inside the store's value are left as they are");
+    } else {
+        assert.ok(false, "Compute function was never invoked");
+    }
+
+    // Reactivity through the raw signal should be preserved
+    fluid.tests.rawStore.set({layers: {}});
+    fluid.cell.stabilize();
+    assert.deepEqual(that.layerList, [], "Computation updates when the raw signal is set");
+
+    that.destroy();
+});
+
+// Method arguments referenced positionally as {N} which are not supplied at the call site should resolve to undefined,
+// as with ordinary JS semantics, rather than producing an unavailable value which poisons the entire argument list
+
+fluid.tests.missingArgLog = [];
+
+fluid.def("fluid.tests.missingMethodArgs", {
+    $layers: "fluid.component",
+    allocateColour: {
+        $method: {
+            func: (self, layerName, layerDef) => {
+                fluid.tests.missingArgLog.push({self, layerName, layerDef});
+                return layerName;
+            },
+            args: ["{self}", "{0}:layerName", "{1}:layerDef"]
+        }
+    }
+});
+
+QUnit.test("Missing method arguments resolve to undefined", function (assert) {
+    fluid.tests.missingArgLog.length = 0;
+    const that = fluid.tests.missingMethodArgs();
+    fluid.cell.stabilize();
+
+    let result;
+    try {
+        result = that.allocateColour("$live");
+    } catch (e) {
+        assert.ok(false, "Method invocation with missing trailing argument threw: " + e.message);
+    }
+
+    assert.equal(fluid.tests.missingArgLog.length, 1, "Method function invoked exactly once");
+    if (fluid.tests.missingArgLog.length > 0) {
+        const received = fluid.tests.missingArgLog[0];
+        assert.ok(fluid.isComponent(received.self), "{self} resolved to the component");
+        assert.equal(received.layerName, "$live", "Supplied argument {0} delivered");
+        assert.strictEqual(received.layerDef, undefined, "Missing argument {1} delivered as undefined");
+        assert.equal(result, "$live", "Method return value delivered to caller");
+    } else {
+        assert.ok(false, "Method function was never invoked");
+    }
+
+    // Both arguments missing - all positional references should resolve to undefined
+    fluid.tests.missingArgLog.length = 0;
+    try {
+        that.allocateColour();
+    } catch (e) {
+        assert.ok(false, "Method invocation with no arguments threw: " + e.message);
+    }
+    if (fluid.tests.missingArgLog.length > 0) {
+        const received = fluid.tests.missingArgLog[0];
+        assert.strictEqual(received.layerName, undefined, "Missing argument {0} delivered as undefined");
+        assert.strictEqual(received.layerDef, undefined, "Missing argument {1} delivered as undefined");
+    } else {
+        assert.ok(false, "Method function was never invoked with no arguments");
+    }
+
+    that.destroy();
+});
+
+// Method arguments resolving to structures should be returned unchanged
+
+fluid.tests.structuredArgLog = [];
+
+fluid.def("fluid.tests.structuredMethodArgs", {
+    $layers: "fluid.component",
+    allocateColour: {
+        $method: {
+            func: (self, layerName, layerDef) => {
+                fluid.tests.structuredArgLog.push({self, layerName, layerDef});
+                return layerName;
+            },
+            args: ["{self}", "{0}:layerName", "{1}:layerDef"]
+        }
+    }
+});
+
+QUnit.test("Structured method argument containing unavailable value is delivered unchanged", function (assert) {
+    fluid.tests.structuredArgLog.length = 0;
+    const that = fluid.tests.structuredMethodArgs();
+    fluid.cell.stabilize();
+
+    const layerDef = {
+        $layers: "fluid.component",
+        colour: fluid.unavailable("Colour not yet allocated", "config")
+    };
+
+    let result;
+    try {
+        result = that.allocateColour("$live", layerDef);
+    } catch (e) {
+        assert.ok(false, "Method invocation with structured argument threw: " + e.message);
+    }
+
+    assert.equal(fluid.tests.structuredArgLog.length, 1, "Method function invoked exactly once");
+    if (fluid.tests.structuredArgLog.length > 0) {
+        const received = fluid.tests.structuredArgLog[0];
+        assert.equal(received.layerName, "$live", "Supplied argument {0} delivered");
+        assert.notOk(fluid.isUnavailable(received.layerDef), "Structured argument {1} not collapsed into an unavailable value");
+        assert.strictEqual(received.layerDef, layerDef, "Structured argument {1} delivered by identity, unchanged");
+        assert.ok(fluid.isUnavailable(received.layerDef?.colour), "Unavailable member of structured argument preserved");
+        assert.equal(result, "$live", "Method return value delivered to caller");
+    } else {
+        assert.ok(false, "Method function was never invoked");
+    }
+
+    that.destroy();
 });

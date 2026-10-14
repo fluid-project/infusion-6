@@ -16,11 +16,11 @@ fluid.def("fluid.demos.filterAssignee", {
             }
         }
     },
-    accept: {
-        $method: {
-            func: (todo, selection) => (selection === "<all>" || !selection) ? true
+    acceptor: {
+        $compute: {
+            func: (selection) => todo => (selection === "<all>" || !selection) ? true
                 : todo.assignee === selection,
-            args: ["{0}:todos", "{select}.selection"]
+            args: ["{self}.select.selection"]
         }
     }
 });

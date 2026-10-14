@@ -32,7 +32,6 @@ const moduleBaseDir = path.resolve(__dirname, "../../../");
  * @return {String} The combined path.
  */
 function buildPath(a, b) {
-    console.log(a, b);
     return a.replace(/\/+$/, "") + "/" + b.replace(/^\/+/, "");
 }
 
@@ -65,6 +64,7 @@ context.window = context;
 /* Load a standard, non-require-aware Fluid framework file into the Fluid context, given a filename
  * relative to this directory (src/module) **/
 const loadInContext = function (fullPath) {
+    console.log("fluid.loadInContext loading path " + fullPath);
     const data = fs.readFileSync(fullPath);
     vm.runInContext(data, context, fullPath);
 };
@@ -86,14 +86,6 @@ loadImportsFromPackage("/");
 const fluid = context.fluid;
 fluid.V8Context = context;
 
-
-// As well as for efficiency, it's useful to customise this because an uncaught
-// exception fired from a a setTimeout handler in node.js will prevent any
-// further from being serviced, which impedes testing these handlers
-fluid.invokeLater = function (func) {
-    process.nextTick(func);
-};
-
 fluid.loadInContext = loadInContext;
 fluid.loadImportsFromPackage = loadImportsFromPackage;
 
@@ -111,7 +103,7 @@ fluid.loadTestingSupport = function () {
 };
 
 
-fluid.module.register("infusion", moduleBaseDir);
+fluid.module.register("infusion-6", moduleBaseDir);
 
 // Export the fluid object into the pan-module node.js global object
 global.fluid = fluid;

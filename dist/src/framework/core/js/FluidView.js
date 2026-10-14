@@ -1,5 +1,3 @@
-/* global signal, computed, effect, untracked */
-
 "use strict";
 
 // import fluid from "./FluidIL.js"
@@ -96,13 +94,13 @@ const fluidViewScope = function (fluid) {
      * @return {Signal<Array<Element>>} A signal containing the current list of matching elements.
      */
     fluid.liveQuerySelectorAll = function (selector, root = null, dokkument = document) {
-        const togo = signal([]);
+        const togo = fluid.cell([], {name: "liveQuerySelectorAll for " + selector});
         const context = root || dokkument;
 
         const updateMatches = () => {
             const upcoming = Array.from(context.querySelectorAll(selector));
-            if (!fluid.arrayEqual(togo.value, upcoming)) {
-                togo.value = upcoming;
+            if (!fluid.arrayEqual(togo.get(), upcoming)) {
+                togo.set(upcoming);
             }
         };
         const window = dokkument.defaultView;
@@ -136,10 +134,11 @@ const fluidViewScope = function (fluid) {
      * @return {Signal<Element|Object>} A signal containing the first matching element or an "unavailable" placeholder.
      */
     fluid.liveQuerySelector = function (selector, root = null, dokkument = document) {
-        const noElement = fluid.unavailable({cause: "No element matches selector " + selector, variety: "I/O"});
-        const query = fluid.liveQuerySelectorAll(selector, root, dokkument);
-        const togo = computed( () => query.value.length === 0 ? noElement : query.value[0]);
-        togo.dispose = query.dispose;
+        const noElement = fluid.unavailable({cause: "No element matches selector " + selector, variety: "config"});
+        const querySignal = fluid.liveQuerySelectorAll(selector, root, dokkument);
+        const togo = fluid.cell(undefined, {name: `{liveQuerySelector for ${selector}`})
+            .computed( (query) => query.length === 0 ? noElement : query[0], [querySignal]);
+        togo.dispose = querySignal.dispose;
         return togo;
     };
 
@@ -169,7 +168,8 @@ const fluidViewScope = function (fluid) {
         }
     };
 
-    // Now unused - we use templateParser to parse
+    // No longer used on templates supplied in string form, which uses template-parser.js,
+    // but used in fluid.captureViewTemplate for in-DOM templates
     /**
      * Converts a DOM tree into a virtual DOM representation.
      *
@@ -206,7 +206,7 @@ const fluidViewScope = function (fluid) {
 
     fluid.importUrlResource = function (layerName, relPath) {
         return typeof(relPath) === "string" ? fluid.importOneUrlResource(layerName, relPath) :
-            fluid.isArrayable(relPath) ? relPath.map(oneRelPath => fluid.importOneUrlResource(layerName, oneRelPath)) : null;
+            Array.isArray(relPath) ? relPath.map(oneRelPath => fluid.importOneUrlResource(layerName, oneRelPath)) : null;
     };
 
     /**
@@ -223,112 +223,208 @@ const fluidViewScope = function (fluid) {
         return root;
     };
 
-    // TODO: see if we can make this read-only
-    fluid.trueSignal = signal(true);
+    fluid.scriptInjectionComplete = function (token) {
+        fluid.lastCompletedInjection = token;
+    };
 
     /**
-     * @typedef {Object} InjectionStyle
-     * @property {Function} construct - A function that returns a virtual DOM node (VNode) representing the script element.
-     * @property {Function} update - A function that updates the script element with the provided record.
+     * Wrap source text in a function scope without disturbing its line numbers. The prefix shares line 1 with the original
+     * text so that only columns on that line shift, and any leading "use strict" remains in the function's directive
+     * prologue. A completion marker is appended so that the injector can detect a failed evaluation.
+     * @param {String} text - The source text to be wrapped.
+     * @param {String} absUrl - The absolute URL to be reported to the debugger.
+     * @param {String} scope - A injection scope style - "global" is supported
+     * @param {String} token - A unique token identifying this injection, reported on successful completion.
+     * @return {String} The wrapped source, ready for insertion into a script element.
      */
+    fluid.wrapScriptSource = function (text, absUrl, scope, token) {
+        return (scope !== "global" ? "(function () {" : "") + text +
+            (scope !== "global" ? "\n}).call(globalThis);" : "") +
+            "\nfluid.scriptInjectionComplete(\"" + token + "\");\n//# sourceURL=" + absUrl;
+    };
 
-    fluid.cssInjectionStyles = {
-        literal: {
-            construct: () => ({
-                tag: "style",
-                attrs: {type: "text/css"},
-                children: [{text: ""}]
-            }),
-            update: (node, rec, dokkument, absUrl) => {
-                node.firstChild.nodeValue = rec.text + `\n/*# sourceURL=${absUrl}*/`;
-                return fluid.trueSignal;
+    /**
+     * Fetch the text of an injected resource, bypassing any cached copy so that reloads observe the current file.
+     * @param {String} url - The absolute URL of the resource.
+     * @return {Promise<String>} A promise for the resource's text, rejecting on a network or HTTP failure.
+     */
+    fluid.fetchInjectionText = function (url) {
+        return fetch(url, {cache: "no-cache"}).then(response => {
+            if (response.ok) {
+                return response.text();
+            } else {
+                throw new Error(`HTTP ${response.status} ${response.statusText} fetching ${url}`);
             }
-        },
-        link: {
-            construct: () => ({
-                tag: "link",
-                attrs: {
-                    rel: "stylesheet",
-                    type: "text/css"
-                }
-            }),
-            update: (node, rec, dokkument) => {
-                const resolved = fluid.module.resolveRelativePath(dokkument.location, rec.url);
-                node.setAttribute("href", resolved);
-                return fluid.trueSignal;
-            }
+        });
+    };
+
+    fluid.injectionId = 0;
+
+    /**
+     * Connect a freshly built injection node to the document, replacing any existing node with the same id or else
+     * appending it to the document's head.
+     * @param {Document} dokkument - The document into which the node is injected.
+     * @param {Element|null} existing - Any existing node with the injection's id.
+     * @param {Element} fresh - The fresh node, which must already carry the injection's id.
+     */
+    fluid.swapInjectedNode = function (dokkument, existing, fresh) {
+        if (existing) {
+            existing.replaceWith(fresh);
+        } else {
+            dokkument.head.appendChild(fresh);
         }
+    };
+
+    /**
+     * Commit a script injection. Since a script element evaluates only once, on connection, every commit builds a fresh
+     * element. Evaluation happens synchronously during the swap, reporting any syntax or runtime error to the window's
+     * error event where a temporary listener captures it, and a completed evaluation is confirmed by the marker appended
+     * by `fluid.wrapScriptSource`.
+     * @param {DocInjectionRecord} docInjRec - The injection payload, whose `material` holds members `text` and `sourceUrl`.
+     * @param {Element|null} existing - Any existing node with the injection's id.
+     * @return {Boolean|Unavailable} `true` if evaluation completed, otherwise an unavailable value describing the failure.
+     */
+    fluid.applyScriptInjection = function ({dokkument, injRec, material}, existing) {
+        let togo;
+        const token = "fluid-injection-" + fluid.injectionId++;
+        const fresh = dokkument.createElement("script");
+        fresh.text = fluid.wrapScriptSource(material.text, material.sourceUrl, injRec.scope, token);
+        fresh.id = injRec.nodeId;
+
+        let captured = null;
+        const view = dokkument.defaultView;
+        const errorListener = event => {
+            captured = event.error ?? event.message;
+        };
+        view?.addEventListener("error", errorListener);
+        try {
+            fluid.swapInjectedNode(dokkument, existing, fresh);
+        } finally {
+            view?.removeEventListener("error", errorListener);
+        }
+
+        if (fluid.lastCompletedInjection === token) {
+            togo = true;
+        } else {
+            togo = fluid.unavailable({
+                message: `Failure evaluating script at ${material.sourceUrl}` + (captured === null ? " - see console for details" : ""),
+                cause: captured
+            });
+        }
+        return togo;
+    };
+
+    /**
+     * Wait for a stylesheet link to finish loading.
+     * @param {HTMLLinkElement} link - A link element which has just been connected or had its href changed.
+     * @param {String} url - The resolved URL, for error reporting.
+     * @return {Promise<Boolean|Unavailable>} Resolves to `true` on load, or an unavailable value on failure. Never rejects.
+     */
+    fluid.awaitLinkLoad = function (link, url) {
+        return new Promise(resolve => {
+            const done = outcome => {
+                console.log("CSS loaded for " + link.getAttribute("href"));
+                link.removeEventListener("load", onLoad);
+                link.removeEventListener("error", onError);
+                resolve(outcome);
+            };
+            const onLoad = () => done(true);
+            const onError = () => done(fluid.unavailable({message: `Failure loading stylesheet at ${url}`}));
+            link.addEventListener("load", onLoad);
+            link.addEventListener("error", onError);
+        });
     };
 
     fluid.scriptInjectionStyles = {
         literal: {
-            construct: () => ({
-                tag: "script",
-                attrs: {type: "text/javascript"},
-                children: [{text: ""}]
-            }),
-            update: (node, rec, dokkument, absUrl) => {
-                node.firstChild.nodeValue = rec.text + `\n//# sourceURL=${absUrl}`;
-                return fluid.trueSignal;
-            },
-            defer: true // A literal script block likely contains the layer definition so should be injected after dependents
+            prepare: (injRec, dokkument, url) => ({text: injRec.text, sourceUrl: url}),
+            apply: fluid.applyScriptInjection
         },
         link: {
-            construct: () => ({
-                tag: "script",
-                attrs: {
-                    async: "false",
-                    type: "text/javascript"
+            prepare: (injRec, dokkument) => {
+                const resolved = fluid.module.resolveRelativePath(dokkument.location, injRec.url);
+                return fluid.fetchInjectionText(resolved).then(text => ({text, sourceUrl: resolved}));
+            },
+            apply: fluid.applyScriptInjection
+        }
+    };
+
+    // CSS nodes are live - a <style> re-parses on any change to its text and a <link> re-fetches on any change to its href -
+    // so an existing node of the right kind is updated in place rather than replaced
+    fluid.cssInjectionStyles = {
+        literal: {
+            apply: ({dokkument, injRec, url}, existing) => {
+                const text = injRec.text + `\n/*# sourceURL=${url}*/`;
+                if (existing?.localName === "style") {
+                    existing.textContent = text;
+                } else {
+                    const fresh = dokkument.createElement("style");
+                    fresh.textContent = text;
+                    fresh.id = injRec.nodeId;
+                    fluid.swapInjectedNode(dokkument, existing, fresh);
                 }
-            }),
-            update: (node, rec, dokkument) => {
-                const resolved = fluid.module.resolveRelativePath(dokkument.location, rec.url);
-                const togo = signal(fluid.unavailable(`Script at url ${resolved} is loading`, "I/O"));
-                node.setAttribute("src", resolved);
-                node.onload = () => togo.value = true;
-                node.async = false;
-                return togo;
+                return true;
+            }
+        },
+        link: {
+            apply: ({dokkument, injRec}, existing) => {
+                const resolved = fluid.module.resolveRelativePath(dokkument.location, injRec.url);
+                if (existing?.localName === "link") {
+                    if (existing.href === resolved && existing.sheet) {
+                        return true; // Unchanged and already loaded - no load event would fire
+                    }
+                    const loaded = fluid.awaitLinkLoad(existing, resolved);
+                    existing.href = resolved;
+                    return loaded;
+                } else {
+                    const fresh = dokkument.createElement("link");
+                    fresh.rel = "stylesheet";
+                    fresh.href = resolved;
+                    fresh.id = injRec.nodeId;
+                    const loaded = fluid.awaitLinkLoad(fresh, resolved); // Listen before connecting
+                    fresh.href = resolved;
+                    fluid.swapInjectedNode(dokkument, existing, fresh);
+                    return loaded;
+                }
+                return true;
             }
         }
     };
 
-    fluid.diffFields = function (rec1, rec2, fields) {
-        return fields.every(field => rec1[field] === rec2[field]);
+    /**
+     * Load phase: acquire the material for an injection without touching the document or executing anything. Styles
+     * without a `prepare` method need no material.
+     * @param {DocInjectionRecord} docInjRec - The decoded injection payload.
+     * @return {Promise<DocInjectionRecord>} A promise for the payload augmented with its `material`.
+     */
+    fluid.prepareSFCElement = function (docInjRec) {
+        const {dokkument, injStyle, injRec, url} = docInjRec;
+        const material = injStyle.prepare ? injStyle.prepare(injRec, dokkument, url) : undefined;
+        return Promise.resolve(material).then(material => ({...docInjRec, material}));
+    };
+
+    /**
+     * Commit phase: apply a prepared injection to the document through its injection style, which owns the lifecycle of
+     * its node.
+     * @param {DocInjectionRecord} docInjRec - A payload as resolved by `fluid.prepareSFCElement`.
+     * @return {Boolean|Unavailable} `true` if the injection completed, otherwise an unavailable value describing the failure.
+     */
+    fluid.doInjectSFCElement = function (docInjRec) {
+        const existing = docInjRec.dokkument.getElementById(docInjRec.injRec.nodeId);
+        return docInjRec.injStyle.apply(docInjRec, existing);
     };
 
     /**
      * @typedef {Object} InjectRecord
      * @property {String} nodeId - The unique identifier for the DOM node to be injected.
+     * @property {String} variety - The type of injection, either "script" or "style".
      * @property {String} [url] - A resolved URL for the script or style source.
      * @property {String} [text] - The inline script or style content with a source map comment.
-     * @property {String} variety - The type of injection, either "script" or "style".
+     * @property {String} [scope] - For a "script" its injection scope style
      */
 
     fluid.clearInjRec = function (dokkument, nodeId) {
         dokkument.getElementById(nodeId)?.remove();
-    };
-
-    /**
-     * Injects a SFC element (either a script or a style node) into the document's head.
-     *
-     * @param {Object}         params - The parameters for the injection.
-     * @param {Document}       params.dokkument - The document object used to create and append the DOM node.
-     * @param {InjectionStyle} params.injStyle - The injection style object containing methods to construct and update the DOM node.
-     * @param {InjectRecord}   params.injRec - The record containing either the URL or inline content for the SFC.
-     * @param {String}         params.url - The URL of the SFC, used for debugging and error reporting.
-     * @return {Signal<Boolean>} - A signal which resolves to `true` once the injection has completed
-     */
-    fluid.doInjectSFCElement = function ({dokkument, injStyle, injRec, url}) {
-        const absUrl = url; // fluid.toAbsoluteUrl(dokkument, url);
-        const fresh = fluid.vNodeToDom(dokkument, injStyle.construct());
-        fresh.id = injRec.nodeId;
-        const togo = injStyle.update(fresh, injRec, dokkument, absUrl);
-        try {
-            dokkument.head.appendChild(fresh);
-        } catch (e) {
-            fluid.fail(`Syntax error in SFC injection at url ${url}: ${e.message}`, e);
-        }
-        return togo;
     };
 
     /**
@@ -349,16 +445,15 @@ const fluidViewScope = function (fluid) {
      * @property {String} url - The URL of the SFC, used for debugging and error reporting.
      */
 
+    fluid.diffFields = function (rec1, rec2, fields) {
+        return fields.every(field => rec1[field] === rec2[field]);
+    };
+
     /**
-     * Decode injection records for injecting a Single File Component (SFC) element into the document's head or updates an existing one.
-     * Returns a payload suitable for sending to fluid.doInjectSFCElement.
-     *
-     * This function determines whether an SFC element should be injected or updated based on the provided
-     * injection record (`injRec`). If the element already exists and its content matches the new record,
-     * no action is taken. Otherwise, the existing element is cleared, and a new one is created and injected.
-     *
-     * @param {Document} dokkument - The document object used to create and append the DOM node.
-     * @param {InjectRecord} injRec - The record containing either the URL or inline content for the SFC.
+     * Decode an injection record into a payload for injection if it differs from the record previously injected under its
+     * node id. No DOM changes are made here - any existing node is replaced during the commit phase.
+     * @param {Document} dokkument - The document into which the element will be injected.
+     * @param {InjectRecord} injRec - The record containing either the URL or inline content for the SFC element.
      * @param {String} url - The URL of the overall SFC, used for debugging and error reporting.
      * @param {Object<String, InjectRecord>} oldInjRecs - A map of existing injection records, keyed by node ID.
      * @param {Object<String, InjectionStyle>} injStyles - A map of injection styles, keyed by "literal" or "link".
@@ -372,9 +467,6 @@ const fluidViewScope = function (fluid) {
         const shouldInject = !existing || !fluid.diffFields(existing, injRec, diffFields);
 
         if (shouldInject) {
-            if (existing) {
-                fluid.clearInjRec(nodeId);
-            }
             const injStyleKey = injRec.text ? "literal" : "link";
             const injStyle = injStyles[injStyleKey];
             return {dokkument, injStyle, injRec, url};
@@ -516,6 +608,7 @@ const fluidViewScope = function (fluid) {
      * @property {String} [url] - The source URL if the script uses `src`.
      * @property {DefMap} [defMaps] - The parsed defMap for inline script content.
      * @property {String} [text] - The original text of the inline script.
+     * @property {String} [scope] - A possible scope marker for a script injection style - supported value is "global"
      */
 
     /**
@@ -533,7 +626,7 @@ const fluidViewScope = function (fluid) {
         const defMapList = scriptNodes.map((scriptNode) => {
             const src = scriptNode.attrs?.src;
             if (src) {
-                return {url: src};
+                return {url: src, scope: scriptNode.attrs["data-fl-scope"]};
             } else {
                 const text = scriptNode.children[0]?.text;
                 const defMaps = fluid.parseDefMaps(text, 0);
@@ -584,7 +677,7 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
-     * Processes a virtual DOM tree (vTree) to extract and prepare injection records for scripts and styles.
+     * Processes a vTree to extract and prepare injection records for scripts and styles.
      * This function validates the presence of required script nodes, parses their definitions, and updates
      * the layer definition with appropriate metadata. It also handles template blocks and style nodes.
      *
@@ -597,7 +690,9 @@ const fluidViewScope = function (fluid) {
             const unavailable = fluid.unavailable(message);
             fluid.def(layerName, unavailable);
         };
+        console.log("sfcToInjRecs for layer ", layerName);
 
+        /** @type {Object<String, InjectRecord>} */
         const injRecs = {};
         const scriptNodes = fluid.querySelectorAll(vTree, "script");
         if (scriptNodes.length === 0) {
@@ -655,8 +750,7 @@ const fluidViewScope = function (fluid) {
                 defMapList.forEach((sni, index) => {
                     const nodeId = `fl-script-${layerName}-${index}`;
                     const injRec = sni.url ?
-                        {url: sni.url} :
-                        // TODO: Should wrap script in closure so it doesn't pollute global namespace
+                        {url: sni.url, scope: sni.scope} :
                         {text: sni.text};
                     injRec.defMaps = sni.defMaps;
                     injRec.nodeId = nodeId;
@@ -693,18 +787,19 @@ const fluidViewScope = function (fluid) {
     fluid.parseSFC = function (rec, layerName) {
         let oldText;
 
-        return fluid.effect(text => {
+        return fluid.cell.effect(text => {
             if (text === oldText) {
-                console.log("Culling SFC injection effect since text has not changed");
+                fluid.log("Culling SFC injection effect since text has not changed");
                 return;
             }
-            console.log("**** Beginning to parse SFC for layer ", layerName);
+            fluid.log("**** Beginning to parse SFC for layer ", layerName);
             oldText = text;
             const vTree = fluid.parseHTMLToTree(text);
-            rec.injRecsSignal.value = fluid.sfcToInjRecs(vTree, layerName);
-            rec.loadCompletion.value = true;
+            rec.injRecsSignal.set(fluid.sfcToInjRecs(vTree, layerName));
+            rec.loadCompletion.set(true);
+            fluid.log("**** SFC completion for layer ", layerName);
 
-        }, [rec.textSignal]);
+        }, [rec.textSignal], {name: `fluid.parseSFC effect for ${layerName}`});
     };
 
     /**
@@ -726,33 +821,35 @@ const fluidViewScope = function (fluid) {
      * @property {Signal<Array>} injRecsSignal - A signal holding an array of all pending injection actions
      */
 
+    // Consumed in hydrate.js to determine when all injections are done
     /** @type {Map<Document, DocLayerInjectionRec>} */
     fluid.documentInjections = new Map();
 
     fluid.noteLayerInjectionInProgress = function (injDone) {
         const existing = fluid.documentInjections.get(injDone.dokkument);
         if (existing) {
-            const existingRecs = [...existing.injRecsSignal.peek()];
+            const existingRecs = [...existing.injRecsSignal._value];
             const existingLayerIndex = existingRecs.findIndex(rec => rec.layerName === injDone.layerName);
             if (existingLayerIndex !== -1) {
                 existingRecs[existingLayerIndex] = injDone;
             } else {
                 existingRecs.push(injDone);
             }
-            existing.injRecsSignal.value = existingRecs;
+            existing.injRecsSignal.set(existingRecs);
         } else {
             /** @type {DocLayerInjectionRec} **/
             const rec = {
-                injRecsSignal: signal([])
+                injRecsSignal: fluid.cell([], {name: "Document injections for ${document.location}"})
             };
-            rec.injectionsComplete = computed( () => fluid.signalsToAvailable(rec.injRecsSignal.value).value);
+            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${document.location}`})
+                .computed( injRecs => fluid.signalsToAvailable(injRecs), [rec.injRecsSignal]);
             fluid.documentInjections.set(injDone.dokkument, rec);
         }
     };
 
     fluid.fetchParsedTemplate = function (layerName) {
         // TODO: fall back to the layer's templateTree if it is not in the store
-        return fluid.templateStore[layerName].value;
+        return fluid.templateStore[layerName].get();
     };
 
     /**
@@ -763,9 +860,9 @@ const fluidViewScope = function (fluid) {
     fluid.writeParsedTemplate = function (layerName, template) {
         const existing = fluid.templateStore[layerName];
         if (existing) {
-            existing.value = template;
+            existing.set(template);
         } else {
-            fluid.templateStore[layerName] = signal(template);
+            fluid.templateStore[layerName] = fluid.cell(template, {name: `template store for layer ${layerName}`});
         }
     };
 
@@ -783,8 +880,8 @@ const fluidViewScope = function (fluid) {
         } else {
             const unavailable = fluid.unavailable(`SFC for ${layerName} is not available`);
             return fluid.sfcStore[layerName] = {
-                textSignal: signal(unavailable),
-                injRecsSignal: signal(unavailable),
+                textSignal: fluid.cell(unavailable, {name: `text signal for layer ${layerName}`}),
+                injRecsSignal: fluid.cell(unavailable, {name: `injections signal for layer ${layerName}`}),
                 /** @type {Map<Document, Effect>} **/
                 docInjectEffects: new Map()
             };
@@ -808,14 +905,15 @@ const fluidViewScope = function (fluid) {
      * @return {LoadingSFCRecord} The record tracking the SFC's load effects
      */
     fluid.loadSFC = function (layerName, url) {
-        console.log("loadSFC for ", layerName);
+        fluid.log("loadSFC for ", layerName);
         const rec = fluid.readSFC(layerName);
         if (!rec.parseEffect) {
-            rec.loadCompletion = signal(fluid.unavailable(`SFC for ${layerName} is loading`, "I/O"));
+            rec.loadCompletion = fluid.cell(fluid.unavailable(`SFC for ${layerName} is loading`, "pending"),
+                {name: `load completion for SFC for layer ${layerName}`});
             rec.url = url;
             // TODO: Currently starts fetch immediately but in future will be initiated by fluid.ensureImportsLoaded
             rec.fetchSignal = fluid.fetchText(url);
-            rec.fetchEffect = effect(() => rec.textSignal.value = rec.fetchSignal.value);
+            rec.textSignal.computed(x => x, [rec.fetchSignal]);
             rec.parseEffect = fluid.parseSFC(rec, layerName);
         }
         return rec;
@@ -835,40 +933,37 @@ const fluidViewScope = function (fluid) {
         if (!docEffect) {
             /** @type {Object<String, InjectRecord>} **/
             let oldInjRecs = {};
-            const injDone = signal(fluid.unavailable("Injection in progress"));
+            const injDone = fluid.cell(fluid.unavailable(`Injection in progress for layer ${layerName}`, "pending"), {name: `Injections for layer ${layerName}`});
             injDone.layerName = layerName;
             injDone.dokkument = dokkument;
-            const newDocEffect = fluid.effect(async function docInjectEffect(injRecs) {
-                const defBuffer = Object.create(null);
-                fluid.startCaptureBufferDefs(defBuffer);
+            const newDocEffect = fluid.cell.effect(async function docInjectEffect(injRecs) {
                 try {
                     /** @type {DocInjectionRecord[]} */
                     const docInjRecs = Object.values(injRecs).map(injRec =>
                         fluid.decodeInjectSFCElement(dokkument, injRec, rec.url, oldInjRecs,
                             injRec.variety === "script" ? fluid.scriptInjectionStyles : fluid.cssInjectionStyles)
                     ).filter(injRec => injRec);
-                    const injsDone = docInjRecs.map(docInjRec => fluid.doInjectSFCElement(docInjRec));
-                    // Do this now because the await is going to pitch us onto a different one of our stack frames.
-                    fluid.endCaptureBufferDefs();
-                    const injsDoneSignal = fluid.signalsToAvailable(injsDone);
-                    const res = fluid.signalToPromise(injsDoneSignal);
-                    await res;
-                    console.log(`Await for ${layerName} is done`);
+                    // Load phase - acquire all material, executing nothing
+                    const prepared = await Promise.all(docInjRecs.map(fluid.prepareSFCElement));
+                    // Commit phase - one synchronous block, so no stabilisation can observe a partial set of definitions
+                    // Stylesheet links return promises which settle once the sheet is applied
+                    const outcomes = await Promise.all(prepared.map(fluid.doInjectSFCElement));
+
+                    outcomes.filter(fluid.isUnavailable).forEach(outcome =>
+                        fluid.log(fluid.logLevel.FAIL, `Injection failure for layer ${layerName}: `, outcome));
+                    console.log(`Injections for ${layerName} committed`);
                 } finally {
-                    console.log(`Finally for ${layerName} is starting`);
-                    // Don't actually register layers until all the rest of the code has executed
-                    fluid.writeBufferDefs(defBuffer);
-                    injDone.value = true;
+                    injDone.set(true);
                 }
 
                 Object.keys(oldInjRecs).forEach(nodeId => {
                     const newRec = injRecs[nodeId];
                     if (!newRec) {
-                        fluid.clearInjRec(nodeId);
+                        fluid.clearInjRec(dokkument, nodeId);
                     }
                 });
                 oldInjRecs = injRecs;
-            }, [rec.injRecsSignal]);
+            }, [rec.injRecsSignal], {name: `docInjectEffect for layer ${layerName}`});
             newDocEffect.injDone = injDone;
             rec.docInjectEffects.set(dokkument, newDocEffect);
             fluid.noteLayerInjectionInProgress(injDone);
@@ -889,9 +984,16 @@ const fluidViewScope = function (fluid) {
         const dokkument = fluid.findDocument(shadow);
         const importRec = fluid.importMap[layerName];
         if (importRec) {
-            return fluid.subscribeDocToInjections(layerName, dokkument);
+            // TODO: We could use the return value of this to stick in the layer store, so that we could report whether
+            // a layer was pending and what it was waiting for - we could use fluid.writeLayer for this, and fix it
+            // so that it didn't update history for unvailable transitions
+            const injDone = fluid.subscribeDocToInjections(layerName, dokkument);
+            if (fluid.isUnavailable(injDone.get())) {
+                fluid.writeLayer(layerName, injDone);
+            }
+            return injDone;
         } else {
-            return signal(true);
+            return fluid.cell(true, {name: `Imports loaded for ${layerName}`});
         }
         // TODO: Return currently ignored - we react to injections through effects on layer store
     };
@@ -973,11 +1075,10 @@ const fluidViewScope = function (fluid) {
         }
     };
 
-
-    fluid.unavailableElement = fluid.unavailable("DOM element not available");
+    fluid.unavailableElement = fluid.unavailable("DOM element not available", "config");
 
     fluid.allocateVNodeEffect = function (vnode, effectMaker) {
-        vnode.elementSignal ||= signal(fluid.unavailableElement);
+        vnode.elementSignal ||= fluid.cell(fluid.unavailableElement, {name: `Element signal for vnode ${vnode._id}`});
         const renderEffect = effectMaker(vnode);
 
         fluid.pushArray(vnode, "renderEffects", renderEffect);
@@ -1001,7 +1102,7 @@ const fluidViewScope = function (fluid) {
     fluid.bindDomTokens = function (templateEffects, vnode, rendered, applyFunc) {
         if (fluid.isSignal(rendered)) {
             const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
-                const togo = fluid.effect( function (element, text) {
+                const togo = fluid.cell.effect( function (element, text) {
                     if (!fluid.isUnavailable(element)) {
                         if (fluid.isUnavailable(text)) {
                             fluid.renderError(element, text);
@@ -1009,7 +1110,7 @@ const fluidViewScope = function (fluid) {
                             applyFunc(element, text);
                         }
                     }
-                }, [vnode.elementSignal, rendered], {free: true});
+                }, [vnode.elementSignal, rendered], {isFree: true, name: "bindDomTokens"});
                 togo.$variety = "bindDomTokens";
                 togo.$vnode = vnode;
                 return togo;
@@ -1018,18 +1119,24 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    let domId = 1;
+
+    fluid.allocateDomId = function (el) {
+        el.flDomId = el.flDomId || domId++;
+    };
+
     fluid.bindContainer = function (templateEffects, vnode, self) {
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
-            const togo = fluid.effect(function (element) {
+            const togo = fluid.cell.effect(function (element) {
                 fluid.noteViewContainerRegistry(element, self[$m]);
-            }, [vnode.elementSignal]);
+            }, [vnode.elementSignal], {name: "fluid.bindContainer effect"});
             togo.$variety = "bindContainer";
             togo.$vnode = vnode;
             return togo;
         });
         templateEffects.push(bindEffect);
-        self.renderedContainer = vnode.elementSignal;
-        self[$m].layerMap.renderedContainer.source = "fluid.viewComponent";
+        const renderedContainer = self[$m].that.renderedContainer;
+        renderedContainer.computed(x => x, [vnode.elementSignal]);
     };
 
     fluid.removeDomListeners = function (vTreeRec) {
@@ -1045,13 +1152,21 @@ const fluidViewScope = function (fluid) {
     fluid.allocateEventBindingEffect = function (templateEffects, vnode) {
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
             const vTreeRec = [];
-            const togo = fluid.effect(function (element) {
+            const togo = fluid.cell.effect(function (element) {
+                fluid.allocateDomId(element);
+                // console.log("Event binding effect activating for vnode " + vnode._id + " element ", element.flDomId, " on ", vnode.on);
                 fluid.applyOns(vnode, vnode.shadow, element, vnode.on, vTreeRec);
-                return () => fluid.removeDomListeners(vTreeRec);
-            }, [vnode.elementSignal]);
+            }, [vnode.elementSignal], {
+                onDispose: () => {
+                    // console.log("Disposed event binding effect for vnode " + vnode._id);
+                    fluid.removeDomListeners(vTreeRec);
+                },
+                name: `eventBindingEffect for vnode ${vnode._id}`
+            });
             togo.$variety = "bindEvents";
             togo.$vnode = vnode;
             togo.vTreeRec = vTreeRec;
+            fluid.log("Allocated event binding effect for vnode id " + vnode._id + " cell id " + togo.cellId + " with on ", vnode.on);
             return togo;
         });
         templateEffects.push(bindEffect);
@@ -1071,9 +1186,37 @@ const fluidViewScope = function (fluid) {
      * @param {Function} func - The transformation function to apply to the signal's value.
      * @return {Signal<any>} A computed signal reflecting the transformed value.
      */
-    fluid.mapSignal = (sig, func) => func === fluid.identity ? sig : fluid.computed( value => func(value), [sig]);
+    fluid.mapSignal = (sig, func) => func === fluid.identity ? sig : fluid.cell(undefined, {name: "fluid.mapSignal"})
+        .computed( value => {
+            return func(value);
+        }, [sig], {mapArg: fluid.deproxyAndDesignal});
 
     fluid.filterObjKeys = (obj, func) => Object.fromEntries(Object.entries(obj).filter(([key]) => func(key)));
+
+    /**
+     * Renders a parsed string template against the local component tree by replacing tokens with their corresponding values.
+     * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
+     * string concatenated.
+     *
+     * @param {Array<string|ParsedContext>} tokens - An array of tokens, where each token is either a string
+     *        or an object with a `key` property indicating a path in the source.
+     * @param {Shadow} shadow - The shadow record of the component where the reference is held
+     * @return {String|Signal<string>} A computed signal representing the resolved string.
+     */
+    fluid.renderComputedStringTemplate = function (tokens, shadow) {
+        if (tokens.length === 0) {
+            return "";
+        } else if (tokens.length === 1 && typeof(tokens[0]) === "string") {
+            return tokens[0];
+        } else {
+            const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.fetchContextReference(token.parsed, shadow));
+            const togo = fluid.cell(undefined, {name: "renderComputedStringTemplate"}).computed(function (...tokens) {
+                return tokens.join("");
+            }, liveTokens, {mapArg: fluid.deSignal});
+            togo.$tokens = liveTokens;
+            return togo;
+        }
+    };
 
     /**
      * Processes an attribute directive found on a virtual node.
@@ -1236,125 +1379,130 @@ const fluidViewScope = function (fluid) {
     fluid.activateTemplate = function (vtemplate, self) {
         const shadow = self[$m];
         // Awful hack to get around surplus notification problem for now
-        const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReferenceSoft("fluid.editorRoot", ["selfEditing"], shadow));
-        const selfEditing = selfEditingRef.value;
+        const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReference("{fluid.editorRoot}.selfEditing", shadow));
+        const selfEditing = fluid.deSignal(selfEditingRef);
 
-        return untracked( () => {
+        // Add dependency on turnover since will affect partial template contingent, etc.
+        shadow.flatMerged.get();
 
-            const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
-            /**
-             * Recursively processes a VNode by rendering any template strings found in its text or attributes
-             * @param {VNode} vnode - The VNode to be processed.
-             * @return {VNode} The processed VNode with rendered content in text and attributes.
-             */
-            function processVNode(vnode) {
-                vnode.shadow = shadow;
-                vnode._id = vnode._id || vnode_id++;
-                if (vnode.text !== undefined) {
-                    const tokens = fluid.parseAtStringTemplate(vnode.text);
-                    const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
-                    fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
-                    return Object.assign(vnode, {text: rendered});
-                } else {
-                    // Process id attribute first since it may cause others to be slung to another component
-                    const idValue = vnode.attrs?.["@id"];
-                    if (idValue) {
-                        // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
-                        // We likely don't want to use this in practice since a template update is going to update this live and
-                        // we'd prefer to reuse whatever is in the DOM without tearing it down.
-                        fluid.allocateVNodeEffect(vnode, vnode => {
-                            const disposable = function () {
-                                fluid.pushPotentia(shadow, idValue, [{mergeRecordType: "template"}]);
-                            };
-                            disposable.$variety = "$component";
-                            const parentTemplate = signal({
-                                tag: vnode.tag,
-                                attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
-                                children: vnode.children.map(fluid.retemplatise)
-                            });
-                            delete vnode.children;
-                            vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
+        const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
+        /**
+         * Recursively processes a VNode by rendering any template strings found in its text or attributes
+         * @param {VNode} vnode - The VNode to be processed.
+         * @return {VNode} The processed VNode with rendered content in text and attributes.
+         */
+        function processVNode(vnode) {
+            vnode.shadow = shadow;
+            vnode._id = vnode._id || vnode_id++;
+            if (vnode.text !== undefined) {
+                const tokens = fluid.parseAtStringTemplate(vnode.text);
+                const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+                fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
+                return Object.assign(vnode, {text: rendered});
+            } else {
+                // Process id attribute first since it may cause others to be slung to another component
+                const idValue = vnode.attrs?.["@id"];
+                if (idValue) {
+                    // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
+                    // We likely don't want to use this in practice since a template update is going to update this live and
+                    // we'd prefer to reuse whatever is in the DOM without tearing it down.
+                    fluid.allocateVNodeEffect(vnode, vnode => {
+                        const disposable = function () {
+                            fluid.pushPotentia(shadow, idValue, [{mergeRecordType: "template"}]);
+                        };
+                        disposable.$variety = "$component";
+                        const parentTemplate = fluid.cell({
+                            tag: vnode.tag,
+                            attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@id"),
+                            children: vnode.children.map(fluid.retemplatise)
+                        }, {name: `parentTemplate signal for vnode ${vnode._id}`});
+                        delete vnode.children;
+                        vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
 
-                            const templateRecord = {
-                                mergeRecordType: "template",
-                                layer: {
-                                    $layers: "fluid.viewComponent",
-                                    container: vnode.elementSignal,
-                                    parentTemplate
-                                }
-                            };
+                        const templateRecord = {
+                            mergeRecordType: "template",
+                            layer: {
+                                $layers: "fluid.viewComponent",
+                                container: vnode.elementSignal,
+                                parentTemplate
+                            }
+                        };
 
-                            fluid.pushPotentia(shadow, idValue, [templateRecord]);
-                            return disposable;
-                        });
-                    }
-                    fluid.each(vnode.attrs, (value, key) => {
-                        fluid.processVNodeAttribute(vnode, value, key, shadow, templateEffects);
+                        const childShadow = fluid.pushPotentia(shadow, idValue, [templateRecord]);
+                        // Establish dependency on availability of child component so we re-render if its availability changes
+                        childShadow.availableInstance.get();
+                        return disposable;
                     });
-                    if (vnode["class"]) {
-                        // Grab a reference to any static source of classes before this node was signalised
-                        const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
-                        const allClass = computed( () => {
+                }
+                fluid.each(vnode.attrs, (value, key) => {
+                    fluid.processVNodeAttribute(vnode, value, key, shadow, templateEffects);
+                });
+                // Special marker put on the VNode by fluid.processVNodeAttribute for @class
+                if (vnode["class"]) {
+                    // Grab a reference to any static source of classes before this node was signalised
+                    const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
+                    const allClass = fluid.cell(undefined, {name: `allClass computer for vnode ${vnode._id}`})
+                        .computed( () => {
                             const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
                                 .filter(([, value]) => value && !fluid.isUnavailable(value))
                                 .map(([key]) => key);
                             return clazzSource + " " + classes;
                         });
-                        allClass.$variety = "$allClass";
-                        allClass.$source = clazzSource;
-                        fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => node.setAttribute("class", text));
-                        vnode.attrs["class"] = allClass;
-                    }
-                    if (vnode.children !== undefined) {
-                        vnode.children = vnode.children.map(processVNode);
-                    }
+                    allClass.$variety = "$allClass";
+                    allClass.$source = clazzSource;
+                    fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => node.setAttribute("class", text));
+                    vnode.attrs["class"] = allClass;
                 }
-                return vnode;
-            }
-
-            const activateTemplate = tree => {
-                fluid.disposeEffects(templateEffects);
-                const togo = processVNode(tree);
-                // TODO: In the end this will be done on parse of the SFC and folding its provenance onto the $imports layer property
-                // TODO: This path is now broken - fluid.findDocument returns a signal and this function accepts a Document.
-                // We can't actually asynchronise this here and this whole process of acquiring imports from template documents is broken
-                // Use layer imports for now until we can have a big reform - either do this processing on parse, or attach machinery to templates directly etc.
-                fluid.acquireLoadDirectives(fluid.findDocument(shadow), vtemplate);
-                templateEffects.forEach(effect => effect.$site = self);
-                return togo;
-            };
-
-            const assignParents = (vnode, parentNode = null) => {
-                vnode.parentNode = parentNode;
-                if (vnode.children) {
-                    vnode.children.forEach(child => assignParents(child, vnode));
+                if (vnode.children !== undefined) {
+                    vnode.children = vnode.children.map(processVNode);
                 }
-                return vnode;
-            };
-            if (!vtemplate) {
-                // TODO: looks like this can only occur through reference like {self}.parentTemplate which should produce unavailable by itself
-                return fluid.unavailable("Template not configured");
             }
+            return vnode;
+        }
 
-            const tree = fluid.copy(vtemplate);
-            const useTree = fluid.effVTree(tree, self.elideParent);
-            let compositedTree = assignParents(useTree);
+        const activateTemplate = tree => {
+            console.log("Disposing old templateEffects for " + shadow.path);
+            fluid.disposeEffects(templateEffects);
+            const togo = processVNode(tree);
+            // TODO: In the end this will be done on parse of the SFC and folding its provenance onto the $imports layer property
+            // TODO: This path is now broken - fluid.findDocument returns a signal and this function accepts a Document.
+            // We can't actually asynchronise this here and this whole process of acquiring imports from template documents is broken
+            // Use layer imports for now until we can have a big reform - either do this processing on parse, or attach machinery to templates directly etc.
+            fluid.acquireLoadDirectives(fluid.findDocument(shadow), vtemplate);
+            templateEffects.forEach(effect => effect.$site = self);
+            return togo;
+        };
 
-            if (fluid.hasLayer(self, "fluid.partialViewComponent")) {
-                fluid.each(self.partialTemplateLayers, (rec, layerName) => {
-                    compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
-                });
+        const assignParents = (vnode, parentNode = null) => {
+            vnode.parentNode = parentNode;
+            if (vnode.children) {
+                vnode.children.forEach(child => assignParents(child, vnode));
             }
+            return vnode;
+        };
+        if (!vtemplate) {
+            // TODO: looks like this can only occur through reference like {self}.parentTemplate which should produce unavailable by itself
+            return fluid.unavailable("Template not configured");
+        }
 
-            // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
-            const activatedTree = activateTemplate(compositedTree);
+        const tree = fluid.copy(vtemplate);
+        const useTree = fluid.effVTree(tree, self.elideParent);
+        let compositedTree = assignParents(useTree);
 
-            const filteredTree = selfEditing ? selfEditingRef.$component.filterForSelfEditing(activatedTree, self) : activatedTree;
+        if (fluid.hasLayer(self, "fluid.partialViewComponent")) {
+            fluid.each(self.partialTemplateLayers, (rec, layerName) => {
+                compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
+            });
+        }
 
-            fluid.bindContainer(templateEffects, filteredTree, self);
-            return filteredTree;
+        // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
+        const activatedTree = activateTemplate(compositedTree);
 
-        });
+        const filteredTree = !fluid.isUnavailable(selfEditing) && selfEditing ? selfEditingRef.get().site.shadow.that.filterForSelfEditing(activatedTree, self) : activatedTree;
+
+        fluid.bindContainer(templateEffects, filteredTree, self);
+        return filteredTree;
+
     };
 
     fluid.unbindDom = function (/*vnode, element*/) {
@@ -1371,8 +1519,8 @@ const fluidViewScope = function (fluid) {
      */
     fluid.bindDom = function (vnode, element) {
         if (vnode.elementSignal) {
-            fluid.unbindDom(vnode, vnode.elementSignal.peek());
-            vnode.elementSignal.value = element;
+            fluid.unbindDom(vnode, vnode.elementSignal._value);
+            vnode.elementSignal.set(element);
         }
     };
 
@@ -1462,6 +1610,7 @@ const fluidViewScope = function (fluid) {
      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
      */
     fluid.renderView = function (self, container, vTree) {
+        fluid.allocateDomId(container);
         console.log(`renderView beginning for ${self[$m].path} with vTree ${vTree._id} container `, container.flDomId);
         fluid.patchChildren(vTree, container, true);
     };
@@ -1474,17 +1623,54 @@ const fluidViewScope = function (fluid) {
         $layers: "fluid.component",
         elideParent: true,
         container: "$compute:fluid.unavailable(Container not specified)",
-        renderedContainer: fluid.unavailable({cause: "Component not rendered", variety: "config"}),
+        // Mashed in live by bindContainer called at the end of activateTemplate
+        renderedContainer: {
+            $reactiveRoot: fluid.unavailable({cause: "Component not rendered", variety: "config"})
+        },
         templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
         vTree: "$compute:fluid.activateTemplate({self}.templateTree, {self})",
         renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree)",
         $variety: "framework"
     });
 
+    // A self-templating component that uses the existing DOM document contents as its template
+    fluid.def("fluid.selfTemplateRoot", {
+        $layers: "fluid.viewComponent",
+        templateContainer: fluid.unavailable({cause: "No template container is configured", variety: "config"}),
+        container: "{self}.templateContainer",
+        templateTree: {
+            $bindable: {
+                bind: "fluid.captureViewTemplate({self}.container)"
+            }
+        },
+        elideParent: false,
+        $variety: "framework"
+    });
+
+    fluid.captureViewTemplate = function (container) {
+        return fluid.domToVDom(container);
+    };
+
+    // TODO: fold selfTemplateRoot and selfTemplate together - requires advanced feature of reacting to whether
+    // container was sourced as a direct user argument or from the templateRecord pushPotentia from a parent component
+    // - we'd probably prefer this to be done by being able to expose the provenance of a value as a reactive quantity
+    // A self-templating component that uses markup supplied by its parent
     fluid.def("fluid.selfTemplate", {
         $layers: "fluid.viewComponent",
         templateTree: "{self}.parentTemplate",
         elideParent: false,
+        $variety: "framework"
+    });
+
+    fluid.def("fluid.templateViewComponent", {
+        $layers: "fluid.viewComponent",
+        templateTree: "$compute:fluid.parseHTMLToTree({self}.template)",
+        $variety: "framework"
+    });
+
+    fluid.def("fluid.sfcTemplateViewComponent", {
+        $layers: "fluid.templateViewComponent",
+        templateTree: "$compute:fluid.fetchParsedTemplate({self}.templateLayer)",
         $variety: "framework"
     });
 
@@ -1542,41 +1728,33 @@ const fluidViewScope = function (fluid) {
     fluid.def("fluid.viewComponentList", {
         $layers: "fluid.viewComponent",
         elideParent: false,
-        vTree: "$compute:fluid.listViewTree({self}.list)",
+        // Note that this is activateTemplate in a regular viewComponent
+        vTree: "$compute:fluid.listViewTree({self}, {self}.list)",
         $variety: "framework"
     });
 
-    fluid.listViewTree = function (list) {
-        return fluid.computed(componentList => {
-            const {designalArgs: components, unavailable: compUnavailable} = fluid.processSignalArgs(componentList);
-            if (compUnavailable) {
-                return compUnavailable;
+    fluid.listViewTree = function (self, list) {
+        return fluid.cell(undefined, {name: "fluid.listViewTree"}).computed(componentList => {
+            const path = self[$t].shadow.path;
+            // console.log("Generating VCL for " + path);
+            const unwrappedList = componentList.map(e => fluid.deSignal(e[fluid.unavailableSymbol]));
+            const unavailable = fluid.mergeUnavailables(unwrappedList);
+
+            if (unavailable) {
+                return unavailable;
             } else {
                 const {
                     designalArgs: childTrees,
                     unavailable: treesUnavailable
-                } = fluid.processSignalArgs(components.map(component => component.vTree));
+                } = fluid.processSignalArgs(componentList.map(component => component.vTree));
                 return treesUnavailable || {
                     tag: "template",
-                    children: childTrees
+                    children: childTrees,
+                    _id: vnode_id++
                 };
             }
-        }, [list]);
+        }, [list], {mapArg: fluid.deproxyAndDesignal});
     };
-
-    fluid.def("fluid.templateViewComponent", {
-        $layers: "fluid.viewComponent",
-        templateTree: "$compute:fluid.parseHTMLToTree({self}.template)",
-        $variety: "framework"
-    });
-
-    fluid.def("fluid.sfcTemplateViewComponent", {
-        $layers: "fluid.templateViewComponent",
-        templateTree: "$compute:fluid.fetchParsedTemplate({self}.templateLayer)",
-        $variety: "framework"
-    });
-
-
 
     /**
      * Creates an effect that automatically instantiates self-booting Fluid components for elements
@@ -1593,8 +1771,8 @@ const fluidViewScope = function (fluid) {
     fluid.makeSelfBootEffect = function (dokkument) {
         // Many thanks to Hugo Daniel https://hugodaniel.com/pages/boredom/ for inspiration for this concept
         const selfBootQuery = fluid.liveQuerySelectorAll("*[fluid-layers]", dokkument, dokkument);
-        return effect( () => {
-            const elements = selfBootQuery.value;
+        return fluid.cell.effect( () => {
+            const elements = selfBootQuery.get();
             elements.forEach(element => {
                 const existing = fluid.viewContainerRegistry.get(element);
                 if (!existing) {
@@ -1608,7 +1786,7 @@ const fluidViewScope = function (fluid) {
                     fluid.viewContainerRegistry.set(element, instance[$t].shadow);
                 }
             });
-        });
+        }, null, {name: `fluid.selfBootEffect for document at ${document.location}`});
     };
 
     /**
@@ -1628,7 +1806,9 @@ const fluidViewScope = function (fluid) {
             fluid.acquireModules(dokkument, dokkument.documentElement);
             fluid.docToImportMap(dokkument, dokkument.documentElement);
         });
-        return fluid.makeSelfBootEffect(dokkument);
+        const effect = fluid.makeSelfBootEffect(dokkument);
+        fluid.cell.stabilize();
+        return effect;
     };
 
 };

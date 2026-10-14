@@ -10,8 +10,8 @@ fluid.def("fluid.editor.historyPane", {
 
 fluid.layerFromHistoryRec = {
     updateLayer: (rec) => rec.newValue,
-    newLayer: (rec, layerName) => rec.newStore[layerName].peek(),
-    deleteLayer: (rec, layerName) => rec.oldStore[layerName].peek()
+    newLayer: (rec, layerName) => rec.newStore[layerName]._value,
+    deleteLayer: (rec, layerName) => rec.oldStore[layerName]._value
 };
 
 fluid.def("fluid.editor.historyList", {
@@ -58,6 +58,9 @@ fluid.editor.historyList.fromStore = function (layerHistory, layerHistoryIndex, 
     });
     // A deferred layer will show up here faultily without filtering layerDef
     //    const filteredRecords = records.filter(layer => !fluid.isUnavailable(layer.layerDef) && (userOnly ? layer.frameworkStatus === 0 : true));
+
+    // Hack for now: layerColourManager will not allocate a colour for a layer which is never actually demanded by any impl
+    // const filteredRecords = records.filter(record => record.colour);
 
     // For now, history just stores user records otherwise navigation will become incoherent
     const filteredRecords = records;

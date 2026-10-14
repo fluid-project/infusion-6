@@ -8,6 +8,8 @@ fluid.registerNamespace("fluid.tests");
 
 QUnit.module("Fluid View Tests");
 
+QUnit.config.reorder = false;
+
 QUnit.test("Layer name extraction test", function (assert) {
     const layerName = fluid.pathToLayerName("%todoApp/sfc/fluid-demos-todoApp.vue");
     assert.equal("fluid.demos.todoApp", layerName, "Layer name extracted");
@@ -19,12 +21,15 @@ fluid.def("fluid.tests.basicRender", {
     template: "<div>@{text}</div>"
 });
 
-const qs = (sel, parent) => (parent || document).querySelector(sel);
+const qs =  (sel, parent) => (parent || document).querySelector(sel);
 const qsa = (sel, parent) => [...(parent || document).querySelectorAll(sel)];
+
 
 QUnit.test("Basic static rendering test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.basicRender({container});
+    fluid.cell.stabilize();
+
     const expected = {
         $tagName: "div",
         $nodeValue: "Initial value"
@@ -45,6 +50,8 @@ fluid.def("fluid.tests.nestedNodeRender", {
 QUnit.test("Basic dynamic rendering test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.nestedNodeRender({container});
+    fluid.cell.stabilize();
+
     const expected = {
         $tagName: "div",
         $children: {
@@ -57,6 +64,7 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
     const inner = root.firstElementChild;
     assert.assertNode(root, expected, "Initial render correct");
     that.text = "Updated value";
+    fluid.cell.stabilize();
 
     assert.equal(inner.childNodes[0].nodeValue, "Updated value", "Updated text content rendered");
     assert.equal(container, root, "Rendered root undisturbed");
@@ -75,6 +83,8 @@ fluid.def("fluid.tests.dynamicAttribute", {
 QUnit.test("Dynamic attribute test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.dynamicAttribute({container});
+    fluid.cell.stabilize();
+
     const expected = {
         $tagName: "div",
         $children: {
@@ -86,6 +96,7 @@ QUnit.test("Dynamic attribute test", function (assert) {
     const inner = root.firstElementChild;
     assert.assertNode(root, expected, "Initial render correct");
     that.text = "Updated value";
+    fluid.cell.stabilize();
 
     assert.equal(inner.getAttribute("value"), "Updated value", "Updated text content rendered");
     assert.equal(container, root, "Rendered root undisturbed");
@@ -151,10 +162,10 @@ fluid.tests.updateRestoreDef = function (layerName, def) {
     };
 };
 
-
 QUnit.test("Nested render test - adapt inner", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.nestedOuter({container});
+    fluid.cell.stabilize();
 
     const root = container;
     assert.assertNode(root, fluid.tests.nestedExpect, "Initial render correct");
@@ -167,6 +178,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
         elideParent: false,
         template: `<div class="inner">New brush</div>`
     });
+    fluid.cell.stabilize();
 
     const newExpected = fluid.copy(fluid.tests.nestedExpect);
     newExpected.$children.$children.$nodeValue = "New brush";
@@ -183,6 +195,7 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
 QUnit.test("Nested render test - adapt outer", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.nestedOuter({container});
+    fluid.cell.stabilize();
 
     const root = container;
     assert.assertNode(root, fluid.tests.nestedExpect, "Initial render correct");
@@ -193,6 +206,8 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
         $layers: "fluid.templateViewComponent",
         template: `<div class="outer"><div class="newHandle" @id="inner"></div>`
     });
+
+    fluid.cell.stabilize();
 
     const newExpected = fluid.copy(fluid.tests.nestedExpect);
     newExpected.$children["class"] = "newHandle";
@@ -221,6 +236,7 @@ fluid.def("fluid.tests.bindClick", {
 QUnit.test("Basic click test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.bindClick({container});
+    fluid.cell.stabilize();
 
     assert.equal(that.value, 0, "Initial count 0");
 
@@ -308,9 +324,11 @@ fluid.def("fluid.tests.todoList", {
     }
 });
 
-fluid.tests.checkTodoRendering = function (assert, that, container, model) {
+fluid.tests.checkTodoRendering = function (assert, that, container, model, message) {
+    fluid.cell.stabilize();
+
     const items = that.todoItems.list;
-    assert.equal(items.length, model.length, "Correct component count");
+    assert.equal(items.length, model.length, `Correct component count: ${message}`);
 
     const modelTexts = items.map(todo => todo.text);
 
@@ -337,7 +355,7 @@ QUnit.test("For rendering test", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.todoList({container});
 
-    fluid.tests.checkTodoRendering(assert, that, container, fluid.tests.todos);
+    fluid.tests.checkTodoRendering(assert, that, container, fluid.tests.todos, "Initial");
 
     const newTodos = fluid.tests.todos.concat([{
         text: "Think about something",
@@ -345,26 +363,27 @@ QUnit.test("For rendering test", function (assert) {
     }]);
 
     that.todos = newTodos;
-    fluid.tests.checkTodoRendering(assert, that, container, newTodos);
+    fluid.tests.checkTodoRendering(assert, that, container, newTodos, "Add item");
 
     const twoDos = newTodos.slice(2, 4);
 
     that.todos = twoDos;
-    fluid.tests.checkTodoRendering(assert, that, container, twoDos);
+    fluid.tests.checkTodoRendering(assert, that, container, twoDos, "Update to 2 items");
 
     that.todos = [];
-    fluid.tests.checkTodoRendering(assert, that, container, []);
+    fluid.tests.checkTodoRendering(assert, that, container, [], "Remove all items");
 
     const oneDo = [twoDos[1]];
 
     that.todos = oneDo;
-    fluid.tests.checkTodoRendering(assert, that, container, oneDo);
+    fluid.tests.checkTodoRendering(assert, that, container, oneDo, "Update to 1 item");
 });
 
 QUnit.test("Event triggering and user reactivity test - delete array element", function (assert) {
     const origTodos = fluid.copy(fluid.tests.todos);
     const container = qs(".container");
     const that = fluid.tests.todoList({container});
+    fluid.cell.stabilize();
 
     const buttons = qsa("button", container);
     buttons[0].dispatchEvent(new MouseEvent("click"));
@@ -373,13 +392,14 @@ QUnit.test("Event triggering and user reactivity test - delete array element", f
 
     const twoDos = fluid.tests.todos.slice(1);
 
-    fluid.tests.checkTodoRendering(assert, that, container, twoDos);
+    fluid.tests.checkTodoRendering(assert, that, container, twoDos, "delete array element");
 });
 
 fluid.tests.checkDeepMutate = function (assert, index) {
     const origTodos = fluid.copy(fluid.tests.todos);
     const container = qs(".container");
     const that = fluid.tests.todoList({container});
+    fluid.cell.stabilize();
 
     const rows = qsa("span", container);
     rows[index].dispatchEvent(new MouseEvent("click"));
@@ -389,15 +409,15 @@ fluid.tests.checkDeepMutate = function (assert, index) {
     const toggled = fluid.copy(fluid.tests.todos);
     toggled[index].completed = !toggled[index].completed;
 
-    fluid.tests.checkTodoRendering(assert, that, container, toggled);
+    fluid.tests.checkTodoRendering(assert, that, container, toggled, `toggled index ${index}`);
 
     rows[index].dispatchEvent(new MouseEvent("click"));
 
-    fluid.tests.checkTodoRendering(assert, that, container, fluid.tests.todos);
+    fluid.tests.checkTodoRendering(assert, that, container, fluid.tests.todos, `clicked index ${index}`);
 
     rows[index].dispatchEvent(new MouseEvent("click"));
 
-    fluid.tests.checkTodoRendering(assert, that, container, toggled);
+    fluid.tests.checkTodoRendering(assert, that, container, toggled, `clicked index ${index} again`);
 };
 
 QUnit.test("Event triggering and user reactivity test - deep mutate array element 0", function (assert) {
@@ -411,6 +431,7 @@ QUnit.test("Event triggering and user reactivity test - deep mutate array elemen
 QUnit.test("Event triggering and user reactivity test - deep mutate different", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.todoList({container});
+    fluid.cell.stabilize();
     const toggled = fluid.copy(fluid.tests.todos);
     toggled[0].completed = !toggled[0].completed;
     toggled[1].completed = !toggled[1].completed;
@@ -425,6 +446,8 @@ QUnit.test("Event triggering and user reactivity test - deep mutate different", 
 QUnit.test("Event triggering and user reactivity test - insert array element", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.todoList({container});
+    fluid.cell.stabilize();
+
     const input = qs("input", container);
     input.value = "New item";
     input.dispatchEvent(new KeyboardEvent("keyup", {
@@ -444,14 +467,16 @@ fluid.def("fluid.tests.fullPageEditor", {
         $component: {
             $layers: "fluid.templateViewComponent",
             template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
-            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.template, {fullPageEditor}.renderedContainer)"
+            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.templateTree, {fullPageEditor}.renderedContainer)"
         }
     }
 });
 
 QUnit.test("Reference up through rendering effect", function (assert) {
     const container = qs(".container");
-    fluid.tests.fullPageEditor({container});
+    fluid.tests.fullPageEditor({container, $layers: "fluid.selfTemplateRoot"});
+    fluid.cell.stabilize();
+
     const button = qs("button", container);
     assert.ok(button, "Button has been rendered through effect");
 });
@@ -478,6 +503,7 @@ fluid.def("fluid.tests.dynamicLayerName", {
 QUnit.test("Rendering content from dynamic layer", function (assert) {
     const container = qs(".container");
     fluid.tests.dynamicLayerName({container});
+    fluid.cell.stabilize();
     const dynamic = qs(".dynamic", container);
     assert.ok(dynamic, "Dynamic content has been rendered");
 });
@@ -496,15 +522,27 @@ fluid.def("fluid.tests.assigneeIf", {
     }
 });
 
+
 QUnit.test("Conditional rendering", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.assigneeIf({container});
+    fluid.cell.stabilize();
     // Unfortunately we can't prevent allocation of the "outer container", even if there is no component
     assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
 
     that.enabled = true;
+    fluid.cell.stabilize();
     assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct");
 
     that.enabled = false;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+
+    that.enabled = true;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct 2");
+
+    that.enabled = false;
+    fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
 });

@@ -17,6 +17,22 @@ fluid.readTextFile = function (path) {
     return text;
 };
 
+/**
+ * Creates a memoized (cached) version of a single-argument function.
+ *
+ * @param {Function} fn - The function to cache.
+ * @return {Function} The wrapped function with caching enabled.
+ */
+fluid.cached = function (fn) {
+    const cache = Object.create(null);
+    return function (key) {
+        if (cache[key] !== undefined) {
+            return cache[key];
+        }
+        return cache[key] = fn(key);
+    };
+};
+
 fluid.decodeHtmlEntity = fluid.cached(he.decode);
 
 fluid.serverDocument = linkedom.parseHTML("<html />").document;
@@ -43,7 +59,7 @@ fluid.loadScriptNodeInDocument = function (node /*, dokkument */) {
 };
 
 // TODO: This should be moved into the client side and listen to script node onload.
-fluid.scriptLoadingIdle = fluid.global.signal(true);
+fluid.scriptLoadingIdle = fluid.cell(true, {name: "Script loading idle"});
 
 // Patch these update rules from FluidView.js so that we can react to script injections synchronously -
 // using a MutationObserver risks an async operation that is hard to track in order to determine when the
@@ -57,32 +73,32 @@ fluid.scriptInjectionStyles.literal.update = function (node, rec, dokkument, abs
 // TODO: When we do package.json style "whole module imports" we need to add the fluid-hydrated attribute to the node here,
 // as well as ignoring attempted import of %infusion-6
 fluid.scriptInjectionStyles.link.update = function (node, rec, dokkument) {
-    const togo = fluid.global.signal(fluid.unavailable(`Script at url {resolved} is loading`, "I/O"));
+    const togo = fluid.cell(fluid.unavailable(`Script at url ${rec.url} is loading`, "pending"));
     const resolveRelative = fluid.module.resolveRelativePath(dokkument.location, rec.url);
     // The client is going to resolve it themselves again and we want it to look relative to them (especially since we
     // don't know what their absolute path is going to be)
     node.setAttribute("src", resolveRelative);
     const resolved = fluid.module.resolvePath(rec.url);
     const fetched = fluid.fetchText(resolved);
-    fluid.effect(text => {
+    fluid.cell.effect(text => {
         vm.runInContext(text, fluid.V8Context, resolved);
         togo.value = true;
-    }, [fetched]);
+    }, [fetched], {name: "script injection effect for url " + rec.url});
     return togo;
 };
 
 fluid.activateDocument = function (dokkument) {
     const scriptQuery = fluid.liveQuerySelectorAll("script", dokkument, dokkument);
     let oldNodes = [];
-    return fluid.effect( (newNodes) => {
-        fluid.scriptLoadingIdle.value = fluid.unavailable("Script loading in progress", "I/O");
+    return fluid.cell.effect( (newNodes) => {
+        fluid.scriptLoadingIdle.set(fluid.unavailable("Script loading in progress", "pending"));
         newNodes.forEach(newNode => {
             if (!oldNodes.find(node => node === newNode)) {
                 fluid.loadScriptNodeInDocument(newNode, dokkument);
             }
         });
         oldNodes = newNodes;
-        fluid.scriptLoadingIdle.value = true;
+        fluid.scriptLoadingIdle.set(true);
     }, [scriptQuery]);
 };
 

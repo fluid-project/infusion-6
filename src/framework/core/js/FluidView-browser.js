@@ -96,28 +96,28 @@ const $fluidViewBrowserScope = function (fluid) {
             }
             const [lh, rh] = parts;
             const parsedLH = fluid.parseContextReference(lh);
+            // TODO: Local context resolution, if we need to push event into {0}
             const target = fluid.resolveContext(parsedLH.context, shadow);
             let rvalue, rvalueSignal;
             let negate = rh.startsWith("!");
             const useRH = negate ? rh.substring(1) : rh;
             if (fluid.isILReference(useRH)) {
-                const parsedRH = fluid.parseContextReference(useRH);
-                rvalueSignal = fluid.fetchContextReference(parsedRH, shadow);
+                rvalueSignal = fluid.fetchContextReference(useRH, shadow);
             } else {
                 rvalue = fluid.coerceToPrimitive(rh);
             }
-            handler = () => {
+            handler = fluid.cell.withAmbientSource("dom", () => {
                 if (rvalueSignal) {
                     rvalue = fluid.deSignal(rvalueSignal);
                 }
                 if (negate) {
                     rvalue = !rvalue;
                 }
-                fluid.setForComponent(target.value, parsedLH.path, rvalue);
-            };
+                fluid.setForComponent(target.get(), parsedLH.path, rvalue);
+            });
         } else {
             const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
-            handler = fluid.expandMethodRecord(parsed, shadow, fluid.vnodeToSegs(vnode));
+            handler = fluid.cell.withAmbientSource("dom", fluid.expandMethodRecord(parsed, shadow, fluid.vnodeToSegs(vnode)));
         }
 
         // map modifiers
@@ -131,7 +131,7 @@ const $fluidViewBrowserScope = function (fluid) {
         }
 
         const rawHandler = e => {
-            console.log("Activating event handler for ", event, " for vnode id ", vnode._id, " for DOM element ", el.flDomId);
+            // console.log("Activating event handler for ", event, " for vnode id ", vnode._id, " for DOM element ", el.flDomId);
             if (modifiers) {
                 if ("key" in e && !(fluid.hyphenate(e.key) in modifiers)) {
                     return;
@@ -143,7 +143,9 @@ const $fluidViewBrowserScope = function (fluid) {
                     }
                 }
             }
-            return handler(e);
+            const togo = handler(e);
+            fluid.cell.stabilize();
+            return togo;
         };
 
         // console.log(`Bound handler to ${event} for vnode ${vnode._id} for DOM element ${el.flDomId} `, el);

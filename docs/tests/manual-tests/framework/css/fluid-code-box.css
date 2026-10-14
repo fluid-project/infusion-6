@@ -5,6 +5,10 @@
     margin: 1em 0;
 }
 
+.fluid-code-box-wrapper .fa {
+    font-size: 14px;
+}
+
 .fluid-code-box-editor {
     display: flex;
     flex-direction: column;
@@ -17,9 +21,38 @@
     padding: 0.5em;
 }
 
+.fluid-code-box-editor-frame {
+    position: relative;
+    display: inline-block;
+}
+
+.fluid-code-box-copy {
+    position: absolute;
+    top: 0.4em;
+    right: 0.4em;
+    border: none;
+    background: transparent;
+    padding: 0.25em 0.4em;
+    cursor: pointer;
+    color: #666;
+    font-size: 0.95em;
+    line-height: 1;
+    border-radius: 3px;
+}
+
+.fluid-code-box-copy:hover {
+    color: #000;
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.fluid-code-box-copy:focus-visible {
+    outline: 2px solid #4a90e2;
+    outline-offset: 1px;
+}
+
 .fluid-code-box-run {
     align-self: flex-start;
-    padding: 0.4em 1em;
+    padding: 0.1em 0.6em;
     cursor: pointer;
 }
 

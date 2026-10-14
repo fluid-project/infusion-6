@@ -47,6 +47,8 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
     const cSeq = [];
     const cEffect = fluid.cell.effect(c => cSeq.push(c), [C]);
 
+    fluid.cell.stabilize();
+
     assert.deepEqual(cSeq, [15], "Startup notification for C");
 
     const fSeq = [];
@@ -57,14 +59,19 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
         cSeq.length = 0;
     };
 
+    fluid.cell.stabilize();
+
     assert.deepEqual(fSeq, [], "No startup notification for uninitialised F");
 
     F.computed(c => 9 * c / 5 + 32, [C]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "One notification C=>F");
     assert.deepEqual(cSeq, [15], "No further notification F=>C");
 
     C.computed(f => 5 * (f - 32) / 9, [F]);
+
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "No change if cells are fresh");
     assert.deepEqual(cSeq, [15], "No change if cells are fresh");
@@ -72,6 +79,7 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
     reset();
 
     C.set(20);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [20], "Original update");
     assert.deepEqual(fSeq, [68], "Relayed update");
@@ -79,6 +87,7 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
     reset();
 
     F.set(212);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [212], "Original update");
     assert.deepEqual(cSeq, [100], "Relayed update");
@@ -89,6 +98,7 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
     reset();
 
     C.set(20);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [20], "Original update");
     assert.deepEqual(fSeq, [], "No relay update");
@@ -96,6 +106,7 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
     reset();
 
     F.set(59);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "Original update");
     assert.deepEqual(cSeq, [15], "Relayed update");
@@ -107,6 +118,7 @@ QUnit.test("Bidirectional tests - Temperature conversion with two nodes", assert
     fEffect.dispose();
 
     F.set(68);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [], "No further notifications");
     assert.deepEqual(cSeq, [], "No further notifications");

@@ -201,7 +201,7 @@ fluid.vizReactive.stepForward = function (timeline) {
         setTimeout(() => {
             fluid.vizReactive.updateTimelineUI(timeline);
             timeline.steppingForward = false;
-        }, 0);
+        }, 1);
     }
 };
 

@@ -10,12 +10,12 @@ fluid.def("fluid.demos.filterCompleted", {
             selection: "all"
         }
     },
-    accept: {
-        $method: {
-            func: (todo, selection) => (selection === "all" || !selection) ? true
+    acceptor: {
+        $compute: {
+            func: (selection) => todo => (selection === "all" || !selection) ? true
                 : selection === "true" ? todo.completed === true
                     : todo.completed === false,
-            args: ["{0}:todos", "{select}.selection"]
+            args: ["{select}.selection"]
         }
     }
 });

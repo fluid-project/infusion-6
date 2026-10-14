@@ -11,7 +11,7 @@ fluid.sfcLinters = {
 fluid.lintMarkerMap = {
     error: {
         single: "mdi mdi-close-circle",
-        multiple: "mdi mdi-close-circle-multiple",
+        multiple: "mdi mdi-close-circle-multiple"
     },
     warning: {
         single: "mdi mdi-alert",
@@ -29,7 +29,7 @@ fluid.sfcValidator = function (text, options, cm) {
     }
     if (cm.getMode().name === "vue") {
         const tree = fluid.parseHTMLToTree(text);
-        console.log("Applying vue linting");
+        fluid.log("Applying vue linting");
         const hints = [];
         tree.children.forEach(child => {
             const linter = fluid.getGlobalValue(fluid.sfcLinters[child.tag]);

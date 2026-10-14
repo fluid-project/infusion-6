@@ -2,10 +2,28 @@
 
 const $fluidCoreJSScope = function (fluid) {
 
-    fluid.version = "Infusion 6.0.0";
+    fluid.version = "Infusion 6.1.0";
 
-    fluid.global = fluid.global || typeof window !== "undefined" ?
-        window : typeof self !== "undefined" ? self : {};
+    // Export this for use in environments like node.js, where it is useful for
+    // configuring stack trace behaviour
+    fluid.Error = Error;
+
+    fluid.global = fluid.global || (typeof window !== "undefined" ?
+        window : typeof self !== "undefined" ? self : {});
+
+    fluid._isLogging = false;
+
+    fluid.isLogging = () => fluid._isLogging;
+
+    fluid.setLogging = function (enabled) {
+        fluid._isLogging = enabled;
+    };
+
+    fluid.log = function (...args) {
+        if (fluid._isLogging) {
+            console.log.apply(console, args);
+        }
+    };
 
     /**
      * Check whether the argument is a primitive type
@@ -31,15 +49,16 @@ const $fluidCoreJSScope = function (fluid) {
             fluid.isPrimitive(arg) || typeof arg[Symbol.iterator] !== "function" ? [arg] : [...arg];
     };
 
-    /** Determines whether the supplied object can be treated as an array (primarily, by iterating over numeric keys bounded from 0 to length).
-     * The strategy used is an optimised approach taken from an earlier version of jQuery - detecting whether the toString() version
-     * of the object agrees with the textual form [object Array]
+    /**
+     * Compares two arrays for equality by checking if they have the same length
+     * and if all elements at corresponding indices are strictly equal.
      *
-     * @param {any} totest - The value to be tested
-     * @return {Boolean} `true` if the supplied value is an array
+     * @param {Array} array1 - The first array to compare.
+     * @param {Array} array2 - The second array to compare.
+     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
      */
-    fluid.isArrayable = function (totest) {
-        return Boolean(totest) && (Object.prototype.toString.call(totest) === "[object Array]");
+    fluid.arrayEqual = function (array1, array2) {
+        return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
     };
 
     /**
@@ -56,6 +75,22 @@ const $fluidCoreJSScope = function (fluid) {
             array.push.apply(array, topush);
         } else {
             array.push(topush);
+        }
+    };
+
+    /**
+     * Iterates over the properties of an object, invoking a provided function for each item.
+     *
+     * @param {Object} source - The object or array to iterate over. If `null` or `undefined`, the function does nothing.
+     * @param {Function} func - The function to be invoked for each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String|Number): The key of the current property.
+     */
+    fluid.each = function (source, func) {
+        if (source) {
+            for (const key in source) {
+                func(source[key], key);
+            }
         }
     };
 
@@ -120,9 +155,15 @@ const $fluidCoreJSScope = function (fluid) {
      * @property {UnavailableCause[]} causes - An array of cause records.
      */
 
+    /**
+     * Upgrades a cause value into a standardized cause object.
+     * @param {Object|String|Error} cause - The cause to upgrade. Can be a string, Error, or object.
+     * @param {String} defaultVariety - The default variety to assign if not present.
+     * @return {UnavailableCause} The upgraded cause object.
+     */
     fluid.upgradeCause = function (cause, defaultVariety) {
         const upCause = typeof(cause) === "string" ? {message: cause} :
-            cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : cause;
+            cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : {...cause};
         if (!upCause.variety) {
             upCause.variety = defaultVariety;
         }
@@ -140,13 +181,26 @@ const $fluidCoreJSScope = function (fluid) {
         return "Value is unavailable - causes are:\n" + causes.map(cause => cause.message).join("\n");
     };
 
+    /**
+     * Applies a fresh set of causes and variety to an existing Unavailable instance. Single or multiple supplied
+     * cause will be upgraded via fluid.upgradeCause.
+     *
+     * @param {Unavailable} instance - The object to annotate with unavailability information.
+     * @param {Object|Array|String|Error} [cause={}] - The cause or array of causes for unavailability.
+     *        Can be a string, Error, object, or array of these.
+     * @param {String} [variety="error"] - The variety of unavailability (e.g., "error", "config", "pending").
+     * @return {Unavailable} The annotated instance.
+     */
     fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {
-        if (fluid.isArrayable(cause)) {
+        if (!(variety in fluid.unavailablePriority)) {
+            throw ({message: "Unrecognised unavailable variety " + variety});
+        }
+        if (Array.isArray(cause)) {
             instance.causes = cause.map(oneCause => fluid.upgradeCause(oneCause, variety));
             instance.variety = instance.causes.reduce((acc, {variety}) => {
                 const priority = fluid.unavailablePriority[variety];
                 return priority > acc.priority ? {variety, priority} : acc;
-            }, {priority: -1}).variety;
+            }, {variety, priority: -1}).variety;
             instance.message = fluid.formatCauses(instance.causes);
         } else {
             const upCause = fluid.upgradeCause(cause, variety);
@@ -164,7 +218,7 @@ const $fluidCoreJSScope = function (fluid) {
      * @param {String} [variety="error"] - The variety of unavailable value:
      * * "error" indicates a syntax or structural issue that needs design intervention.
      * * "config" indicates the value is not available because it has been configured away
-     * * "I/O" indicates pending I/O - a stale value may be stored at `staleValue` representing a previous evaluation
+     * * "pending" indicates pending I/O - a stale value may be stored at `staleValue` representing a previous evaluation
      * @return {Unavailable} A marker of type "Unavailable".
      */
     fluid.unavailable = function (cause = {}, variety = "error") {
@@ -235,13 +289,19 @@ const $fluidCoreJSScope = function (fluid) {
         return !existing ? fresh : fluid.unavailable(fluid.unavailableToCauses(existing).concat(fluid.unavailableToCauses(fresh)));
     };
 
-    fluid.missingPolicies = {
-        unavailable: (root, path) => fluid.unavailable({
-            message: `Path ${path} was not found`,
-            // TODO: Upgrade incoming data so that it always comes with a full site cursor
-            site: root
-        }),
-        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    /**
+     * Merges multiple results into a single unavailable object.
+     * @param {Array} values - An array of values to check for unavailability
+     * @return {Unavailable|null} unavailable - The merged unavailable result, or null if no supplied values were unavailable
+     */
+    fluid.mergeUnavailables = function (values) {
+        let unavailable = null;
+        values.forEach(result => {
+            if (fluid.isUnavailable(result)) {
+                unavailable = fluid.mergeUnavailable(unavailable, result);
+            }
+        });
+        return unavailable;
     };
 
     /** Support for traversing substrate via string paths **/
@@ -297,6 +357,18 @@ const $fluidCoreJSScope = function (fluid) {
     fluid.pathToSegs = function (path) {
         return fluid.isPrimitive(path) ? fluid.parsePath(path) : path;
     };
+
+    fluid.missingPolicies = {
+        unavailable: (root, path) => {
+            return fluid.unavailable({
+                message: `Path ${path} was not found`,
+                // TODO: Upgrade incoming data so that it always comes with a full site cursor
+                site: root
+            });
+        },
+        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    };
+
 
     /**
      * Retrieve the value at a specified path within a nested object structure.

@@ -1,5 +1,6 @@
 <script>
 fluid.def("fluid.editor.menu", {
+    elideParent: false,
     menuItemsData: {
         File: [{
             text: "Export...",
@@ -136,6 +137,7 @@ fluid.inspect.mouseMove = function (self, event, editorRoot) {
     const useShadow = shadow && (!editorRoot.showUserLayersOnly || fluid.shadowHasUserLayer(shadow)) ? shadow : null;
     // Some nice tool will in future show up this distant write access
     editorRoot.inspectingSite = useShadow ? {shadow: useShadow} : null;
+    fluid.cell.deferredStabilize();
 };
 
 fluid.inspect.effect = function (self, inspecting, document) {

@@ -1,7 +1,7 @@
 <script>
 fluid.def("fluid.codemirror", {
     // User configurable options here:
-    mode: "$compute:unavailable(Codemirror mode has not been configured)",
+    mode: "$compute:fluid.unavailable(Codemirror mode has not been configured)",
     codemirrorOptions: {
         lineNumbers: true,
         matchBrackets: true,
@@ -18,19 +18,31 @@ fluid.def("fluid.codemirror", {
     },
     refreshOnActive: {
         $effect: {
-            func: instance => instance.refresh(),
-            args: ["{self}.instance", "{fluid.editor}.isActive"]
+            func: self => self.refresh(),
+            args: ["{self}", "{fluid.editor}.isActive"]
+        }
+    },
+    refresh: {
+        $method: {
+            func: instance => {
+                console.log("Refreshing CodeMirror instance");
+                console.log(new Error().stack);
+                instance.refresh()
+            },
+            args: ["{self}.instance"]
         }
     },
     readEffect: {
         $effect: {
             func: (text, instance) => {
-                console.log("Codemirror readText update ", text);
+                console.log("Codemirror readEffect update ", text, " with selfWrite ", instance.selfWrite);
                 // Appalling kludge to avoid updating on our own writes - thankfully currently there is no other source of them
                 if (!instance.selfWrite) {
                     instance.inReadUpdate = true;
                     fluid.codemirror.updateText(instance, text);
                     instance.inReadUpdate = false;
+                    console.log("Scheduling async refresh");
+
                     // CodeMirror 5 is a bit rubbish: https://stackoverflow.com/questions/8349571/codemirror-editor-is-not-loading-content-until-clicked
                     fluid.invokeLater(() => instance.refresh());
                 }
@@ -77,21 +89,24 @@ fluid.codemirror.updateText = function (instance, text) {
     }
 };
 
+const $m = fluid.metadataSymbol;
+
 fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
-    const validText = signal(fluid.unavailable("Text not validated"));
+    const validText = fluid.cell(fluid.unavailable("Text not validated", "pending"), {name: "fluid.codemirror validated text at " + self[$m].path});
+    validText.$variety = "codeMirror-validText";
     const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
     const textarea = container.firstElementChild;
     const instance = CodeMirror.fromTextArea(textarea, options);
     instance.firstValid = false; // Ignore the first validation update from initial editor contents
     console.log("Constructing from textArea ", textarea, " ", textarea.innerText);
-    instance.writeEffect = fluid.effect(validText => {
+    instance.writeEffect = fluid.cell.effect(validText => {
         if (instance.firstValid && holder.writeText && !instance.inReadUpdate) {
             // instance.selfWrite = true;
             holder.writeText(validText);
+            fluid.cell.deferredStabilize();
         }
         instance.firstValid = true;
-    }, [validText]);
-    validText.$variety = "codeMirror-validText";
+    }, [validText], {name: "writeEffect for fluid.codemirror at " + self[$m].path});
     fluid.disableRendering(self);
     return instance;
 };
@@ -99,26 +114,26 @@ fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
 
 <!-- What if someone wants to intercede on any of these imports? -->
 
-<script src="%infusion-6/src/lib/codemirror/js/codemirror.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/css.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/javascript.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/markdown.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/xml.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/overlay.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/htmlmixed.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/vue.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/codemirror.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/css.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/javascript.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/markdown.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/xml.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/overlay.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/htmlmixed.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/vue.js" data-fl-scope="global"></script>
 
 <!-- The core linting implementations -->
-<script src="%infusion-6/src/lib/codemirror/js/jshint.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/jsonlint.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/csslint.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/htmlhint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/jshint.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/jsonlint.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/csslint.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/htmlhint.js" data-fl-scope="global"></script>
 
 <!-- CodeMirror's integrations for linting modes -->
-<script src="%infusion-6/src/lib/codemirror/js/forked-lint.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/javascript-lint.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/json-lint.js"></script>
-<script src="%infusion-6/src/lib/codemirror/js/css-lint.js"></script>
+<script src="%infusion-6/src/lib/codemirror/js/forked-lint.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/javascript-lint.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/json-lint.js" data-fl-scope="global"></script>
+<script src="%infusion-6/src/lib/codemirror/js/css-lint.js" data-fl-scope="global"></script>
 
 <script src="%fluid-edit/js/sfcLinter.js"></script>
 

@@ -1,9 +1,10 @@
 "use strict";
 
+fluid.registerNamespace("fluid.tests");
+
 /* global QUnit */
 
 QUnit.module("Fluid Signals Tests");
-
 
 // Fresh bidirectional test produced to validate fluid.cell implementation - following similar thoughts
 // at https://www.ppig.org/files/2015-PPIG-26th-Basman.pdf
@@ -15,6 +16,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
 
     const cSeq = [];
     const cEffect = fluid.cell.effect(celsius => cSeq.push(celsius), [celsiusCell]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [15], "Startup notification");
 
@@ -25,15 +27,18 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
         fSeq.length = 0;
         cSeq.length = 0;
     };
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
     fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "One notification on forward arc");
     assert.deepEqual(cSeq, [15], "No backward notification");
 
     celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "No change on faithful inverse");
     assert.deepEqual(cSeq, [15], "No change on faithful inverse");
@@ -41,6 +46,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     celsiusCell.set(20);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [20], "Original update");
     assert.deepEqual(fSeq, [68], "Relayed update");
@@ -48,6 +54,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     fahrenheitCell.set(212);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [212], "Original update");
     assert.deepEqual(cSeq, [100], "Relayed update");
@@ -58,6 +65,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     celsiusCell.set(20);
+    fluid.cell.stabilize();
 
     assert.deepEqual(cSeq, [20], "Original update");
     assert.deepEqual(fSeq, [], "No relay update");
@@ -65,6 +73,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     reset();
 
     fahrenheitCell.set(59);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [59], "Original update");
     assert.deepEqual(cSeq, [15], "Relayed update");
@@ -76,6 +85,7 @@ QUnit.test("Bidirectional tests - two nodes", assert => {
     fEffect.dispose();
 
     fahrenheitCell.set(68);
+    fluid.cell.stabilize();
 
     assert.deepEqual(fSeq, [], "No further notifications");
     assert.deepEqual(cSeq, [], "No further notifications");
@@ -106,6 +116,65 @@ QUnit.test("Bidirectional tests - three nodes", assert => {
     assert.nearEqual(celsiusCell.get(), 20, "Spread from Kelvin to Celsius");
     assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
 });
+
+QUnit.test("Bidirectional tests - three nodes, circularly linked", assert => {
+
+    const kelvinCell = fluid.cell();
+    kelvinCell.name = "Kelvin";
+    const celsiusCell = fluid.cell(15);
+    celsiusCell.name = "Celsius";
+    const fahrenheitCell = fluid.cell();
+    fahrenheitCell.name = "Fahrenheit";
+
+    kelvinCell.computed(celsius => celsius + 273.15, [celsiusCell]);
+    celsiusCell.computed(kelvin => kelvin - 273.15, [kelvinCell]);
+
+    fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+    celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+
+    kelvinCell.computed(kelvin => (kelvin - 273.15) * 9 / 5 + 32, [kelvinCell]);
+    fahrenheitCell.computed(fahrenheit => (fahrenheit - 32) * 5 / 9 + 273.15, [fahrenheitCell]);
+
+    // Celsius value has spread in both directions
+    assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
+    assert.equal(fahrenheitCell.get(), 59, "Spread from Celsius to Fahrenheit");
+
+    kelvinCell.set(293.15);
+
+    assert.nearEqual(celsiusCell.get(), 20, "Spread from Kelvin to Celsius");
+    assert.nearEqual(fahrenheitCell.get(), 68, "Spread from Kelvin to Fahrenheit");
+
+    fahrenheitCell.set(212);
+
+    assert.equal(celsiusCell.get(), 100, "Spread from Fahrenheit to Celsius");
+    assert.nearEqual(kelvinCell.get(), 373.15, "Spread from Fahrenheit to Kelvin");
+});
+
+/*
+QUnit.test("Genuine cyclicity with monotonicity is acceptable", assert => {
+
+    const layerCountCell = fluid.cell(0, {name: "layerCount"});
+
+    const layerSeq = [];
+    const layerEffect = fluid.cell.effect(layerCount => layerSeq.push(layerCount), [layerCountCell]);
+
+    const layerNextCell = fluid.cell(undefined, {name: "layerNext"}).computed(x => x, [layerCountCell]);
+
+    const layerReactor = fluid.cell(undefined, {name: "layerReactor"}).computed(layerCount => {
+        if (layerCount < 2) {
+            layerCountCell.set(layerCount + 1);
+        }
+        return layerCountCell._value;
+    }, [layerNextCell]);
+    layerReactor.get();
+    layerReactor.get();
+    layerReactor.get();
+    fluid.cell.stabilize();
+    // Currently only gets up to 1 since layer count is marked as clean after set
+    assert.deepEqual(layerSeq, [2], "Layer count has stabilized to 2");
+    layerEffect.dispose();
+});
+ */
 
 QUnit.test("findCause with three nodes", assert => {
     const A = fluid.cell(1, {name: "A"});
@@ -143,14 +212,17 @@ QUnit.test("Source tracking and source exclusion", assert => {
     const Blog = [];
     // See historical note at https://docs.fluidproject.org/infusion/development/ChangeApplierAPI#example-featuring-user-defined-change-source-filtering
     const Beff = fluid.cell.effect(b => Blog.push(b), [B], {excludeSource: "scrollbar"});
+    fluid.cell.stabilize();
     assert.deepEqual(Blog, [2], "Startup effect");
 
     Blog.length = 0;
     A.set(2);
+    fluid.cell.stabilize();
     assert.deepEqual(Blog, [3], "Update effect");
 
     Blog.length = 0;
     A.set(3, {source: "scrollbar"});
+    fluid.cell.stabilize();
     assert.deepEqual(Blog, [], "Update skipped if source excluded");
 
     Beff.dispose();
@@ -210,12 +282,15 @@ QUnit.test("Early cutoff tests with effects", assert => {
 
     const c5Logger = fluid.cell.effect(c5 => c5Log.push(c5), [c5Cell], {name: "c5Logger"});
 
+    fluid.cell.stabilize();
+
     assert.deepEqual(c5Log, [6], "Pushed through chain to effect");
     assert.equal(busyCount, 1, "One lot of busy on init");
     reset();
 
     // Update computation 1
     headCell.set(1);
+    fluid.cell.stabilize();
     assert.equal(c5Cell.get(), 6, "Computed value 6");
     assert.deepEqual(c5Log, [], "No further effect through early cutoff");
     assert.equal(busyCount, 0, "No further busy through early cutoff");
@@ -223,9 +298,69 @@ QUnit.test("Early cutoff tests with effects", assert => {
     reset();
     // Update computation 2
     headCell.set(0);
+    fluid.cell.stabilize();
     assert.equal(c5Cell.get(), 6, "No change in computed value");
     assert.deepEqual(c5Log, [], "No further effect through early cutoff");
     assert.equal(busyCount, 0, "No further busy through early cutoff");
 
     c5Logger.dispose();
+});
+
+/**
+ * Construct a fixture holding a cell computed from two sources, one of which permanently holds a
+ * config-unavailable value, with the sources declared in a supplied order. A dispatcher takes charge of
+ * the computation so that the edge yields a concrete value despite the unavailable argument, and records
+ * each activation.
+ *
+ * @param {Boolean} unconfiguredFirst - `true` if the config-unavailable source is to be declared first.
+ * @return {Object} A record holding the `trigger` source cell, the computed `target` cell, and an
+ * `evaluations` array recording the value produced by each activation of the computing edge.
+ */
+fluid.tests.makeUnconfiguredFixture = function (unconfiguredFirst) {
+    const trigger = fluid.cell(1, {name: "trigger"});
+    const unconfigured = fluid.cell(fluid.unavailable("Never configured", "config"),
+        {name: "unconfigured"});
+    const evaluations = [];
+    const dispatcher = function (func, args) {
+        const concrete = args.find(arg => !fluid.isUnavailable(arg));
+        evaluations.push(concrete);
+        return func(concrete);
+    };
+    const sources = unconfiguredFirst ? [unconfigured, trigger] : [trigger, unconfigured];
+    // Seed with a concrete value so that the first wiring does not itself mark the cell stale
+    const target = fluid.cell(1, {name: "target"}).computed(x => x, sources, {dispatcher});
+    return {trigger, unconfigured, target, evaluations};
+};
+
+QUnit.test("Update along an edge holding an unconfigured source", function (assert) {
+    [false, true].forEach(function (unconfiguredFirst) {
+        const order = unconfiguredFirst ? "unconfigured source declared first" :
+            "unconfigured source declared last";
+        const fixture = fluid.tests.makeUnconfiguredFixture(unconfiguredFirst);
+
+        assert.equal(fixture.target.get(), 1, `Seeded value undisturbed - ${order}`);
+        assert.deepEqual(fixture.evaluations, [], `Settled cell not recomputed on first pull - ${order}`);
+
+        fixture.trigger.set(2);
+        assert.equal(fixture.target.get(), 2, `Recomputed along the edge which dirtied it - ${order}`);
+        assert.deepEqual(fixture.evaluations, [2], `Edge activated exactly once - ${order}`);
+
+        fixture.trigger.set(3);
+        assert.equal(fixture.target.get(), 3, `Recomputed again on further update - ${order}`);
+        assert.deepEqual(fixture.evaluations, [2, 3], `Edge activated once per update - ${order}`);
+    });
+});
+
+QUnit.test("Unconfigured source demotes an edge which did not carry the update", function (assert) {
+    const unconfigured = fluid.cell(fluid.unavailable("Never configured", "config"),
+        {name: "unconfigured"});
+    const other = fluid.cell("fallback", {name: "other"});
+    const target = fluid.cell(undefined, {name: "target"});
+
+    // Declared first, so it would win on a tie under findDirtyEdge's strict improvement test
+    target.computed(x => x, [unconfigured]);
+    target.computed(x => x, [other]);
+
+    assert.equal(target.get(), "fallback",
+        "Edge holding an unconfigured source passed over in favour of a configured alternative");
 });

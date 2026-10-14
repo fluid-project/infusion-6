@@ -33,3 +33,7 @@ Development dependencies will be installed by running the following from the pro
 ```bash
 npm install
 ```
+
+### Tests
+
+Either run `npm test` or else visit files in tests/framework-tests/core/html in the browser

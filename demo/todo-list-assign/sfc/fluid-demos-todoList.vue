@@ -8,7 +8,7 @@ fluid.def("fluid.demos.todoList", {
         $compute: {
             func: (filters, todos) => {
                 console.log("Got filters ", filters);
-                return todos.filter(todo => filters.every(filter => filter.accept(todo)));
+                return todos.filter(todo => filters.every(filter => filter.acceptor(todo)));
             },
             args: ["{filters fluid.demos.filter}", "{self}.todos"]
         }

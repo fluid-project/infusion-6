@@ -5,9 +5,8 @@ import "./FluidModules.mjs";
 
 
 
-    fluid.isBrowser = function () {
-        return typeof(window) !== "undefined" && !!window.document;
-    };
+    // Constant to detect runaway recursion through structures
+    fluid.strategyRecursionBailout = 128;
 
     // The following flag defeats all logging/tracing activities in the most performance-critical parts of the framework.
     // This should really be performed by a build-time step which eliminates calls to pushActivity/popActivity and fluid.log.
@@ -359,8 +358,6 @@ import "./FluidModules.mjs";
         return fluid.isArrayable(tocopy) ? [] : {};
     };
 
-    fluid.strategyRecursionBailout = 128;
-
     /**
      * Determine whether the supplied object path exceeds the maximum strategy recursion depth of fluid.strategyRecursionBailout -
      * if it does, fluid.fail will be issued with a diagnostic
@@ -393,18 +390,6 @@ import "./FluidModules.mjs";
         } else {
             return fluid.transform(tocopy, copyMember);
         }
-    };
-
-    /**
-     * Compares two arrays for equality by checking if they have the same length
-     * and if all elements at corresponding indices are strictly equal.
-     *
-     * @param {Array} array1 - The first array to compare.
-     * @param {Array} array2 - The second array to compare.
-     * @return {Boolean} `true` if the arrays are equal, `false` otherwise.
-     */
-    fluid.arrayEqual = function (array1, array2) {
-        return array1.length === array2.length && array1.every((element, index) => element === array2[index]);
     };
 
     /**
@@ -759,11 +744,11 @@ import "./FluidModules.mjs";
     };
 
     /**
-     * Check whether a given value is an instance of a `preactSignalsCore.Signal`.
+     * Check whether a given value is an instance of a `fluid.cell`.
      * @param {any} value - The value to test.
      * @return {Boolean} `true` if the value is a `Signal`, otherwise `false`.
      */
-    fluid.isSignal = value => value instanceof preactSignalsCore.Signal;
+    fluid.isSignal = value => value instanceof fluid.cell;
 
     /**
      * Resolve a value from a `Signal`, or return the value as-is if it is not a `Signal`.
@@ -773,8 +758,8 @@ import "./FluidModules.mjs";
      */
     fluid.deSignal = ref => {
         let deref = 0;
-        while (fluid.isSignal(ref)) {
-            ref = ref.value;
+        while (ref instanceof fluid.cell) {
+            ref = ref.get();
             deref++;
             if (deref > fluid.strategyRecursionBailout) {
                 fluid.fail("Cyclic reference structure found in fluid.deSignal of ", ref);
@@ -783,13 +768,10 @@ import "./FluidModules.mjs";
         return ref;
     };
 
-    fluid.defaultSignalOptions = {
-        flattenArg: fluid.deSignal
-    };
-
     // TODO: Probably needs to be made available as a context name - there's support now as $oldValue
     fluid.OldValue = Symbol("Old Computed Value");
 
+    // TODO: Only kept around because of fluid.signalsToAvailable, in modern core we have fluid.cell.mapSignalArgs(args, cell._value);
     /**
      * Process an array of arguments, unwrapping values from `preactSignalsCore.Signal` objects
      * and identifying and coalescing "unavailable" values if present.
@@ -812,8 +794,8 @@ import "./FluidModules.mjs";
         const flattenArg = options?.flattenArg;
         for (let i = 0; i < args.length; ++i) {
             let arg = args[i];
-            if (arg instanceof preactSignalsCore.Signal) {
-                arg = flattenArg ? flattenArg(arg, i) : arg.value;
+            if (arg instanceof fluid.cell) {
+                arg = flattenArg ? flattenArg(arg, i) : arg.get();
             }
             if (arg === fluid.OldValue) {
                 arg = fluid.isUnavailable(oldValue) ? null : oldValue; // User doesn't want a short-circuit
@@ -833,25 +815,9 @@ import "./FluidModules.mjs";
      * @return {Signal<Unavailable|Array>} Unavailable marker if any argument is unavailable, or the array of resolved arguments.
      */
     fluid.signalsToAvailable = function (sigs) {
-        return computed( () => {
+        return fluid.cell(undefined, {name: "signalsToAvailable"}).computed( () => {
             const sigRec = fluid.processSignalArgs(sigs);
             return sigRec.unavailable || sigRec.designalArgs;
-        });
-    };
-
-    /**
-     * Converts a signal into a Promise that resolves when the signal's value changes to an
-     * available value.
-     *
-     * @param {Signal<any>} valSignal - The signal to monitor.
-     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
-     */
-    fluid.signalToPromise = function (valSignal) {
-        return new Promise( (resolve) => {
-            fluid.effect(function (value) {
-                resolve(value);
-                this.dispose();
-            }, [valSignal]);
         });
     };
 
@@ -880,65 +846,8 @@ import "./FluidModules.mjs";
 
     fluid.notEvaluated = fluid.unavailable("Computed not yet evaluated", "config");
 
-    /**
-     * Create a computed value based on a function and its arguments, resolving any signals and handling unavailability.
-     *
-     * @param {Function|Signal<Function>} funcSignal - The function to compute the value
-     * @param {Array|any} argSignals - The arguments or argument to pass to the function. These may include signals, which will be resolved.
-     * @param {Object} [options] - Additional specifications for processing arguments (optional).
-     * @return {Object} A computed value that resolves the function's result, or an "unavailable" marker if any argument is unavailable.
-     */
-    fluid.computed = function (funcSignal, argSignals, options) {
-        return computed(function fluidComputed(oldValue) {
-            const acc = u => fluid.accumulateUnavailableSite(u, this.site);
-            const {
-                designalArgs,
-                unavailable
-            } = fluid.processSignalArgs(argSignals, options || fluid.defaultSignalOptions, oldValue);
-            const func = fluid.deSignal(funcSignal);
-            const anyUnavailable = unavailable || (fluid.isUnavailable(func) ? func : false);
-            if (options?.dispatcher) {
-                return options.dispatcher(func, designalArgs, anyUnavailable, oldValue);
-            } else {
-                return anyUnavailable ? acc(anyUnavailable) : func.apply(null, designalArgs);
-            }
-        }, fluid.notEvaluated);
-    };
-
-    let effectId = 1;
-
-    /**
-     * Create an effect that executes a function with resolved arguments, resolving any signals and handling unavailability.
-     *
-     * @param {Function} func - The function to execute
-     * @param {Array|any} args - The arguments or argument to pass to the function. These may include signals, which will be resolved.
-     * @param {Object} [options] - Additional specifications for processing arguments (optional).
-     * @return {Object} An effect that executes the function if all arguments are available, or does nothing if any argument is unavailable.
-     */
-    fluid.effect = function (func, args, options) {
-        const togo = effect(function fluidEffect() {
-            const {designalArgs, unavailable} = fluid.processSignalArgs(args, options || fluid.defaultSignalOptions);
-            if (!unavailable || options?.free) {
-                return untracked( () => func.apply(this, designalArgs));
-            }
-        }, options);
-        togo.$func = func;
-        togo.$args = args;
-        togo.effectId = effectId++;
-        return togo;
-    };
-
-    fluid.catch = function (source, func) {
-        return effect( () => {
-            const result = source.value;
-            if (fluid.isErrorUnavailable(result)) {
-                func(result);
-            }
-        });
-    };
-
     fluid.disposeEffects = function (effectStructure) {
-        if (effectStructure instanceof preactSignalsCore.Effect) {
+        if (effectStructure instanceof fluid.cell) {
             effectStructure.dispose();
         } else if (Array.isArray(effectStructure)) {
             effectStructure.forEach(effect => effect.dispose());
@@ -946,74 +855,6 @@ import "./FluidModules.mjs";
         } else {
             Object.values(effectStructure).forEach(value => fluid.disposeEffects(value));
         }
-    };
-
-    // Currently disused - was part of the old layer-based system for injecting CSS etc. but may come back
-    /**
-     * Creates a single source effect that listens to changes in a computed signal and invokes a callback
-     * with the old and new values whenever the computed signal changes.
-     *
-     * @param {Computed} aComputed - The computed signal to observe.
-     * @param {Function} fn - A callback function with the signature (oldValue, newValue).
-     * @return {Effect} The created effect.
-     */
-    fluid.singleSourceEffect = function (aComputed, fn) {
-        let oldValue = aComputed.value; // Initialize with the current value of the computed signal.
-
-        return effect(() => {
-            const newValue = aComputed.value; // Get the updated value of the computed signal.
-            if (oldValue !== newValue) {
-                fn(oldValue, newValue); // Notify the callback with old and new values.
-                oldValue = newValue; // Update the old value for the next change.
-            }
-        });
-    };
-
-    fluid.sampleComputed = computed(() => {
-    });
-    const computedPrototype = Object.getPrototypeOf(fluid.sampleComputed);
-    const computedPrototypeDescriptor = Object.getOwnPropertyDescriptor(computedPrototype, "value");
-
-    fluid.delegateUnavailable = fluid.unavailable({message: "No written value for delegated signal"});
-
-    fluid.DelegatedSignal = function (outerSignal, onWrite, onReset) {
-        const computer = computed(() => {
-            const targetValue = computer._target.value;
-            return fluid.isUnavailable(targetValue) ? computer._outerSignal.value : targetValue;
-        });
-        Object.setPrototypeOf(computer, fluid.DelegatedSignal.prototype);
-        computer._outerSignal = outerSignal;
-        computer._onWrite = onWrite;
-        computer._onReset = onReset;
-        computer._target = signal(fluid.delegateUnavailable);
-        return computer;
-    };
-
-    fluid.DelegatedSignal.prototype = fluid.sampleComputed;
-
-    fluid.DelegatedSignal.prototype.reset = function () {
-        if (this._onReset) {
-            this.onReset(this._target, this);
-        }
-        this._target.value = fluid.delegateUnavailable;
-    };
-
-    Object.defineProperty(fluid.DelegatedSignal.prototype, "value", {
-        get: computedPrototypeDescriptor.get,
-        set: function (newValue) {
-            if (this._target) {
-                this._target.value = newValue;
-            } else {
-                this._target = signal(newValue);
-                if (this._onWrite) {
-                    this._onWrite(this._target, this);
-                }
-            }
-        }
-    });
-
-    fluid.delegatedSignal = function (outerSignal, onWrite, onReset) {
-        return new fluid.DelegatedSignal(outerSignal, onWrite, onReset);
     };
 
     // Path handling
@@ -1164,7 +1005,8 @@ import "./FluidModules.mjs";
      * no signals are encountered, or `undefined` if the traversal passes beyond defined objects.
      */
     fluid.getThroughSignals = function (root, segs, extra) {
-        const togo = computed(function getThroughSignals() {
+        const siteName = extra?.site ? ` for site ${fluid.renderSite(extra.site)}` : "";
+        const togo = fluid.cell(undefined, {name: "getThroughSignals" + siteName}).computed(function getThroughSignals() {
             if (window.cycleImminent) {
                 debugger;
             }
@@ -1953,17 +1795,17 @@ import "./FluidModules.mjs";
 
     // Lookup of layer names to signal<{raw: layer}>
     // where "raw" has not yet been readerExpanded
-    fluid.layerStore = signal({});
+    fluid.layerStore = fluid.cell({});
 
-    fluid.layerHistory = signal([]);
+    fluid.layerHistory = fluid.cell([]);
 
-    fluid.layerHistoryIndex = signal(0);
+    fluid.layerHistoryIndex = fluid.cell(0);
 
     fluid.pushHistory = function (record) {
         if ((record.layerName.startsWith("{") || fluid.isUserLayer(record.layerName)) && !fluid.historyPush) {
-            const index = fluid.layerHistoryIndex.value;
-            fluid.layerHistory.value = [...fluid.layerHistory.peek().slice(0, index), record];
-            fluid.layerHistoryIndex.value = index + 1;
+            const index = fluid.layerHistoryIndex.get();
+            fluid.layerHistory.set([...fluid.layerHistory._value.slice(0, index), record]);
+            fluid.layerHistoryIndex.set(index + 1);
         }
     };
 
@@ -1976,10 +1818,10 @@ import "./FluidModules.mjs";
     };
 
     fluid.historyBack = function () {
-        const index = fluid.layerHistoryIndex.value;
+        const index = fluid.layerHistoryIndex.get();
         if (index > 0) {
             const newIndex = index - 1;
-            const backRec = fluid.layerHistory.value[newIndex];
+            const backRec = fluid.layerHistory.get()[newIndex];
             if (backRec.type === "updateLayer") {
                 if (backRec.layerName.startsWith("{")) {
                     fluid.applyLiveHistory(backRec, "oldValue");
@@ -1987,15 +1829,15 @@ import "./FluidModules.mjs";
                     // Update layer registry
                 }
             }
-            fluid.layerHistoryIndex.value = newIndex;
+            fluid.layerHistoryIndex.set(newIndex);
         }
     };
 
     fluid.historyForward = function () {
-        const index = fluid.layerHistoryIndex.value;
-        if (index < fluid.layerHistory.value.length) {
+        const index = fluid.layerHistoryIndex.get();
+        if (index < fluid.layerHistory.get().length) {
             const newIndex = index + 1;
-            const foreRec = fluid.layerHistory.value[index];
+            const foreRec = fluid.layerHistory.get()[index];
             if (foreRec.type === "updateLayer") {
                 if (foreRec.layerName.startsWith("{")) {
                     fluid.applyLiveHistory(foreRec, "newValue");
@@ -2003,7 +1845,7 @@ import "./FluidModules.mjs";
                     // Update layer registry
                 }
             }
-            fluid.layerHistoryIndex.value = newIndex;
+            fluid.layerHistoryIndex.set(newIndex);
         }
     };
 
@@ -2027,9 +1869,9 @@ import "./FluidModules.mjs";
      * @param {LayerDef} layerValue - The value associated with the new layer.
      */
     fluid.newLayer = function (layerName, layerValue) {
-        const store = fluid.layerStore.value;
-        const newStore = {...store, [layerName]: signal(layerValue)};
-        fluid.layerStore.value = newStore;
+        const store = fluid.layerStore.get();
+        const newStore = {...store, [layerName]: fluid.cell(layerValue)};
+        fluid.layerStore.set(newStore);
         fluid.pushHistory({type: "newLayer", newStore, oldStore: store, layerName});
     };
 
@@ -2039,26 +1881,26 @@ import "./FluidModules.mjs";
      *
      * @param {String} layerName - The name of the layer to retrieve.
      * @param {Boolean} demand - Whether the layer is being demanded by an implementation
-     * @return {signal<RawLayer>} The layer signal if it exists, or an "unavailable" marker if the layer is not defined.
+     * @return {fluid.cell<RawLayer>} The layer signal if it exists, or an "unavailable" marker if the layer is not defined.
      */
     fluid.readLayer = function (layerName, demand = false) {
-        const store = fluid.layerStore.peek();
+        const store = fluid.layerStore._value;
         const layerSig = store[layerName];
         if (layerSig) {
-            const layer = layerSig.peek();
+            const layer = layerSig._value;
             if (fluid.isUnavailable(layer)) {
                 if (demand) {
                     layerSig.demanded = true;
                 }
             } else if ((demand || layerSig.demanded) && !layer.demanded) {
-                layerSig.value = {...layer, demanded: true};
+                layerSig.set({...layer, demanded: true});
             }
             return layerSig;
         } else {
             // TODO: These unavailable signals perhaps could be stored in a WeakMap so they could be GCed if no pending instances
             // are relying on them
             // Is it worth updating store + history for this?
-            const togo = store[layerName] = signal(fluid.unavailable({
+            const togo = store[layerName] = fluid.cell(fluid.unavailable({
                 message: "Layer " + layerName + " is not defined",
                 path: ["layer", layerName]
             }, "config"));
@@ -2078,12 +1920,12 @@ import "./FluidModules.mjs";
      * @param {LayerDef} layer - The layer data to store.
      */
     fluid.writeLayer = function (layerName, layer) {
-        const store = fluid.layerStore.peek();
+        const store = fluid.layerStore._value;
         const layerSig = store[layerName];
         const layerValue = {raw: layer, demanded: layerSig?.demanded, tick: 0};
         if (layerSig) {
-            const oldValue = layerSig.peek();
-            layerSig.value = layerValue;
+            const oldValue = layerSig._value;
+            layerSig.set(layerValue);
             fluid.pushHistory({type: "updateLayer", oldValue, newValue: layerValue, layerName});
         } else {
             fluid.newLayer(layerName, layerValue);
@@ -2098,12 +1940,12 @@ import "./FluidModules.mjs";
      * @param {String} layerName - The name of the layer to invalidate.
      */
     fluid.invalidateLayer = function (layerName) {
-        const store = fluid.layerStore.peek();
+        const store = fluid.layerStore._value;
         const layerSig = store[layerName];
         if (layerSig) {
-            const oldValue = layerSig.peek();
+            const oldValue = layerSig._value;
             if (!fluid.isUnavailable(oldValue)) {
-                layerSig.value = {...oldValue, tick: oldValue.tick + 1};
+                layerSig.set({...oldValue, tick: oldValue.tick + 1});
             }
         }
     };
@@ -2115,10 +1957,10 @@ import "./FluidModules.mjs";
      * @param {String} layerName - The name of the layer to delete.
      */
     fluid.deleteLayer = function (layerName) {
-        const currentStore = fluid.layerStore.value;
+        const currentStore = fluid.layerStore.get();
         const newStore = {...currentStore};
         delete newStore[layerName];
-        fluid.layerStore.value = newStore;
+        fluid.layerStore.set(newStore);
         fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
     };
 
@@ -2155,7 +1997,7 @@ import "./FluidModules.mjs";
      * @return {Boolean} `true` if the layer is a user-defined layer, `false` otherwise.
      */
     fluid.isUserLayer = function (layerName) {
-        const layerDef = fluid.readLayer(layerName).peek().raw;
+        const layerDef = fluid.readLayer(layerName)._value.raw;
         return layerDef && !fluid.isUnavailable(layerDef) && fluid.layerFrameworkStatus(layerDef) === 0;
     };
 
@@ -2469,7 +2311,7 @@ import "./FluidModules.mjs";
          *
          * @param {Object} layer - A layer definition object containing a `$layers` property listing parent layer names.
          * @param {String} rootLayer - The name of the current root layer being resolved, used to detect circular references.
-         * @return {Signal[]} An array of Signals, one for each stored parent layer, or an `unavailable` signal if a circular reference is detected.
+         * @return {fluid.cell[]} An array of Signals, one for each stored parent layer, or an `unavailable` signal if a circular reference is detected.
          */
         storeParents(layer, rootLayer) {
             return layer.$layers.map(layerName => {
@@ -2499,7 +2341,7 @@ import "./FluidModules.mjs";
                 // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
                 this.flatDefs[layerName] = "in progress";
 
-                const layer = fluid.readLayer(layerName, true).value;
+                const layer = fluid.readLayer(layerName, true).get();
                 if (fluid.isUnavailable(layer)) {
                     this.unavailableLayers[layerName] = layer;
                     this.layerFetcher(layerName);
@@ -2656,7 +2498,7 @@ import "./FluidModules.mjs";
      */
     fluid.def = function (layerName, layer) {
         if (layer === undefined) {
-            return fluid.readLayer(layerName).value.raw;
+            return fluid.readLayer(layerName).get().raw;
         } else {
             if (fluid.defBuffer) {
                 fluid.makeComponentCreator(layerName);
@@ -2701,7 +2543,7 @@ import "./FluidModules.mjs";
      * @return {any} The return value from the function
      */
     fluid.invokeGradedFunction = function (name, spec) {
-        const defaults = fluid.readLayer(name).value;
+        const defaults = fluid.readLayer(name).get();
         if (!defaults || fluid.isUnavailable(name) || !defaults.argumentMap || !fluid.hasGrade(defaults, "fluid.function")) {
             fluid.fail("Cannot look up name " + name +
                 " to a function with registered argumentMap - got defaults ", defaults);
@@ -2951,10 +2793,10 @@ import "./FluidModules.mjs";
      * @return {Signal<any>} A signal containing the processed data or an "unavailable" state.
      */
     fluid.fetch = function (url, options, strategy) {
-        const togo = signal(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "pending"}));
+        const togo = fluid.cell(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "pending"}));
         const assignResult = data => {
             try {
-                togo.value = data;
+                togo.set(data);
             } catch (e) { // Don't use catch's error handler since this will swallow it
                 fluid.fail("Error assigning I/O result: ", e);
                 throw e;
@@ -2963,13 +2805,13 @@ import "./FluidModules.mjs";
         fetch(url, {...options, ...fluid.cacheOptions})
             .then(response => {
                 if (!response.ok) {
-                    togo.value = fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"});
+                    togo.set(fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"}));
                 } else {
                     return strategy(response);
                 }
             })
             .then(data => {
-                if (!fluid.isErrorUnavailable(togo.peek())) { // Fetch API provides an undefined response in the case response is not OK
+                if (!fluid.isErrorUnavailable(togo._value)) { // Fetch API provides an undefined response in the case response is not OK
                     if (options?.delay) {
                         window.setTimeout(() => assignResult(data), options.delay);
                     } else {
@@ -2978,7 +2820,7 @@ import "./FluidModules.mjs";
                 }
             })
             .catch(err => {
-                togo.value = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"});
+                togo.set(fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
             });
         return togo;
     };
@@ -3019,7 +2861,7 @@ import "./FluidModules.mjs";
      */
     fluid.siteToPromise = function (component, path) {
         const pathSignal = fluid.getForComponent(component[$m], path);
-        return fluid.signalToPromise(pathSignal);
+        return fluid.cell.signalToPromise(pathSignal);
     };
 
 export default fluid;

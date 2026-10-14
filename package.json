@@ -38,10 +38,11 @@
         "build": "node build.js",
         "build-fluid-cell": "run-s es6-transform clean:tsc tsc es6-bundle",
         "lint": "fluid-lint-all",
-        "start": "serve"
+        "start": "serve",
+        "test": "node tests/test-core/qunit/js/fqunit-cli.js"
     },
     "engines": {
-        "node": ">=14"
+        "node": ">=16"
     },
     "browserslist": [
         "extends browserslist-config-fluid"
@@ -84,7 +85,8 @@
     "infusion": {
         "imports": {
             "client": [
-                "src/lib/preact-signals/preact-signals-core.js",
+                "src/framework/core/js/FluidCore.js",
+                "src/framework/core/js/FluidSignals.js",
                 "src/framework/core/js/Fluid.js",
                 "src/framework/core/js/FluidModules.js",
                 "src/framework/core/js/FluidIL.js",
@@ -95,7 +97,8 @@
                 "src/framework/core/js/template-parser.js"
             ],
             "server": [
-                "src/lib/preact-signals/preact-signals-core.js",
+                "src/framework/core/js/FluidCore.js",
+                "src/framework/core/js/FluidSignals.js",
                 "src/framework/core/js/Fluid.js",
                 "src/framework/core/js/FluidModules.js",
                 "src/framework/core/js/FluidIL.js",
@@ -104,6 +107,16 @@
                 "src/lib/lezer/lezer-javascript-browser.js",
                 "src/framework/core/js/sfc-parser.js",
                 "src/framework/core/js/template-parser.js"
+            ]
+        },
+        "tests": {
+            "server": [
+                "tests/framework-tests/core/js/FluidCoreTests.js",
+                "tests/framework-tests/core/js/FluidJSTests.js",
+                "tests/framework-tests/core/js/FluidILTests.js",
+                "tests/framework-tests/core/js/FluidSignalsGraphTests.js",
+                "tests/framework-tests/core/js/FluidSignalsTests.js",
+                "tests/framework-tests/core/js/FluidSignalsAsyncTests.js"
             ]
         }
     }

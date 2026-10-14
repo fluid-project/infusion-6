@@ -17,7 +17,6 @@ fluid.tests.plainObjectTrue = {
 fluid.tests.plainObjectFalse = {
     "null": null,
     "undefined": undefined,
-    "document": document,
     "window": window
 };
 
@@ -32,69 +31,10 @@ QUnit.test("fluid.isPlainObject tests", assert => {
     });
     assert.equal(fluid.isPlainObject([]), true, "Array is plain by standard");
     assert.equal(fluid.isPlainObject([], true), false, "Array is nonplain in strict");
-});
 
-fluid.tests.plainObjectFalseArrayable = {
-    "null": false,
-    "undefined": false,
-    "document": false,
-    "window": false,
-    "jDocument": true,
-    "component": false
-};
-
-QUnit.test("fluid.makeArray tests", assert => {
-    assert.deepEqual(fluid.makeArray(1), [1], "fluid.makeArray on non-array");
-    assert.deepEqual(fluid.makeArray(null), [], "fluid.makeArray on null");
-    assert.deepEqual(fluid.makeArray(undefined), [], "fluid.makeArray on undefined");
-    const inputArray = [1];
-    const outputArray = fluid.makeArray(inputArray);
-    assert.deepEqual(inputArray, outputArray, "fluid.makeArray on array - deep equality");
-    assert.notEqual(inputArray, outputArray, "fluid.makeArray on array - cloning");
-});
-
-fluid.tests.pushArray = [
-    {
-        message: "nonexistent element - nonarray",
-        holder: {},
-        topush: 1,
-        expected: {
-            m1: [1]
-        }
-    }, {
-        message: "nonexistent element - array",
-        holder: {},
-        topush: [1],
-        expected: {
-            m1: [1]
-        }
-    }, {
-        message: "existent element - nonarray",
-        holder: {
-            m1: [1]
-        },
-        topush: 2,
-        expected: {
-            m1: [1, 2]
-        }
-    }, {
-        message: "existent element - array",
-        holder: {
-            m1: [1]
-        },
-        topush: [2, 3],
-        expected: {
-            m1: [1, 2, 3]
-        }
+    if (typeof(document) !== "undefined") {
+        assert.equal(fluid.isPlainObject(document), false);
     }
-];
-
-QUnit.test("fluid.pushArray tests", assert => {
-    fluid.each(fluid.tests.pushArray, function (fixture) {
-        const holder = Object.assign({}, fixture.holder);
-        fluid.pushArray(holder, "m1", fixture.topush);
-        assert.deepEqual(holder, fixture.expected, "fluid.pushArray - " + fixture.message);
-    });
 });
 
 function isOdd(i) {
@@ -135,38 +75,6 @@ QUnit.test("remove_if index stability and target", assert => {
     const target = [];
     fluid.remove_if([0, 1, 2, 3], fluid.tests.indexChecker, target);
     assert.deepEqual(target, [1, 2], "Target contains removed elements in original order");
-});
-
-QUnit.test("transform", assert => {
-    assert.deepEqual(fluid.transform({a: 0, b: 1}, isOdd), {a: false, b: true}, "Transform hash");
-});
-
-QUnit.test("null iteration", assert => {
-    assert.expect(2);
-
-    fluid.each(null, function () {
-        assert.ok(false, "This should not run");
-    });
-    var transformed = fluid.transform(null, function () {
-        assert.ok(false, "This should not run");
-    });
-    assert.equal(transformed, null, "Output of null transform should be null");
-
-    assert.true(true, "a null each and a null transform don't crash the framework");
-});
-
-QUnit.test("null iteration", assert => {
-    assert.expect(2);
-
-    fluid.each(null, function () {
-        assert.ok(false, "This should not run");
-    });
-    const transformed = fluid.transform(null, function () {
-        assert.ok(false, "This should not run");
-    });
-    assert.equal(transformed, null, "Output of null transform should be null");
-
-    assert.true(true, "a null each and a null transform don't crash the framework");
 });
 
 QUnit.test("stringTemplate: greedy", assert => {
@@ -345,32 +253,6 @@ QUnit.test("FLUID-6330 test - interception of fluid.log", assert => {
     assert.true(listeners.includes(fluid.doBrowserLog), "Browser log listener restored");
 });
 
-QUnit.test("fluid.get and fluid.set", assert => {
-    const model = { "path3": "thing" };
-    assert.equal(fluid.get(model, "path3"), "thing", "Get simple value");
-    assert.deepEqual(fluid.get(model, ""), model, "Get root value");
-    assert.undefined(fluid.get(model, "path3.nonexistent"), "Get blank value");
-    assert.undefined(fluid.get(model, "path3.nonexistent.non3"), "Get blank value");
-    assert.undefined(fluid.get(model, "path1.nonexistent"), "Get blank value");
-    assert.undefined(fluid.get(model, "path1.nonexistent.non3"), "Get blank value");
-    assert.undefined(fluid.get(model, "path1"), "Get blank value");
-
-    fluid.set(model, "path2.past", "attach");
-    assert.deepEqual(model, { path2: { past: "attach" }, path3: "thing" }, "Set blank value");
-
-    fluid.setGlobalValue("fluid.newFunc", function () {
-        return 2;
-    });
-    assert.equal(fluid.newFunc(), 2, "Call new global function");
-});
-
-QUnit.test("fluid.get for FLUID-6217 - get ending at falsy value", assert => {
-    assert.undefined(fluid.get([0, 1, 2], "0.value"), "Simple 0-based fetch");
-    assert.undefined(fluid.get([0, 1, 2], "0.any.path.at.all"), "Nested 0-based fetch");
-    assert.undefined(fluid.get([0, false, 2], "1.foo.bar.baz"), "Nested false-based fetch");
-    assert.undefined(fluid.get({ foo: false }, "foo.bar.baz"), "Fetch from hash");
-});
-
 QUnit.test("Globals", assert => {
     const space = fluid.registerNamespace("fluid.engage.mccord");
     space.func = function () {
@@ -492,7 +374,6 @@ fluid.tests.constraintTests = [{
 fluid.tests.upgradeListeners = function (listeners) {
     return Object.entries(listeners).map(([key, value]) => {
         return {
-            ...value,
             namespace: key,
             priority: fluid.parsePriority(value, 0, false, "listeners")
         };

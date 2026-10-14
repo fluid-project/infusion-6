@@ -161,7 +161,7 @@ export type Site = {
      */
     segs?: string[];
 };
-export type ComponentComputer = any;
+export type ComponentComputer = signal<fluid.component>;
 /**
  * Represents the potential state of a component, defining its layer-based configuration and merge records.
  */
@@ -374,7 +374,7 @@ declare namespace fluid {
      *   - The component or scope corresponding to `context` in the target component's scope chain, if found.
      *   - An unavailable value if the context cannot be resolved.
      */
-    function resolveContext(context: string, shadow: Shadow, resolver?: Function): any;
+    function resolveContext(context: string, shadow: Shadow, resolver?: Function): signal<Component | any>;
     /**
      * Retrieves a signal for a value at a path within a component.
      *
@@ -391,7 +391,7 @@ declare namespace fluid {
      * @param {any} value - The value to set at the specified path.
      * @return {signal<Object>} Signal for the value at the updated path, which will now have been raised into the live layer
      */
-    function setForComponent(component: any, path: string | Array<string>, value: any): any;
+    function setForComponent(component: any, path: string | Array<string>, value: any): signal<any>;
     /**
      * Creates a writable live signal for a given reference within a component.
      * The signal dynamically tracks the value located at the specified path and allows updates to it.
@@ -449,7 +449,8 @@ declare namespace fluid {
      */
     function findReactiveRoot(shadowMap: any, segs: string[]): string[] | null;
     /**
-     * Recursively transfer a shadow map structure based on a corresponding layer map.
+     * Recursively transfer a shadow map structure based on a corresponding layer map. Currently only transfers reactiveRoot
+     * markers from layerMap into shadowMap.
      * @param {Object} shadowMap - The shadow map to be populated.
      * @param {Object} layerMap - The layer map providing the structure and reactive root indicators.
      */
@@ -457,12 +458,14 @@ declare namespace fluid {
     /**
      * Recursively traverse a data structure, resolving any `Signal` values to their underlying values.
      * @param {any|Signal<any>} root - The root data structure to process.
-     * @param {String} strategy - Strategy to be used
+     * @param {String} [strategy] - Strategy to be used, either "methodStrategy", "effectStrategy" or none. These two proxyise components, and
+     * methodStrategy delivers undefined for unavailable values, which is likely a mistake - should either throw or deliver unavailable or so
+     * - what are use cases/test cases for this?
      * @param {Object} [shadowRecIn] - Section of a shadow map we are traversing - when we run off the end of this, we must stop flattening.
      * This argument arises through recursive calls if we flatten structured arguments
      * @return {any} The processed data structure with all `Signal` values resolved and flattened into primitive values where applicable.
      */
-    function flattenSignals(root: any | Signal<any>, strategy: string, shadowRecIn?: any): any;
+    function flattenSignals(root: any | Signal<any>, strategy?: string, shadowRecIn?: any): any;
     /**
      * Resolve material intended for compute and method arguments - this only expands {} references, possibly into
      * a local context
@@ -523,6 +526,7 @@ declare namespace fluid {
      * @return {ResolvedFuncRecord} An object containing the resolved function signal and the resolved arguments array.
      */
     function resolveFuncRecord(rec: FuncRecord, shadow: Shadow, segs: string[]): ResolvedFuncRecord;
+    function makeFuncDispatcher(func: any): (...args: any[]) => any;
     /**
      * Expands a compute-style function record into a computed signal.
      * The function and its arguments are resolved from the record, and a signal is returned that tracks their computed value.
@@ -543,10 +547,10 @@ declare namespace fluid {
      * @param {FuncRecord} record - The record describing the bindable function. Must include either `func` or `funcName`, and optionally `args`.
      * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
      * @param {String[]} segs - The path where this record appears in its component
-     * @return {Signal<any>} A computed signal representing the result of invoking the resolved function with the resolved arguments.
+     * @return {fluid.cell<any>} A computed signal representing the result of invoking the resolved function with the resolved arguments.
      *     Includes a `$variety` property set to `"$bindable"`.
      */
-    function expandBindableRecord(record: FuncRecord, shadow: Shadow, segs: string[]): Signal<any>;
+    function expandBindableRecord(record: FuncRecord, shadow: Shadow, segs: string[]): fluid.cell<any>;
     /**
      * Expands an effect-style function record into a reactive effect.
      * The function and its arguments are resolved from the record, and an effect is created that runs in response to changes.
@@ -629,7 +633,7 @@ declare namespace fluid {
      * @param {String[]} segs - The path segments where the signal is sited within its component
      * @return {signal|computed|effect} The now sited signal
      */
-    function siteSignal(signal: any | any | any, shadow: Shadow, segs: string[]): any | any | any;
+    function siteSignal(signal: any | computed | effect, shadow: Shadow, segs: string[]): any | computed | effect;
     /**
      * Converts a site locator into a unique string identifier.
      * The identifier is constructed by combining the shadow's path and the composed segments of the site's path.

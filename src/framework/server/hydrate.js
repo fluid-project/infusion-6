@@ -26,7 +26,7 @@ fluid.writeDocument = function (filename, dokkument) {
 };
 
 fluid.makeDocumentWriter = function (dokkument, outFilename) {
-    return fluid.effect( () => {
+    return fluid.cell.effect( () => {
         fluid.writeDocument(outFilename, dokkument);
     }, [fluid.documentInjections.get(dokkument).injectionsComplete, fluid.scriptLoadingIdle, fluid.unavailableComponents]);
 };

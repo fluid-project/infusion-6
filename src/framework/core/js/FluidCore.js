@@ -8,8 +8,8 @@ const $fluidCoreJSScope = function (fluid) {
     // configuring stack trace behaviour
     fluid.Error = Error;
 
-    fluid.global = fluid.global || typeof window !== "undefined" ?
-        window : typeof self !== "undefined" ? self : {};
+    fluid.global = fluid.global || (typeof window !== "undefined" ?
+        window : typeof self !== "undefined" ? self : {});
 
     fluid._isLogging = false;
 
@@ -75,6 +75,22 @@ const $fluidCoreJSScope = function (fluid) {
             array.push.apply(array, topush);
         } else {
             array.push(topush);
+        }
+    };
+
+    /**
+     * Iterates over the properties of an object, invoking a provided function for each item.
+     *
+     * @param {Object} source - The object or array to iterate over. If `null` or `undefined`, the function does nothing.
+     * @param {Function} func - The function to be invoked for each item. It is called with two arguments:
+     *   - `value` (any): The value of the current property or element.
+     *   - `key` (String|Number): The key of the current property.
+     */
+    fluid.each = function (source, func) {
+        if (source) {
+            for (const key in source) {
+                func(source[key], key);
+            }
         }
     };
 
@@ -147,7 +163,7 @@ const $fluidCoreJSScope = function (fluid) {
      */
     fluid.upgradeCause = function (cause, defaultVariety) {
         const upCause = typeof(cause) === "string" ? {message: cause} :
-            cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : cause;
+            cause instanceof Error ? {message: cause.message, error: cause, variety: "error"} : {...cause};
         if (!upCause.variety) {
             upCause.variety = defaultVariety;
         }
@@ -176,12 +192,15 @@ const $fluidCoreJSScope = function (fluid) {
      * @return {Unavailable} The annotated instance.
      */
     fluid.applyUnavailable = function (instance, cause = {}, variety = "error") {
+        if (!(variety in fluid.unavailablePriority)) {
+            throw ({message: "Unrecognised unavailable variety " + variety});
+        }
         if (Array.isArray(cause)) {
             instance.causes = cause.map(oneCause => fluid.upgradeCause(oneCause, variety));
             instance.variety = instance.causes.reduce((acc, {variety}) => {
                 const priority = fluid.unavailablePriority[variety];
                 return priority > acc.priority ? {variety, priority} : acc;
-            }, {priority: -1}).variety;
+            }, {variety, priority: -1}).variety;
             instance.message = fluid.formatCauses(instance.causes);
         } else {
             const upCause = fluid.upgradeCause(cause, variety);
@@ -270,13 +289,19 @@ const $fluidCoreJSScope = function (fluid) {
         return !existing ? fresh : fluid.unavailable(fluid.unavailableToCauses(existing).concat(fluid.unavailableToCauses(fresh)));
     };
 
-    fluid.missingPolicies = {
-        unavailable: (root, path) => fluid.unavailable({
-            message: `Path ${path} was not found`,
-            // TODO: Upgrade incoming data so that it always comes with a full site cursor
-            site: root
-        }),
-        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    /**
+     * Merges multiple results into a single unavailable object.
+     * @param {Array} values - An array of values to check for unavailability
+     * @return {Unavailable|null} unavailable - The merged unavailable result, or null if no supplied values were unavailable
+     */
+    fluid.mergeUnavailables = function (values) {
+        let unavailable = null;
+        values.forEach(result => {
+            if (fluid.isUnavailable(result)) {
+                unavailable = fluid.mergeUnavailable(unavailable, result);
+            }
+        });
+        return unavailable;
     };
 
     /** Support for traversing substrate via string paths **/
@@ -332,6 +357,18 @@ const $fluidCoreJSScope = function (fluid) {
     fluid.pathToSegs = function (path) {
         return fluid.isPrimitive(path) ? fluid.parsePath(path) : path;
     };
+
+    fluid.missingPolicies = {
+        unavailable: (root, path) => {
+            return fluid.unavailable({
+                message: `Path ${path} was not found`,
+                // TODO: Upgrade incoming data so that it always comes with a full site cursor
+                site: root
+            });
+        },
+        error: (root, path) => fluid.fail("Path ", path, " was not found in model ", root)
+    };
+
 
     /**
      * Retrieve the value at a specified path within a nested object structure.

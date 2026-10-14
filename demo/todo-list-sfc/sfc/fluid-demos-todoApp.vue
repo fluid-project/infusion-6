@@ -23,6 +23,8 @@ fluid.demos.fetchTodos = () => [
     }
 ];
 
+fluid.setLogging(true);
+
 </script>
 
 <template>

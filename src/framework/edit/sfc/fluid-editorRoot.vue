@@ -62,11 +62,14 @@ fluid.def("fluid.editorRoot", {
     editorHolderForLayer: {
         $method: {
             func: async (editorsPane, layerName) => {
-                const children = fluid.liveQueryILSelector(editorsPane, "fluid.editor");
+                const childSearch = fluid.liveQueryILSelector(editorsPane, "fluid.editor");
 
-                await(fluid.signalToPromise(children));
+                // Horrid hacks to wait long enough - need FDS
+                let children = await(fluid.cell.signalToPromise(childSearch));
+                fluid.cell.stabilize();
+                children = await(fluid.cell.signalToPromise(childSearch));
 
-                return children.value.find(child => child.layerRec.layerName === layerName);
+                return children.find(child => child.layerRec.layerName === layerName);
             },
             args: ["{editorsPane}", "{0}:layerName"]
         }
@@ -87,7 +90,7 @@ fluid.def("fluid.editorRoot", {
             func: async (self, layerName) => {
                 self.selectedLayerTab = layerName;
                 const holder = await(self.editorHolderForLayer(layerName));
-                const instance = await(fluid.signalToPromise(holder.editor.instance));
+                const instance = await(fluid.contextRefToPromise("{self}.editor.instance", holder));
                 instance.focus();
             },
             args: ["{self}", "{0}:layerName"]
@@ -153,7 +156,10 @@ fluid.def("fluid.editorRoot", {
                 func: "fluid.editorRoot.editUpdateListener",
                 args: ["{self}", "{global}.MutationObserver"]
             },
-            unbind: observer => observer.disconnect()
+            unbind: (observer) => {
+                debugger;
+                observer.disconnect();
+            }
         }
     },
     $variety: "frameworkAux"
@@ -173,7 +179,7 @@ fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
                 console.log("Found mutation of target ", target, " within root ", editRoot, " within container ", container);
                 const path = fluid.pathToNode(editRoot, container);
                 console.log("Path from editRoot to parent ", path.join(""));
-                const vTree = shadow.that.vTree.peek();
+                const vTree = shadow.that.vTree._value;
                 const vNode = fluid.navigatePath(vTree, path);
                 console.log("Found corresponding vNode ", vNode);
                 if (fluid.textDiff(vNode, editRoot)) {
@@ -181,18 +187,19 @@ fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
                 } else {
                     const templateLayer = vNode.attrs["fl-template-layer"];
                     const sfcRec = fluid.sfcStore[templateLayer];
-                    const origText = sfcRec.textSignal.value;
+                    const origText = sfcRec.textSignal.get();
                     const from = vNode.children[0].start;
                     const to = fluid.peek(vNode.children).end;
                     const newText = origText.slice(0, from) + editRoot.innerHTML + origText.slice(to);
                     console.log(`Proposing updating text from\n${origText} to \n${newText}`);
-                    sfcRec.textSignal.value = newText;
+                    sfcRec.textSignal.set(newText);
+                    fluid.cell.deferredStabilize();
                 }
             }
         });
     });
 
-    observer.observe(document, {
+    observer.observe(document.body, {
         childList: true,
         subtree: true,
         characterData: true

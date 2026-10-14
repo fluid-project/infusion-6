@@ -134,7 +134,7 @@ const $fluidSignalsScope = function (fluid) {
      * A reactive cell
      * @typedef {Object} Cell
      *
-     * @property {function(): any} get - Retrieves the current value of the cell.
+     * @property {function(Boolean=, Boolean=): any} get - Retrieves the current value of the cell.
      * @property {function(any): void} set - Sets a new value for the cell.
      * @property {function(Function, Array<Cell>, ComputedProps=): Cell} computed - Sets up or tears down a reactive computation for the cell.
      * @property {function(Function, Array<Cell>, ComputedProps=): Cell} asyncComputed - Sets up or tears down an asynchyronous reactive computation for the cell.
@@ -153,13 +153,6 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Fit|null} _fit - The current update fit that the cell is enlisted in
      */
 
-    /**
-     * @typedef {Object} ComputedProps
-     * @property {Boolean} isAsync - Indicates if the computation is asynchronous.
-     * @property {Boolean} isFree - Indicates if this is a "free" computation that will deliver unavailable values
-     * @property {Function} [mapArg] - Optional function to map arguments supplied to computation
-     */
-
     /** An edge between two reactive cells
      * @typedef {Object} Edge
      * @property {Cell} target - The cell that we are the edge to (a computer for)
@@ -169,7 +162,7 @@ const $fluidSignalsScope = function (fluid) {
      * @property {Function} fn - The function to be called to compute the value
      * @property {Boolean} isAsync - Indicates if the edge's computation is asynchronous.
      * @property {Boolean} isFree - Indicates if the edge's computation should be invoked on unavailable values
-     * @property {Boolean} isBind - Indicates if the edge may refer to another cell which needs tracking
+     * @property {String} includeSource - If a source is required for propagation across this edge
      * @property {String} excludeSource - If an update with a particular source should not propagate across this edge
      * @property {Function|null} mapArg - Optional function to be applied to map any arguments supplied to `fn`
      * @property {Function|null} dispatcher - Optional function to take charge of dispatch to `fn`
@@ -191,6 +184,7 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell = function (initialValue, props) {
         const cell = Object.create(fluid.cellPrototype);
+        cell._isUntracked = false;
         Object.assign(cell, props);
 
         cell.cellId = fluid.cell.cellId++;
@@ -272,7 +266,7 @@ const $fluidSignalsScope = function (fluid) {
 
     /** End the current "fit" (transaction) which is updating the reactive graph by resetting all the arcs which
      * have been marked as consumed by one leg of bidirectional update arcs.
-     * @param {Fit} fit - The fit to end
+     * @param {Fit|null} fit - The fit to end
      * @param {Boolean} [coalesce] - If this fit is being coalesced into another
      */
     fluid.cell.endFit = function (fit, coalesce) {
@@ -395,12 +389,6 @@ const $fluidSignalsScope = function (fluid) {
 
     fluid.cell.equals = fluid.defaultEquality;
 
-    const dumpCell = cell => cell.name + " cellId " + cell.cellId;
-
-    const dumpCells = function (cells) {
-        return "\n" + cells?.map(dumpCell).join("\n");
-    };
-
     // Dynamic dependency tracking logic
 
     /**
@@ -511,7 +499,7 @@ const $fluidSignalsScope = function (fluid) {
      * @this {Cell}
      */
     fluid.cell.prototype.get = function (defeatTracking = false, retainFits = false) {
-        if (!defeatTracking) {
+        if (!defeatTracking && !this._isUntracked) {
             fluid.cell.trackRead(this);
         }
 
@@ -552,6 +540,13 @@ const $fluidSignalsScope = function (fluid) {
             }
         }
     };
+
+    /**
+     * @typedef {Object} ComputedProps
+     * @property {Boolean} isAsync - Indicates if the computation is asynchronous.
+     * @property {Boolean} isFree - Indicates if this is a "free" computation that will deliver unavailable values
+     * @property {Function} [mapArg] - Optional function to map arguments supplied to computation
+     */
 
     /**
      * Establish a computed relation which will lazily and reactively compute this cell's value given the values of a number
@@ -596,7 +591,7 @@ const $fluidSignalsScope = function (fluid) {
             inEdge.target = this;
             inEdge.isAsync = props?.isAsync || false;
             inEdge.isFree = props?.isFree || false;
-            inEdge.isBind = props?.isBind || false;
+            inEdge.includeSource = props?.includeSource || false;
             inEdge.excludeSource = props?.excludeSource || false;
             inEdge.mapArg = props?.mapArg || null;
             inEdge.dispatcher = props?.dispatcher || null;
@@ -797,12 +792,25 @@ const $fluidSignalsScope = function (fluid) {
         fluid.cell.commitValue(cell, newValue);
     };
 
+    fluid.cell.ambientSource = null;
+
+    fluid.cell.withAmbientSource = function (source, callback) {
+        return (e) => {
+            fluid.cell.ambientSource = source;
+            try {
+                callback(e);
+            } finally {
+                fluid.cell.ambientSource = null;
+            }
+        };
+    };
+
     /**
      * Update the value of this writeable cell.
      *
      * @param {any} value - The new cell value
      * @param {Object} options - Optional options to contextualise the update
-     * @param {String} [options.source] - Optional source to mark the reactive propagation, accessible via effect's excludeSource
+     * @param {String} [options.source] - Optional source to mark the reactive propagation, accessible via effect's includeSource/excludeSource
      * @this {Cell}
      */
     fluid.cell.prototype.set = function (value, options) {
@@ -814,7 +822,7 @@ const $fluidSignalsScope = function (fluid) {
             if (this._fit && this._fit.isActive && !this._fit.staticFit) {
                 fluid.cell.flushFit(this._fit, false, true);
             }
-            const source = options?.source;
+            const source = options?.source || fluid.cell.ambientSource;
             if (source && !this._fit.sources.includes(source)) {
                 this._fit.sources.push(source);
             }
@@ -824,31 +832,32 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     fluid.cell.bindIterable = function (cell, inEdge, iterable) {
-        // Guide at https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function*#declaring_an_async_generator_function
         const bindIterable = nextIt => {
-            fluid.cell.setPending(cell, cell._value);
             nextIt.then(res => {
-                fluid.cell.updateComplete(res.value, cell);
+                if (!res.done || res.value !== undefined) {
+                    fluid.cell.updateComplete(res.value, cell);
+                }
                 if (!res.done) {
-                    fluid.invokeLater( () => {
-                        const nextIt = iterable.next();
-                        bindIterable(nextIt);
+                    fluid.invokeLater(() => {
+                        bindIterable(iterable.next());
                     });
                 }
             }, e => {
                 fluid.cell.updateComplete(fluid.unavailable(e), cell);
             });
         };
-        const nextIt = iterable.next();
-        bindIterable(nextIt);
+        if (!fluid.isPending(cell._value)) {
+            fluid.cell.setPending(cell, cell._value);
+        }
+        bindIterable(iterable.next());
     };
 
     // Currently very plain compared to old core's processSignalArgs but may include flattening etc. again in future
     /**
      * Map an array of arguments, coalescing "unavailable" values if present.
      *
-     * @param {Array|any} args - The array of arguments or single argument to process.
-     *     Arguments may include `preactSignalsCore.Signal` instances or plain values.
+     * @param {Array} args - The array of arguments to process. These will be checked in a flat way to see if they
+     * directly hold unavailable values
      * @param {any} oldValue - Any previous value computed at the same site where arguments are being consumed
      * @return {Object} An object with the following properties:
      *     - `unavailable` (Object|null): The most "unavailable" value (if any) based on priority,
@@ -892,16 +901,24 @@ const $fluidSignalsScope = function (fluid) {
         fluid.cell.commitValue(cell, pendingValue);
     };
 
+    // Utility temporarily required because fits are not properly propagating across linked updates
+    fluid.cell.findFit = function (cell) {
+        while (cell) {
+            if (cell._fit !== null) {
+                return cell._fit;
+            }
+            cell = cell._dirtyFrom;
+        }
+    };
+
     /**
      * Updates the value of a reactive cell by re-evaluating its computation function and updating any changed dynamic dependencies.
      * @param {Cell} cell - The reactive cell to update.
      * @param {Edge} inEdge - The edge along which we should update
-     * @return {Boolean} settled - Whether the update succeeded in settling the cell (currently unused - always true)
      */
     fluid.cell.update = function (cell, inEdge) {
-        let settled = true;
         if (cell._trackingRecord || !cell._inEdges) {
-            return settled;
+            return;
         }
         let syncUpdate = !inEdge.isAsync;
         let result;
@@ -909,14 +926,6 @@ const $fluidSignalsScope = function (fluid) {
         fluid.cell.beginTracking(cell, inEdge);
 
         fluid.cell.enlistInFit(cell, inEdge.sources);
-
-        // Skip notification if the fit has an excluded source
-        if (inEdge.excludeSource) {
-            if (cell._fit.sources.includes(inEdge.excludeSource)) {
-                fluid.cell.endTracking(cell);
-                return settled;
-            }
-        }
 
         const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
 
@@ -926,12 +935,29 @@ const $fluidSignalsScope = function (fluid) {
         }
         const mapArg = inEdge.mapArg === null ? x => x.get(false, true) : inEdge.mapArg;
 
+        let skipped = false;
+
         try {
             const args = inEdge.staticSources ? inEdge.staticSources.map(mapArg) : [];
             const {unavailable} = fluid.cell.mapSignalArgs(args, cell._value);
 
-            result = inEdge.dispatcher !== null ? inEdge.dispatcher(inEdge.fn, args, unavailable, cell._value) :
-                unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
+            const fit = fluid.cell.findFit(cell);
+
+            // Skip notification if the fit has an excluded source
+            if (inEdge.excludeSource) {
+                if (fit && fit.sources.includes(inEdge.excludeSource)) {
+                    skipped = true;
+                }
+            }
+            if (inEdge.includeSource) {
+                if (!fit || !fit.sources.includes(inEdge.includeSource)) {
+                    skipped = true;
+                }
+            }
+            if (!skipped) {
+                result = inEdge.dispatcher !== null ? inEdge.dispatcher(inEdge.fn, args, unavailable, cell._value) :
+                    unavailable && !inEdge.isFree ? unavailable : inEdge.fn.apply(null, args);
+            }
         } catch (e) {
             if (fluid.isLogging()) {
                 fluid.log(`Failure during update of ${cell.name}: `, e);
@@ -939,41 +965,29 @@ const $fluidSignalsScope = function (fluid) {
             result = fluid.unavailable(e);
             syncUpdate = true;
         } finally {
-            if (!syncUpdate) {
-                if (fluid.isPromise(result)) {
-                    result.then(newValue => {
-                        fluid.cell.updateComplete(newValue, cell);
-                    }).catch(e => {
-                        fluid.cell.updateComplete(fluid.unavailable(e), cell);
-                    });
-                } else if (result[Symbol.asyncIterator]) {
-                    fluid.cell.bindIterable(cell, inEdge, result);
-                } else { // Unexpected plain return from async edge
-                    syncUpdate = true;
+            if (!skipped) {
+                if (!syncUpdate) {
+                    if (fluid.isPromise(result)) {
+                        result.then(newValue => {
+                            fluid.cell.updateComplete(newValue, cell);
+                        }).catch(e => {
+                            fluid.cell.updateComplete(fluid.unavailable(e), cell);
+                        });
+                    } else if (result[Symbol.asyncIterator]) {
+                        fluid.cell.bindIterable(cell, inEdge, result);
+                    } else { // Unexpected plain return from async edge
+                        syncUpdate = true;
+                    }
                 }
-            }
-            if (syncUpdate) {
-                // It was a plain value, update now
-                fluid.cell.updateComplete(result, cell);
-            }
-            if (inEdge.isBind && syncUpdate && result instanceof fluid.cell) {
-                fluid.cell.trackRead(result);
+                if (syncUpdate) {
+                    // It was a plain value, update now
+                    fluid.cell.updateComplete(result, cell);
+                }
             }
 
             fluid.cell.updateDynamicDependencies(cell, inEdge);
             fluid.cell.endTracking(cell);
-
-            if (inEdge.isBind && syncUpdate && result instanceof fluid.cell &&
-                result._state !== CacheClean) {
-                // A bind edge selects a referent rather than computing a value. The cleaning pass which
-                // preceded this update could not have covered a source which the update itself acquired,
-                // so it must be repeated for the referent before we can be considered settled.
-                fluid.cell.updateIfNecessary(result);
-                // Suggested by Claude to prevent "oscillation" but in fact breaks most of FluidIL.js
-                // settled = cell._state === CacheClean;
-            }
         }
-        return settled;
     };
 
     /**
@@ -988,7 +1002,7 @@ const $fluidSignalsScope = function (fluid) {
         let bestCandidate = null, bestScore = 0;
         const scoreEdge = function (edge) {
             let score = 0;
-            if (edge.isFree || edge.isBind) {
+            if (edge.isFree) {
                 score = 1;
             } else if (targetState === CacheDirty) {
                 score = 1;
@@ -1005,24 +1019,19 @@ const $fluidSignalsScope = function (fluid) {
                                 score = 0;
                             }
                         }
-                        /*
-                        if (fluid.isConfigUnavailable(source._value) || source._state !== CacheClean) {
-                            score = 0;
-                            // break;
-                        } else if (source === cell._dirtyFrom) {
-                            score = 2;
-                        }*/
                     }
                 }
             }
             return score;
         };
-        for (let i = 0; i < cell._inEdges.length; ++i) {
-            const edge = cell._inEdges[i];
-            const score = scoreEdge(edge);
-            if (score > bestScore) {
-                bestScore = score;
-                bestCandidate = edge;
+        if (cell._inEdges) {
+            for (let i = 0; i < cell._inEdges.length; ++i) {
+                const edge = cell._inEdges[i];
+                const score = scoreEdge(edge);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCandidate = edge;
+                }
             }
         }
         return bestCandidate;
@@ -1068,14 +1077,12 @@ const $fluidSignalsScope = function (fluid) {
             dirtyEdge = fluid.cell.findDirtyEdge(cell, cell._state);
         }
 
-        let settled = true;
         if (dirtyEdge) {
-            settled = fluid.cell.update(cell, dirtyEdge);
+            fluid.cell.update(cell, dirtyEdge);
         }
-        if (settled) {
-            cell._state = CacheClean;
-        }
+        cell._state = CacheClean;
     };
+
 
     /**
      * Removes this cell as an observer from its parent source cells starting at the given index of an edge's sources
@@ -1115,6 +1122,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Function} [config.unbind.fn] - Cleanup function to run on disposal.
      * @param {Boolean}  [config.isFree] - If true, the effect will run even if some sources are unavailable.
      * @param {String}   [config.name] - Optional name for the effect.
+     * @param {String}   [config.includeSource] - Optional source name (as supplied as last argument to cell.set) that must be present for notification
      * @param {String}   [config.excludeSource] - Optional source name (as supplied as last argument to cell.set) that will have its notification skipped
      * @param {Function} [config.mapArg] - Optional function to map arguments supplied to `fn`
      * @return {Cell} The created disposable effect cell.
@@ -1172,6 +1180,7 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Function} [props.onDispose] - Optional cleanup function to run when the effect is disposed.
      * @param {Boolean}  [props.isFree] - If true, the effect will run even if some sources are unavailable.
      * @param {String}   [props.name] - Optional name for the effect
+     * @param {String}   [props.includeSource] - Optional source name (as supplied as last argument to cell.set) that must be present for notification
      * @param {String}   [props.excludeSource] - Optional source name (as supplied as last argument to cell.set) that will have its notification skipped
      * @param {Function} [props.mapArg] - Optional function to map arguments supplied to `fn`
      * @return {Cell} The created effect cell.
@@ -1183,6 +1192,7 @@ const $fluidSignalsScope = function (fluid) {
             _fit: props?._fit || null,
             isFree: props?.isFree,
             name: props?.name,
+            includeSource: props?.includeSource,
             excludeSource: props?.excludeSource,
             mapArg: props?.mapArg
         });
@@ -1190,7 +1200,6 @@ const $fluidSignalsScope = function (fluid) {
 
     // Stabilize function to process effect queue
     fluid.cell.stabilize = function () {
-
         const EffectQueue = fluid.cell.EffectQueue;
         for (let i = 0; i < EffectQueue.length; i++) {
             function pullOneEffect(effect) {
@@ -1284,7 +1293,7 @@ const $fluidSignalsScope = function (fluid) {
      * @return {Promise<any>} A Promise that resolves with the signal's first available value.
      */
     fluid.cell.signalToPromise = function (valSignal) {
-        return new Promise((resolve, reject) => {
+        const togo = new Promise((resolve, reject) => {
             const fetchEffect = fluid.cell.effect(function (value) {
                 if (fluid.isUnavailable(value)) {
                     if (value.variety === "error") {
@@ -1300,8 +1309,14 @@ const $fluidSignalsScope = function (fluid) {
                 isFree: true,
                 name: "Resolution effect for cell " + valSignal.name + "/" + fluid.cell.fitId
             });
+
+            // Ensure that any pending effects start to be honoured which had been kicked off on this stack frame,
+            // since we are almost certainly in an "await" block
+            // fluid.cell.stabilize();
+
             fetchEffect.get();
         });
+        return togo;
     };
 };
 
