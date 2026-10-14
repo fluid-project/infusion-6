@@ -8,7 +8,7 @@ fluid.def("fluid.demos.todoItem.withAssignee", {
             selection: {
                 $compute: {
                     func: value => value || "<none>",
-                    args: "{todo}.assignee"
+                    args: "{todoItem}.todo.assignee"
                 }
             },
             optionValues: {
@@ -22,7 +22,7 @@ fluid.def("fluid.demos.todoItem.withAssignee", {
                 // Then we further need the "includeSource" to get around the fact that reference sliding amongst members of the list will activate this
                 $effect: {
                     func: (selection, itemIndex, assignItem) => assignItem(itemIndex, selection === "<none>" ? null : selection),
-                    args: ["{self}.selection", "{itemIndex}", "{todoList}.assignItem"],
+                    args: ["{self}.selection", "{todoItem}.itemIndex", "{todoList}.assignItem"],
                     includeSource: "dom"
                 }
             }

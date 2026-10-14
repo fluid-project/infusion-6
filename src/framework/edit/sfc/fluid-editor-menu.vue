@@ -48,20 +48,20 @@ fluid.def("fluid.editor.menu", {
             $layers: "fluid.templateViewComponent",
             $for: {
                 source: "{menu}.menuItemsData",
-                value: "menuRecords",
-                key: "itemName"
+                valueAs: "menuRecords",
+                keyAs: "itemName"
             },
             isOpen: {
                 $compute: {
                     func: (itemName, menuOpen) => itemName === menuOpen,
-                    args: ["{itemName}", "{menu}.menuOpen"]
+                    args: ["{self}.itemName", "{menu}.menuOpen"]
                 }
             },
             template: `
             <div class="fl-menu-item-holder">
                 <div class="fl-menu-item fl-clickable fl-no-dismiss"
-                    @onclick="{menu}.menuOpen = {itemName}"
-                    @onmouseover="fluid.editor.menu.mouseOver({menu}, {itemName})">@{{itemName}}
+                    @onclick="{menu}.menuOpen = {self}.itemName"
+                    @onmouseover="fluid.editor.menu.mouseOver({menu}, {self}.itemName)">@{itemName}
                 </div>
                 <div class="fl-menu-body fl-no-dismiss" @class="active:@{{self}.isOpen}">
                     <div class="fl-menu-body-item" @id="menuBodyItems"></div>
@@ -69,13 +69,12 @@ fluid.def("fluid.editor.menu", {
             </div>`,
             menuBodyItems: {
                 $component: {
-                    $layers: ["fluid.templateViewComponent", "{menuRecord}.layers"],
+                    $layers: ["fluid.templateViewComponent", "{self}.menuRecord.layers"],
                     $for: {
-                        source: "{menuRecords}",
-                        value: "menuRecord"
-
+                        source: "{self}.menuRecords",
+                        valueAs: "menuRecord"
                     },
-                    template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({menuRecord})">@{{menuRecord}.text}</div>`
+                    template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({self}.menuRecord)">@{menuRecord.text}</div>`
                 }
             }
         }

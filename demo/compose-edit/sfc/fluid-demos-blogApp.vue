@@ -3,10 +3,9 @@ fluid.def("fluid.demos.blogApp", {
     post: {
         $component: {
             $layers: "fluid.demos.fullPost",
-            postLayer: "{postLayer}",
             $for: {
                 source: "{blogApp}.postData",
-                value: "postLayer"
+                valueAs: "postLayer"
             }
         }
     },

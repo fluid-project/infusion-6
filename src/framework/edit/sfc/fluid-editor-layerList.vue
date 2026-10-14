@@ -10,12 +10,12 @@ fluid.def("fluid.editor.layerList", {
     layers: {
         $component: {
             $layers: "fluid.templateViewComponent",
-            layerName: "{layerRec}.layerName",
+            layerName: "{self}.layerRec.layerName",
             template: `<div class="fl-layerlist-layer fl-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)"
-                style="background-color: @{{layerRec}.colour}" title="@{layerName}">@{layerName}</div>`,
+                style="background-color: @{layerRec.colour}" title="@{layerName}">@{layerName}</div>`,
             $for: {
                 source: "{layerList}.layerList",
-                value: "layerRec"
+                valueAs: "layerRec"
             }
         }
     },

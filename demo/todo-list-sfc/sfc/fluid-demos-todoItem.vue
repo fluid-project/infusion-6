@@ -7,10 +7,10 @@ fluid.def("fluid.demos.todoItem", {
     <div>
         <span class="todo tag is-large"
               @class="completed:@{completed}, is-info:!@{completed}"
-              @onclick="{todoList}.toggleItem({itemIndex})">
+              @onclick="{todoList}.toggleItem({self}.itemIndex)">
             <span>@{text}</span>
             <button class="delete is-small"
-                @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
+                @onclick.stop="{todoList}.deleteItem({self}.itemIndex)"></button>
         </span>
     </div>
 </template>

@@ -22,3 +22,8 @@
 
 ## Testing instructions
  - Run tests/framework-tests/core/html/*.html in the browser
+ - Run npm test in node to run (currently) all non-view tests
+ - Run, e.g. node tests/test-core/qunit/js/fqunit-cli.js tests/framework-tests/core/js/FluidILTests.js to run a single test file
+
+## Commit messages
+ - Mention issue closed in form fluid-project/infusion-6#3
