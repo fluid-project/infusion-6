@@ -5,6 +5,22 @@ import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T} from "tldraw";
 const h = React.createElement;
 
 /**
+ * Load the tldraw licence key from the gitignored credentials file, if present - see tldraw-credentials.example.js
+ * @return {Promise<String|undefined>} A promise for the licence key, or `undefined` if none is configured
+ */
+const loadLicenseKey = async function () {
+    let licenseKey;
+    try {
+        licenseKey = (await import("../../tldraw/js/tldraw-credentials.js")).tldrawLicenseKey || undefined;
+    } catch (e) {
+        console.warn("No tldraw credentials file found - running without a licence key");
+    }
+    return licenseKey;
+};
+
+const licenseKey = await loadLicenseKey();
+
+/**
  * A tldraw shape which hosts an Infusion component. The shape renders a container bearing a `fluid-layers`
  * attribute, which Infusion's self-boot effect (see fluid.makeSelfBootEffect) detects via its live query and
  * instantiates a component into.
@@ -77,5 +93,5 @@ const onMount = function (editor) {
 };
 
 createRoot(document.getElementById("tldraw-root")).render(
-    h(Tldraw, {shapeUtils, onMount})
+    h(Tldraw, {shapeUtils, onMount, licenseKey})
 );

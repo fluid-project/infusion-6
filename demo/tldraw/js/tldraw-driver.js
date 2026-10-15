@@ -5,6 +5,71 @@ import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor} fr
 const h = React.createElement;
 
 /**
+ * Load the tldraw licence key from the gitignored credentials file, if present - see tldraw-credentials.example.js
+ * @return {Promise<String|undefined>} A promise for the licence key, or `undefined` if none is configured
+ */
+const loadLicenseKey = async function () {
+    let licenseKey;
+    try {
+        licenseKey = (await import("./tldraw-credentials.js")).tldrawLicenseKey || undefined;
+    } catch (e) {
+        console.warn("No tldraw credentials file found - running without a licence key");
+    }
+    return licenseKey;
+};
+
+const licenseKey = await loadLicenseKey();
+
+/**
+ * A root-scoped component holding the tldraw editor, through which any Infusion component may reach it as
+ * `{tldrawHost}.editor` - the Infusion counterpart of React's `useEditor()`.
+ */
+fluid.def("fluid.demos.tldrawHost", {
+    $layers: ["fluid.resolveRoot", "fluid.component"],
+    editor: null,
+    // DRAFT, untested: bridges the tldraw store into Infusion's reactive world, as `{tldrawHost}.shapes`. $bindable
+    // (documented as experimental) is the only directive pairing an acquisition with a release tied to the component's
+    // lifetime - $effect offers no cleanup. Whether consumers see through the bound cell to its value is unverified.
+    shapes: {
+        $bindable: {
+            bind: {
+                func: "fluid.demos.tldrawHost.bindShapes",
+                args: ["{self}.editor"]
+            },
+            unbind: {
+                func: "fluid.demos.tldrawHost.unbindShapes",
+                args: ["{boundValue}"]
+            }
+        }
+    }
+});
+
+/**
+ * Subscribe to the tldraw store, producing a cell holding all shapes on the current page which is updated whenever
+ * the document changes
+ * @param {Editor} editor - The tldraw editor
+ * @return {fluid.cell} A cell holding the current page's shapes, with an `unsubscribe` member
+ */
+fluid.demos.tldrawHost.bindShapes = function (editor) {
+    const shapesCell = fluid.cell(editor.getCurrentPageShapes(), {name: "tldraw current page shapes"});
+    shapesCell.unsubscribe = editor.store.listen(() => {
+        // Coarse-grained: every document change, e.g. every frame of a drag, replaces the whole array
+        shapesCell.set(editor.getCurrentPageShapes());
+        // GAP: changes arriving from outside Infusion are not rendered until something stabilizes
+        fluid.cell.deferredStabilize();
+    }, {scope: "document"});
+    return shapesCell;
+};
+
+/**
+ * Release the subscription made by bindShapes
+ * @param {fluid.cell} shapesCell - The cell returned from bindShapes
+ */
+fluid.demos.tldrawHost.unbindShapes = function (shapesCell) {
+    shapesCell.unsubscribe();
+};
+
+/**
  * Returns a promise which resolves once the named layer has been registered. Since SFCs are loaded asynchronously,
  * a layer's creator function will not exist until its SFC has been fetched and its script evaluated.
  * @param {String} layerName - The name of the layer to wait for
@@ -31,9 +96,10 @@ const awaitLayer = function (layerName) {
  * once React has mounted the container, and destroyed when React unmounts it.
  * @param {Object} props - The React props
  * @param {String} props.layerName - The name of the Infusion layer to be instantiated
+ * @param {String} props.shapeId - The id of the tldraw shape hosting the component
  * @return {ReactElement} The rendered container
  */
-const InfusionHost = function ({layerName}) {
+const InfusionHost = function ({layerName, shapeId}) {
     const containerRef = React.useRef(null);
     React.useEffect(() => {
         let that = null;
@@ -41,7 +107,7 @@ const InfusionHost = function ({layerName}) {
         awaitLayer(layerName).then(() => {
             if (!unmounted) {
                 const creator = fluid.getGlobalValue(layerName);
-                that = creator({container: containerRef.current});
+                that = creator({container: containerRef.current, shapeId});
                 // Flush the component's rendering effects
                 fluid.cell.stabilize();
                 console.log(`Constructed Infusion component ${layerName} with id ${that.$id}`);
@@ -54,7 +120,7 @@ const InfusionHost = function ({layerName}) {
                 that.destroy();
             }
         };
-    }, [layerName]);
+    }, [layerName, shapeId]);
     return h("div", {
         ref: containerRef,
         onPointerDown: e => {
@@ -107,7 +173,8 @@ class InfusionShapeUtil extends BaseBoxShapeUtil {
                 overflow: "hidden"
             }
         }, h(InfusionHost, {
-            layerName: shape.props.layerName
+            layerName: shape.props.layerName,
+            shapeId: shape.id
         }));
     }
 
@@ -149,13 +216,19 @@ const NewShapePanel = function () {
     const create = () => {
         const center = editor.getViewportPageBounds().center;
         const id = createShapeId();
+        // A layer may advertise the size it would like to be hosted at
+        const preferredSize = fluid.def(choice)?.preferredSize;
+        const w = preferredSize?.w || defaultShapeWidth;
+        const hh = preferredSize?.h || defaultShapeHeight;
         editor.createShape({
             id,
             type: "infusion",
-            x: center.x - defaultShapeWidth / 2,
-            y: center.y - defaultShapeHeight / 2,
+            x: center.x - w / 2,
+            y: center.y - hh / 2,
             props: {
-                layerName: choice
+                layerName: choice,
+                w,
+                h: hh
             }
         });
         editor.select(id);
@@ -180,11 +253,15 @@ const components = {
 };
 
 /**
- * Populate an empty canvas with a single Infusion widget, and expose the editor for debugging
+ * Construct the tldrawHost component exposing the editor to Infusion, populate an empty canvas with a single Infusion
+ * widget, and expose the editor for debugging
  * @param {Editor} editor - The tldraw editor which has just mounted
+ * @return {Function} A function which tldraw will call on unmount, destroying the tldrawHost component
  */
 const onMount = function (editor) {
     window.tldrawEditor = editor;
+    const tldrawHost = fluid.demos.tldrawHost({editor});
+    fluid.cell.stabilize();
     if (editor.getCurrentPageShapes().length === 0) {
         editor.createShape({
             type: "infusion",
@@ -192,8 +269,9 @@ const onMount = function (editor) {
             y: 200
         });
     }
+    return () => tldrawHost.destroy();
 };
 
 createRoot(document.getElementById("tldraw-root")).render(
-    h(Tldraw, {shapeUtils, components, onMount})
+    h(Tldraw, {shapeUtils, components, onMount, licenseKey})
 );

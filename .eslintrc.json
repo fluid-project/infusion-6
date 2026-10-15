@@ -26,7 +26,8 @@
     "overrides": [{
         "files": [
             "tests/manual-tests/framework/js/es6*.js",
-            "demo/tldraw*/js/*.js"
+            "demo/tldraw*/js/tldraw-driver.js",
+            "demo/tldraw/js/tldraw-credentials*.js"
             ],
         "parserOptions": {
             "sourceType": "module"
