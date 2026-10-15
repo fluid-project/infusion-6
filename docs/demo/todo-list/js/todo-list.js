@@ -19,8 +19,8 @@ fluid.def("fluid.demos.todoItem", {
     $layers: "fluid.templateViewComponent",
     template:
         `<div>
-            <span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
-            @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
+            <span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({self}.itemIndex)">
+            @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({self}.itemIndex)"></button>
             </span>
          </div>`
 });
@@ -57,11 +57,11 @@ fluid.def("fluid.demos.todoList", {
             $layers: "fluid.demos.todoItem",
             $for: {
                 source: "{todoList}.todos",
-                value: "todo",
-                key: "itemIndex"
+                valueAs: "todo",
+                keyAs: "itemIndex"
             },
-            text: "{todo}.text",
-            completed: "{todo}.completed"
+            text: "{self}.todo.text",
+            completed: "{self}.todo.completed"
         }
     },
     toggleItem: {

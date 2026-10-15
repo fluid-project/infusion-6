@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Infusion in tldraw (React lifecycle)</title>
+
+    <fluid-module id="infusion-6" src="../../"></fluid-module>
+
+    <script src="../../src/lib/lezer/lezer-javascript-browser.js" fluid-hydrated="%infusion-6"></script>
+
+    <script src="../../src/framework/core/js/FluidCore.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidSignals.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/Fluid.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidModules.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidIL.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidView.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/FluidView-browser.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/template-parser.js" fluid-hydrated="%infusion-6"></script>
+    <script src="../../src/framework/core/js/sfc-parser.js" fluid-hydrated="%infusion-6"></script>
+
+    <fluid-module id="tldrawDemo" src="./"></fluid-module>
+
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="https://esm.sh/tldraw@5.5.2/tldraw.css">
+
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@19.3.1",
+            "react-dom/client": "https://esm.sh/react-dom@19.3.1/client?deps=react@19.3.1",
+            "tldraw": "https://esm.sh/tldraw@5.5.2?deps=react@19.3.1,react-dom@19.3.1"
+        }
+    }
+    </script>
+
+    <style>
+        :root {
+            /* tldraw's UI inherits its font, and refers to this variable in some places */
+            --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+        html, body {
+            margin: 0;
+            height: 100%;
+        }
+        body {
+            font-family: var(--font-body);
+        }
+        .new-shape-panel {
+            pointer-events: all;
+            display: flex;
+            gap: 6px;
+            margin: 8px;
+            padding: 6px;
+            background: var(--color-panel, white);
+            border-radius: 9px;
+            box-shadow: var(--shadow-2, 0 1px 4px rgba(0, 0, 0, 0.2));
+        }
+        .new-shape-panel select, .new-shape-panel button {
+            font: inherit;
+            font-size: 13px;
+            padding: 4px 8px;
+        }
+        .new-shape-panel button {
+            cursor: pointer;
+        }
+        #tldraw-root {
+            position: fixed;
+            inset: 0;
+        }
+    </style>
+</head>
+<body>
+<!-- tldraw mounts here; its Infusion shapes construct and destroy their component explicitly from React lifecycle hooks -->
+<div id="tldraw-root"></div>
+<script type="module" src="js/tldraw-driver.js"></script>
+</body>
+</html>

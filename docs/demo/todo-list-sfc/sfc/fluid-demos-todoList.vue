@@ -9,11 +9,11 @@ fluid.def("fluid.demos.todoList", {
             $layers: "fluid.demos.todoItem",
             $for: {
                 source: "{todoList}.todos",
-                value: "todo",
-                key: "itemIndex"
+                valueAs: "todo",
+                keyAs: "itemIndex"
             },
-            text: "{todo}.text",
-            completed: "{todo}.completed"
+            text: "{self}.todo.text",
+            completed: "{self}.todo.completed"
         }
     },
     toggleItem: {

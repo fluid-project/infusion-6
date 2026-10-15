@@ -5,7 +5,6 @@ const $fluidILScope = function (fluid) {
     const $m = fluid.metadataSymbol;
     const $t = fluid.proxySymbol;
     const $u = fluid.unavailableSymbol;
-    const $k = fluid.keySymbol;
 
     // A function to tag the types of all Fluid components
     fluid.componentConstructor = function () {};

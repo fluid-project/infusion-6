@@ -758,9 +758,9 @@ fluid.def("fluid.tests.editorHolder", {
             $layers: "fluid.tests.editor",
             $for: {
                 source: "{editorHolder}.names",
-                value: "name"
+                valueAs: "name"
             },
-            editorName: "{name}"
+            editorName: "{self}.name"
         }
     }
 });

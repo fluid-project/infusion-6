@@ -25,7 +25,8 @@
     },
     "overrides": [{
         "files": [
-            "tests/manual-tests/framework/js/es6*.js"
+            "tests/manual-tests/framework/js/es6*.js",
+            "demo/tldraw*/js/*.js"
             ],
         "parserOptions": {
             "sourceType": "module"

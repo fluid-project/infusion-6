@@ -5,10 +5,10 @@ fluid.def("fluid.editor.editorsPane", {
             $layers: "fluid.templateViewComponent",
             $for: {
                 source: "{fluid.editorRoot}.openLayerTabs",
-                value: "layerRec"
+                valueAs: "layerRec"
             },
-            layerName: "{layerRec}.layerName",
-            colour: "{layerRec}.colour",
+            layerName: "{self}.layerRec.layerName",
+            colour: "{self}.layerRec.colour",
             isActive: {
                 $compute: {
                     func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
@@ -30,9 +30,8 @@ fluid.def("fluid.editor.editorsPane", {
             $layers: ["fluid.editor", "{self}.layerRec.editorModeLayer"],
             $for: {
                 source: "{fluid.editorRoot}.openLayerTabs",
-                value: "layerRec"
-            },
-            layerRec: "{layerRec}"
+                valueAs: "layerRec"
+            }
         }
     },
     $variety: "frameworkAux"

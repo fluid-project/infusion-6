@@ -264,8 +264,8 @@ fluid.tests.todos = [
 fluid.def("fluid.tests.todoItem", {
     $layers: "fluid.templateViewComponent",
     template:
-        `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({itemIndex})">
-            @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({itemIndex})"></button>
+        `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({self}.itemIndex)">
+            @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({self}.itemIndex)"></button>
         </span>`
 });
 
@@ -299,11 +299,11 @@ fluid.def("fluid.tests.todoList", {
             $layers: "fluid.tests.todoItem",
             $for: {
                 source: "{todoList}.todos",
-                value: "todo",
-                key: "itemIndex"
+                valueAs: "todo",
+                keyAs: "itemIndex"
             },
-            text: "{todo}.text",
-            completed: "{todo}.completed"
+            text: "{self}.todo.text",
+            completed: "{self}.todo.completed"
         }
     },
     toggleItem: {

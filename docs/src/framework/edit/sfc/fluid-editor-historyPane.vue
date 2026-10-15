@@ -26,15 +26,15 @@ fluid.def("fluid.editor.historyList", {
     history: {
         $component: {
             $layers: "fluid.templateViewComponent",
-            layerName: "{historyRec}.layerName",
+            layerName: "{self}.historyRec.layerName",
             template: `
-<div class="fl-history-rec" @class="current:@{{historyRec}.current}" style="background-color: @{{historyRec}.colour}" title="@{layerName}">
+<div class="fl-history-rec" @class="current:@{historyRec.current}" style="background-color: @{historyRec.colour}" title="@{layerName}">
     <div class="fl-history-layer">@{layerName}</div>
-    <div class="fl-history-type">@{{historyRec}.type}</div>
+    <div class="fl-history-type">@{historyRec.type}</div>
 </div>`,
             $for: {
                 source: "{historyList}.records",
-                value: "historyRec"
+                valueAs: "historyRec"
             }
         }
     },

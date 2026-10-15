@@ -5,7 +5,6 @@ const $fluidILScope = function (fluid) {
     const $m = fluid.metadataSymbol;
     const $t = fluid.proxySymbol;
     const $u = fluid.unavailableSymbol;
-    const $k = fluid.keySymbol;
 
     // A function to tag the types of all Fluid components
     fluid.componentConstructor = function () {};
@@ -264,7 +263,7 @@ const $fluidILScope = function (fluid) {
      * @typedef {Object} ScopeRecord
      * A record mapping string keys to scope entries, each holding a Shadow value and its associated priority.
      * @property {Shadow} value - The component shadow associated with this key.
-     * @property {Integer} priority - The priority bitmask indicating how the key was applied (e.g., contextName, memberName, variableName).
+     * @property {Integer} priority - The priority bitmask indicating how the key was applied (e.g., contextName, memberName).
      */
 
     /**
@@ -315,12 +314,10 @@ const $fluidILScope = function (fluid) {
 
     fluid.cacheLayerScopes = function (parentShadow, shadow) {
         const rootComponent = shadow.instantiator.rootComponent;
-        shadow.childrenScope = Object.create(parentShadow ? parentShadow.variableScope : null);
+        shadow.childrenScope = Object.create(parentShadow ? parentShadow.ownScope : null);
         shadow.childrenScope[$m] = "childrenScope-" + shadow.path;
         shadow.ownScope = Object.create(shadow.childrenScope);
         shadow.ownScope[$m] = "ownScope-" + shadow.path;
-        shadow.variableScope = Object.create(shadow.ownScope);
-        shadow.variableScope[$m] = "variableScope-" + shadow.path;
         shadow.ownScopeTick = fluid.cell(0, {name: "ownScopeTick for component at " + shadow.path});
         shadow.scopeTick = parentShadow ? fluid.cell(0, {name: "scopeTick for component at " + shadow.path}).
             computed( (ownScopeTick, parentScopeTick) => ownScopeTick + parentScopeTick, [shadow.ownScopeTick, parentShadow.ownScopeTick]) : shadow.ownScopeTick;
@@ -382,6 +379,7 @@ const $fluidILScope = function (fluid) {
      * @property {Object} frameworkEffects - A possibly deep structure of effects allocated by the framework which
      * which need to be disposed when the component is destroyed. Any user effects are disposed as layers come and go.
      *
+     * @property {Object} variablesLayer - Layer holding any iteration variables applied through $for, merged just below the liveLayer
      * @property {Object} liveLayer - The live layer associated with runtime modifications to the object
      * @property {Cell<String[]>} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
      * @property {Cell<Object<String, Unavailable>>} unavailableLayerMap - Map of layers which are currently unavailable
@@ -706,11 +704,42 @@ const $fluidILScope = function (fluid) {
     });
 
     /**
+     * Determines whether a context name is a global address of a component, of the form "/path.to.component"
+     * @param {String} context - The context name to be tested
+     * @return {Boolean} `true` if the context name is a global address
+     */
+    fluid.isGlobalAddress = function (context) {
+        return context.length > 1 && context.charAt(0) === "/";
+    };
+
+    /**
+     * Looks up the shadow of the component at a global address of the form "/path.to.component"
+     * @param {String} context - The global address of the component
+     * @param {Shadow} shadow - Any shadow belonging to the instantiator holding the component
+     * @return {Shadow|undefined} The shadow of the addressed component, or `undefined` if there is none
+     */
+    fluid.resolveGlobalAddress = function (context, shadow) {
+        return shadow.instantiator.pathToComponent[context.substring(1)];
+    };
+
+    /**
+     * Renders a site into a global reference of the form "{/path.to.component}.path.in.component" which may be
+     * resolved by `fluid.fetchContextReference` to a `$sitedRef` at that site
+     * @param {Site} site - The site to be rendered
+     * @return {String} The global reference to the site
+     */
+    fluid.renderGlobalReference = function (site) {
+        const path = site.segs.length > 0 ? "." + fluid.composeSegments(site.segs) : "";
+        return `{/${site.shadow.path}}${path}`;
+    };
+
+    /**
      * Resolves a given context string to its corresponding component or scope within the component tree.
      *
      * @param {String} context - The context name to resolve. Special values:
      *   - `"self"` resolves to the current component
      *   - `"/"` resolves to the root component.
+     *   - `"/path.to.component"` resolves to the component at that global path
      *   - Other values resolve to named scopes in the target component's scope chain.
      * @param {Shadow} shadow - The component site from which resolution starts.
      * @return {any} Signal or plain value for the resolved component or scope. Returns:
@@ -730,14 +759,15 @@ const $fluidILScope = function (fluid) {
             return fluid.global;
         } else if (context === "$oldValue") {
             return fluid.OldValue;
+        } else if (fluid.isGlobalAddress(context)) {
+            const target = fluid.resolveGlobalAddress(context, shadow);
+            return target ? target.computer : fluid.contextUnavailable(context, shadow);
         } else {
             return fluid.cell(undefined, {name: `resolveContext for ${context} at ${shadow.path}`}).computed(() => {
                 shadow.scopeTick.get(); // Read the scope tick to cause a dependency
-                const resolvedRec = shadow.variableScope[context];
+                const resolvedRec = shadow.ownScope[context];
                 if (resolvedRec) {
-                    const resolved = resolvedRec.value;
-                    return resolved instanceof fluid.shadow ?
-                        resolved.computer.get() || fluid.contextUnavailable(context, shadow) : resolved;
+                    return resolvedRec.value.computer.get() || fluid.contextUnavailable(context, shadow);
                 } else {
                     return fluid.contextUnavailable(context, shadow);
                 }
@@ -948,7 +978,13 @@ const $fluidILScope = function (fluid) {
 
         const contextTarget = localContext === fluid.NoValue ? fluid.resolveContext(parsed.context, shadow) : localContext;
 
-        if (parsed.path === "" && !parsed.selector) {
+        const globalShadow = localContext === fluid.NoValue && fluid.isGlobalAddress(parsed.context) && !parsed.selector ?
+            fluid.resolveGlobalAddress(parsed.context, shadow) : undefined;
+
+        if (globalShadow) {
+            // A global address to a site, e.g. as written into a variablesLayer - dispense the $sitedRef directly
+            return fluid.getForComponent(globalShadow, parsed.path);
+        } else if (parsed.path === "" && !parsed.selector) {
             // Special wrapper to signal to flattenSignals that it should not try to recurse through this. Eliminate this
             // once we reform flattenSignals
             const bareValue = fluid.cell(contextTarget, {name: `bareValue cell from fetchContextReference`, _isUntracked: true});
@@ -984,7 +1020,7 @@ const $fluidILScope = function (fluid) {
                         }
                     } else {
                         const bareTarget = fluid.unProxy(target);
-                        // Special case of reference through variable context - will need to be reformed with loop scoping
+                        // Special case of reference through a local context holding a proxy, e.g. a method argument
                         if (fluid.isSignal(bareTarget) && bareTarget.$variety === "$sitedRef") {
                             return fluid.getForComponent(bareTarget.site.shadow, [...bareTarget.site.segs, ...fluid.pathToSegs(parsed.path)]);
                         } else {
@@ -1426,18 +1462,18 @@ const $fluidILScope = function (fluid) {
      * @param {Shadow} shadow - The shadow record representing the parent component into which the subcomponent is being added.
      * @param {String} memberName - The member name of the subcomponent within the parent component.
      * @param {Object} expanded - The expanded component definition for the subcomponent, expected to contain a `$layers` field.
-     * @param {ScopeRecord|null} [scope] - The scope record tracking references and their resolution priorities during expansion.
+     * @param {Object|null} [variables] - Iteration variables to be placed in the subcomponent's variables layer
      * @param {String} [source] - The layer name in which this subcomponent definition appeared
      * @return {ComponentComputer} Computer for the pushed subcomponent
      */
-    fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, scope, source) {
+    fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, variables, source) {
         const subLayerRecord = {
             mergeRecordType: "subcomponent",
             mergeRecordName: `${source}`,
             layer: expanded
         };
         // TODO: detect injected reference and take direct path to instantiator
-        return fluid.pushPotentia(shadow, memberName, [subLayerRecord], expanded.$layers, scope).computer;
+        return fluid.pushPotentia(shadow, memberName, [subLayerRecord], expanded.$layers, variables).computer;
     };
 
     /**
@@ -1462,17 +1498,21 @@ const $fluidILScope = function (fluid) {
             const componentList = fluid.cell(undefined, {name: `componentList for record ${forRecord.source} at path ${segs} of ${shadow.path}`})
                 .computed(source => {
                     const allKeys = [];
+                    const sourceRef = fluid.deSignalToSite(sourceSignal);
+                    const sourceSite = fluid.isSignal(sourceRef) && sourceRef.$variety === "$sitedRef" ? sourceRef.site : null;
 
                     const pushSubcomponentPotentia = function (value, subKey) {
                         allKeys.push("" + subKey);
-                        const scope = {};
-                        if (forRecord.value !== undefined) {
-                            scope[forRecord.value] = {value: value, source: sourceSignal, sourcePath: subKey};
+                        const variables = {};
+                        if (forRecord.valueAs !== undefined) {
+                            // Where the source has a site, express the value as a global reference to it so that it stays live
+                            variables[forRecord.valueAs] = sourceSite ?
+                                fluid.renderGlobalReference({shadow: sourceSite.shadow, segs: [...sourceSite.segs, "" + subKey]}) : value;
                         }
-                        if (forRecord.key !== undefined) {
-                            scope[forRecord.key] = {value: subKey, source: sourceSignal, sourcePath: subKey};
+                        if (forRecord.keyAs !== undefined) {
+                            variables[forRecord.keyAs] = subKey;
                         }
-                        return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, scope, sourceLayer);
+                        return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, variables, sourceLayer);
                     };
 
                     let togo;
@@ -1848,6 +1888,10 @@ const $fluidILScope = function (fluid) {
 
 
             const layers = resolved.mergeRecords.concat(mergeRecords).concat({
+                mergeRecordType: "variables",
+                mergeRecordName: "variables",
+                layer: shadow.variablesLayer
+            }, {
                 mergeRecordType: "live",
                 mergeRecordName: "live",
                 layer: shadow.liveLayer
@@ -1873,10 +1917,10 @@ const $fluidILScope = function (fluid) {
      * @param {Potentia} potentia - The potentia (potential component configuration).
      * @param {Shadow} parentShadow - The shadow record associated with the parent component.
      * @param {String} memberName - The name of the member for this component in the parent.
-     * @param {Object} [variableScope] - Local scope values to be applied, perhaps through iteration
+     * @param {Object} [variables] - Iteration variables to be placed in the component's variables layer
      * @return {ComponentComputer} - The computed instance as a signal with shadow and $variety properties.
      */
-    fluid.computeInstance = function (potentia, parentShadow, memberName, variableScope) {
+    fluid.computeInstance = function (potentia, parentShadow, memberName, variables) {
         fluid.isIdle.set(fluid.busyUnavailable);
 
         /** @type {Shadow} **/
@@ -1884,6 +1928,7 @@ const $fluidILScope = function (fluid) {
 
         shadow.path = fluid.composeSegment(parentShadow.path, memberName);
         shadow.potentia = fluid.cell(potentia, {name: `potentia for path ${shadow.path}`});
+        shadow.variablesLayer = variables || Object.create(null);
         shadow.liveLayer = Object.create(null);
         shadow.shadowMap = Object.create(null);
         shadow.sitedRefMap = Object.create(null);
@@ -1944,7 +1989,6 @@ const $fluidILScope = function (fluid) {
         // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
         const instantiator = parentShadow.instantiator;
         instantiator.recordKnownComponent(parentShadow, shadow, memberName, true);
-        fluid.applyScope(shadow.variableScope, variableScope);
 
         fluid.allocateEffectScheduler(shadow);
 
@@ -2042,18 +2086,6 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
-     * Replaces all entries in the target scope with those from the new scope.
-     * This performs a shallow overwrite, first clearing the existing properties on the target.
-     *
-     * @param {Object} target - The target scope object to be updated.
-     * @param {Object} newScope - The new scope whose properties will replace those in the target.
-     */
-    fluid.applyScope = function (target, newScope) {
-        fluid.clear(target);
-        Object.assign(target, newScope);
-    };
-
-    /**
      * @typedef {Cell<fluid.component>} ComponentComputer
      * @property {fluid.component} value - The component value associated with the signal.
      * @property {Shadow} shadow - The shadow record associated with the component.
@@ -2078,10 +2110,10 @@ const $fluidILScope = function (fluid) {
      * @param {String} memberName - The name of the component within its parent.
      * @param {MergeRecord[]} mergeRecords - An array of merge records representing the component's configuration.
      * @param {String[]} [layerNames] - An array of direct layer names applied to the component
-     * @param {Object} [variableScope] - A record of scope values to be applied as a result of structural iteration
+     * @param {Object} [variables] - Iteration variables to be placed in the component's variables layer as a result of structural iteration
      * @return {Shadow} Shadow for the updated or newly designated component.
      */
-    fluid.pushPotentia = function (parentShadow, memberName, mergeRecords, layerNames = [], variableScope) {
+    fluid.pushPotentia = function (parentShadow, memberName, mergeRecords, layerNames = [], variables) {
         const existing = parentShadow.childComponents[memberName];
         if (existing) {
             const shadow = existing;
@@ -2093,11 +2125,14 @@ const $fluidILScope = function (fluid) {
             const newLayerNames = oldPotentia.layerNames || layerNames;
 
             const potentia = {mergeRecords: newMergeRecords, layerNames: newLayerNames};
+            if (variables) {
+                // Assign before setting potentia since this read is not tracked by flatMergedComputer
+                shadow.variablesLayer = variables;
+            }
             shadow.potentia.set(potentia);
-            fluid.applyScope(shadow.variableScope, variableScope);
             return shadow;
         } else {
-            return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName, variableScope).shadow;
+            return fluid.computeInstance({mergeRecords, layerNames}, parentShadow, memberName, variables).shadow;
         }
     };
     fluid.busyUnavailable = fluid.unavailable("System is busy", "pending");

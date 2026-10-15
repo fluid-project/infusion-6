@@ -1987,6 +1987,7 @@ const $fluidScope = function (fluid) {
         distribution: 300, // and above
         template: 200, // layer entries synthesized out of template
         dynamicLayers: 150, // need to take priority over anything literal
+        variables: 120, // iteration variables applied through $for
         live: 100,
         defParents: 0 // layer holding resolved $layers member through hierarchy - must beat all others since it is computed from them
     };
