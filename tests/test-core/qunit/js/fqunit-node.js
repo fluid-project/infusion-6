@@ -90,15 +90,10 @@ colors.stylize = function (str, styles) {
 };
 
 const testState = {
-    currentModule: "",
     assertions: [],
     tests: [],
     global: null
 };
-
-QUnit.testStart(function (test) {
-    testState.currentModule = test.module || "";
-});
 
 fQUnit.log = function () {
     const args = fluid.makeArray(arguments);
@@ -127,36 +122,50 @@ fQUnit.passCount = function (data) {
 };
 
 /**
- * Callback for each assertion.
- * @param {Object} data
+ * Attach the console reporter to a QUnit instance - either the one loaded into the main Fluid context, or one loaded
+ * into the dedicated context of an HTML driver file by fqunit-html.js
+ * @param {QUnit} QUnit - The QUnit instance to report on
+ * @param {Function} onDone - Called with QUnit's summary record once all of its tests have concluded
  */
-QUnit.log(function (data) {
-    data.test = QUnit.config.current.testName;
-    data.module = testState.currentModule;
-    testState.assertions.push(data);
-    if (!data.result) {
-        fQUnit.log(fQUnit.passFail(1) + ": " + fQUnit.renderTestName(data, "test") + " - Message: " + data.message);
-        if (data.expected !== undefined) {
-            fQUnit.log("Expected: ", data.expected);
-            fQUnit.log("Actual: ", data.actual);
-        }
-        if (data.source) {
-            fQUnit.log("Source: " + data.source);
-        }
-    }
-});
+fQUnit.attachReporter = function (QUnit, onDone) {
+    let currentModule = "";
 
-/**
- * Callback for one done test.
- * @param {Object} test
- */
-QUnit.testDone(function (data) {
-    // use last module name if no module name defined
-    data.module = data.module || testState.currentModule;
-    testState.tests.push(data);
-    fQUnit.log("Test concluded - " + fQUnit.renderTestName(data, "name") + ": " + fQUnit.passCount(data) + " passed - " +
-        fQUnit.passFail(data.failed));
-});
+    QUnit.testStart(function (test) {
+        currentModule = test.module || "";
+    });
+
+    // Callback for each assertion
+    QUnit.log(function (data) {
+        data.test = QUnit.config.current.testName;
+        data.module = currentModule;
+        testState.assertions.push(data);
+        if (!data.result) {
+            fQUnit.log(fQUnit.passFail(1) + ": " + fQUnit.renderTestName(data, "test") + " - Message: " + data.message);
+            if (data.expected !== undefined) {
+                fQUnit.log("Expected: ", data.expected);
+                fQUnit.log("Actual: ", data.actual);
+            }
+            if (data.source) {
+                fQUnit.log("Source: " + data.source);
+            }
+        }
+    });
+
+    // Callback for one done test
+    QUnit.testDone(function (data) {
+        // use last module name if no module name defined
+        data.module = data.module || currentModule;
+        testState.tests.push(data);
+        fQUnit.log("Test concluded - " + fQUnit.renderTestName(data, "name") + ": " + fQUnit.passCount(data) + " passed - " +
+            fQUnit.passFail(data.failed));
+    });
+
+    // Debounce this to deal with case where QUnit notifies that all tests are done, when in fact
+    // it has just synchronously executed the first of a set of synchronous tests and another is
+    // just about to arrive.
+    // This strategy taken from kof's node-qunit: https://github.com/kof/node-qunit/blob/master/lib/child.js
+    QUnit.done(fluid.debounce(onDone, 100));
+};
 
 // Stolen from Underscore.js 1.4.3 - see licence at head of this file
 /* jshint ignore:start */
@@ -181,6 +190,10 @@ fluid.debounce = function (func, wait, immediate) {
 };
 /* jshint ignore:end */
 
+/**
+ * Report the aggregate result of all test suites, and exit the process with a status reflecting it
+ * @param {Object} data - Aggregated summary record with members `passed`, `failed`, `total` and `runtime`
+ */
 fQUnit.allTestsDone = function (data) {
     if (fQUnit.globalFailure) {
         ++data.failed;
@@ -200,18 +213,30 @@ fQUnit.allTestsDone = function (data) {
 
     process.exit(success ? 0 : 1);
 };
-/**
- * Callback for all done tests in the file.
- * @param {Object} res
- */
 
-// Debounce this to deal with case where QUnit notifies that all tests are done, when in fact
-// it has just synchronously executed the first of a set of synchronous tests and another is
-// just about to arrive.
-// This strategy taken from kof's node-qunit: https://github.com/kof/node-qunit/blob/master/lib/child.js
-QUnit.done(fluid.debounce(function (data) {
-    fQUnit.allTestsDone(data);
-}), 100);
+/**
+ * Run a sequence of test suites one after another, and report their aggregate result. A suite which queues no tests
+ * is counted as a failure.
+ * @param {Function[]} suites - Functions each starting one suite and returning a promise for its QUnit summary record
+ * @return {Promise} A promise which resolves once all suites have concluded
+ */
+fQUnit.runSuites = async function (suites) {
+    const totals = {passed: 0, failed: 0, total: 0, runtime: 0};
+    for (const suite of suites) {
+        const data = await suite();
+        if (data.total === 0) {
+            fQUnit.log("Failure in fixture - no tests were queued - " + fQUnit.passFail(1));
+            ++totals.failed;
+            ++totals.total;
+        } else {
+            totals.passed += data.passed;
+            totals.failed += data.failed;
+            totals.total += data.total;
+            totals.runtime += data.runtime;
+        }
+    }
+    fQUnit.allTestsDone(totals);
+};
 
 fQUnit.testState = testState;
 

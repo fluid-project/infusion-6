@@ -839,9 +839,9 @@ const fluidViewScope = function (fluid) {
         } else {
             /** @type {DocLayerInjectionRec} **/
             const rec = {
-                injRecsSignal: fluid.cell([], {name: "Document injections for ${document.location}"})
+                injRecsSignal: fluid.cell([], {name: `Document injections for ${injDone.dokkument.location}`})
             };
-            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${document.location}`})
+            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${injDone.dokkument.location}`})
                 .computed( injRecs => fluid.signalsToAvailable(injRecs), [rec.injRecsSignal]);
             fluid.documentInjections.set(injDone.dokkument, rec);
         }
@@ -1788,7 +1788,7 @@ const fluidViewScope = function (fluid) {
                     fluid.viewContainerRegistry.set(element, instance[$t].shadow);
                 }
             });
-        }, null, {name: `fluid.selfBootEffect for document at ${document.location}`});
+        }, null, {name: `fluid.selfBootEffect for document at ${dokkument.location}`});
     };
 
     /**

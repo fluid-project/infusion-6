@@ -61,31 +61,39 @@ fluid.loadScriptNodeInDocument = function (node /*, dokkument */) {
 // TODO: This should be moved into the client side and listen to script node onload.
 fluid.scriptLoadingIdle = fluid.cell(true, {name: "Script loading idle"});
 
-// Patch these update rules from FluidView.js so that we can react to script injections synchronously -
-// using a MutationObserver risks an async operation that is hard to track in order to determine when the
-// document can first be written
-fluid.scriptInjectionStyles.literal.update = function (node, rec, dokkument, absUrl) {
-    node.firstChild.nodeValue = rec.text + `\n//# sourceURL=${absUrl}`;
-    vm.runInContext(rec.text, fluid.V8Context, absUrl);
-    return fluid.trueSignal;
-};
-
-// TODO: When we do package.json style "whole module imports" we need to add the fluid-hydrated attribute to the node here,
-// as well as ignoring attempted import of %infusion-6
-fluid.scriptInjectionStyles.link.update = function (node, rec, dokkument) {
-    const togo = fluid.cell(fluid.unavailable(`Script at url ${rec.url} is loading`, "pending"));
-    const resolveRelative = fluid.module.resolveRelativePath(dokkument.location, rec.url);
-    // The client is going to resolve it themselves again and we want it to look relative to them (especially since we
-    // don't know what their absolute path is going to be)
-    node.setAttribute("src", resolveRelative);
-    const resolved = fluid.module.resolvePath(rec.url);
-    const fetched = fluid.fetchText(resolved);
-    fluid.cell.effect(text => {
-        vm.runInContext(text, fluid.V8Context, resolved);
-        togo.value = true;
-    }, [fetched], {name: "script injection effect for url " + rec.url});
+/**
+ * Server version of `fluid.applyScriptInjection` from FluidView.js. linkedom does not evaluate script elements on
+ * connection, so after writing the same script node into the document as the browser would, its source is evaluated
+ * directly and synchronously in the Fluid V8 context - using a MutationObserver would risk an async operation that is
+ * hard to track in order to determine when the document can first be written.
+ * @param {DocInjectionRecord} docInjRec - The injection payload, whose `material` holds members `text` and `sourceUrl`.
+ * @param {Element|null} existing - Any existing node with the injection's id.
+ * @return {Boolean|Unavailable} `true` if evaluation completed, otherwise an unavailable value describing the failure.
+ */
+fluid.applyServerScriptInjection = function ({dokkument, injRec, material}, existing) {
+    let togo;
+    const token = "fluid-injection-" + fluid.injectionId++;
+    const wrapped = fluid.wrapScriptSource(material.text, material.sourceUrl, injRec.scope, token);
+    const fresh = dokkument.createElement("script");
+    fresh.text = wrapped;
+    fresh.id = injRec.nodeId;
+    fluid.swapInjectedNode(dokkument, existing, fresh);
+    try {
+        vm.runInContext(wrapped, fluid.V8Context, {filename: material.sourceUrl});
+        togo = fluid.lastCompletedInjection === token ? true :
+            fluid.unavailable({message: `Failure evaluating script at ${material.sourceUrl} - completion marker not reached`});
+    } catch (error) {
+        console.error(error);
+        togo = fluid.unavailable({
+            message: `Failure evaluating script at ${material.sourceUrl}`,
+            cause: error
+        });
+    }
     return togo;
 };
+
+fluid.scriptInjectionStyles.literal.apply = fluid.applyServerScriptInjection;
+fluid.scriptInjectionStyles.link.apply = fluid.applyServerScriptInjection;
 
 fluid.activateDocument = function (dokkument) {
     const scriptQuery = fluid.liveQuerySelectorAll("script", dokkument, dokkument);

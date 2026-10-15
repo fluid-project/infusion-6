@@ -39,7 +39,8 @@
         "build-fluid-cell": "run-s es6-transform clean:tsc tsc es6-bundle",
         "lint": "fluid-lint-all",
         "start": "serve",
-        "test": "node tests/test-core/qunit/js/fqunit-cli.js"
+        "test": "node tests/test-core/qunit/js/fqunit-cli.js",
+        "hydrate-test": "node tests/framework-tests/server/hydrate-test.js"
     },
     "engines": {
         "node": ">=16"
@@ -111,12 +112,15 @@
         },
         "tests": {
             "server": [
-                "tests/framework-tests/core/js/FluidCoreTests.js",
-                "tests/framework-tests/core/js/FluidJSTests.js",
-                "tests/framework-tests/core/js/FluidILTests.js",
-                "tests/framework-tests/core/js/FluidSignalsGraphTests.js",
-                "tests/framework-tests/core/js/FluidSignalsTests.js",
-                "tests/framework-tests/core/js/FluidSignalsAsyncTests.js"
+                "tests/framework-tests/core/html/FluidCoreTests.html",
+                "tests/framework-tests/core/html/FluidJSTests.html",
+                "tests/framework-tests/core/html/FluidMicroSQLTests.html",
+                "tests/framework-tests/core/html/FluidSignalsTests.html",
+                "tests/framework-tests/core/html/FluidSignalsGraphTests.html",
+                "tests/framework-tests/core/html/FluidSignalsAsyncTests.html",
+                "tests/framework-tests/core/html/FluidILTests.html",
+                "tests/framework-tests/core/html/FluidViewTests.html",
+                "tests/framework-tests/core/html/FluidViewSFCTests.html"
             ]
         }
     }

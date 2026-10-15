@@ -623,35 +623,34 @@ QUnit.test("FLUID-7000 scoping test", function (assert) {
 
 // Async computation test
 
-if (typeof(document) !== "undefined") {
 
-    fluid.def("fluid.tests.fetchCompute", {
-        $layers: "fluid.component",
-        first: "$compute:fluid.fetchJSON(../testData/data-2.json)",
-        second: "$compute:fluid.fetchJSON(../testData/data-3.json)",
-        result: {
-            "$compute": {
-                func: (a, b) => a + b,
-                args: ["{self}.first.value", "{self}.second.value"]
+fluid.def("fluid.tests.fetchCompute", {
+    $layers: "fluid.component",
+    first: "$compute:fluid.fetchJSON(../testData/data-2.json)",
+    second: "$compute:fluid.fetchJSON(../testData/data-3.json)",
+    result: {
+        "$compute": {
+            func: (a, b) => a + b,
+            args: ["{self}.first.value", "{self}.second.value"]
+        }
+    }
+});
+
+QUnit.test("Async computation test", async function (assert) {
+    const log = [];
+    const that = fluid.tests.fetchCompute({
+        logResult: {
+            "$effect": {
+                func: result => log.push(result),
+                args: "{self}.result"
             }
         }
     });
+    await fluid.siteToPromise(that, "result");
+    assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
+});
 
-    QUnit.test("Async computation test", async function (assert) {
-        const log = [];
-        const that = fluid.tests.fetchCompute({
-            logResult: {
-                "$effect": {
-                    func: result => log.push(result),
-                    args: "{self}.result"
-                }
-            }
-        });
-        await fluid.siteToPromise(that, "result");
-        assert.deepEqual(log, [5], "Received exactly one result after double async resolution");
-    });
 
-}
 // Shape cognition test - framework should only travere and flatten signals in material which is derived from configuration
 
 const $tv = Symbol("fluid.testValue");

@@ -135,8 +135,11 @@ QUnit.test("Component instantiated from SFC layer renders and responds", async f
     assert.equal(textNode.textContent, "Initial SFC text", "Initial text rendered");
     assert.equal(qs(".sfc-count", container).textContent, "0", "Initial count rendered");
 
-    const color = window.getComputedStyle(textNode).color;
-    assert.equal(color, "rgb(255, 0, 0)", "CSS from SFC applied to rendered markup");
+    // The linkedom mockup used to run this fixture under node implements no CSS cascade
+    if (typeof(window.getComputedStyle) === "function") {
+        const color = window.getComputedStyle(textNode).color;
+        assert.equal(color, "rgb(255, 0, 0)", "CSS from SFC applied to rendered markup");
+    }
 
     that.text = "Updated SFC text";
     fluid.cell.stabilize();
