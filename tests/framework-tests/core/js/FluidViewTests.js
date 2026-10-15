@@ -246,6 +246,41 @@ QUnit.test("Basic click test", function (assert) {
     assert.equal(that.value, 1, "Updated count 1");
 });
 
+fluid.def("fluid.tests.multiClass", {
+    $layers: "fluid.templateViewComponent",
+    a: true,
+    b: true,
+    template: `<div><span class="base" @class="one:@{a},two:@{b},three:!@{a}">Text</span></div>`
+});
+
+fluid.tests.checkMultiClass = function (assert, container, expected, message) {
+    fluid.cell.stabilize();
+    const span = qs("span", container);
+    const classAttr = span.getAttribute("class");
+    assert.deepEqual([...span.classList].sort(), expected.sort(), `Correct classes: ${message}`);
+    assert.equal(classAttr, classAttr.trim(), `No surrounding whitespace in class attribute: ${message}`);
+    assert.notOk(classAttr.includes(","), `No comma in class attribute: ${message}`);
+};
+
+QUnit.test("Multiple simultaneous dynamic classes - fluid-project/infusion-6#11", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.multiClass({container});
+
+    fluid.tests.checkMultiClass(assert, container, ["base", "one", "two"], "Both true");
+
+    that.a = false;
+    fluid.tests.checkMultiClass(assert, container, ["base", "two", "three"], "Only b true");
+
+    that.b = false;
+    fluid.tests.checkMultiClass(assert, container, ["base", "three"], "Both false");
+
+    that.a = true;
+    that.b = true;
+    fluid.tests.checkMultiClass(assert, container, ["base", "one", "two"], "Both true again");
+
+    that.destroy();
+});
+
 fluid.tests.todos = [
     {
         "text": "Write some code",

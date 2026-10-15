@@ -1237,6 +1237,10 @@ const fluidViewScope = function (fluid) {
                 const parts = value.split(",").map(part => part.trim());
                 const clazz = Object.fromEntries(parts.map(part => {
                     const [key, ref] = part.split(":");
+                    if (ref === undefined) {
+                        // TODO: Figure out how to route template syntax errors back to template source
+                        fluid.fail(`Malformed @class entry "${part}" in value "${value}" - expected className:@{reference}`);
+                    }
                     const negate = ref.startsWith("!");
                     const effRef = negate ? ref.substring(1) : ref;
                     const tokens = fluid.parseAtStringTemplate(effRef);
@@ -1446,7 +1450,7 @@ const fluidViewScope = function (fluid) {
                             const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
                                 .filter(([, value]) => value && !fluid.isUnavailable(value))
                                 .map(([key]) => key);
-                            return clazzSource + " " + classes;
+                            return [clazzSource, ...classes].filter(clazz => clazz).join(" ");
                         });
                     allClass.$variety = "$allClass";
                     allClass.$source = clazzSource;
@@ -1735,8 +1739,6 @@ const fluidViewScope = function (fluid) {
 
     fluid.listViewTree = function (self, list) {
         return fluid.cell(undefined, {name: "fluid.listViewTree"}).computed(componentList => {
-            const path = self[$t].shadow.path;
-            // console.log("Generating VCL for " + path);
             const unwrappedList = componentList.map(e => fluid.deSignal(e[fluid.unavailableSymbol]));
             const unavailable = fluid.mergeUnavailables(unwrappedList);
 
