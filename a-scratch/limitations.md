@@ -1,17 +1,29 @@
 Here are all the Infusion limitations found across the three draft ports (storyTime, imageGenerator and closestNoteFinder), most serious first. Only the first item has been confirmed by running code; everything after it comes from reading the framework source and from writing the untested drafts.
 
-1. @class bug (confirmed). When two dynamic classes are true at once, they're joined with a comma, giving class="base one,two", so neither class applies. The cause is clazzSource + " " + classes in FluidView.js, where classes is an array. It needs a one-line .join(" ") fix.
+1. @class bug (confirmed). When two dynamic classes are true at once, they're joined with a comma, giving class="base one,two", so neither class applies. The cause is clazzSource + " " + classes in FluidView.js, where classes is an array. It needs a one-line .join(" ") fix. DONE
+    * Resolved as https://github.com/fluid-project/infusion-6/issues/11
 2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cleared by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
 3. No two-way input binding. Every input needs its own $method that copies e.target.value into state.
 4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to call fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
+    * Do this in the tldraw driver for the time being
 5. No first-class way to subscribe to an outside data source. $effect has no cleanup, and $bindable is experimental and never rebinds when its arguments change. It's also unverified whether a bindable that returns a cell lets readers see the cell's value.
+    * This is something we want to do with $bindable and so should firm it up. Should clarify that $bindable is only notified on changes from available to unavailable, but it can
+    bind to a signal which can stream updates for the lifetime of the $bindable.
 6. No adapter for tldraw's signals. tldraw's store is made of fine-grained signals, but the only available bridge copies the whole page-shapes array on every document change, including every frame of a drag. That makes every reader recompute.
 7. No standard way to inject host objects. Nothing like React's useEditor() exists. The draft adds a root-scoped {tldrawHost} component with fluid.resolveRoot, which goes against the docs' advice to avoid live JavaScript objects in configuration.
+    * Misunderstanding in docs, clarified
 8. A component can't see its own host shape change. It receives a fixed shapeId and has to search the shared shape list for its own position. The alternative is for InfusionHost to write the shape record into the component on each React render. Either way, it should be a settled pattern.
+    * See notes on $bindable, same issue as 6 and 5.
 9. Conditionals exist only at the component level. Each conditionally shown block must become a $if subcomponent, and an empty outer container stays in the DOM when it's hidden.
+    * Annoyance in DOM but conditionals at component level is core design principle
 10. $if only tests truthiness. Conditions like x !== null need their own boolean computed member, or a value of 0 or "" hides the block.
+    * Resolved by long-form $if record {func, args} by analogy with $compute - fluid-project/infusion-6#13
 11. No expressions in @{}. Values like total - long or a || !b have to become named $compute members backed by global functions. This is idiomatic, but verbose.
+    * Is somewhat more verbose, but as designed - intermediate values should be named and exposed for integration purposes
 12. SFC styles are global and unscoped, so every class name needs a manual prefix.
+    * This is ok given a general policy of trying to minimally change semantics of user's expressions. We also don't want
+    a heavyweight dependency on something like PostCSS to operate something like Vue's "scoped" model for SFC CSS: https://vuejs.org/api/sfc-css-features.html
 13. $for reconciles the list by index on every change. For the story-time highlighting, that happens on every keystroke over a computed array; how fast this is with long text is untested.
+    * Long-term architectural issues with reactive efficiency - but we should at least verify that nothing goes through $for when there is merely a data change in a component.
 
 The ones that matter most for a working tldraw integration are 2, 4 and 5–6. The rest have straightforward, if verbose, workarounds.

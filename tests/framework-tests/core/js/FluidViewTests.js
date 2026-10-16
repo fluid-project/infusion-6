@@ -581,3 +581,39 @@ QUnit.test("Conditional rendering", function (assert) {
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
 });
+
+fluid.def("fluid.tests.longFormIf", {
+    $layers: "fluid.templateViewComponent",
+    distance: null,
+    template: `<div @id="distanceLine"></div>`,
+    elideParent: false,
+    distanceLine: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            $if: {
+                func: x => x !== null,
+                args: "{longFormIf}.distance"
+            },
+            template: `<div class="distance">@{{longFormIf}.distance}</div>`
+        }
+    }
+});
+
+QUnit.test("Conditional rendering with long-form $if record - fluid-project/infusion-6#13", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.longFormIf({container});
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+
+    that.distance = 0;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="distance">0</div>`, "Falsy value accepted by condition renders");
+
+    that.distance = 5;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="distance">5</div>`, "Updated value renders");
+
+    that.distance = null;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});

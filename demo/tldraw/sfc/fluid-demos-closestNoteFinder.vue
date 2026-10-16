@@ -13,12 +13,14 @@ fluid.def("fluid.demos.closestNoteFinder", {
     closest: "$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.shapes, {self}.shapeId)",
     noteText: "{self}.closest.text",
     distance: "{self}.closest.distance",
-    // GAP-ish: $if tests truthiness only, so a distance of 0 would hide the line - a separate boolean is required
-    hasDistance: "{self}.closest.hasDistance",
     distanceLine: {
         $component: {
             $layers: "fluid.templateViewComponent",
-            $if: "{closestNoteFinder}.hasDistance",
+            // Long-form $if so that a distance of 0 still shows the line
+            $if: {
+                func: distance => distance !== null,
+                args: "{closestNoteFinder}.distance"
+            },
             template: `<div class="notefinder-distance">Distance: @{{closestNoteFinder}.distance}px</div>`
         }
     }
@@ -38,7 +40,6 @@ fluid.demos.closestNoteFinder.extractText = function (note) {
  * @typedef {Object} ClosestNoteRec
  * @property {String} text - The text of the closest note, or a message if there is none
  * @property {Number|null} distance - The rounded distance to the closest note, or `null` if there is none
- * @property {Boolean} hasDistance - `true` if a closest note was found
  */
 
 /**
@@ -56,11 +57,10 @@ fluid.demos.closestNoteFinder.findClosest = function (shapes, shapeId) {
         const closest = withDistance.reduce((a, b) => b.distance < a.distance ? b : a);
         togo = {
             text: fluid.demos.closestNoteFinder.extractText(closest.note) || "Empty note",
-            distance: Math.round(closest.distance),
-            hasDistance: true
+            distance: Math.round(closest.distance)
         };
     } else {
-        togo = {text: "No sticky notes found", distance: null, hasDistance: false};
+        togo = {text: "No sticky notes found", distance: null};
     }
     return togo;
 };

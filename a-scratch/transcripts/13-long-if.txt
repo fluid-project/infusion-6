@@ -1,0 +1,199 @@
+
+❯ Implement a fix for https://github.com/fluid-project/infusion-6/issues/13
+
+  Ran 2 shell commands
+
+● Skill(anthropic-skills:house-js-style)
+Successfully loaded skill
+
+  Ran 3 shell commands
+
+The issue asks for a long-form $if record. I'm reading how $compute expands its func records so $if can reuse the same pathway.
+
+  Ran 4 shell commands
+
+Now the implementation: an $if that is a String stays a context reference; an Object is expanded as a func record into a computed signal.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p = "src/framework/core/js/FluidIL.js"…)
+1575:            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join}`});
+Updated src/framework/core/js/FluidIL.js (+24 -1)
+    };
+
+    /**
+     * Expands the `$if` condition of a component record into a signal whose truthiness determines whether the component
+     * is instantiated. A String is interpreted as a context reference. Otherwise the record is a long-form function record
+     * holding `func` and optionally `args`, as for `$compute`, whose computed value is tested.
+     *
+     * @param {String|FuncRecord} ifRecord - The `$if` condition, either a context reference String or a function record
+     * @param {Shadow} shadow - The shadow record of the component holding the conditional component record
+     * @param {String[]} segs - The path in the parent shadow holding the conditional component record
+     * @return {Signal<any>} A signal whose value will be tested for truthiness
+     */
+    fluid.expandIfRecord = function (ifRecord, shadow, segs) {
+        let togo;
+        if (typeof(ifRecord) === "string") {
+            togo = fluid.fetchContextReference(ifRecord, shadow);
+        } else {
+            const {func, resolvedArgs} = fluid.resolveFuncRecord(ifRecord, shadow, [...segs, "$if"]);
+            const dispatchIf = fluid.makeFuncDispatcher(func);
+            togo = fluid.cell(undefined, {name: `$if at path ${segs.join(".")} of component at path ${shadow.path}`}).
+                computed(dispatchIf, resolvedArgs, {mapArg: fluid.flattenSignals});
+        }
+        return togo;
+    };
+
+    /**
+     * Expands a subcomponent-style function record into a component instantiation.
+     * Produces a `subcomponent`-type layer record and pushes it into the component tree at the given `key` under the `shadow`.
+     *
+
+        } else if (ifRecord) {
+            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join}`});
+            let computer;
+            const sourceSignal = fluid.fetchContextReference(ifRecord, shadow);
+            const sourceSignal = fluid.expandIfRecord(ifRecord, shadow, segs);
+            // TODO: This should really be a sited effect but this requires rewriting effect allocation pathway
+            // See notes from 1/7/2025
+            const effectKey = "conditionalComponent-" + segs.join(".");
+(files that changed while this command ran, by the command or by another process; a convenience view, not a review or audit of the command)
+Allowed by auto mode classifier
+
+Also fixing a small adjacent bug: the cell name used ${segs.join} (interpolates the function source) rather than segs.join("."). Next, a test.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i '1575s/\${segs.join}/${segs.join(".")}/' src/framework/core/js/FluidIL.js; sed -n 1575p src/framework/core/js…)
+            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join(".")}`});
+package.json:122:                "tests/framework-tests/core/html/FluidViewTests.html",
+tests/framework-tests/core/html/FluidViewTests.html:20:        <script src="../js/FluidViewTests.js"></script>
+… +2 lines
+Updated src/framework/core/js/FluidIL.js (+1 -1)
+            }, [sourceSignal], {name: `Component list reading effect for ${effectKey}`});
+            return listComputer;
+        } else if (ifRecord) {
+            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join}`});
+            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join(".")}`});
+            let computer;
+            const sourceSignal = fluid.expandIfRecord(ifRecord, shadow, segs);
+            // TODO: This should really be a sited effect but this requires rewriting effect allocation pathway
+Updated tests/framework-tests/core/js/FluidViewTests.js (+36 -0)
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});
+
+fluid.def("fluid.tests.longFormIf", {
+    $layers: "fluid.templateViewComponent",
+    distance: null,
+    template: `<div @id="distanceLine"></div>`,
+    elideParent: false,
+    distanceLine: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            $if: {
+                func: x => x !== null,
+                args: "{longFormIf}.distance"
+            },
+            template: `<div class="distance">@{{longFormIf}.distance}</div>`
+        }
+    }
+});
+
+QUnit.test("Conditional rendering with long-form $if record - fluid-project/infusion-6#13", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.longFormIf({container});
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+
+    that.distance = 0;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="distance">0</div>`, "Falsy value accepted by condition renders");
+
+    that.distance = 5;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="distance">5</div>`, "Updated value renders");
+
+    that.distance = null;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});
+Allowed by auto mode classifier
+
+  Ran 1 shell command
+
+All 159 view tests pass. Now I'll update the closestNoteFinder demo that prompted the issue, and the limitations note, then run the full suite and lint.
+
+  Ran 2 shell commands
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p = "demo/tldraw/sfc/fluid-demos-closestNoteFinder.vue"…)
+diff --git a/demo/tldraw/sfc/fluid-demos-closestNoteFinder.vue b/demo/tldraw/sfc/fluid-demos-closestNoteFinder.vue
+old mode 100644
+new mode 100755
+… +44 lines
+Updated demo/tldraw/sfc/fluid-demos-closestNoteFinder.vue (+7 -7)
+    closest: "$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.shapes, {self}.shapeId)",
+    noteText: "{self}.closest.text",
+    distance: "{self}.closest.distance",
+    // GAP-ish: $if tests truthiness only, so a distance of 0 would hide the line - a separate boolean is required
+    hasDistance: "{self}.closest.hasDistance",
+    distanceLine: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            $if: "{closestNoteFinder}.hasDistance",
+            // Long-form $if so that a distance of 0 still shows the line
+            $if: {
+                func: distance => distance !== null,
+                args: "{closestNoteFinder}.distance"
+            },
+            template: `<div class="notefinder-distance">Distance: @{{closestNoteFinder}.distance}px</div>`
+        }
+    }
+
+ * @typedef {Object} ClosestNoteRec
+ * @property {String} text - The text of the closest note, or a message if there is none
+ * @property {Number|null} distance - The rounded distance to the closest note, or `null` if there is none
+ * @property {Boolean} hasDistance - `true` if a closest note was found
+ */
+
+/**
+
+        const closest = withDistance.reduce((a, b) => b.distance < a.distance ? b : a);
+        togo = {
+            text: fluid.demos.closestNoteFinder.extractText(closest.note) || "Empty note",
+            distance: Math.round(closest.distance),
+            hasDistance: true
+            distance: Math.round(closest.distance)
+        };
+    } else {
+        togo = {text: "No sticky notes found", distance: null, hasDistance: false};
+        togo = {text: "No sticky notes found", distance: null};
+    }
+    return togo;
+};
+Updated a-scratch/limitations.md (+1 -1)
+9. Conditionals exist only at the component level. Each conditionally shown block must become a $if subcomponent, and an empty outer container stays in the DOM when it's hi
+dden.
+    * Annoyance in DOM but conditionals at component level is core design principle
+10. $if only tests truthiness. Conditions like x !== null need their own boolean computed member, or a value of 0 or "" hides the block.
+    *
+    * Resolved by long-form $if record {func, args} by analogy with $compute - fluid-project/infusion-6#13
+11. No expressions in @{}. Values like total - long or a || !b have to become named $compute members backed by global functions. This is idiomatic, but verbose.
+    * Is somewhat more verbose, but as designed - intermediate values should be named and exposed for integration purposes
+12. SFC styles are global and unscoped, so every class name needs a manual prefix.
+Allowed by auto mode classifier
+
+I've added a long-form $if record for issue #13. A record like $if: {func: x => x > 0, args: "{closestNoteFinder}.hasDistance"} now controls whether the component is created. The full npm test run passes (735/735) and eslint is clean on the changed files. The demo I changed hasn't been tried in the browser. Nothing is committed yet.
+
+How it works (src/framework/core/js/FluidIL.js)
+- A new function, fluid.expandIfRecord, handles the condition. A string is still treated as a context reference, as before.
+- An object is treated as a func/args record and turned into a computed value the same way $compute records are, so func can also be a global function name or a context reference. The component is created when that value is truthy.
+- expandComponentRecord now calls fluid.expandIfRecord instead of fetching the reference directly.
+- I also fixed a small bug nearby: the debug name of the conditional cell used ${segs.join} without calling it, so it printed the function's source code rather than the path.
+
+Test (tests/framework-tests/core/js/FluidViewTests.js)
+- The new test uses $if: {func: x => x !== null, args: "{longFormIf}.distance"}. It checks that a distance of 0 shows the block, that the value updates, and that null hides it again.
+
+Demo and notes
+- demo/tldraw/sfc/fluid-demos-closestNoteFinder.vue now uses distance => distance !== null on distance directly. I removed the extra hasDistance member that existed only to work around this problem.
+- In a-scratch/limitations.md, item 10 is marked as resolved, citing #13.
+
+I didn't touch the copies under docs/, which look like build output. Suggested commit message: "Long-form $if records - Resolves fluid-project/infusion-6#13".
