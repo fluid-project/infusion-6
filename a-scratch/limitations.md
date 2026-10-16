@@ -3,7 +3,9 @@ Here are all the Infusion limitations found across the three draft ports (storyT
 1. @class bug (confirmed). When two dynamic classes are true at once, they're joined with a comma, giving class="base one,two", so neither class applies. The cause is clazzSource + " " + classes in FluidView.js, where classes is an array. It needs a one-line .join(" ") fix. DONE
     * Resolved as https://github.com/fluid-project/infusion-6/issues/11
 2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cleared by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
+    * Resolved by binding absence for boolean attributes and live state properties with write-back - fluid-project/infusion-6#14
 3. No two-way input binding. Every input needs its own $method that copies e.target.value into state.
+    * Resolved - a bound value, checked, selected or open attribute writes the user's change back to a writeable model site - fluid-project/infusion-6#14
 4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to call fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
     * Do this in the tldraw driver for the time being
 5. No first-class way to subscribe to an outside data source. $effect has no cleanup, and $bindable is experimental and never rebinds when its arguments change. It's also unverified whether a bindable that returns a cell lets readers see the cell's value.

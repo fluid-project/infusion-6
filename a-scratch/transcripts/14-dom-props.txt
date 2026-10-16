@@ -1,0 +1,399 @@
+now resolve https://github.com/fluid-project/infusion-6/issues/14
+
+  Ran 1 shell command
+
+I'll look at the FluidView.js code to see how bound attributes currently handle boolean absence, live-state properties like value/checked/selected, and event-based sync-back.
+
+  Ran 7 shell commands
+
+I'm still mapping out how a bound template reference can be written back to its model site, so value/checked can sync from user input. Next I'll write the attribute applier and the tests.
+
+  Ran 6 shell commands
+
+Since linkedom maps form properties directly onto attributes, node tests can check the attribute side. Next I'll check how effects are scheduled, since this matters for <select> elements whose options get patched in after the select itself.
+
+  Ran 2 shell commands
+
+Effects are queued and run at stabilize, so on first render a select's options already exist when its binding applies. I'll write the implementation now.
+
+  Ran 1 shell command
+
+Now inserting the attribute machinery after allocateEventBindingEffect.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat > /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/d30126cf-6c93-4263-9cd7-d4081e420962/scratchpad/attrs…)
+Updated src/framework/core/js/FluidView.js (+209 -3)
+    };
+
+    /**
+     * Attributes whose presence alone denotes `true`, so that a false value must be expressed by their removal.
+     * @type {Set<String>}
+     */
+    fluid.booleanAttrs = new Set(["disabled", "checked", "selected", "readonly", "required", "hidden", "multiple",
+        "open", "inert", "autofocus", "novalidate", "indeterminate"]);
+
+    /**
+     * @typedef {Object} LiveStateRecord
+     * @property {String} prop - The DOM property holding the live state corresponding to the attribute
+     * @property {String} event - The DOM event signalling that the user has changed the live state
+     */
+
+    /**
+     * Attributes whose live state is held in a DOM property which may diverge from the attribute, either because the
+     * attribute only represents a default (`value`, `checked`, `selected`), because the user may change it (`open`),
+     * or because the attribute is unknown to HTML and is materialised only for serialisation (`indeterminate`).
+     * A bound attribute in this table writes both the attribute and the property, and listens to the named event in
+     * order to write the user's change back to the bound model value.
+     * @type {Object<String, LiveStateRecord>}
+     */
+    fluid.liveStateAttrs = {
+        value: {prop: "value", event: "input"},
+        checked: {prop: "checked", event: "change"},
+        selected: {prop: "selected", event: "change"},
+        open: {prop: "open", event: "toggle"},
+        indeterminate: {prop: "indeterminate", event: "change"}
+    };
+
+    /**
+     * Determine whether a value bound to an attribute should cause the attribute to be absent. Boolean `false` denotes
+     * absence except for `aria-` attributes, for which "true" and "false" are meaningful tokens.
+     * @param {String} key - The attribute name
+     * @param {any} value - The bound value
+     * @return {Boolean} `true` if the attribute should be removed
+     */
+    fluid.isAbsentAttrValue = function (key, value) {
+        const isFalse = value === false && !key.startsWith("aria-");
+… 196 more lines
+
+Next, re-applying a bound select value after its options are patched, since re-rendering options would otherwise strip their selected attributes.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+src/framework/core/js/FluidCore.js:72:    fluid.pushArray = function (holder, member, topush) {
+src/framework/core/js/FluidView.js:1464:                fluid.model.setSimple(vnode, ["boundAttrs", key], bound);
+                    const fresh = fluid.nodeFromVNode(element.ownerDocument, vchild);
+… +14 lines
+Updated src/framework/core/js/FluidView.js (+1 -0)
+                const bound = token ? fluid.cell(undefined, {name: `raw attribute value for ${key} of vnode ${vnode._id}`})
+                    .computed(fluid.identity, [token], {mapArg: fluid.deproxyAndDesignal}) : rendered;
+                fluid.bindDomAttr(templateEffects, vnode, key, bound, token);
+                fluid.model.setSimple(vnode, ["boundAttrs", key], bound);
+                vnode.attrs[key] = rendered; // Mark to reconciler that it is a signal so it should ignore it
+                if (key === "value" && vnode.tag === "textarea") {
+                    // The textarea's value is materialised as its content, which the reconciler must leave alone
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+12:09:15.914:   fq:  All tests concluded: 159/159 total passed in 1231ms - PASS
+Updated src/framework/core/js/FluidView.js (+8 -1)
+     *
+     * @property {signal<HTMLElement>|undefined} [elementSignal] - A signal that resolves to the corresponding DOM element.
+     * @property {Function[]} [renderEffects] - An array of effects that manage updates to the corresponding DOM element
+     * @property {Object<String, Signal>} [boundAttrs] - Signals for the values of attributes bound in the template, indexed by attribute name
+     */
+
+    /**
+
+                const bound = token ? fluid.cell(undefined, {name: `raw attribute value for ${key} of vnode ${vnode._id}`})
+                    .computed(fluid.identity, [token], {mapArg: fluid.deproxyAndDesignal}) : rendered;
+                fluid.bindDomAttr(templateEffects, vnode, key, bound, token);
+                fluid.model.setSimple(vnode, ["boundAttrs", key], bound);
+                vnode.boundAttrs ||= {};
+                vnode.boundAttrs[key] = bound;
+                vnode.attrs[key] = rendered; // Mark to reconciler that it is a signal so it should ignore it
+                if (key === "value" && vnode.tag === "textarea") {
+                    // The textarea's value is materialised as its content, which the reconciler must leave alone
+
+            for (let i = element.childNodes.length - 1; i >= vcount; --i) {
+                element.childNodes[i].remove();
+            }
+            const boundValue = vnode.boundAttrs?.value;
+            if (boundValue && element.localName === "select") {
+                // Patching the options may have disturbed the value materialised onto them, so restore it
+                fluid.cell.untracked(() => fluid.applyAttr(element, "value", fluid.deSignal(boundValue)));
+            }
+        }
+    };
+
+
+Existing view tests still pass. Now writing tests for the new behaviour; checking how existing tests dispatch DOM events.
+
+  Ran 1 shell command
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >> tests/framework-tests/core/js/FluidViewTests.js <<'EOF'…)
+12:09:43.928:   fq:  Running HTML test driver /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core/html/FluidViewTests.html
+12:09:44.073:   fq:  Test concluded - Module "Fluid View Tests" Test name "Layer name extraction test": 1/1 passed - PASS
+12:09:44.094:   fq:  Test concluded - Module "Fluid View Tests" Test name "Basic static rendering test": 2/2 passed - PASS
+… +20 lines
+Updated tests/framework-tests/core/js/FluidViewTests.js (+93 -0)
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});
+
+fluid.def("fluid.tests.attrBinding", {
+    $layers: "fluid.templateViewComponent",
+    busy: false,
+    text: "Initial",
+    shout: "$compute:fluid.tests.attrBinding.shout({self}.text)",
+    choice: "b",
+    notes: "Some notes",
+    done: false,
+    template: `<div>
+        <button disabled="@{busy}" aria-pressed="@{busy}" title="Busy: @{busy}">Go</button>
+        <input class="text" value="@{text}"/>
+        <input class="shout" value="@{shout}"/>
+        <input class="done" type="checkbox" checked="@{done}"/>
+        <textarea value="@{notes}"></textarea>
+        <select value="@{choice}"><option value="a">A</option><option value="b">B</option></select>
+    </div>`
+});
+
+fluid.tests.attrBinding.shout = text => text.toUpperCase();
+
+QUnit.test("Binding attributes and live state properties - fluid-project/infusion-6#14", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.attrBinding({container});
+    fluid.cell.stabilize();
+    const button = qs("button", container);
+    assert.notOk(button.hasAttribute("disabled"), "Boolean attribute bound to false is absent");
+    assert.equal(button.getAttribute("aria-pressed"), "false", "aria- attribute bound to false holds \"false\"");
+    assert.equal(button.getAttribute("title"), "Busy: false", "Composite template renders as string");
+
+    that.busy = true;
+    fluid.cell.stabilize();
+    assert.equal(button.getAttribute("disabled"), "", "Boolean attribute bound to true is present");
+    assert.equal(button.getAttribute("aria-pressed"), "true", "aria- attribute bound to true holds \"true\"");
+
+    that.busy = "false";
+    fluid.cell.stabilize();
+… 56 more lines
+
+All 182 pass under linkedom, though it has no dirty state, so the browser property path is untested. Checking whether a headless browser is available to run the HTML driver for real.
+
+  Ran 2 shell commands
+
+Chrome headless: 185/185 pass. Confirming the new test, including the checkbox branch, actually ran there.
+
+  Ran 2 shell commands
+
+Also passes in real Chrome (26/26), including clearing a dirty input from the model and checkbox write-back. Now updating the two tldraw demos that worked around the missing bindings.
+
+  Ran 5 shell commands
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      def edit(p, reps):…)
+5:2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cleared
+ by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
+Updated demo/tldraw/sfc/fluid-demos-imageGenerator.vue (+6 -16)
+            template: `<p class="imagegen-loading">Creating your image... This may take a moment.</p>`
+        }
+    },
+    updatePrompt: {
+        $method: {
+            func: (state, e) => {
+                state.prompt = e.target.value;
+            },
+            args: ["{self}.state", "{0}:event"]
+        }
+    },
+    keyDown: {
+        $method: {
+            func: (self, e) => {
+
+                props: {assetId, w: 1024, h: 1024}
+            }]);
+            editor.createShapes(validatedShapes);
+            // GAP: clears the model but not the DOM <input> - no `value` property binding
+            // Clears the DOM <input> too, through its bound `value`
+            state.prompt = "";
+        } catch (err) {
+            state.error = "Failed to generate image. Please try again.";
+
+<template>
+    <div class="imagegen">
+        <h3 class="imagegen-title">Image Generator</h3>
+        <!-- GAP: original has disabled={isGenerating} - no boolean attribute/property binding -->
+        <!-- The bound value is written back to state.prompt as the user types -->
+        <input type="text" class="imagegen-input" placeholder="Describe the image you want..."
+               @class="imagegen-busy:@{isGenerating}"
+               @oninput="{self}.updatePrompt({0})" @onkeydown="{self}.keyDown({0})">
+        <!-- GAP: original has disabled={isGenerating || !prompt.trim()} - approximated by a class, the method guards -->
+        <button class="imagegen-button" @class="imagegen-disabled:@{cannotGenerate}"
+               value="@{state.prompt}" disabled="@{isGenerating}" @onkeydown="{self}.keyDown({0})">
+        <button class="imagegen-button" disabled="@{cannotGenerate}"
+                @onclick="{self}.generate()">@{buttonLabel}</button>
+        <div @id="errorMessage"></div>
+        <div @id="loadingMessage"></div>
+
+    outline: none;
+}
+
+… 13 more lines
+Updated demo/tldraw/sfc/fluid-demos-storyImageGen.vue (+6 -14)
+            template: `<div class="story-imagegen-error">⚠️ @{{storyImageGen}.imageError}</div>`
+        }
+    },
+    updatePrompt: {
+        $method: {
+            func: (state, e) => {
+                state.imagePrompt = e.target.value;
+            },
+            args: ["{self}.state", "{0}:event"]
+        }
+    },
+    keyDown: {
+        $method: {
+            func: (self, e) => {
+
+ */
+fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
+    const prompt = state.imagePrompt.trim();
+    // GAP: no property binding for `disabled`, so the guard must live here rather than in the template
+    // The button is disabled while generating, but Enter in the input still arrives here
+    if (prompt && !state.isGenerating) {
+        state.isGenerating = true;
+        state.imageError = "";
+
+                throw new Error(errors.join("; "));
+            }
+            editor.createShapes(validatedShapes);
+            // GAP: this clears the model but not the DOM <input>, since templates cannot bind its `value` property
+            // Clears the DOM <input> too, through its bound `value`
+            state.imagePrompt = "";
+        } catch (err) {
+            state.imageError = err.message || "Failed to generate image.";
+
+    <div class="story-imagegen">
+        <div class="story-imagegen-header">🎨 Great writing! Generate an illustration:</div>
+        <div class="story-imagegen-row">
+            <!-- Bound directly to the parent's reactive state so that the user's typing is written back there -->
+            <input type="text" class="story-imagegen-input" placeholder="Describe your illustration... 🖌️"
+                   @oninput="{self}.updatePrompt({0})" @onkeydown="{self}.keyDown({0})">
+            <button class="story-imagegen-button" @class="story-busy:@{isGenerating}"
+                   value="@{{storyTime}.state.imagePrompt}" disabled="@{isGenerating}" @onkeydown="{self}.keyDown({0})">
+            <button class="story-imagegen-button" disabled="@{isGenerating}"
+                    @onclick="{self}.generate()">@{buttonLabel}</button>
+… 11 more lines
+
+I've updated both demos to use disabled/value bindings tied to a path in $reactiveRoot. Now I'll add test coverage for writing back into it and update the limitations note.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; grep -n 'imagePrompt' demo/tldraw/sfc/fluid-demos-storyTime.vue | head -3; python3 - <<'EOF'
+      def edit(p, reps):…)
+15:            imagePrompt: "",
+2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cleared b
+y setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
+… +4 lines
+Updated tests/framework-tests/core/js/FluidViewTests.js (+16 -0)
+    choice: "b",
+    notes: "Some notes",
+    done: false,
+    state: {
+        $reactiveRoot: {
+            prompt: "Initial prompt"
+        }
+    },
+    template: `<div>
+        <input class="prompt" value="@{state.prompt}"/>
+        <button disabled="@{busy}" aria-pressed="@{busy}" title="Busy: @{busy}">Go</button>
+        <input class="text" value="@{text}"/>
+        <input class="shout" value="@{shout}"/>
+
+        assert.notOk(done.hasAttribute("checked"), "Checked attribute removed following user unchecking");
+    }
+
+    const prompt = qs(".prompt", container);
+    assert.equal(prompt.value, "Initial prompt", "Value rendered from reactive root");
+    prompt.value = "Typed prompt";
+    prompt.dispatchEvent(new Event("input"));
+    fluid.cell.stabilize();
+    assert.equal(that.state.prompt, "Typed prompt", "User input written back into reactive root");
+    that.state.prompt = "";
+    fluid.cell.stabilize();
+    assert.equal(prompt.value, "", "Input bound into reactive root cleared from model");
+
+    const textarea = qs("textarea", container);
+    assert.equal(textarea.textContent, "Some notes", "Textarea value materialised as content");
+    that.notes = "Other notes";
+Updated a-scratch/limitations.md (+1 -0)
+1. @class bug (confirmed). When two dynamic classes are true at once, they're joined with a comma, giving class="base one,two", so neither class applies. The cause is clazzS
+ource + " " + classes in FluidView.js, where classes is an array. It needs a one-line .join(" ") fix. DONE
+    * Resolved as https://github.com/fluid-project/infusion-6/issues/11
+2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cle
+ared by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
+    * Resolved by binding absence for boolean attributes and live state properties with write-back - fluid-project/infusion-6#14
+3. No two-way input binding. Every input needs its own $method that copies e.target.value into state.
+4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to c
+all fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
+    * Do this in the tldraw driver for the time being
+
+That also resolves limitation 3 (no two-way input binding), so I'll annotate it too, then run the full suite, lint, and Chrome.
+
+  Ran 1 shell command
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p = "a-scratch/limitations.md"…)
+/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/sfc/fluid-demos-storyTime.vue
+  1:1  error  Parsing error: Unexpected token <
+… +20 lines
+Updated a-scratch/limitations.md (+1 -0)
+2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cl
+eared by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
+    * Resolved by binding absence for boolean attributes and live state properties with write-back - fluid-project/infusion-6#14
+3. No two-way input binding. Every input needs its own $method that copies e.target.value into state.
+    * Resolved - a bound value, checked, selected or open attribute writes the user's change back to a writeable model site - fluid-project/infusion-6#14
+4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to
+call fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
+    * Do this in the tldraw driver for the time being
+5. No first-class way to subscribe to an outside data source. $effect has no cleanup, and $bindable is experimental and never rebinds when its arguments change. It's also u
+nverified whether a bindable that returns a cell lets readers see the cell's value.
+
+All green in node (761/761) and Chrome. The eslint errors are only because plain eslint can't parse .vue files; checking the JS files alone and the project's own lint config.
+
+  Ran 3 shell commands
+
+The stash pop was refused, so my changes are still safely stashed—this is because the file-mode differences on this mount cause spurious conflicts. Let me check the current state before restoring them.
+
+  Ran 1 shell command
+
+With mode differences ignored, the working tree is clean, and the stash holds my changes plus the earlier pre-existing ones (csslint.js, the woff2 files). Restoring with file-mode checking off.
+
+  Ran 1 shell command
+
+Restored. One thing to check: the stash listed two .woff2 font files with content changes, but they no longer show as modified. Comparing against the dropped stash commit.
+
+  Ran 1 shell command
+
+The font files are byte-identical to the stash, so that was a mode-only entry. Running a final check that the whole working tree matches the stash content, then re-running the tests.
+
+  Ran 1 shell command
+
+I've fixed issue #14. Template attributes now handle boolean state and DOM properties, and user changes to inputs are written back to the model. All 761 node tests pass, and every HTML test driver passes in headless Chrome. Lint gives the same 225/270 result with and without my changes. Nothing is committed yet. I haven't run the tldraw demos themselves.
+
+How bindings behave now (src/framework/core/js/FluidView.js)
+- Raw values: an attribute whose template is a single reference, like disabled="@{busy}", now gets the actual value instead of a string, so booleans work.
+- Absence: false, null, undefined or an unavailable value removes the attribute.
+  - Boolean attributes such as disabled, checked and hidden are written as "" when true, and a bound string "false" counts as false.
+  - aria-* attributes are the exception: false is written as "false", because that value is meaningful for accessibility.
+- Live state: for value, checked, selected, open and indeterminate, the binding sets both the attribute (so the HTML stays accurate) and the DOM property (so the screen agrees). Clearing an input is now just setting the model to "".
+  - A textarea value is written as its text content, and the reconciler leaves its children alone.
+  - A select value is written as selected on the matching option, and is reapplied after the options are re-rendered.
+- Write-back: a listener on input, change or toggle writes the user's change to the bound model value. If the target is a $compute, nothing is written back and only the attribute is updated to match the screen.
+- Static attributes and attribute removal go through the same code, so removing value or checked also clears the property.
+
+Tests: one new test in FluidViewTests.js (26 checks) covers each of the cases above, including writing into a $reactiveRoot. Linkedom has no checked property, so the checkbox write-back checks only run in a browser; they pass in Chrome. Chrome also showed that a dirty input really clears from the model.
+
+Demos: fluid-demos-imageGenerator.vue and fluid-demos-storyImageGen.vue now use real disabled and value bindings. That replaces the stand-in classes, the updatePrompt methods and the notes about the gaps, and the CSS now uses :disabled. I marked limitations 2 and 3 as resolved in a-scratch/limitations.md.
+
+Behaviour changes and limits:
+- A single reference that is null or undefined now removes the attribute instead of rendering "".
+- An unavailable attribute value no longer writes error markup into the element; the attribute is just absent.
+- Write-back has the same limitation as the proxy's set (the "follow fish upstream" TODO): when bound through a member that is itself a reference, the value is written on the component that holds the reference rather than at its source. That's why the storyImageGen input binds {storyTime}.state.imagePrompt directly.
+- Values typed into an input come back to the model as strings.
+- Radio groups aren't handled: when one radio is selected, the others change without firing events.
+
+A git mistake I made: to get a lint baseline I ran git stash. Restoring it was refused, because on this mount every file shows a mode-only change. I restored it with core.fileMode=false and checked that the working tree now matches the stashed content exactly. Your older stash@{0} from commit 57f473b wasn't touched.
+
+Suggested commit message: "Bind DOM properties and boolean attributes with write-back - Resolves fluid-project/infusion-6#14".
+
+✻ Churned for 12m 12s · done 12:17
+
+※ recap: Issue #14 is done: attribute bindings now handle boolean attributes and DOM properties, and inputs write back to the model, with all tests passing in node and Chrome. Next you need to review and commit; nothing is committed yet. (disable recaps in /config)

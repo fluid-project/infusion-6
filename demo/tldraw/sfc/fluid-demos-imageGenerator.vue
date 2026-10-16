@@ -34,14 +34,6 @@ fluid.def("fluid.demos.imageGenerator", {
             template: `<p class="imagegen-loading">Creating your image... This may take a moment.</p>`
         }
     },
-    updatePrompt: {
-        $method: {
-            func: (state, e) => {
-                state.prompt = e.target.value;
-            },
-            args: ["{self}.state", "{0}:event"]
-        }
-    },
     keyDown: {
         $method: {
             func: (self, e) => {
@@ -107,7 +99,7 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
                 props: {assetId, w: 1024, h: 1024}
             }]);
             editor.createShapes(validatedShapes);
-            // GAP: clears the model but not the DOM <input> - no `value` property binding
+            // Clears the DOM <input> too, through its bound `value`
             state.prompt = "";
         } catch (err) {
             state.error = "Failed to generate image. Please try again.";
@@ -124,12 +116,10 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
 <template>
     <div class="imagegen">
         <h3 class="imagegen-title">Image Generator</h3>
-        <!-- GAP: original has disabled={isGenerating} - no boolean attribute/property binding -->
+        <!-- The bound value is written back to state.prompt as the user types -->
         <input type="text" class="imagegen-input" placeholder="Describe the image you want..."
-               @class="imagegen-busy:@{isGenerating}"
-               @oninput="{self}.updatePrompt({0})" @onkeydown="{self}.keyDown({0})">
-        <!-- GAP: original has disabled={isGenerating || !prompt.trim()} - approximated by a class, the method guards -->
-        <button class="imagegen-button" @class="imagegen-disabled:@{cannotGenerate}"
+               value="@{state.prompt}" disabled="@{isGenerating}" @onkeydown="{self}.keyDown({0})">
+        <button class="imagegen-button" disabled="@{cannotGenerate}"
                 @onclick="{self}.generate()">@{buttonLabel}</button>
         <div @id="errorMessage"></div>
         <div @id="loadingMessage"></div>
@@ -165,7 +155,7 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
     outline: none;
 }
 
-.imagegen-input.imagegen-busy {
+.imagegen-input:disabled {
     opacity: 0.6;
     pointer-events: none;
 }
@@ -181,7 +171,7 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
     cursor: pointer;
 }
 
-.imagegen-button.imagegen-disabled {
+.imagegen-button:disabled {
     background-color: #999;
     cursor: not-allowed;
 }

@@ -14,14 +14,6 @@ fluid.def("fluid.demos.storyImageGen", {
             template: `<div class="story-imagegen-error">⚠️ @{{storyImageGen}.imageError}</div>`
         }
     },
-    updatePrompt: {
-        $method: {
-            func: (state, e) => {
-                state.imagePrompt = e.target.value;
-            },
-            args: ["{self}.state", "{0}:event"]
-        }
-    },
     keyDown: {
         $method: {
             func: (self, e) => {
@@ -51,7 +43,7 @@ fluid.demos.storyImageGen.buttonLabel = isGenerating => isGenerating ? "Generati
  */
 fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
     const prompt = state.imagePrompt.trim();
-    // GAP: no property binding for `disabled`, so the guard must live here rather than in the template
+    // The button is disabled while generating, but Enter in the input still arrives here
     if (prompt && !state.isGenerating) {
         state.isGenerating = true;
         state.imageError = "";
@@ -72,7 +64,7 @@ fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
                 throw new Error(errors.join("; "));
             }
             editor.createShapes(validatedShapes);
-            // GAP: this clears the model but not the DOM <input>, since templates cannot bind its `value` property
+            // Clears the DOM <input> too, through its bound `value`
             state.imagePrompt = "";
         } catch (err) {
             state.imageError = err.message || "Failed to generate image.";
@@ -89,9 +81,10 @@ fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
     <div class="story-imagegen">
         <div class="story-imagegen-header">🎨 Great writing! Generate an illustration:</div>
         <div class="story-imagegen-row">
+            <!-- Bound directly to the parent's reactive state so that the user's typing is written back there -->
             <input type="text" class="story-imagegen-input" placeholder="Describe your illustration... 🖌️"
-                   @oninput="{self}.updatePrompt({0})" @onkeydown="{self}.keyDown({0})">
-            <button class="story-imagegen-button" @class="story-busy:@{isGenerating}"
+                   value="@{{storyTime}.state.imagePrompt}" disabled="@{isGenerating}" @onkeydown="{self}.keyDown({0})">
+            <button class="story-imagegen-button" disabled="@{isGenerating}"
                     @onclick="{self}.generate()">@{buttonLabel}</button>
         </div>
         <div @id="error"></div>
@@ -148,8 +141,7 @@ fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
     flex-shrink: 0;
 }
 
-/* Stands in for `disabled`, which cannot currently be bound */
-.story-imagegen-button.story-busy {
+.story-imagegen-button:disabled {
     background-color: #90CAF9;
     cursor: not-allowed;
 }
