@@ -150,7 +150,7 @@ const sfcParserScope = function (fluid) {
 
     /**
      * Patches a textual representation of a JSON-like structure using a defMap.
-     * If the given `key` is already present in the `defMap`, its textual range is removed.
+     * If the given `key` is already present in the `defMap`, its value is replaced in place and `disposition` is ignored.
      *
      * @param {String} text - The original textual form of the structure to patch.
      * @param {DefMap} defMap - A flat defMap mapping top-level property names to their source ranges.
@@ -164,24 +164,25 @@ const sfcParserScope = function (fluid) {
         const keyPath = [key, $m];
         const entry = fluid.get(defMap, keyPath);
 
-        let resultText = text;
+        let resultText;
 
         if (entry) {
-            // Replace the old key-value range with spaces
-            const from = entry.from;
-            const to = entry.to;
-            resultText = resultText.slice(0, from) + resultText.slice(to);
+            // Replace the old value's range with the new value
+            resultText = text.slice(0, entry.from) + JSON.stringify(value) + text.slice(entry.to);
+        } else {
+            const tom = defMap[$m].to - 1;
+            const fromp = defMap[$m].from + 1;
+            // Determine separators from the text itself since defMap may have been augmented with other keys
+            const contents = text.slice(fromp, tom).trim();
+            const empty = contents === "";
+
+            const insertPos = disposition === "first" ? (text[fromp] === "\n" ? fromp + 1 : fromp) : (text[tom - 1] === "\n" ? tom - 1 : tom);
+
+            const insertion = (disposition === "last" && !empty && !contents.endsWith(",") ? ",\n" : "") +
+                `    ${key}: ${JSON.stringify(value)}` +
+                (disposition === "first" && !empty ? ",\n" : "");
+            resultText = text.slice(0, insertPos) + insertion + text.slice(insertPos);
         }
-        const tom = defMap[$m].to - 1;
-        const fromp = defMap[$m].from + 1;
-        const empty = Object.keys(defMap).length === 1;
-
-        const insertPos = disposition === "first" ? (resultText[fromp] === "\n" ? fromp + 1 : fromp) : (resultText[tom - 1] === "\n" ? tom - 1 : tom);
-
-        const insertion = (disposition === "last" ? ",\n" : "") +
-            `    ${key}: ${JSON.stringify(value)}` +
-            (disposition === "first" && !empty ? ",\n" : "");
-        resultText = resultText.slice(0, insertPos) + insertion + resultText.slice(insertPos);
 
         return resultText;
     };

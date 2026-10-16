@@ -32,6 +32,7 @@ fluid.editor.layerList.newLayer = function (self) {
  * @property {String} layerName - The name of the layer.
  * @property {Object} layerDef - The definition of the layer.
  * @property {String} colour - The allocated color for the layer.
+ * @property {String} editorModeLayer - The editor mode layer suitable for editing the layer, as determined by fluid.editorModeLayerFor
  * @property {signal<String>} [sfcDef] - The signal containing the SFC definition text, if available.
  */
 
@@ -54,12 +55,13 @@ fluid.editor.layerList.fromStore = function (store, userOnly, colourManager) {
             return fluid.NoValue;
         } else {
             const layerDef = rec.raw;
+            const editorModeLayer = fluid.editorModeLayerFor(layerName);
             return {
                 layerName,
                 layerDef,
                 colour: colourManager.allocateColour(layerName, layerDef),
-                editorModeLayer: "fluid.editor.sfc",
-                sfcDef: fluid.readSFC(layerName).textSignal
+                editorModeLayer,
+                sfcDef: editorModeLayer === "fluid.editor.sfc" ? fluid.readSFC(layerName).textSignal : undefined
             };
         }
     });

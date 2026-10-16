@@ -246,6 +246,41 @@ QUnit.test("Basic click test", function (assert) {
     assert.equal(that.value, 1, "Updated count 1");
 });
 
+fluid.def("fluid.tests.multiClass", {
+    $layers: "fluid.templateViewComponent",
+    a: true,
+    b: true,
+    template: `<div><span class="base" @class="one:@{a},two:@{b},three:!@{a}">Text</span></div>`
+});
+
+fluid.tests.checkMultiClass = function (assert, container, expected, message) {
+    fluid.cell.stabilize();
+    const span = qs("span", container);
+    const classAttr = span.getAttribute("class");
+    assert.deepEqual([...span.classList].sort(), expected.sort(), `Correct classes: ${message}`);
+    assert.equal(classAttr, classAttr.trim(), `No surrounding whitespace in class attribute: ${message}`);
+    assert.notOk(classAttr.includes(","), `No comma in class attribute: ${message}`);
+};
+
+QUnit.test("Multiple simultaneous dynamic classes - fluid-project/infusion-6#11", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.multiClass({container});
+
+    fluid.tests.checkMultiClass(assert, container, ["base", "one", "two"], "Both true");
+
+    that.a = false;
+    fluid.tests.checkMultiClass(assert, container, ["base", "two", "three"], "Only b true");
+
+    that.b = false;
+    fluid.tests.checkMultiClass(assert, container, ["base", "three"], "Both false");
+
+    that.a = true;
+    that.b = true;
+    fluid.tests.checkMultiClass(assert, container, ["base", "one", "two"], "Both true again");
+
+    that.destroy();
+});
+
 fluid.tests.todos = [
     {
         "text": "Write some code",
@@ -545,4 +580,149 @@ QUnit.test("Conditional rendering", function (assert) {
     that.enabled = false;
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});
+
+fluid.def("fluid.tests.longFormIf", {
+    $layers: "fluid.templateViewComponent",
+    distance: null,
+    template: `<div @id="distanceLine"></div>`,
+    elideParent: false,
+    distanceLine: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            $if: {
+                func: x => x !== null,
+                args: "{longFormIf}.distance"
+            },
+            template: `<div class="distance">@{{longFormIf}.distance}</div>`
+        }
+    }
+});
+
+QUnit.test("Conditional rendering with long-form $if record - fluid-project/infusion-6#13", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.longFormIf({container});
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+
+    that.distance = 0;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="distance">0</div>`, "Falsy value accepted by condition renders");
+
+    that.distance = 5;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, `<div class="distance">5</div>`, "Updated value renders");
+
+    that.distance = null;
+    fluid.cell.stabilize();
+    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});
+
+fluid.def("fluid.tests.attrBinding", {
+    $layers: "fluid.templateViewComponent",
+    busy: false,
+    text: "Initial",
+    shout: "$compute:fluid.tests.attrBinding.shout({self}.text)",
+    choice: "b",
+    notes: "Some notes",
+    done: false,
+    state: {
+        $reactiveRoot: {
+            prompt: "Initial prompt"
+        }
+    },
+    template: `<div>
+        <input class="prompt" value="@{state.prompt}"/>
+        <button disabled="@{busy}" aria-pressed="@{busy}" title="Busy: @{busy}">Go</button>
+        <input class="text" value="@{text}"/>
+        <input class="shout" value="@{shout}"/>
+        <input class="done" type="checkbox" checked="@{done}"/>
+        <textarea value="@{notes}"></textarea>
+        <select value="@{choice}"><option value="a">A</option><option value="b">B</option></select>
+    </div>`
+});
+
+fluid.tests.attrBinding.shout = text => text.toUpperCase();
+
+QUnit.test("Binding attributes and live state properties - fluid-project/infusion-6#14", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.attrBinding({container});
+    fluid.cell.stabilize();
+    const button = qs("button", container);
+    assert.notOk(button.hasAttribute("disabled"), "Boolean attribute bound to false is absent");
+    assert.equal(button.getAttribute("aria-pressed"), "false", "aria- attribute bound to false holds \"false\"");
+    assert.equal(button.getAttribute("title"), "Busy: false", "Composite template renders as string");
+
+    that.busy = true;
+    fluid.cell.stabilize();
+    assert.equal(button.getAttribute("disabled"), "", "Boolean attribute bound to true is present");
+    assert.equal(button.getAttribute("aria-pressed"), "true", "aria- attribute bound to true holds \"true\"");
+
+    that.busy = "false";
+    fluid.cell.stabilize();
+    assert.notOk(button.hasAttribute("disabled"), "Boolean attribute bound to \"false\" is absent");
+
+    that.busy = null;
+    fluid.cell.stabilize();
+    assert.notOk(button.hasAttribute("aria-pressed"), "Attribute bound to null is absent");
+
+    const input = qs(".text", container);
+    assert.equal(input.getAttribute("value"), "Initial", "Initial value attribute rendered");
+    assert.equal(input.value, "Initial", "Initial value property rendered");
+
+    input.value = "Typed";
+    input.dispatchEvent(new Event("input"));
+    fluid.cell.stabilize();
+    assert.equal(that.text, "Typed", "User input written back to model");
+    assert.equal(input.getAttribute("value"), "Typed", "Value attribute materialises user input");
+
+    const shout = qs(".shout", container);
+    assert.equal(shout.value, "TYPED", "Computed value rendered into dependent input");
+    shout.value = "Other";
+    shout.dispatchEvent(new Event("input"));
+    fluid.cell.stabilize();
+    assert.equal(that.shout, "TYPED", "User input is not written back to a computed value");
+    assert.equal(shout.getAttribute("value"), "Other", "Attribute bound to computed value rematerialised from user input");
+
+    that.text = "";
+    fluid.cell.stabilize();
+    assert.equal(input.value, "", "Input cleared by setting model to empty string");
+    assert.equal(input.getAttribute("value"), "", "Value attribute cleared");
+
+    const done = qs(".done", container);
+    assert.notOk(done.hasAttribute("checked"), "Unchecked checkbox has no checked attribute");
+    that.done = true;
+    fluid.cell.stabilize();
+    assert.equal(done.getAttribute("checked"), "", "Checked checkbox has checked attribute");
+    if ("checked" in done) { // linkedom does not implement the checked property
+        assert.equal(done.checked, true, "Checked property set");
+        done.checked = false;
+        done.dispatchEvent(new Event("change"));
+        fluid.cell.stabilize();
+        assert.equal(that.done, false, "User unchecking written back to model");
+        assert.notOk(done.hasAttribute("checked"), "Checked attribute removed following user unchecking");
+    }
+
+    const prompt = qs(".prompt", container);
+    assert.equal(prompt.value, "Initial prompt", "Value rendered from reactive root");
+    prompt.value = "Typed prompt";
+    prompt.dispatchEvent(new Event("input"));
+    fluid.cell.stabilize();
+    assert.equal(that.state.prompt, "Typed prompt", "User input written back into reactive root");
+    that.state.prompt = "";
+    fluid.cell.stabilize();
+    assert.equal(prompt.value, "", "Input bound into reactive root cleared from model");
+
+    const textarea = qs("textarea", container);
+    assert.equal(textarea.textContent, "Some notes", "Textarea value materialised as content");
+    that.notes = "Other notes";
+    fluid.cell.stabilize();
+    assert.equal(textarea.value, "Other notes", "Textarea value updated");
+
+    const options = qsa("option", container);
+    assert.deepEqual(options.map(option => option.hasAttribute("selected")), [false, true], "Select value materialised onto options");
+    that.choice = "a";
+    fluid.cell.stabilize();
+    assert.deepEqual(options.map(option => option.hasAttribute("selected")), [true, false], "Select value updated");
+    assert.equal(qs("select", container).value, "a", "Select value property agrees");
 });

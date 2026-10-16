@@ -741,9 +741,15 @@ const fluidViewScope = function (fluid) {
                     fluid.writeParsedTemplate(layerName, docTemplate);
                 }
 
-                // If no $layers was written in the definition, add one that will correctly resolve its template
+                // If no $layers was written in the definition, add one that will correctly resolve its template.
+                // In either case, add the tag layer marking the layer as derived from an SFC
+                // Reparse if the text has already been patched since an existing $layers entry may have moved
+                const layersDef = patchedText === ourSNI.text ? ourDef :
+                    {scriptIndex: ourDef.scriptIndex, ...fluid.parseDefMaps(patchedText, 0)[layerName]};
                 if (!oldLayers) {
-                    patchedText = fluid.patchDefMap(patchedText, ourDef, "$layers", addLayers, "first");
+                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", ["fluid.sfcViewComponent", ...addLayers], "first");
+                } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcViewComponent")) {
+                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", ["fluid.sfcViewComponent", ...fluid.makeArray(oldLayers)], "first");
                 }
                 ourSNI.text = patchedText;
 
@@ -1883,6 +1889,12 @@ const fluidViewScope = function (fluid) {
     fluid.def("fluid.templateViewComponent", {
         $layers: "fluid.viewComponent",
         templateTree: "$compute:fluid.parseHTMLToTree({self}.template)",
+        $variety: "framework"
+    });
+
+    // Tag layer applied by fluid.sfcToInjRecs to every layer which was loaded from a Single File Component, allowing
+    // its MIME type to be determined by fluid.layerMimeType
+    fluid.def("fluid.sfcViewComponent", {
         $variety: "framework"
     });
 

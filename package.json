@@ -92,6 +92,7 @@
                 "src/framework/core/js/FluidModules.js",
                 "src/framework/core/js/FluidIL.js",
                 "src/framework/core/js/FluidView.js",
+                "src/framework/core/js/FluidPTF.js",
                 "src/framework/core/js/FluidView-browser.js",
                 "src/lib/lezer/lezer-javascript-browser.js",
                 "src/framework/core/js/sfc-parser.js",
@@ -104,6 +105,7 @@
                 "src/framework/core/js/FluidModules.js",
                 "src/framework/core/js/FluidIL.js",
                 "src/framework/core/js/FluidView.js",
+                "src/framework/core/js/FluidPTF.js",
                 "src/framework/core/js/FluidView-node.js",
                 "src/lib/lezer/lezer-javascript-browser.js",
                 "src/framework/core/js/sfc-parser.js",
@@ -120,7 +122,8 @@
                 "tests/framework-tests/core/html/FluidSignalsAsyncTests.html",
                 "tests/framework-tests/core/html/FluidILTests.html",
                 "tests/framework-tests/core/html/FluidViewTests.html",
-                "tests/framework-tests/core/html/FluidViewSFCTests.html"
+                "tests/framework-tests/core/html/FluidViewSFCTests.html",
+                "tests/framework-tests/core/html/FluidPTFTests.html"
             ]
         }
     }

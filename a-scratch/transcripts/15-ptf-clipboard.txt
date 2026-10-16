@@ -1,0 +1,1677 @@
+ ▐▛███▛█   Claude Code v2.1.301
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6/a-scratch/transcripts
+
+
+❯ Try to resolve https://github.com/fluid-project/infusion-6/issues/15 - if an  
+  aspect appears problematic or requires considerable research/experimentation, 
+  report back with a work plan and/or summary of obstacles rather than          
+  spending too many cycles on it                                                
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● This is a large multi-part issue. Let me survey the relevant machinery first.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Skill(anthropic-skills:house-js-style)
+  ⎿  Successfully loaded skill
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● Still surveying: I've read the issue and the SFC and editor layer-mode code.
+  Next I'm looking at the layer store, potentia and liveLayer internals.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● Progress: I've mapped the layer store, SFC loading, potentia/liveLayer
+  internals and the editor mode wiring. Baseline is 761/761 tests passing. Now
+  checking a few helper APIs before writing code.
+
+  Ran 7 shell commands (ctrl+o to expand)
+
+● I'm writing the new FluidPTF.js core file along with the
+  fluid.sfcViewComponent tag layer and editor mode fix, starting by checking
+  edge cases in patchDefMap and merge records.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Now writing the core FluidPTF.js.
+
+● Write(/mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidPTF.j
+       s)
+  ⎿  Wrote 499 lines to ../../src/framework/core/js/FluidPTF.js
+       1 "use strict";
+       2 
+       3 // import fluid from "./FluidView.js"
+       5 // The "Potentia Transmission Format" (PTF) - a MIME multipart (
+         RFC 1341, RFC 2046) document holding all of the layer
+       6 // definitions, user potentia and live layer contents required t
+         o reconstruct a component instance at another location.
+       8 
+       9 const fluidPTFScope = function (fluid) {
+      10     const $m = fluid.metadataSymbol;
+     … +640 lines (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now tidy the function-rendering branch, move the tag layer into FluidView.js,
+  and fix patchDefMap + sfcToInjRecs.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js; python3
+      - <<'EOF'
+      p="FluidPTF.js"…)
+  ⎿      fluid.patchDefMap = function (text, defMap, key, value, dispositio
+     n) {
+             const keyPath = [key, $m];
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+2 -6)
+      11  
+      12      fluid.registerNamespace("fluid.ptf");
+      13  
+      14 -    // Tag layer applied by fluid.sfcToInjRecs to every layer w
+         -hich was loaded from a Single File Component                   
+      15 -    fluid.def("fluid.sfcViewComponent", {                      
+      16 -        $variety: "framework"                                  
+      17 -    });                                                        
+      18 -                                                               
+      14      /** MIME types for each of the representations a layer may 
+          be transmitted or edited in */
+      15      fluid.layerMimeTypes = {
+      16          sfc: "text/x-vue",
+     ...
+      55          let togo;
+      56          if (typeof(value) === "function") {
+      57              const source = value.toString();
+      63 -            togo = functionExpressionRE.test(source) ? source :
+         - "function " + source;                                         
+      58              if (source.includes("[native code]")) {
+      59                  togo = `fluid.unavailable(${JSON.stringify("Nat
+          ive function " + value.name + " cannot be transmitted")})`;
+      60 +            } else {                                           
+      61 +                togo = functionExpressionRE.test(source) ? sour
+         +ce : "function " + source;                                     
+      62              }
+      63          } else if (Array.isArray(value)) {
+      64              const elements = value.map(element => inner + fluid
+          .ptf.valueToJavaScript(element, inner));
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidView.js (+11 -2)
+      741                      fluid.writeParsedTemplate(layerName, docTe
+           mplate);
+      742                  }
+      743  
+      744 -                // If no $layers was written in the definition
+          -, add one that will correctly resolve its template            
+      744 +                // If no $layers was written in the definition
+          +, add one that will correctly resolve its template.           
+      745 +                // In either case, add the tag layer marking t
+          +he layer as derived from an SFC                               
+      746                  if (!oldLayers) {
+      746 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, ourDef, "$layers", addLayers, "first");                    
+      747 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, ourDef, "$layers", ["fluid.sfcViewComponent", ...addLayers]
+          +, "first");                                                   
+      748 +                } else if (!fluid.makeArray(oldLayers).include
+          +s("fluid.sfcViewComponent")) {                                
+      749 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, ourDef, "$layers", ["fluid.sfcViewComponent", ...fluid.make
+          +Array(oldLayers)], "first");                                  
+      750                  }
+      751                  ourSNI.text = patchedText;
+      752  
+     ...
+      1889          $variety: "framework"
+      1890      });
+      1891  
+      1892 +    // Tag layer applied by fluid.sfcToInjRecs to every layer
+           + which was loaded from a Single File Component, allowing     
+      1893 +    // its MIME type to be determined by fluid.layerMimeType 
+      1894 +    fluid.def("fluid.sfcViewComponent", {                    
+      1895 +        $variety: "framework"                                
+      1896 +    });                                                      
+      1897 +                                                             
+      1898      fluid.def("fluid.sfcTemplateViewComponent", {
+      1899          $layers: "fluid.templateViewComponent",
+      1900          templateTree: "$compute:fluid.fetchParsedTemplate({se
+            lf}.templateLayer)",
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     sfc-parser.js (+14 -15)
+      150  
+      151      /**
+      152       * Patches a textual representation of a JSON-like structu
+           re using a defMap.
+      153 -     * If the given `key` is already present in the `defMap`, 
+          -its textual range is removed.                                 
+      153 +     * If the given `key` is already present in the `defMap`, 
+          +its value is replaced in place and `disposition` is ignored.  
+      154       *
+      155       * @param {String} text - The original textual form of the
+            structure to patch.
+      156       * @param {DefMap} defMap - A flat defMap mapping top-leve
+           l property names to their source ranges.
+     ...
+      164          const keyPath = [key, $m];
+      165          const entry = fluid.get(defMap, keyPath);
+      166  
+      167 -        let resultText = text;                                
+      167 +        let resultText;                                       
+      168  
+      169          if (entry) {
+      170 -            // Replace the old key-value range with spaces    
+      171 -            const from = entry.from;                          
+      172 -            const to = entry.to;                              
+      173 -            resultText = resultText.slice(0, from) + resultTex
+          -t.slice(to);                                                  
+      174 -        }                                                     
+      175 -        const tom = defMap[$m].to - 1;                        
+      176 -        const fromp = defMap[$m].from + 1;                    
+      177 -        const empty = Object.keys(defMap).length === 1;       
+      170 +            // Replace the old value's range with the new valu
+          +e                                                             
+      171 +            resultText = text.slice(0, entry.from) + JSON.stri
+          +ngify(value) + text.slice(entry.to);                          
+      172 +        } else {                                              
+      173 +            const tom = defMap[$m].to - 1;                    
+      174 +            const fromp = defMap[$m].from + 1;                
+      175 +            const empty = Object.keys(defMap).length === 0;   
+      176  
+      179 -        const insertPos = disposition === "first" ? (resultTex
+          -t[fromp] === "\n" ? fromp + 1 : fromp) : (resultText[tom - 1] 
+          -=== "\n" ? tom - 1 : tom);                                    
+      177 +            const insertPos = disposition === "first" ? (text[
+          +fromp] === "\n" ? fromp + 1 : fromp) : (text[tom - 1] === "\n"
+          + ? tom - 1 : tom);                                            
+      178  
+      181 -        const insertion = (disposition === "last" ? ",\n" : ""
+          -) +                                                           
+      182 -            `    ${key}: ${JSON.stringify(value)}` +          
+      183 -            (disposition === "first" && !empty ? ",\n" : ""); 
+      184 -        resultText = resultText.slice(0, insertPos) + insertio
+          -n + resultText.slice(insertPos);                              
+      179 +            const insertion = (disposition === "last" ? ",\n" 
+          +: "") +                                                       
+      180 +                `    ${key}: ${JSON.stringify(value)}` +      
+      181 +                (disposition === "first" && !empty ? ",\n" : "
+          +");                                                           
+     … 5 more lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js; sed -i
+      's/const empty = Object.keys(defMap).length === 0;/const empty =
+      Object.keys(defMap).le…)
+  ⎿  175:            const empty = Object.keys(defMap).length === 1;
+
+         /**
+     … +503 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     sfc-parser.js (+1 -1)
+      172          } else {
+      173              const tom = defMap[$m].to - 1;
+      174              const fromp = defMap[$m].from + 1;
+      175 -            const empty = Object.keys(defMap).length === 0;   
+      175 +            const empty = Object.keys(defMap).length === 1;   
+      176  
+      177              const insertPos = disposition === "first" ? (text[
+           fromp] === "\n" ? fromp + 1 : fromp) : (text[tom - 1] === "\n"
+            ? tom - 1 : tom);
+      178  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js; python3
+      - <<'EOF'
+      p="FluidView.js"…)
+  ⎿  14:33:26.394:   ASSERTION FAILED:  1 thingit
+     14:33:26.441:   ASSERTION FAILED:  Could not find targets for any cons
+     traints in listeners  [
+     … +14 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidView.js (+5 -2)
+      743  
+      744                  // If no $layers was written in the definition
+           , add one that will correctly resolve its template.
+      745                  // In either case, add the tag layer marking t
+           he layer as derived from an SFC
+      746 +                // Reparse if the text has already been patche
+          +d since an existing $layers entry may have moved              
+      747 +                const layersDef = patchedText === ourSNI.text 
+          +? ourDef :                                                    
+      748 +                    {scriptIndex: ourDef.scriptIndex, ...fluid
+          +.parseDefMaps(patchedText, 0)[layerName]};                    
+      749                  if (!oldLayers) {
+      747 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, ourDef, "$layers", ["fluid.sfcViewComponent", ...addLayers]
+          -, "first");                                                   
+      750 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, layersDef, "$layers", ["fluid.sfcViewComponent", ...addLaye
+          +rs], "first");                                                
+      751                  } else if (!fluid.makeArray(oldLayers).include
+           s("fluid.sfcViewComponent")) {
+      749 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, ourDef, "$layers", ["fluid.sfcViewComponent", ...fluid.make
+          -Array(oldLayers)], "first");                                  
+      752 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, layersDef, "$layers", ["fluid.sfcViewComponent", ...fluid.m
+          +akeArray(oldLayers)], "first");                               
+      753                  }
+      754                  ourSNI.text = patchedText;
+      755  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Baseline still green. Now wiring FluidPTF.js into load lists, then writing
+  tests.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js; python3
+      - <<'EOF'
+      p="FluidPTF.js"…)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+33 -3)
+      152          fluid.each(liveLayer, (value, key) => {
+      153              const childSegs = [...segs, key];
+      154              if (fluid.isSignal(value)) {
+      155 -                togo[fluid.composeSegments(childSegs)] = fluid
+          -.deSignal(value.get());                                       
+      155 +                const amenable = fluid.ptf.toJSONAmenable(flui
+          +d.deSignal(value.get()));                                     
+      156 +                if (amenable !== undefined) {                 
+      157 +                    togo[fluid.composeSegments(childSegs)] = a
+          +menable;                                                      
+      158 +                }                                             
+      159              } else {
+      160                  fluid.ptf.flattenLiveLayer(value, childSegs, t
+           ogo);
+      161              }
+     ...
+      164      };
+      165  
+      166      /**
+      167 +     * Reduce a value to the parts of it which can be faithful
+          +ly transmitted as JSON. Primitives, plain objects and         
+      168 +     * arrays are retained, whereas any other values such as f
+          +unctions or DOM nodes, which are typically supplied by the    
+      169 +     * host environment (for example a component's `container`
+          +), are discarded.                                             
+      170 +     * @param {any} value - The value to be reduced           
+      171 +     * @return {any} The JSON-amenable parts of the value, or 
+          +`undefined` if none of it is amenable                         
+      172 +     */                                                       
+      173 +    fluid.ptf.toJSONAmenable = function (value) {             
+      174 +        let togo;                                             
+      175 +        if (Array.isArray(value)) {                           
+      176 +            togo = value.map(element => fluid.ptf.toJSONAmenab
+          +le(element) ?? null);                                         
+      177 +        } else if (fluid.isPlainObject(value, true)) {        
+      178 +            togo = {};                                        
+      179 +            fluid.each(value, (member, key) => {              
+      180 +                const amenable = fluid.ptf.toJSONAmenable(memb
+          +er);                                                          
+      181 +                if (amenable !== undefined) {                 
+      182 +                    togo[key] = amenable;                     
+      183 +                }                                             
+      184 +            });                                               
+      185 +        } else if (value === null || ["string", "number", "boo
+          +lean"].includes(typeof(value))) {                             
+      186 +            togo = value;                                     
+      187 +        }                                                     
+      188 +        return togo;                                          
+      189 +    };                                                        
+      190 +                                                              
+      191 +    /**                                                       
+      192       * Render the user potentia of a component as a JSON-amena
+           ble object. For the transmitted component, its full list
+     … 26 more lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      import re…)
+  ⎿  patched demo/compose-edit/index.html
+     patched demo/tldraw/index.html
+     patched demo/tldraw-selfboot/index.html
+     … +66 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/package.json (+4 -1)
+      92                  "src/framework/core/js/FluidModules.js",
+      93                  "src/framework/core/js/FluidIL.js",
+      94                  "src/framework/core/js/FluidView.js",
+      95 +                "src/framework/core/js/FluidPTF.js",           
+      96                  "src/framework/core/js/FluidView-browser.js",
+      97                  "src/lib/lezer/lezer-javascript-browser.js",
+      98                  "src/framework/core/js/sfc-parser.js",
+     ...
+      105                  "src/framework/core/js/FluidModules.js",
+      106                  "src/framework/core/js/FluidIL.js",
+      107                  "src/framework/core/js/FluidView.js",
+      108 +                "src/framework/core/js/FluidPTF.js",          
+      109                  "src/framework/core/js/FluidView-node.js",
+      110                  "src/lib/lezer/lezer-javascript-browser.js",
+      111                  "src/framework/core/js/sfc-parser.js",
+     ...
+      122                  "tests/framework-tests/core/html/FluidSignalsA
+           syncTests.html",
+      123                  "tests/framework-tests/core/html/FluidILTests.
+           html",
+      124                  "tests/framework-tests/core/html/FluidViewTest
+           s.html",
+      123 -                "tests/framework-tests/core/html/FluidViewSFCT
+          -ests.html"                                                    
+      125 +                "tests/framework-tests/core/html/FluidViewSFCT
+          +ests.html",                                                   
+      126 +                "tests/framework-tests/core/html/FluidPTFTests
+          +.html"                                                        
+      127              ]
+      128          }
+      129      }
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/build.js (+2 -1)
+      27          "src/framework/core/js/Fluid.js",
+      28          "src/framework/core/js/FluidModules.js",
+      29          "src/framework/core/js/FluidIL.js",
+      30 -        "src/framework/core/js/FluidView.js"                   
+      30 +        "src/framework/core/js/FluidView.js",                  
+      31 +        "src/framework/core/js/FluidPTF.js"                    
+      32      ],
+      33  
+      34      copy: [{
+  ⎿  Updated
+     /mnt/outer-source/gits/fluid-infusion-6/demo/compose-edit/index.html
+     (+1 -0)
+      20      <script src="../../src/framework/core/js/FluidModules.js" f
+          luid-hydrated="%infusion-6"></script>
+      21      <script src="../../src/framework/core/js/FluidIL.js" fluid-
+          hydrated="%infusion-6"></script>
+      22      <script src="../../src/framework/core/js/FluidView.js" flui
+          d-hydrated="%infusion-6"></script>
+      23 +    <script src="../../src/framework/core/js/FluidPTF.js" fluid
+         +-hydrated="%infusion-6"></script>                              
+      24      <script src="../../src/framework/core/js/FluidView-browser.
+          js" fluid-hydrated="%infusion-6"></script>
+      25      <script src="../../src/framework/core/js/template-parser.js
+          " fluid-hydrated="%infusion-6"></script>
+      26      <script src="../../src/framework/core/js/sfc-parser.js" flu
+          id-hydrated="%infusion-6"></script>
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/index.html
+     (+1 -0)
+      14      <script src="../../src/framework/core/js/FluidModules.js" f
+          luid-hydrated="%infusion-6"></script>
+      15      <script src="../../src/framework/core/js/FluidIL.js" fluid-
+          hydrated="%infusion-6"></script>
+      16      <script src="../../src/framework/core/js/FluidView.js" flui
+          d-hydrated="%infusion-6"></script>
+      17 +    <script src="../../src/framework/core/js/FluidPTF.js" fluid
+         +-hydrated="%infusion-6"></script>                              
+      18      <script src="../../src/framework/core/js/FluidView-browser.
+          js" fluid-hydrated="%infusion-6"></script>
+      19      <script src="../../src/framework/core/js/template-parser.js
+          " fluid-hydrated="%infusion-6"></script>
+      20      <script src="../../src/framework/core/js/sfc-parser.js" flu
+          id-hydrated="%infusion-6"></script>
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw-selfboot/i
+     ndex.html (+1 -0)
+      14      <script src="../../src/framework/core/js/FluidModules.js" f
+          luid-hydrated="%infusion-6"></script>
+      15      <script src="../../src/framework/core/js/FluidIL.js" fluid-
+          hydrated="%infusion-6"></script>
+      16      <script src="../../src/framework/core/js/FluidView.js" flui
+          d-hydrated="%infusion-6"></script>
+      17 +    <script src="../../src/framework/core/js/FluidPTF.js" fluid
+         +-hydrated="%infusion-6"></script>                              
+      18      <script src="../../src/framework/core/js/FluidView-browser.
+          js" fluid-hydrated="%infusion-6"></script>
+      19      <script src="../../src/framework/core/js/template-parser.js
+          " fluid-hydrated="%infusion-6"></script>
+      20      <script src="../../src/framework/core/js/sfc-parser.js" flu
+          id-hydrated="%infusion-6"></script>
+  ⎿  … 4 more files changed
+
+● Now the tests.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core;
+      sed 's#<title>FluidView.js SFC Tests</title>#<title>FluidPTF.js
+      Tests</title>#; s#../js/F…)
+  ⎿  5:        <title>FluidPTF.js Tests</title>
+     19:        <script src="../../../../src/framework/core/js/FluidPTF.js"
+     ></script>
+     … +2 lines (ctrl+o to expand)
+  ⎿  Created /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/
+     core/html/FluidPTFTests.html (+35 -0)
+       1 +<!DOCTYPE html>                                                
+       2 +<html lang="en">                                               
+       3 +    <head>                                                     
+       4 +        <meta http-equiv="Content-Type" content="text/html; cha
+         +rset=utf-8" />                                                 
+       5 +        <title>FluidPTF.js Tests</title>                       
+       6 +                                                               
+       7 +        <link rel="stylesheet" media="screen" href="../../../li
+         +b/qunit/css/qunit.css" />                                      
+       8 +                                                               
+       9 +        <script src="../../../../src/lib/lezer/lezer-javascript
+         +-browser.js" fluid-hydrated="%infusion-6"></script>            
+      10 +                                                               
+      11 +        <script src="../../../../src/framework/core/js/FluidCor
+         +e.js"></script>                                                
+      12 +        <script src="../../../../src/framework/core/js/FluidSig
+         +nals.js"></script>                                             
+      13 +        <script src="../../../../src/framework/core/js/Fluid.js
+         +"></script>                                                    
+      14 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>                                                  
+      15 +        <script src="../../../../src/framework/core/js/template
+         +-parser.js"></script>                                          
+      16 +        <script src="../../../../src/framework/core/js/sfc-pars
+         +er.js"></script>                                               
+      17 +        <script src="../../../../src/framework/core/js/FluidMod
+         +ules.js"></script>                                             
+      18 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w.js"></script>                                                
+      19 +        <script src="../../../../src/framework/core/js/FluidPTF
+         +.js"></script>                                                 
+      20 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w-browser.js"></script>                                        
+      21 +                                                               
+      22 +        <script src="../../../lib/qunit/js/qunit.js"></script> 
+      23 +        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         +"></script>                                                    
+      24 +                                                               
+      25 +        <script src="../js/FluidPTFTests.js"></script>         
+      26 +    </head>                                                    
+      27 +    <body>                                                     
+      28 +    <div id="qunit"></div>                                     
+      29 +    <!-- Test HTML -->                                         
+      30 +    <div id="qunit-fixture">                                   
+      31 +        <div class="container" id="main-container"></div>      
+      32 +    </div>                                                     
+      33 +                                                               
+      34 +    </body>                                                    
+      35 +</html>                                                        
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core;
+      sed -i 's#<div class="container" id="main-container"></div>#<div
+      class="container" id="ma…)
+  ⎿      <div id="qunit"></div>
+         <!-- Test HTML -->
+         <div id="qunit-fixture">
+     … +6 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/
+     core/html/FluidPTFTests.html (+1 -0)
+      29      <!-- Test HTML -->
+      30      <div id="qunit-fixture">
+      31          <div class="container" id="main-container"></div>
+      32 +        <div class="target-container" id="target-container"></d
+         +iv>                                                            
+      33      </div>
+      34  
+      35      </body>
+
+● Write(/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core/js/Fl
+       uidPTFTests.js)  ⎿  Wrote 262 lines to
+     ../../tests/framework-tests/core/js/FluidPTFTests.js
+      1 /* global QUnit */
+      2 
+      3 "use strict";
+      4 
+      5 fluid.setLogging(true);
+      6 
+      7 fluid.registerNamespace("fluid.tests.ptf");
+      8 
+      9 QUnit.module("Fluid PTF Tests");
+     … +314 lines (ctrl+o to expand)
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● PTF tests: 33/37 pass. I'm fixing three things: a trailing-newline round-trip
+  bug, the order layer parts come out in, and getting the shadow of a component
+  that isn't available yet.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js; python3
+      - <<'EOF'
+      p="FluidPTF.js"…)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+15 -4)
+       7  // See https://github.com/fluid-project/infusion-6/issues/15
+       8  
+       9  const fluidPTFScope = function (fluid) {
+      10 -    const $m = fluid.metadataSymbol;                           
+      10 +    const $t = fluid.proxySymbol;                              
+      11  
+      12      fluid.registerNamespace("fluid.ptf");
+      13  
+     ...
+      209      };
+      210  
+      211      /**
+      212 +     * Retrieve the shadow of a component from its proxy. Unli
+          +ke reading its metadata, this succeeds even while the         
+      213 +     * component is unavailable, for example while its layers 
+          +are loading.                                                  
+      214 +     * @param {fluid.component} component - The proxy for the 
+          +component                                                     
+      215 +     * @return {Shadow} The component's shadow                
+      216 +     */                                                       
+      217 +    fluid.ptf.componentToShadow = function (component) {      
+      218 +        return component[$t].shadow;                          
+      219 +    };                                                        
+      220 +                                                              
+      221 +    /**                                                       
+      222       * Assemble all of the parts required to reconstruct the s
+           upplied component at another location. These are
+      223       * i) the definitions of all user layers resolved in the `
+           $layers` of the component and any of its subcomponents,
+      224       * ii) the user potentia of the component and any subcompo
+           nents having one and iii) the contents of the live layers
+     ...
+      227       * @return {PTFPart[]} The parts required to reconstruct t
+           he component
+      228       */
+      229      fluid.ptf.componentToParts = function (component) {
+      220 -        const rootShadow = component[$m];                     
+      230 +        const rootShadow = fluid.ptf.componentToShadow(compone
+          +nt);                                                          
+      231          const layerNames = new Set();
+      232          const potentiaParts = [];
+      233          const liveParts = [];
+     ...
+      285              `Content-Disposition: attachment; filename=${JSON.
+           stringify(part.filename)}\n` +
+      286              `Content-Description: ${part.kind}\n` +
+      287              "\n" +
+      278 -            part.body + (part.body.endsWith("\n") ? "" : "\n")
+      288 +            // The line break preceding each delimiter belongs
+          + to the delimiter rather than the body                        
+      289 +            part.body + "\n"                                  
+      290          );
+      291          return "MIME-Version: 1.0\n" +
+     … 9 more lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's/const layerParts =
+      \[...layerNames\].reverse().map/const layerParts = [...layerNames].map/'
+      src/framework/…)
+  ⎿  14:35:53.992:   fq:  Test concluded - Module "Fluid PTF Tests" Test na
+     me "Encode and decode round trip": 4/4 passed - PASS
+     14:35:53.997:   fq:  Test concluded - Module "Fluid PTF Tests" Test na
+     … +47 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+1 -1)
+      252              });
+      253          };
+      254          visit(rootShadow, []);
+      255 -        const layerParts = [...layerNames].reverse().map(layer
+          -Name => fluid.ptf.layerToPart(layerName));                    
+      255 +        const layerParts = [...layerNames].map(layerName => fl
+          +uid.ptf.layerToPart(layerName));                              
+      256          return [...layerParts, ...potentiaParts, ...liveParts]
+           ;
+      257      };
+      258  
+
+● All 44 PTF tests pass. Let me look at a real generated document to check it's
+  readable.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Readable. One tweak (put $layers first in potentia), then the editor-mode
+  cleanup.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's/            togo =
+      {...merged, \$layers: potentia.layerNames};/            togo = {$layers:
+      potentia.layer…)
+  ⎿  204:            togo = {$layers: potentia.layerNames, ...merged};
+     "use strict";
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+1 -1)
+      201          const merged = fluid.ptf.toJSONAmenable(Object.assign(
+           {}, ...userRecords.map(mergeRecord => mergeRecord.layer)));
+      202          let togo = null;
+      203          if (isRoot) {
+      204 -            togo = {...merged, $layers: potentia.layerNames}; 
+      204 +            togo = {$layers: potentia.layerNames, ...merged}; 
+      205          } else if (userRecords.length > 0) {
+      206              togo = merged;
+      207          }
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/
+     core/js/FluidPTFTests.js (+1 -1)
+      197          ["live", "/", "application/json"]
+      198      ], "Expected parts assembled");
+      199      assert.equal(parts[0].body, fluid.tests.ptf.counterSFC, "S
+           FC text transmitted verbatim");
+      200 -    assert.deepEqual(JSON.parse(parts[1].body), {text: "User t
+          -ext", $layers: ["fluid.tests.ptf.counter"]}, "User potentia tr
+          -ansmitted without container");                                
+      200 +    assert.deepEqual(JSON.parse(parts[1].body), {$layers: ["fl
+          +uid.tests.ptf.counter"], text: "User text"}, "User potentia tr
+          +ansmitted without container");                                
+      201      assert.deepEqual(JSON.parse(parts[2].body), {count: 1}, "L
+           ive layer transmitted");
+      202  
+      203      // Rename the layer throughout the document so that recons
+           truction must register it afresh
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidPTF.js"…)
+  ⎿  6:            text: "{fluid.editor}.text"
+     40:    text: "{fluid.editor}.layerRec.sfcDef",
+     70:    text: {
+     … +3 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+2 -1)
+      201          const merged = fluid.ptf.toJSONAmenable(Object.assign(
+           {}, ...userRecords.map(mergeRecord => mergeRecord.layer)));
+      202          let togo = null;
+      203          if (isRoot) {
+      204 -            togo = {$layers: potentia.layerNames, ...merged}; 
+      204 +            // Written first for legibility, and last so that 
+          +it overrides any partial $layers in the user records          
+      205 +            togo = Object.assign({$layers: potentia.layerNames
+          +}, merged, {$layers: potentia.layerNames});                   
+      206          } else if (userRecords.length > 0) {
+      207              togo = merged;
+      208          }
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/edit/js/
+     editorRoot.js (+16 -0)
+       2  
+       3  const $m = fluid.metadataSymbol;
+       4  
+       5 +// Editor mode layers supplied to fluid.editor by fluid.editor.
+         +editorsPane for each MIME type determined by fluid.layerMimeTyp
+         +e                                                              
+       6 +fluid.editorModeLayers = {                                     
+       7 +    "text/x-vue": "fluid.editor.sfc",                          
+       8 +    "text/javascript": "fluid.editor.javascript",              
+       9 +    "application/json": "fluid.editor.json"                    
+      10 +};                                                             
+      11 +                                                               
+      12 +/**                                                            
+      13 + * Determine the editor mode layer suitable for editing the nam
+         +ed layer.                                                      
+      14 + * @param {String} layerName - The name of the layer           
+      15 + * @return {String} The name of the editor mode layer to be sup
+         +plied to fluid.editor                                          
+      16 + */                                                            
+      17 +fluid.editorModeLayerFor = function (layerName) {              
+      18 +    return fluid.editorModeLayers[fluid.layerMimeType(layerName
+         +)];                                                            
+      19 +};                                                             
+      20 +                                                               
+      21  fluid.shadowHasUserLayer = function (shadow) {
+      22      return shadow.that && fluid.deSignal(shadow.that.$layers).s
+          ome(layer => fluid.isUserLayer(layer));
+      23  };
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/edit/sfc
+     /fluid-editor-layerList.vue (+4 -2)
+      32   * @property {String} layerName - The name of the layer.
+      33   * @property {Object} layerDef - The definition of the layer.
+      34   * @property {String} colour - The allocated color for the laye
+          r.
+      35 + * @property {String} editorModeLayer - The editor mode layer s
+         +uitable for editing the layer, as determined by fluid.editorMod
+         +eLayerFor                                                      
+      36   * @property {signal<String>} [sfcDef] - The signal containing 
+          the SFC definition text, if available.
+      37   */
+      38  
+     ...
+      55              return fluid.NoValue;
+      56          } else {
+      57              const layerDef = rec.raw;
+      58 +            const editorModeLayer = fluid.editorModeLayerFor(la
+         +yerName);                                                      
+      59              return {
+      60                  layerName,
+      61                  layerDef,
+      62                  colour: colourManager.allocateColour(layerName,
+           layerDef),
+      61 -                editorModeLayer: "fluid.editor.sfc",           
+      62 -                sfcDef: fluid.readSFC(layerName).textSignal    
+      63 +                editorModeLayer,                               
+      64 +                sfcDef: editorModeLayer === "fluid.editor.sfc" 
+         +? fluid.readSFC(layerName).textSignal : undefined              
+      65              };
+      66          }
+      67      });
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/edit/sfc
+     /fluid-editorRoot.vue (+1 -1)
+      54                      layerName,
+      55                      layerDef: fluid.fetchWriteableLiveSignal(la
+          yerName),
+      56                      colour: layerColours.$live,
+      57 -                    editorModeLayer: "fluid.editor.json"       
+      57 +                    editorModeLayer: fluid.editorModeLayerFor(l
+         +ayerName)                                                      
+      58                  } : layerList.find(layerRec => layerRec.layerNa
+          me === layerName);
+      59              },
+      60              args: ["{layerList}.layerList", "{colourManager}.la
+          yerColours", "{0}:layerName"]
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/edit/sfc
+     /fluid-editor.vue (+7 -1)
+      64  });
+      65  
+      66  
+      67 +// Currently read-only since layers defined in JavaScript canno
+         +t be faithfully written back from their rendered source        
+      68  fluid.def("fluid.editor.javascript", {
+      69      mode: "text/javascript",
+      69 -    text: "{fluid.editor}.layerRec.layerDef",                  
+      70 +    text: {                                                    
+      71 +        $compute: {                                            
+      72 +            func: "fluid.layerToJavaScript",                   
+      73 +            args: ["{fluid.editor}.layerRec.layerName", "{fluid
+         +.editor}.layerRec.layerDef"]                                   
+      74 +        }                                                      
+      75 +    },                                                         
+      76      $variety: "frameworkAux"
+      77  });
+      78  
+
+● Editor wiring done. Running the full suite and lint.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 805/805 pass. The two lint errors in editorRoot.js are on lines I didn't touch
+  (75, 139). Checking the .vue files via the project linter:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Lint failures are all pre-existing (generated .d.mts files and the like). None
+  of my files are flagged. Quick check on the remaining tldraw pieces to judge
+  their size:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I've implemented the core of issue #15: the PTF format, collecting a
+  component's layers and state into a document, rebuilding a component from one,
+  and a single way to work out each layer's MIME type. I haven't done the
+  tldraw clipboard and .withTLDraw parts; there's a work plan for them below.
+  npm test passes 805/805, including 44 new PTF tests. Nothing is committed.
+
+  What's done
+
+  New file src/framework/core/js/FluidPTF.js. I added it to package.json (client
+  and server lists, plus the test list), build.js, both FluidView test pages
+  and the five demo pages that load FluidView-browser.js.
+
+  - The format. fluid.ptf.encode / decode write and read MIME multipart
+    documents.
+    - Each part says what it is in its Content-Description (layer, potentia or
+      live).
+    - For a layer part, the Content-Disposition filename is the layer name. For
+      the other two it's the path relative to the copied component: / for the
+      component itself, /child for a subcomponent.
+    - Lines are separated by plain LF so the text is easy to read and edit. The
+      decoder also accepts CRLF.
+    - fluid.ptf.isPTF(text) is a cheap check that tells a PTF paste apart from
+      anything else.
+  - Collecting. fluid.ptf.componentToPTF(component) walks the component and its
+    subcomponents and gathers three things:
+    - The definitions of the user layers in their $layers. SFC layers are sent
+      as their original SFC text; JavaScript layers are written out as a
+      fluid.def(...) call, with functions written out as their source.
+    - The user potentia, with $layers holding the direct layer names.
+    - Each live layer, flattened to a path → value map.
+
+    Values that can't go into JSON, such as the container DOM node the host
+    passes in, are dropped.
+  - Rebuilding. fluid.ptf.instantiate(text, {potentia, overrideLayers}):
+    - Registers any transmitted layers that aren't already defined. SFC text is
+      loaded directly through a new fluid.loadSFCText.
+    - Creates the component as a free component, with options.potentia merged on
+      top so the receiving side can supply its own container.
+    - Once the component is available, applies the live state.
+
+    The tests round-trip an SFC component and a JavaScript component with a
+    subcomponent. They rename the layer throughout the document before
+    rebuilding, which also shows the format can be hand-edited.
+
+  MIME type mechanism
+  - Every layer loaded from an SFC now gets a fluid.sfcViewComponent tag layer
+    added (in fluid.sfcToInjRecs), whether or not its $layers was written by
+    hand. fluid.layerMimeType(name) returns text/x-vue, application/json (for
+    live {...} layers) or text/javascript.
+  - The editor now picks its mode layer from this through
+    fluid.editorModeLayerFor. That replaces the hard-coded fluid.editor.sfc in
+    layerList and fluid.editor.json in editorRoot. JavaScript layers now open in
+    fluid.editor.javascript, which shows the generated source read-only.
+  - I haven't run the editor changes in a browser. There are no tests that cover
+    the editor.
+
+  Bug fix in fluid.patchDefMap (sfc-parser.js). When the key already existed, it
+  cut out only the value and then inserted a new entry, which left broken code
+  like $layers: , behind. It now replaces the value where it is. Earlier code
+  never hit this case; the tag layer does.
+
+  Limitations to know about
+
+  - Pasting runs code. Rebuilding evaluates JavaScript layer parts with new 
+    Function, and SFC parts inject their scripts, so a paste executes whatever
+    code it carries. That's the same trust as loading an SFC from wherever the
+    text came from, but it's worth deciding on deliberately.
+  - JavaScript layers lose named global functions. If a layer refers to a global
+    function by name (e.g. func: "fluid.foo.bar") and that function was defined
+    outside fluid.def, it isn't included. SFC layers don't have this problem
+    because their whole text is sent.
+  - Copying a nested instance loses some config. Only "user" merge records are
+    collected, and today only free components have them. Config that a
+    subcomponent inherits from its parent's layer isn't sent.
+  - Subcomponents created by templates or $for may not get their state back.
+    Their parts are applied only if the subcomponent exists once the root is
+    available. Any that can't be applied are listed in unresolved in the result.
+
+  Work plan for the tldraw part
+
+  This needs testing against tldraw 5.5.2's clipboard internals in a real
+  browser, so I stopped here:
+  1. Override tldraw's copy / cut actions (via the overrides prop) so that when
+     the selection contains Infusion shapes, the clipboard gets PTF as
+     text/plain instead of the LZString HTML flavour.
+  2. Register an external content handler for pasted text that checks
+     fluid.ptf.isPTF. If it matches, create a new Infusion shape and call
+     fluid.ptf.instantiate with {potentia: {container, shapeId}}. Otherwise hand
+     the paste back to tldraw's default handler. InfusionHost will need a path
+     for building from PTF text rather than just a layer name.
+  3. Add a $linkage that adds a .withTLDraw layer to every Infusion shape's
+     component, holding a tldraw subcomponent with id, type, x, y, w, h. Its
+     live layer then travels in the PTF without extra work. This overlaps with
+     the open shape-tracking problem (items 5, 6 and 8 in
+     a-scratch/limitations.md), so it's best done together with firming up
+     $bindable.
+  4. Fall back to tunnelling through tldraw's meta field only if (1) can't take
+     over the native clipboard format cleanly.
+
+  If you commit this, a suggested message is: "Potentia Transmission Format and
+  layer MIME types - fluid-project/infusion-6#15". The issue stays open for the
+  tldraw part.
+
+✻ Crunched for 11m 51s · done 14:38
+
+❯ Can you try work plan items 1 and 2                                           
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll pull the tldraw 5.5.2 package source into the scratchpad to see how its
+  copy and paste actually work.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● I found two tldraw hooks that fit: onBeforeCopyToClipboard to suppress its
+  default copy, and onClipboardPasteRaw to intercept pastes. Now checking the
+  exports and default tldraw-content paste path.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I've confirmed the plan works against tldraw 5.5.2: override copy/cut to
+  serialize a nested PTF document (tldraw JSON plus one PTF part per Infusion
+  shape) and override paste to tag Infusion shapes with tokens before handing
+  off to tldraw's normal paste, letting InfusionHost rebuild from PTF. First I
+  need to add nested multipart support to FluidPTF.js.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidPTF.js"…)
+  ⎿      fluid.ptf.instantiateParts = async function (parts, options = {})
+     {
+             let togo;
+     … +11 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+87 -42)
+      260      fluid.ptf.preamble = "This is a Potentia Transmission Form
+           at (PTF) document holding the layers and potentia of an Infusi
+           on component.";
+      261  
+      262      /**
+      263 -     * Allocate a multipart boundary which does not occur in a
+          -ny of the supplied parts' bodies.                             
+      264 -     * @param {PTFPart[]} parts - The parts to be encoded     
+      263 +     * Allocate a multipart boundary which does not occur in a
+          +ny of the supplied texts.                                     
+      264 +     * @param {String[]} texts - The texts of the parts to be 
+          +encoded                                                       
+      265       * @return {String} A suitable boundary
+      266       */
+      267 -    fluid.ptf.allocateBoundary = function (parts) {           
+      267 +    fluid.ptf.allocateBoundary = function (texts) {           
+      268          let boundary;
+      269          do {
+      270              boundary = "ptf-boundary-" + Math.random().toStrin
+           g(36).substring(2, 12);
+      271 -        } while (parts.some(part => part.body.includes(boundar
+          -y)));                                                         
+      271 +        } while (texts.some(text => text.includes(boundary)));
+      272          return boundary;
+      273      };
+      274  
+      275      /**
+      276 -     * Encode a set of parts as a PTF document. Lines are sepa
+          -rated with plain LF rather than the CRLF of RFC 1341 so       
+      277 -     * that the document can be read and edited as ordinary te
+          -xt - `fluid.ptf.decode` accepts either.                       
+      276 +     * Encode a set of parts as the body of a multipart entity
+          +. A part holding nested `parts` rather than a `body` is       
+      277 +     * encoded as a nested multipart entity with its own bound
+          +ary, as described in RFC 2046 section 5.1.1.                  
+      278       * @param {PTFPart[]} parts - The parts to be encoded
+      279 -     * @return {String} The text of the PTF document          
+      279 +     * @param {String} [preamble] - Text to be placed before t
+          +he first part, which is ignored on decoding                   
+      280 +     * @return {Object} A record with members `boundary` holdi
+          +ng the allocated boundary and `body` holding the encoded body 
+      281       */
+      281 -    fluid.ptf.encode = function (parts) {                     
+      282 -        const boundary = fluid.ptf.allocateBoundary(parts);   
+      283 -        const blocks = parts.map(part =>                      
+      282 +    fluid.ptf.encodeBody = function (parts, preamble) {       
+      283 +        const encoded = parts.map(part => {                   
+      284 +            let togo;                                         
+      285 +            if (part.parts) {                                 
+      286 +                const nested = fluid.ptf.encodeBody(part.parts
+          +);                                                            
+      287 +                togo = {contentType: `multipart/mixed; boundar
+          +y="${nested.boundary}"`, body: nested.body};                  
+      288 +            } else {                                          
+      289 +                togo = {contentType: `${part.contentType}; cha
+          +rset=utf-8`, body: part.body};                                
+     … 149 more lines (ctrl+o to expand)
+
+● Removing the leftover block braces from that refactor:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidPTF.js"…)
+  ⎿      fluid.ptf.instantiateParts = async function (parts, options = {})
+     {
+             let togo;
+     … +17 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+36 -38)
+      519       */
+      520      fluid.ptf.instantiateParts = async function (parts, option
+           s = {}) {
+      521          let togo;
+      522 -        {                                                     
+      523 -            parts.filter(part => part.kind === "layer").forEac
+          -h(part => {                                                   
+      524 -                const existing = fluid.readLayer(part.filename
+          -).get();                                                      
+      525 -                if (options.overrideLayers || fluid.isUnavaila
+          -ble(existing) || fluid.isUnavailable(fluid.deSignal(existing.r
+          -aw))) {                                                       
+      526 -                    fluid.ptf.registerLayerPart(part);        
+      522 +        parts.filter(part => part.kind === "layer").forEach(pa
+          +rt => {                                                       
+      523 +            const existing = fluid.readLayer(part.filename).ge
+          +t();                                                          
+      524 +            if (options.overrideLayers || fluid.isUnavailable(
+          +existing) || fluid.isUnavailable(fluid.deSignal(existing.raw))
+          +) {                                                           
+      525 +                fluid.ptf.registerLayerPart(part);            
+      526 +            }                                                 
+      527 +        });                                                   
+      528 +        const rootPart = parts.find(part => part.kind === "pot
+          +entia" && fluid.ptf.filenameToSegs(part.filename).length === 0
+          +);                                                            
+      529 +        if (!rootPart) {                                      
+      530 +            togo = Promise.reject(fluid.unavailable("PTF docum
+          +ent has no potentia for its root component", "error"));       
+      531 +        } else {                                              
+      532 +            const rootPotentia = JSON.parse(rootPart.body);   
+      533 +            const [componentName, ...layerNames] = fluid.makeA
+          +rray(rootPotentia.$layers);                                   
+      534 +            const that = fluid.initFreeComponent(componentName
+          +, {...rootPotentia, ...options.potentia, $layers: layerNames})
+          +;                                                             
+      535 +            const rootShadow = fluid.ptf.componentToShadow(tha
+          +t);                                                           
+      536 +            await fluid.cell.signalToPromise(rootShadow.availa
+          +bleInstance);                                                 
+      537 +            const unresolved = [];                            
+      538 +            parts.filter(part => part !== rootPart && part.kin
+          +d === "potentia").forEach(part => {                           
+      539 +                const segs = fluid.ptf.filenameToSegs(part.fil
+          +ename);                                                       
+      540 +                const parentShadow = fluid.ptf.resolveShadow(r
+          +ootShadow, segs.slice(0, -1));                                
+      541 +                if (parentShadow) {                           
+      542 +                    const layer = JSON.parse(part.body);      
+      543 +                    fluid.pushPotentia(parentShadow, fluid.pee
+          +k(segs), [{mergeRecordType: "user", layer}], fluid.makeArray(l
+          +ayer.$layers));                                               
+      544 +                } else {                                      
+      545 +                    unresolved.push(part.filename);           
+      546                  }
+      547              });
+      529 -            const rootPart = parts.find(part => part.kind === 
+          -"potentia" && fluid.ptf.filenameToSegs(part.filename).length =
+          -== 0);                                                        
+      530 -            if (!rootPart) {                                  
+      531 -                togo = Promise.reject(fluid.unavailable("PTF d
+          -ocument has no potentia for its root component", "error"));   
+      532 -            } else {                                          
+      533 -                const rootPotentia = JSON.parse(rootPart.body)
+          -;                                                             
+      534 -                const [componentName, ...layerNames] = fluid.m
+          -akeArray(rootPotentia.$layers);                               
+     … 44 more lines (ctrl+o to expand)
+
+● Now a typedef note and a nested round-trip test:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidPTF.js"…)
+  ⎿  14:44:19.277:   fq:  All tests concluded: 811/811 total passed in 2581
+     ms - PASS
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+2 -0)
+      118       * @property {String} filename - For a layer part, the lay
+           er name - otherwise, the path of the component relative to
+      119       * the transmitted component as rendered by `fluid.ptf.seg
+           sToFilename`
+      120       * @property {String} body - The text of the part
+      121 +     * @property {PTFPart[]} [parts] - For a part which is its
+          +elf a multipart entity, its nested parts. When encoding, these
+      122 +     * are supplied in place of `body`                        
+      123       * @property {Object<String, String>} [headers] - All head
+           ers of a decoded part, keyed by lower-cased header name
+      124       */
+      125  
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/
+     core/js/FluidPTFTests.js (+18 -0)
+       98      assert.deepEqual(crlf.map(part => part.body), parts.map(pa
+           rt => part.body), "CRLF document decoded to same bodies");
+       99  });
+      100  
+      101 +QUnit.test("Nested multipart round trip", function (assert) { 
+      102 +    const inner = [{kind: "potentia", contentType: "applicatio
+          +n/json", filename: "/", body: "{}"}];                         
+      103 +    const text = fluid.ptf.encode([                           
+      104 +        {kind: "tldraw", contentType: "application/json", file
+          +name: "content", body: "[1]"},                                
+      105 +        {kind: "component", filename: "shape:a", parts: inner}
+          +,                                                             
+      106 +        {kind: "component", filename: "shape:b", parts: inner}
+      107 +    ]);                                                       
+      108 +    const decoded = fluid.ptf.decode(text);                   
+      109 +    assert.equal(decoded.length, 3, "Three outer parts decoded
+          +");                                                           
+      110 +    assert.equal(decoded[0].body, "[1]", "Plain part decoded")
+          +;                                                             
+      111 +    assert.equal(decoded[1].contentType, "multipart/mixed", "N
+          +ested part has multipart content type");                      
+      112 +    assert.deepEqual(decoded.slice(1).map(part => part.filenam
+          +e), ["shape:a", "shape:b"], "Nested part filenames decoded"); 
+      113 +    decoded.slice(1).forEach(part => {                        
+      114 +        assert.deepEqual(part.parts.map(({kind, contentType, f
+          +ilename, body}) => ({kind, contentType, filename, body})), inn
+          +er,                                                           
+      115 +            "Nested parts decoded");                          
+      116 +    });                                                       
+      117 +});                                                           
+      118 +                                                              
+      119  QUnit.test("Decode hand-written document", function (assert) {
+      120      const text = `MIME-Version: 1.0
+      121  Content-Type: multipart/mixed;
+
+● 811/811 pass. Now the tldraw side. One concern first: does
+  fluid.ptf.instantiateParts hang in the browser when nothing triggers a
+  stabilize? Checking deferredStabilize:
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll make instantiateParts queue a stabilization whenever it waits, so it
+  works without autoStabilize:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidPTF.js"…)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     FluidPTF.js (+14 -2)
+      501      };
+      502  
+      503      /**
+      504 +     * Await the availability of a component. A stabilization 
+          +is queued since the effect awaiting it will otherwise not     
+      505 +     * run until something else stabilizes the signal graph.  
+      506 +     * @param {Shadow} shadow - The shadow of the component   
+      507 +     * @return {Promise<fluid.component>} A promise resolving 
+          +once the component is available                               
+      508 +     */                                                       
+      509 +    fluid.ptf.awaitAvailable = function (shadow) {            
+      510 +        const togo = fluid.cell.signalToPromise(shadow.availab
+          +leInstance);                                                  
+      511 +        fluid.cell.deferredStabilize();                       
+      512 +        return togo;                                          
+      513 +    };                                                        
+      514 +                                                              
+      515 +    /**                                                       
+      516       * @typedef {Object} PTFInstantiation
+      517       * @property {fluid.component} that - The reconstructed co
+           mponent
+      518       * @property {String[]} unresolved - The filenames of any 
+           potentia or live parts which could not be applied since
+     ...
+      547              const [componentName, ...layerNames] = fluid.makeA
+           rray(rootPotentia.$layers);
+      548              const that = fluid.initFreeComponent(componentName
+           , {...rootPotentia, ...options.potentia, $layers: layerNames})
+           ;
+      549              const rootShadow = fluid.ptf.componentToShadow(tha
+           t);
+      538 -            await fluid.cell.signalToPromise(rootShadow.availa
+          -bleInstance);                                                 
+      550 +            await fluid.ptf.awaitAvailable(rootShadow);       
+      551              const unresolved = [];
+      552              parts.filter(part => part !== rootPart && part.kin
+           d === "potentia").forEach(part => {
+      553                  const segs = fluid.ptf.filenameToSegs(part.fil
+           ename);
+     ...
+      563              for (const part of parts.filter(part => part.kind 
+           === "live")) {
+      564                  const shadow = fluid.ptf.resolveShadow(rootSha
+           dow, fluid.ptf.filenameToSegs(part.filename));
+      565                  if (shadow) {
+      554 -                    await fluid.cell.signalToPromise(shadow.av
+          -ailableInstance);                                             
+      566 +                    await fluid.ptf.awaitAvailable(shadow);   
+      567                      fluid.each(JSON.parse(part.body), (value, 
+           path) => {
+      568                          fluid.setForComponent(shadow.that, pat
+           h, value);
+      569                      });
+
+● Now the clipboard module for the demo:
+
+● Write(/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-clipboard.
+       js)
+  ⎿  Wrote 163 lines to ../../demo/tldraw/js/tldraw-clipboard.js
+      1 // Replaces tldraw's clipboard format with the Potentia Transmiss
+        ion Format (PTF) whenever Infusion shapes are copied
+      2 // or cut, and sniffs pastes for PTF documents, deferring to tldr
+      3 // See https://github.com/fluid-project/infusion-6/issues/15
+      4 
+      5 /**
+      6  * The live Infusion component hosted by each Infusion shape, key
+      7  * @type {Map<String, fluid.component>}
+      8  */
+      9 export const infusionInstances = new Map();
+     … +207 lines (ctrl+o to expand)
+
+● Now wiring it into the driver:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="demo/tldraw/js/tldraw-driver.js"…)
+  ⎿  /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-clipboar
+     d.js
+       110:9  error  Missing JSDoc @param "info.editor" declaration     jsd
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-
+     driver.js (+43 -12)
+      1  import React from "react";
+      2  import {createRoot} from "react-dom/client";
+      3  import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeI
+         d, useEditor} from "tldraw";
+      4 +import {infusionInstances, lookupPendingParts, makeClipboardOpti
+        +ons} from "./tldraw-clipboard.js";                              
+      5  
+      6  const h = React.createElement;
+      7  
+     ...
+       93  };
+       94  
+       95  /**
+       95 - * A React component hosting an Infusion component. The Infusi
+          -on component is constructed via its creator function          
+       96 - * once React has mounted the container, and destroyed when Re
+          -act unmounts it.                                              
+       96 + * A React component hosting an Infusion component. The Infusi
+          +on component is constructed once React has mounted the        
+       97 + * container, and destroyed when React unmounts it. A shape wh
+          +ich was pasted from a PTF document is reconstructed from      
+       98 + * the document's parts, and otherwise the component is constr
+          +ucted afresh via its layer's creator function.                
+       99   * @param {Object} props - The React props
+      100   * @param {String} props.layerName - The name of the Infusion 
+           layer to be instantiated
+      101   * @param {String} props.shapeId - The id of the tldraw shape 
+           hosting the component
+      102 + * @param {String} [props.ptfToken] - A token resolving to the
+          + PTF parts from which the component should be reconstructed   
+      103   * @return {ReactElement} The rendered container
+      104   */
+      102 -const InfusionHost = function ({layerName, shapeId}) {        
+      105 +const InfusionHost = function ({layerName, shapeId, ptfToken})
+          + {                                                            
+      106      const containerRef = React.useRef(null);
+      107      React.useEffect(() => {
+      108          let that = null;
+      109          let unmounted = false;
+      107 -        awaitLayer(layerName).then(() => {                    
+      108 -            if (!unmounted) {                                 
+      109 -                const creator = fluid.getGlobalValue(layerName
+          -);                                                            
+      110 -                that = creator({container: containerRef.curren
+          -t, shapeId});                                                 
+      110 +        const adopt = function (constructed, how) {           
+      111 +            if (unmounted) {                                  
+      112 +                constructed.destroy();                        
+      113 +            } else {                                          
+      114 +                that = constructed;                           
+      115 +                infusionInstances.set(shapeId, that);         
+      116                  // Flush the component's rendering effects
+      117                  fluid.cell.stabilize();
+      113 -                console.log(`Constructed Infusion component ${
+          -layerName} with id ${that.$id}`);                             
+     … 62 more lines (ctrl+o to expand)
+
+● The 'use strict' warning only comes from forcing module parsing on that core
+  file. I'll fix the JSDoc params:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="demo/tldraw/js/tldraw-clipboard.js"…)
+  ⎿  14:46:13.791:   fq:  All tests concluded: 811/811 total passed in 3025
+     ms - PASS
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-
+     clipboard.js (+8 -0)
+      111           * Write a PTF document to the clipboard in place of t
+           ldraw's own format if any Infusion shapes are being
+      112           * copied or cut. Since cancelling tldraw's write also
+            cancels its removal of cut shapes, these are removed here.
+      113           * @param {Object} info - The copy information supplie
+           d by tldraw
+      114 +         * @param {Editor} info.editor - The tldraw editor    
+      115 +         * @param {TLContent} info.content - The content being
+          + copied                                                       
+      116 +         * @param {String} info.operation - Either "copy" or "
+          +cut"                                                          
+      117           * @return {Promise<Boolean|undefined>} `false` if the
+            clipboard was written here, otherwise `undefined` to let
+      118           * tldraw write its own format
+      119           */
+     ...
+      136           * any paste of plain text alone, which is what onBefo
+           reCopyToClipboard writes, is claimed, and if it turns out
+      137           * not to be PTF it is pasted as ordinary text.
+      138           * @param {TLClipboardPasteRawInfo} info - The paste i
+           nformation supplied by tldraw
+      139 +         * @param {Editor} info.editor - The tldraw editor    
+      140 +         * @param {String} info.source - Either "native-event"
+          + for a keyboard paste or "clipboard-read" for a menu paste    
+      141 +         * @param {DataTransfer} [info.clipboardData] - For a 
+          +keyboard paste, the event's clipboard data                    
+      142 +         * @param {ClipboardItem[]} [info.clipboardItems] - Fo
+          +r a menu paste, the items read from the clipboard             
+      143 +         * @param {VecLike} [info.point] - The page point at w
+          +hich to paste, if any                                         
+      144           * @return {Boolean|undefined} `false` if the paste wa
+           s claimed, otherwise `undefined` to let tldraw handle it
+      145           */
+      146          onClipboardPasteRaw: function ({editor, source, clipbo
+           ardData, clipboardItems, point}) {
+
+● Lint is clean and 811/811 pass. Now I'd like to exercise this in a real
+  browser. Checking what's available locally:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Chrome is installed, so I'll drive the real demo headlessly. I'll install
+  puppeteer-core into the scratchpad only, not the project, and serve the repo
+  locally.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Background command "cd /mnt/outer-source/gits/fluid-infusion-6; npx serve -l
+5173 . > /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/4998c595-d4b5-
+469b-b912-9f2eb6c59e4b/scratchpad/serve.log 2>&1 &
+echo started" completed (exit code 0)
+
+● The server didn't stay up because I backgrounded it twice. Restarting it
+  properly:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Adding a debug handle next to the existing window.tldrawEditor, then writing
+  the browser test script:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="demo/tldraw/js/tldraw-driver.js"…)
+  ⎿  301
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-
+     driver.js (+1 -0)
+      291   */
+      292  const onMount = function (editor) {
+      293      window.tldrawEditor = editor;
+      294 +    window.infusionInstances = infusionInstances;             
+      295      const tldrawHost = fluid.demos.tldrawHost({editor});
+      296      fluid.cell.stabilize();
+      297      if (editor.getCurrentPageShapes().length === 0) {
+
+  Made 1 scratchpad edit +155, ran 1 shell command (ctrl+o to expand)
+
+● The page never got an Infusion instance. Dumping logs and state at that point:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● A real bug surfaced: an injected SFC script has a syntax error. I'll run every
+  demo SFC through sfcToInjRecs in node and syntax-check the patched output:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found it: the old code worked only by coincidence, inserting templateLayer
+  emitted a leading comma that the later $layers insertion used to fill, but now
+  that I reparse, the comma is doubled. I'll fix patchDefMap to decide commas
+  from the actual text between braces instead of key counts.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/sfc-parser.js"…)
+  ⎿  fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion
+     -6/src/framework/core/js/FluidIL.js
+     fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion
+     … +12 lines (ctrl+o to expand)
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
+     sfc-parser.js (+4 -2)
+      172          } else {
+      173              const tom = defMap[$m].to - 1;
+      174              const fromp = defMap[$m].from + 1;
+      175 -            const empty = Object.keys(defMap).length === 1;   
+      175 +            // Determine separators from the text itself since
+          + defMap may have been augmented with other keys               
+      176 +            const contents = text.slice(fromp, tom).trim();   
+      177 +            const empty = contents === "";                    
+      178  
+      179              const insertPos = disposition === "first" ? (text[
+           fromp] === "\n" ? fromp + 1 : fromp) : (text[tom - 1] === "\n"
+            ? tom - 1 : tom);
+      180  
+      179 -            const insertion = (disposition === "last" ? ",\n" 
+          -: "") +                                                       
+      181 +            const insertion = (disposition === "last" && !empt
+          +y && !contents.endsWith(",") ? ",\n" : "") +                  
+      182                  `    ${key}: ${JSON.stringify(value)}` +
+      183                  (disposition === "first" && !empty ? ",\n" : "
+           ");
+      184              resultText = text.slice(0, insertPos) + insertion 
+           + text.slice(insertPos);
+
+● I confirmed all 44 SFCs now produce valid scripts, fixing a prior bug where
+  SFCs with empty fluid.def (helloWorld, todoItem, fluid-tooltip) failed to load
+  without being caught by node tests. I'm adding a regression test and
+  re-running the browser script now.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/core/js/FluidPTFTests.js"…)
+  ⎿  14:49:39.448:   fq:  All tests concluded: 813/813 total passed in 2635
+     ms - PASS
+     === create counter: [
+     … +138 lines (ctrl+o to expand)
+  ⎿  Shell cwd was reset to /mnt/outer-source/gits/fluid-infusion-6
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/
+     core/js/FluidPTFTests.js (+12 -0)
+      193      assert.equal(fluid.def("fluid.tests.ptf.plain").value, 2, 
+           "Remainder of definition intact");
+      194      assert.equal(fluid.layerMimeType("fluid.tests.ptf.plain"),
+            "text/x-vue", "SFC layer without template");
+      195  
+      196 +    // An empty definition with a template requires both $laye
+          +rs and templateLayer to be patched in                         
+      197 +    const emptySFC = `<script>                                
+      198 +fluid.def("fluid.tests.ptf.empty", {});                       
+      199 +</script>                                                     
+      200 +<template><div class="ptf-empty">Empty</div></template>`;     
+      201 +    const emptyLoaded = await fluid.tests.ptf.loadSFCText("flu
+          +id.tests.ptf.empty", emptySFC);                               
+      202 +    assert.ok(emptyLoaded, "SFC with empty definition loaded")
+          +;                                                             
+      203 +    assert.deepEqual(fluid.def("fluid.tests.ptf.empty"), {    
+      204 +        $layers: ["fluid.sfcViewComponent", "fluid.sfcTemplate
+          +ViewComponent"],                                              
+      205 +        templateLayer: "fluid.tests.ptf.empty"                
+      206 +    }, "Empty definition patched with $layers and templateLaye
+          +r");                                                          
+      207 +                                                              
+      208      const counterLoaded = await fluid.tests.ptf.loadSFCText("f
+           luid.tests.ptf.counter", fluid.tests.ptf.counterSFC);
+      209      assert.ok(counterLoaded, "Counter SFC loaded");
+      210      assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$lay
+           ers, ["fluid.sfcViewComponent", "fluid.sfcTemplateViewComponen
+           t"],
+
+● Testing confirms copy, paste, cut, and native fallback all work in Chrome
+  against tldraw 5.5.2, but I found a bug: undoing a cut restores the shape's
+  original paste state instead of its state at cut time. I'll fix this by
+  snapshotting each cut component into a new token outside undo history, and now
+  I'm checking tldraw's run options to implement this.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="demo/tldraw/js/tldraw-clipboard.js"…)
+  ⎿  === paste via native paste event: {
+      "before": 2,
+      "after": 3,
+     … +44 lines (ctrl+o to expand)
+  ⎿  Shell cwd was reset to /mnt/outer-source/gits/fluid-infusion-6
+  ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-
+     clipboard.js (+17 -0)
+      51  };
+      52  
+      53  /**
+      54 + * Before Infusion shapes are deleted by a cut, write a fresh t
+         +oken into each one resolving to a snapshot of its              
+      55 + * component, so that if the cut is undone, the restored shape 
+         +is reconstructed with the state it had when it was cut.        
+      56 + * The token is written outside the undo history so that the re
+         +cord captured by the deletion carries it.                      
+      57 + * @param {Editor} editor - The tldraw editor                  
+      58 + * @param {TLShape[]} shapes - The shapes about to be deleted, 
+         +including any descendants of the selected shapes               
+      59 + */                                                            
+      60 +const snapshotForUndo = function (editor, shapes) {            
+      61 +    const updates = shapes.filter(shape => shape.type === "infu
+         +sion" && infusionInstances.has(shape.id)).map(shape => {       
+      62 +        const ptfToken = "ptf-" + crypto.randomUUID();         
+      63 +        pendingParts.set(ptfToken, fluid.ptf.componentToParts(i
+         +nfusionInstances.get(shape.id)));                              
+      64 +        return {id: shape.id, type: shape.type, meta: {...edito
+         +r.getShape(shape.id)?.meta, ptfToken}};                        
+      65 +    });                                                        
+      66 +    editor.run(() => editor.updateShapes(updates), {history: "i
+         +gnore"});                                                      
+      67 +};                                                             
+      68 +                                                               
+      69 +/**                                                            
+      70   * Paste a PTF document onto the canvas. A document produced by
+           `contentToPTF` is pasted through tldraw's own handling
+      71   * of its content, so that shape ids are remapped and positions
+           resolved as for a native paste, after each Infusion shape
+      72   * has been marked with a token resolving to the parts of its c
+          omponent. A bare component document, as produced by
+     ...
+      139                  const text = contentToPTF(content);
+      140                  await editor.getContainerWindow().navigator.cl
+           ipboard.writeText(text);
+      141                  if (operation === "cut") {
+      142 +                    snapshotForUndo(editor, content.shapes);  
+      143                      editor.markHistoryStoppingPoint("cut");
+      144                      editor.deleteShapes(editor.getSelectedShap
+           eIds());
+      145                  }
+
+● The undo text is correct, but I can't verify which counter is which from DOM
+  order alone—the cut clipboard shows count 2 even though I clicked the last
+  button. I'll update the steps to report each shape's count by id for clarity.
+
+  Ran 1 shell command (ctrl+o to expand)
+● Confirmed by id: the cut captures count 3, and undo brings the shape back with
+  3. Quick look at the screenshot:
+
+  Read 1 file (ctrl+o to expand)
+
+● Everything renders. The pasted copy landed exactly on top of the original at
+  (600,200), hiding it. Checking whether that's also tldraw's native behaviour:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● That's tldraw's native behaviour too: with no point given it pastes in place
+  and plays a "puff" animation. So this matches native, and isn't a bug.
+  Shutting down the server:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Background command "cd /mnt/outer-source/gits/fluid-infusion-6; exec npx serve
+-l 5173 ." failed with exit code 144
+
+● Items 1 and 2 are working. I checked them in headless Chrome against the real
+  tldraw 5.5.2 demo: copy, paste, cut, undo, and fallback to tldraw's own
+  handling all behave as intended. npm test passes 813/813 and lint is clean on
+  the changed files.
+
+  I also found and fixed a bug from my first round. The patchDefMap change broke
+  loading of any SFC whose definition is empty, such as
+  fluid-demos-helloWorld.vue, fluid-demos-todoItem.vue and fluid-tooltip.vue.
+  Their injected script came out with a doubled comma. The old comma handling
+  only worked by accident, and none of the node tests used an empty definition.
+  patchDefMap now works out commas from the text between the braces. I ran all
+  44 SFCs in the repo through sfcToInjRecs and checked the output parses, and
+  added a regression test.
+
+  How it works
+
+  tldraw 5.5.2 has two documented hooks that fit, so nothing in tldraw needs
+  patching. They're passed through the options prop, from a new module
+  demo/tldraw/js/tldraw-clipboard.js.
+
+  Copy and cut (onBeforeCopyToClipboard)
+  - If the selection includes any Infusion shapes, a plain-text PTF document
+    goes on the clipboard instead of tldraw's compressed format.
+  - The document contains a tldraw part holding tldraw's own copied content as
+    readable JSON (positions, ids, bindings and any native shapes alongside). It
+    also holds one nested PTF document per Infusion shape, whose filename is
+    the shape id.
+  - FluidPTF.js now supports nested multipart documents, as RFC 2046 allows.
+  - For cut, the shapes are deleted by our code, because cancelling tldraw's
+    clipboard write also cancels its delete.
+  - Copies with no Infusion shapes are left entirely to tldraw.
+
+  Paste (onClipboardPasteRaw)
+  - Keyboard paste: the plain text is checked with fluid.ptf.isPTF, which can be
+    done immediately. If it matches, each Infusion shape in the tldraw content
+    is tagged with meta.ptfToken, a token pointing at its decoded parts. The
+    content is then handed to tldraw's normal paste, so new ids and positions
+    behave exactly like a native paste. InfusionHost sees the token and rebuilds
+    the component with fluid.ptf.instantiateParts instead of creating a fresh
+    one.
+  - Bare component documents: a document from fluid.ptf.componentToPTF that has
+    no tldraw part pastes as a single new shape.
+  - Any other paste goes to tldraw unchanged.
+
+  What the browser run showed
+
+  - A counter at 2 copied and pasted as a separate component at 2. Incrementing
+    the copy to 3 left the original at 2.
+  - Cut removed the shape and put a PTF document holding count 3 on the
+    clipboard.
+  - Undoing the cut brought it back at 3. The first attempt restored it at the
+    earlier count, so at cut time each component's current state is now saved
+    under a fresh token. That write is kept out of undo history, so the restored
+    shape carries it.
+  - A native geo shape still copied in tldraw's own format (text/html), and
+    pasting non-PTF text still made a tldraw text shape.
+  - Both paths through the menu-paste hook worked: PTF text built a component,
+    and plain text made a text shape.
+
+  Things you should know
+
+  - Menu paste rule. A menu paste only hands over the clipboard contents
+    asynchronously, so we can't check for PTF before deciding. We therefore
+    claim any menu paste containing plain text only, which is what our copy
+    writes. If it turns out not to be PTF, it's pasted as an ordinary text
+    shape. A plain URL pasted from the menu becomes text rather than a bookmark.
+    Keyboard paste is unaffected.
+  - Not tested with real key presses. In the headless browser I fired synthetic
+    copy, cut and paste events, and called the menu hook directly rather than
+    clicking the context menu. A quick manual Ctrl+C / Ctrl+V in a real browser
+    is still worth doing.
+  - Pasted shapes land on top of the original. That's tldraw's native in-place
+    paste.
+  - Deleting with the Delete key and then undoing still restores a component
+    with fresh state. Only cut takes the snapshot.
+  - The component's shapeId ends up in the copied data. It comes along as part
+    of the user potentia; the receiving side overrides it, so it's harmless. It
+    should move into the tldraw subcomponent with item 3 (.withTLDraw).
+  - The tldraw part is verbose. It includes tldraw's full schema block (about 30
+    lines) so pasted content can be upgraded across tldraw versions.
+
+  Changed files
+
+  - New: demo/tldraw/js/tldraw-clipboard.js.
+  - tldraw-driver.js: InfusionHost now rebuilds from the token and tracks live
+    components by shape id, and the clipboard options are passed to tldraw. I
+    also exposed window.infusionInstances for debugging, next to the existing
+    window.tldrawEditor.
+  - FluidPTF.js: nested multipart, instantiateParts, and queuing a stabilization
+    while waiting, so a rebuild doesn't hang without autoStabilize.
+  - sfc-parser.js: the comma fix.
+
+  The puppeteer script I used is at /tmp/claude-1000/-mnt-outer-source-gits-flui
+  d-infusion-6/4998c595-d4b5-469b-b912-9f2eb6c59e4b/scratchpad/pp/clip.mjs if
+  you want to re-run it. Nothing is committed.
+
+✻ Baked for 10m 43s · done 14:52
+  ⎿  Read ../../../../tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/49
+     98c595-d4b5-469b-b912-9f2eb6c59e4b/scratchpad/pp/clip.mjs (168 lines)
+  ⎿  Read demo/tldraw/js/tldraw-clipboard.js (189 lines)
+  ⎿  Referenced file tests/framework-tests/core/js/FluidPTFTests.js
+  ⎿  Referenced file src/framework/core/js/FluidPTF.js
+  ⎿  Skills restored (anthropic-skills:house-js-style)
+
+● Compacted while idle, before the prompt cache expired
+
+❯ Save the transcript of this session to                                        
+  a-scratch/transcripts/15-ptf-clipboard.md                                     
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● I saved the transcript to a-scratch/transcripts/15-ptf-clipboard.md (about 29
+  KB).
+
+  It is in Markdown and runs in order:
+  - Your messages are quoted under ## User headings: the request to resolve the
+    issue, "Can you try work plan items 1 and 2", and this request.
+  - My replies are included in full, including the round-1 work plan and the
+    final report on items 1 and 2.
+  - Tool calls are shortened to one line each: the tool name, the command's
+    description and its first line (cut at 160 characters), or the file path for
+    reads and edits. Tool output and my internal reasoning are left out, so
+    it's shorter than the earlier .txt transcripts.
+
+  A marker in the file shows where the context was compacted. It sits just after
+  the final report on items 1 and 2, because that's where it falls in the
+  session log, not at the point in the work where compaction happened.
+
+  The conversion script is at /tmp/claude-1000/-mnt-outer-source-gits-fluid-infu
+  sion-6/4998c595-d4b5-469b-b912-9f2eb6c59e4b/scratchpad/totranscript.py if you
+  want to regenerate it or reuse it for future sessions.
+
+✻ Churned for 44s · done 16:34
+
+❯ Can I not get saved the text exactly as I see it in this buffer?              
+
+● No, I can't do that myself: I don't have access to your terminal's screen
+  buffer, only the session log I built the Markdown file from.
+
+  You can do it with the built-in /export command, which saves the conversation
+  as plain text the way the terminal shows it. Your 13-long-if.txt and
+  14-dom-props.txt look like they came from this, since they have the "Ran N
+  shell commands" and "● Bash(…)" lines. Type:
+
+  /export a-scratch/transcripts/15-ptf-clipboard.txt
+
+  Run it as a slash command at the prompt, not with !. It's a built-in command,
+  so I can't run it for you.
+
+  One caveat: this session was compacted partway through, so the export may
+  begin at the summary rather than at your first message. If the earlier part is
+  missing, the Markdown file I wrote still covers the whole session from the
+  log. Once you've exported, I can delete 15-ptf-clipboard.md or leave it
+  alongside the .txt, whichever you prefer.
+
+✻ Cogitated for 8s · done 16:36

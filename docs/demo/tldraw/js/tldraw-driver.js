@@ -1,6 +1,7 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor} from "tldraw";
+import {infusionInstances, lookupPendingParts, makeClipboardOptions} from "./tldraw-clipboard.js";
 
 const h = React.createElement;
 
@@ -92,35 +93,61 @@ const awaitLayer = function (layerName) {
 };
 
 /**
- * A React component hosting an Infusion component. The Infusion component is constructed via its creator function
- * once React has mounted the container, and destroyed when React unmounts it.
+ * A React component hosting an Infusion component. The Infusion component is constructed once React has mounted the
+ * container, and destroyed when React unmounts it. A shape which was pasted from a PTF document is reconstructed from
+ * the document's parts, and otherwise the component is constructed afresh via its layer's creator function.
  * @param {Object} props - The React props
  * @param {String} props.layerName - The name of the Infusion layer to be instantiated
  * @param {String} props.shapeId - The id of the tldraw shape hosting the component
+ * @param {String} [props.ptfToken] - A token resolving to the PTF parts from which the component should be reconstructed
  * @return {ReactElement} The rendered container
  */
-const InfusionHost = function ({layerName, shapeId}) {
+const InfusionHost = function ({layerName, shapeId, ptfToken}) {
     const containerRef = React.useRef(null);
     React.useEffect(() => {
         let that = null;
         let unmounted = false;
-        awaitLayer(layerName).then(() => {
-            if (!unmounted) {
-                const creator = fluid.getGlobalValue(layerName);
-                that = creator({container: containerRef.current, shapeId});
+        const adopt = function (constructed, how) {
+            if (unmounted) {
+                constructed.destroy();
+            } else {
+                that = constructed;
+                infusionInstances.set(shapeId, that);
                 // Flush the component's rendering effects
                 fluid.cell.stabilize();
-                console.log(`Constructed Infusion component ${layerName} with id ${that.$id}`);
+                console.log(`${how} Infusion component ${layerName} with id ${that.$id}`);
             }
-        });
+        };
+        const parts = lookupPendingParts(ptfToken);
+        if (parts) {
+            fluid.ptf.instantiateParts(parts, {potentia: {container: containerRef.current, shapeId}}).then(
+                ({that: constructed, unresolved}) => {
+                    if (unresolved.length > 0) {
+                        console.warn(`Could not apply PTF parts ${unresolved.join(", ")} for shape ${shapeId}`);
+                    }
+                    adopt(constructed, "Reconstructed");
+                },
+                error => console.error(`Failed to reconstruct Infusion component for shape ${shapeId} from PTF: `, error)
+            );
+        } else {
+            awaitLayer(layerName).then(() => {
+                if (!unmounted) {
+                    const creator = fluid.getGlobalValue(layerName);
+                    adopt(creator({container: containerRef.current, shapeId}), "Constructed");
+                }
+            });
+        }
         return () => {
             unmounted = true;
             if (that) {
                 console.log(`Destroying Infusion component ${layerName} with id ${that.$id}`);
+                if (infusionInstances.get(shapeId) === that) {
+                    infusionInstances.delete(shapeId);
+                }
                 that.destroy();
             }
         };
-    }, [layerName, shapeId]);
+    }, [layerName, shapeId, ptfToken]);
     return h("div", {
         ref: containerRef,
         onPointerDown: e => {
@@ -174,7 +201,8 @@ class InfusionShapeUtil extends BaseBoxShapeUtil {
             }
         }, h(InfusionHost, {
             layerName: shape.props.layerName,
-            shapeId: shape.id
+            shapeId: shape.id,
+            ptfToken: shape.meta.ptfToken
         }));
     }
 
@@ -252,6 +280,9 @@ const components = {
     SharePanel: NewShapePanel
 };
 
+// Copying or cutting Infusion shapes writes a PTF document to the clipboard, and pasting one reconstructs them
+const options = makeClipboardOptions({w: defaultShapeWidth, h: defaultShapeHeight});
+
 /**
  * Construct the tldrawHost component exposing the editor to Infusion, populate an empty canvas with a single Infusion
  * widget, and expose the editor for debugging
@@ -259,7 +290,9 @@ const components = {
  * @return {Function} A function which tldraw will call on unmount, destroying the tldrawHost component
  */
 const onMount = function (editor) {
-    window.tldrawEditor = editor;
+    const tldraw = fluid.registerNamespace("fluid.tldraw");
+    tldraw.editorInstance = editor;
+    tldraw.instances = infusionInstances;
     const tldrawHost = fluid.demos.tldrawHost({editor});
     fluid.cell.stabilize();
     if (editor.getCurrentPageShapes().length === 0) {
@@ -273,5 +306,5 @@ const onMount = function (editor) {
 };
 
 createRoot(document.getElementById("tldraw-root")).render(
-    h(Tldraw, {shapeUtils, components, onMount, licenseKey})
+    h(Tldraw, {shapeUtils, components, options, onMount, licenseKey})
 );

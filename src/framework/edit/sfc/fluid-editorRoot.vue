@@ -2,6 +2,7 @@
 fluid.def("fluid.editorRoot", {
     $layers: ["fluid.sfcTemplateViewComponent", "fluid.resolveRoot"],
     openLayerTabs: {
+        // Holds an array of LayerRec structures as dispensed from {layerList}
         $reactiveRoot: []
     },
     showUserLayersOnly: true,
@@ -53,7 +54,7 @@ fluid.def("fluid.editorRoot", {
                     layerName,
                     layerDef: fluid.fetchWriteableLiveSignal(layerName),
                     colour: layerColours.$live,
-                    editorModeLayer: "fluid.editor.json"
+                    editorModeLayer: fluid.editorModeLayerFor(layerName)
                 } : layerList.find(layerRec => layerRec.layerName === layerName);
             },
             args: ["{layerList}.layerList", "{colourManager}.layerColours", "{0}:layerName"]

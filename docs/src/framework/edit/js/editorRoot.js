@@ -2,6 +2,22 @@
 
 const $m = fluid.metadataSymbol;
 
+// Editor mode layers supplied to fluid.editor by fluid.editor.editorsPane for each MIME type determined by fluid.layerMimeType
+fluid.editorModeLayers = {
+    "text/x-vue": "fluid.editor.sfc",
+    "text/javascript": "fluid.editor.javascript",
+    "application/json": "fluid.editor.json"
+};
+
+/**
+ * Determine the editor mode layer suitable for editing the named layer.
+ * @param {String} layerName - The name of the layer
+ * @return {String} The name of the editor mode layer to be supplied to fluid.editor
+ */
+fluid.editorModeLayerFor = function (layerName) {
+    return fluid.editorModeLayers[fluid.layerMimeType(layerName)];
+};
+
 fluid.shadowHasUserLayer = function (shadow) {
     return shadow.that && fluid.deSignal(shadow.that.$layers).some(layer => fluid.isUserLayer(layer));
 };

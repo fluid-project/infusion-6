@@ -27,7 +27,8 @@ const buildIndex = {
         "src/framework/core/js/Fluid.js",
         "src/framework/core/js/FluidModules.js",
         "src/framework/core/js/FluidIL.js",
-        "src/framework/core/js/FluidView.js"
+        "src/framework/core/js/FluidView.js",
+        "src/framework/core/js/FluidPTF.js"
     ],
 
     copy: [{

@@ -1477,6 +1477,29 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
+     * Expands the `$if` condition of a component record into a signal whose truthiness determines whether the component
+     * is instantiated. A String is interpreted as a context reference. Otherwise the record is a long-form function record
+     * holding `func` and optionally `args`, as for `$compute`, whose computed value is tested.
+     *
+     * @param {String|FuncRecord} ifRecord - The `$if` condition, either a context reference String or a function record
+     * @param {Shadow} shadow - The shadow record of the component holding the conditional component record
+     * @param {String[]} segs - The path in the parent shadow holding the conditional component record
+     * @return {Signal<any>} A signal whose value will be tested for truthiness
+     */
+    fluid.expandIfRecord = function (ifRecord, shadow, segs) {
+        let togo;
+        if (typeof(ifRecord) === "string") {
+            togo = fluid.fetchContextReference(ifRecord, shadow);
+        } else {
+            const {func, resolvedArgs} = fluid.resolveFuncRecord(ifRecord, shadow, [...segs, "$if"]);
+            const dispatchIf = fluid.makeFuncDispatcher(func);
+            togo = fluid.cell(undefined, {name: `$if at path ${segs.join(".")} of component at path ${shadow.path}`}).
+                computed(dispatchIf, resolvedArgs, {mapArg: fluid.flattenSignals});
+        }
+        return togo;
+    };
+
+    /**
      * Expands a subcomponent-style function record into a component instantiation.
      * Produces a `subcomponent`-type layer record and pushes it into the component tree at the given `key` under the `shadow`.
      *
@@ -1549,9 +1572,9 @@ const $fluidILScope = function (fluid) {
             }, [sourceSignal], {name: `Component list reading effect for ${effectKey}`});
             return listComputer;
         } else if (ifRecord) {
-            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join}`});
+            const togo = fluid.cell(undefined, {name: `conditional creation for component at path ${segs.join(".")}`});
             let computer;
-            const sourceSignal = fluid.fetchContextReference(ifRecord, shadow);
+            const sourceSignal = fluid.expandIfRecord(ifRecord, shadow, segs);
             // TODO: This should really be a sited effect but this requires rewriting effect allocation pathway
             // See notes from 1/7/2025
             const effectKey = "conditionalComponent-" + segs.join(".");

@@ -20,6 +20,7 @@ const fluidViewScope = function (fluid) {
      *
      * @property {signal<HTMLElement>|undefined} [elementSignal] - A signal that resolves to the corresponding DOM element.
      * @property {Function[]} [renderEffects] - An array of effects that manage updates to the corresponding DOM element
+     * @property {Object<String, Signal>} [boundAttrs] - Signals for the values of attributes bound in the template, indexed by attribute name
      */
 
     /**
@@ -740,9 +741,15 @@ const fluidViewScope = function (fluid) {
                     fluid.writeParsedTemplate(layerName, docTemplate);
                 }
 
-                // If no $layers was written in the definition, add one that will correctly resolve its template
+                // If no $layers was written in the definition, add one that will correctly resolve its template.
+                // In either case, add the tag layer marking the layer as derived from an SFC
+                // Reparse if the text has already been patched since an existing $layers entry may have moved
+                const layersDef = patchedText === ourSNI.text ? ourDef :
+                    {scriptIndex: ourDef.scriptIndex, ...fluid.parseDefMaps(patchedText, 0)[layerName]};
                 if (!oldLayers) {
-                    patchedText = fluid.patchDefMap(patchedText, ourDef, "$layers", addLayers, "first");
+                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", ["fluid.sfcViewComponent", ...addLayers], "first");
+                } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcViewComponent")) {
+                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", ["fluid.sfcViewComponent", ...fluid.makeArray(oldLayers)], "first");
                 }
                 ourSNI.text = patchedText;
 
@@ -839,9 +846,9 @@ const fluidViewScope = function (fluid) {
         } else {
             /** @type {DocLayerInjectionRec} **/
             const rec = {
-                injRecsSignal: fluid.cell([], {name: "Document injections for ${document.location}"})
+                injRecsSignal: fluid.cell([], {name: `Document injections for ${injDone.dokkument.location}`})
             };
-            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${document.location}`})
+            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${injDone.dokkument.location}`})
                 .computed( injRecs => fluid.signalsToAvailable(injRecs), [rec.injRecsSignal]);
             fluid.documentInjections.set(injDone.dokkument, rec);
         }
@@ -1173,6 +1180,204 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Attributes whose presence alone denotes `true`, so that a false value must be expressed by their removal.
+     * @type {Set<String>}
+     */
+    fluid.booleanAttrs = new Set(["disabled", "checked", "selected", "readonly", "required", "hidden", "multiple",
+        "open", "inert", "autofocus", "novalidate", "indeterminate"]);
+
+    /**
+     * @typedef {Object} LiveStateRecord
+     * @property {String} prop - The DOM property holding the live state corresponding to the attribute
+     * @property {String} event - The DOM event signalling that the user has changed the live state
+     */
+
+    /**
+     * Attributes whose live state is held in a DOM property which may diverge from the attribute, either because the
+     * attribute only represents a default (`value`, `checked`, `selected`), because the user may change it (`open`),
+     * or because the attribute is unknown to HTML and is materialised only for serialisation (`indeterminate`).
+     * A bound attribute in this table writes both the attribute and the property, and listens to the named event in
+     * order to write the user's change back to the bound model value.
+     * @type {Object<String, LiveStateRecord>}
+     */
+    fluid.liveStateAttrs = {
+        value: {prop: "value", event: "input"},
+        checked: {prop: "checked", event: "change"},
+        selected: {prop: "selected", event: "change"},
+        open: {prop: "open", event: "toggle"},
+        indeterminate: {prop: "indeterminate", event: "change"}
+    };
+
+    /**
+     * Determine whether a value bound to an attribute should cause the attribute to be absent. Boolean `false` denotes
+     * absence except for `aria-` attributes, for which "true" and "false" are meaningful tokens.
+     * @param {String} key - The attribute name
+     * @param {any} value - The bound value
+     * @return {Boolean} `true` if the attribute should be removed
+     */
+    fluid.isAbsentAttrValue = function (key, value) {
+        const isFalse = value === false && !key.startsWith("aria-");
+        return isFalse || value === null || value === undefined || fluid.isUnavailable(value);
+    };
+
+    /**
+     * Coerce a value arriving from a template binding for an attribute - the String "false" bound to a boolean
+     * attribute is taken to mean `false`, since nobody binding it means it to denote presence.
+     * @param {String} key - The attribute name
+     * @param {any} value - The bound value
+     * @return {any} The coerced value
+     */
+    fluid.coerceBoundAttrValue = function (key, value) {
+        return fluid.booleanAttrs.has(key) && value === "false" ? false : value;
+    };
+
+    /**
+     * Materialise the serialisable form of an attribute value onto a DOM element. This is normally the attribute
+     * itself, but the value of a `textarea` is materialised as its text content, and the value of a `select` as
+     * `selected` attributes on its options.
+     * @param {Element} element - The element to be updated
+     * @param {String} key - The attribute name
+     * @param {any} value - The value to be materialised
+     */
+    fluid.materialiseAttr = function (element, key, value) {
+        const absent = fluid.isAbsentAttrValue(key, value);
+        const tag = element.localName;
+        if (key === "value" && tag === "textarea") {
+            const text = absent ? "" : String(value);
+            if (element.textContent !== text) {
+                element.textContent = text;
+            }
+        } else if (key === "value" && tag === "select") {
+            const text = absent ? null : String(value);
+            [...element.options].forEach(option => fluid.applyAttr(option, "selected", option.value === text));
+        } else if (absent) {
+            if (element.hasAttribute(key)) {
+                element.removeAttribute(key);
+            }
+        } else {
+            const attrValue = fluid.booleanAttrs.has(key) ? "" : String(value);
+            if (element.getAttribute(key) !== attrValue) {
+                element.setAttribute(key, attrValue);
+            }
+        }
+    };
+
+    /**
+     * Apply a value to a DOM element under a single attribute name, materialising it as an attribute so that the
+     * element serialises faithfully, and also writing any live state property so that the element's visible state agrees.
+     * @param {Element} element - The element to be updated
+     * @param {String} key - The attribute name as written in the template
+     * @param {any} value - The value to be applied
+     */
+    fluid.applyAttr = function (element, key, value) {
+        fluid.materialiseAttr(element, key, value);
+        const live = fluid.liveStateAttrs[key];
+        // The live state of a select is held by its options, which have been written by fluid.materialiseAttr
+        if (live && live.prop in element && element.localName !== "select") {
+            const absent = fluid.isAbsentAttrValue(key, value);
+            const propValue = fluid.booleanAttrs.has(key) ? !absent : (absent ? "" : String(value));
+            // Guard against redundant writes, which would reset the caret in a focused input
+            if (element[live.prop] !== propValue) {
+                element[live.prop] = propValue;
+            }
+        }
+    };
+
+    /**
+     * Resolve the model site to which a template reference bound to an attribute could write back a user's change.
+     * A site holding a signal product such as `$compute` is not writeable.
+     * @param {Signal} token - The live reference bound to the attribute, as resolved by `fluid.fetchContextReference`
+     * @return {Site|null} The writeable site, or `null` if there is none
+     */
+    fluid.writeableAttrSite = function (token) {
+        const sited = fluid.deSignalToSite(token);
+        const site = fluid.isSignal(sited) && sited.$variety === "$sitedRef" ? sited.site : null;
+        const isProduct = site && fluid.get(site.shadow.shadowMap, [...site.segs, $m])?.signalRecord;
+        return site && !isProduct ? site : null;
+    };
+
+    /**
+     * Respond to a user's change to the live state of an element bound to an attribute. If the attribute is bound to
+     * a single writeable reference, the change is written back to it, and the attribute will be updated by its binding.
+     * Otherwise the attribute is rematerialised from the live state so that the element continues to serialise faithfully.
+     * @param {Element} element - The element whose live state has changed
+     * @param {String} key - The attribute name
+     * @param {Signal|null} token - The single live reference bound to the attribute, if there is one
+     */
+    fluid.liveStateChanged = function (element, key, token) {
+        const live = fluid.liveStateAttrs[key];
+        const propValue = element[live.prop];
+        const value = fluid.booleanAttrs.has(key) ? Boolean(propValue) : propValue;
+        const site = token ? fluid.writeableAttrSite(token) : null;
+        if (site) {
+            fluid.setForComponent(site.shadow.that, site.segs, value);
+        } else {
+            fluid.materialiseAttr(element, key, value);
+        }
+    };
+
+    /**
+     * Allocate an effect which listens for a user's changes to the live state of an element bound to an attribute
+     * named in `fluid.liveStateAttrs`, removing the listener when the template's effects are disposed.
+     * @param {Effect[]} templateEffects - An array of effects to contribute the allocated effect to
+     * @param {VNode} vnode - The virtual DOM node holding the attribute
+     * @param {String} key - The attribute name
+     * @param {Signal|null} token - The single live reference bound to the attribute, if there is one
+     */
+    fluid.allocateLiveStateEffect = function (templateEffects, vnode, key, token) {
+        const event = fluid.liveStateAttrs[key].event;
+        const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
+            let bound = null;
+            const unbind = function () {
+                if (bound) {
+                    bound.element.removeEventListener(event, bound.listener);
+                    bound = null;
+                }
+            };
+            const togo = fluid.cell.effect(function (element) {
+                unbind();
+                const listener = fluid.cell.withAmbientSource("dom", () => fluid.liveStateChanged(element, key, token));
+                element.addEventListener(event, listener);
+                bound = {element, listener};
+            }, [vnode.elementSignal], {
+                onDispose: unbind,
+                name: `liveStateEffect for attribute ${key} of vnode ${vnode._id}`
+            });
+            togo.$variety = "bindLiveState";
+            togo.$vnode = vnode;
+            return togo;
+        });
+        templateEffects.push(bindEffect);
+    };
+
+    /**
+     * Bind a rendered attribute value to the DOM element corresponding to a virtual node. An unavailable value causes
+     * the attribute to be absent. If the attribute is named in `fluid.liveStateAttrs`, its live state property is also
+     * bound, and user changes to it are written back to the model.
+     * @param {Effect[]} templateEffects - An array of effects to contribute any allocated effects to
+     * @param {VNode} vnode - The virtual DOM node holding the attribute
+     * @param {String} key - The attribute name
+     * @param {Signal<any>} bound - A signal for the value to be applied to the attribute
+     * @param {Signal|null} token - The single live reference bound to the attribute, if there is one
+     */
+    fluid.bindDomAttr = function (templateEffects, vnode, key, bound, token) {
+        const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
+            const togo = fluid.cell.effect(function (element, value) {
+                if (!fluid.isUnavailable(element)) {
+                    fluid.applyAttr(element, key, fluid.coerceBoundAttrValue(key, value));
+                }
+            }, [vnode.elementSignal, bound], {isFree: true, name: `bindDomAttr for attribute ${key}`});
+            togo.$variety = "bindDomAttr";
+            togo.$vnode = vnode;
+            return togo;
+        });
+        templateEffects.push(bindEffect);
+        if (fluid.liveStateAttrs[key]) {
+            fluid.allocateLiveStateEffect(templateEffects, vnode, key, token);
+        }
+    };
+
+    /**
      * Return a function that conditionally negates its input based on the given flag.
      * @param {Boolean} negate - If `true`, returns a function that negates its input; otherwise, returns fluid.identity
      * @return {Function} A function that optionally negates its input.
@@ -1237,6 +1442,10 @@ const fluidViewScope = function (fluid) {
                 const parts = value.split(",").map(part => part.trim());
                 const clazz = Object.fromEntries(parts.map(part => {
                     const [key, ref] = part.split(":");
+                    if (ref === undefined) {
+                        // TODO: Figure out how to route template syntax errors back to template source
+                        fluid.fail(`Malformed @class entry "${part}" in value "${value}" - expected className:@{reference}`);
+                    }
                     const negate = ref.startsWith("!");
                     const effRef = negate ? ref.substring(1) : ref;
                     const tokens = fluid.parseAtStringTemplate(effRef);
@@ -1254,8 +1463,18 @@ const fluidViewScope = function (fluid) {
             const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
             if (fluid.isSignal(rendered)) {
                 rendered.$source = value;
-                fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.setAttribute(key, text));
+                // A template consisting of a single reference binds its raw value so that booleans survive
+                const token = tokens.length === 1 ? rendered.$tokens[0] : null;
+                const bound = token ? fluid.cell(undefined, {name: `raw attribute value for ${key} of vnode ${vnode._id}`})
+                    .computed(fluid.identity, [token], {mapArg: fluid.deproxyAndDesignal}) : rendered;
+                fluid.bindDomAttr(templateEffects, vnode, key, bound, token);
+                vnode.boundAttrs ||= {};
+                vnode.boundAttrs[key] = bound;
                 vnode.attrs[key] = rendered; // Mark to reconciler that it is a signal so it should ignore it
+                if (key === "value" && vnode.tag === "textarea") {
+                    // The textarea's value is materialised as its content, which the reconciler must leave alone
+                    delete vnode.children;
+                }
             }
         }
     };
@@ -1446,7 +1665,7 @@ const fluidViewScope = function (fluid) {
                             const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
                                 .filter(([, value]) => value && !fluid.isUnavailable(value))
                                 .map(([key]) => key);
-                            return clazzSource + " " + classes;
+                            return [clazzSource, ...classes].filter(clazz => clazz).join(" ");
                         });
                     allClass.$variety = "$allClass";
                     allClass.$source = clazzSource;
@@ -1536,13 +1755,13 @@ const fluidViewScope = function (fluid) {
             for (let i = element.attributes.length - 1; i >= 0; i--) {
                 const attrName = element.attributes[i].name;
                 if (!(attrName in vnode.attrs) && !attrName.startsWith("data-fl-transient")) {
-                    element.removeAttribute(attrName);
+                    fluid.applyAttr(element, attrName, null);
                 }
             }
         }
         for (const [key, value] of Object.entries(vnode.attrs)) {
             if (!fluid.isSignal(value) && element.getAttribute(key) !== value) {
-                element.setAttribute(key, value);
+                fluid.applyAttr(element, key, value);
             }
         }
     };
@@ -1595,6 +1814,11 @@ const fluidViewScope = function (fluid) {
             }
             for (let i = element.childNodes.length - 1; i >= vcount; --i) {
                 element.childNodes[i].remove();
+            }
+            const boundValue = vnode.boundAttrs?.value;
+            if (boundValue && element.localName === "select") {
+                // Patching the options may have disturbed the value materialised onto them, so restore it
+                fluid.cell.untracked(() => fluid.applyAttr(element, "value", fluid.deSignal(boundValue)));
             }
         }
     };
@@ -1668,6 +1892,12 @@ const fluidViewScope = function (fluid) {
         $variety: "framework"
     });
 
+    // Tag layer applied by fluid.sfcToInjRecs to every layer which was loaded from a Single File Component, allowing
+    // its MIME type to be determined by fluid.layerMimeType
+    fluid.def("fluid.sfcViewComponent", {
+        $variety: "framework"
+    });
+
     fluid.def("fluid.sfcTemplateViewComponent", {
         $layers: "fluid.templateViewComponent",
         templateTree: "$compute:fluid.fetchParsedTemplate({self}.templateLayer)",
@@ -1735,8 +1965,6 @@ const fluidViewScope = function (fluid) {
 
     fluid.listViewTree = function (self, list) {
         return fluid.cell(undefined, {name: "fluid.listViewTree"}).computed(componentList => {
-            const path = self[$t].shadow.path;
-            // console.log("Generating VCL for " + path);
             const unwrappedList = componentList.map(e => fluid.deSignal(e[fluid.unavailableSymbol]));
             const unavailable = fluid.mergeUnavailables(unwrappedList);
 
@@ -1786,7 +2014,7 @@ const fluidViewScope = function (fluid) {
                     fluid.viewContainerRegistry.set(element, instance[$t].shadow);
                 }
             });
-        }, null, {name: `fluid.selfBootEffect for document at ${document.location}`});
+        }, null, {name: `fluid.selfBootEffect for document at ${dokkument.location}`});
     };
 
     /**

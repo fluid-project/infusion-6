@@ -1942,6 +1942,17 @@ const $fluidScope = function (fluid) {
         fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
     };
 
+    /**
+     * Render a layer definition as a `fluid.def` call in JavaScript source text. Note that any global functions
+     * referenced by name from the definition are not included.
+     * @param {String} layerName - The name of the layer
+     * @param {LayerDef|Signal<LayerDef>} layerDef - The layer's definition
+     * @return {String} JavaScript source text which will register the layer definition when evaluated
+     */
+    fluid.layerToJavaScript = function (layerName, layerDef) {
+        return `fluid.def(${JSON.stringify(layerName)}, ${fluid.ptf.valueToJavaScript(fluid.deSignal(layerDef))});\n`;
+    };
+
     // Like a "reader macro" - currently just ensures that "$layers" is an array
     // Do we actually need this in this role?
     // TODO: Called from expandComponentRecord and storeLayer, and now computeInstance does its own expansion - can axe?

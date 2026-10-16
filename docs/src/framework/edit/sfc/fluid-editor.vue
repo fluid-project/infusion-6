@@ -64,9 +64,15 @@ fluid.def("fluid.editor.sfc", {
 });
 
 
+// Currently read-only since layers defined in JavaScript cannot be faithfully written back from their rendered source
 fluid.def("fluid.editor.javascript", {
     mode: "text/javascript",
-    text: "{fluid.editor}.layerRec.layerDef",
+    text: {
+        $compute: {
+            func: "fluid.layerToJavaScript",
+            args: ["{fluid.editor}.layerRec.layerName", "{fluid.editor}.layerRec.layerDef"]
+        }
+    },
     $variety: "frameworkAux"
 });
 
