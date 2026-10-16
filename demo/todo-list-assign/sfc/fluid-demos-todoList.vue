@@ -7,7 +7,6 @@ fluid.def("fluid.demos.todoList", {
     filteredTodos: {
         $compute: {
             func: (filters, todos) => {
-                console.log("Got filters ", filters);
                 return todos.filter(todo => filters.every(filter => filter.acceptor(todo)));
             },
             args: ["{filters fluid.demos.filter}", "{self}.todos"]
@@ -20,9 +19,7 @@ fluid.def("fluid.demos.todoList", {
                 source: "{todoList}.filteredTodos",
                 valueAs: "todo",
                 keyAs: "itemIndex"
-            },
-            text: "{self}.todo.text",
-            completed: "{self}.todo.completed"
+            }
         }
     },
     facets: {
@@ -33,22 +30,6 @@ fluid.def("fluid.demos.todoList", {
     filters: {
         $component: {
             $layers: "fluid.demos.filters"
-        }
-    },
-    toggleItem: {
-        $method: {
-            func: (todos, itemIndex) => {
-                todos[itemIndex].completed = !todos[itemIndex].completed;
-            },
-            args: ["{self}.todos", "{0}:itemIndex"]
-        }
-    },
-    deleteItem: {
-        $method: {
-            func: (todos, itemIndex) => {
-                todos = todos.splice(itemIndex, 1);
-            },
-            args: ["{self}.todos", "{0}:itemIndex"]
         }
     }
 });

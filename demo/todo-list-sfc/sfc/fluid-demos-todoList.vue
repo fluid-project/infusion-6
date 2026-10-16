@@ -11,25 +11,7 @@ fluid.def("fluid.demos.todoList", {
                 source: "{todoList}.todos",
                 valueAs: "todo",
                 keyAs: "itemIndex"
-            },
-            text: "{self}.todo.text",
-            completed: "{self}.todo.completed"
-        }
-    },
-    toggleItem: {
-        $method: {
-            func: (todos, itemIndex) => {
-                todos[itemIndex].completed = !todos[itemIndex].completed;
-            },
-            args: ["{self}.todos", "{0}:itemIndex"]
-        }
-    },
-    deleteItem: {
-        $method: {
-            func: (todos, itemIndex) => {
-                todos = todos.splice(itemIndex, 1);
-            },
-            args: ["{self}.todos", "{0}:itemIndex"]
+            }
         }
     }
 });

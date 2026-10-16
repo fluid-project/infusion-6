@@ -1,0 +1,2493 @@
+ ▐▛███▛█   Claude Code v2.1.301
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
+
+
+❯ Have a go at https://github.com/fluid-project/infusion-6/issues/16 - while    
+  you are there, remove the now unnecessary copies in todoList.vue of           
+    text: "{self}.todo.text",                                                   
+              completed: "{self}.todo.completed" which don't need to happen now 
+  #10 is resolved. Make a test fixture out of the actual demo SFC files         
+  (rather than local replicas in the tests hierarchy, and put them through some 
+  paces there. For extra credit see if you can proxy a call to                  
+  delete(item.todo) onto the relevant splice or delete in the source data       
+  although you may find some reasons this is not ergonomic/stable. If all is    
+  good, make corresponding fixes in the "assignees" version and get the         
+  corresponding projections to work through the filter() application. I've made 
+  some initial edits todoItem to get the ball rolling, and there's an open      
+  stub for proxying "filter" in fluidIL.js which you may well be able to delete 
+  entirely if the projection works out well.                                    
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Skill(anthropic-skills:house-js-style)
+  ⎿  Successfully loaded skill
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Mode changes only. Real content diff:
+
+  Ran 7 shell commands (ctrl+o to expand)
+
+● I've read issue #16, the todo demos and the proxy/$for code in FluidIL.js.
+  Next I'm checking how the existing view and SFC tests are wired up.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● Baseline is green (813/813). Next I'm setting up a test fixture that loads the
+  real demo SFC files.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(mkdir -p
+      /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/demos/html
+      /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/demos/js; cd
+      /mn…)
+  ⎿  Created tests/framework-tests/demos/html/TodoListTests.html (+45 -0)
+       1 +<!DOCTYPE html>                                                
+       2 +<html lang="en">                                               
+       3 +    <head>                                                     
+       4 +        <meta http-equiv="Content-Type" content="text/html; cha
+         +rset=utf-8" />                                                 
+       5 +        <title>Todo List Demo Tests</title>                    
+       6 +                                                               
+       7 +        <link rel="stylesheet" media="screen" href="../../../li
+         +b/qunit/css/qunit.css" />                                      
+       8 +                                                               
+       9 +        <fluid-module id="infusion-6" src="../../../../"></flui
+         +d-module>                                                      
+      10 +                                                               
+      11 +        <script src="../../../../src/lib/lezer/lezer-javascript
+         +-browser.js"></script>                                         
+      12 +                                                               
+      13 +        <script src="../../../../src/framework/core/js/FluidCor
+         +e.js"></script>                                                
+      14 +        <script src="../../../../src/framework/core/js/FluidSig
+         +nals.js"></script>                                             
+      15 +        <script src="../../../../src/framework/core/js/Fluid.js
+         +"></script>                                                    
+      16 +        <script src="../../../../src/framework/core/js/FluidMod
+         +ules.js"></script>                                             
+      17 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>                                                  
+      18 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w.js"></script>                                                
+      19 +        <script src="../../../../src/framework/core/js/FluidPTF
+         +.js"></script>                                                 
+      20 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w-browser.js"></script>                                        
+      21 +        <script src="../../../../src/framework/core/js/template
+         +-parser.js"></script>                                          
+      22 +        <script src="../../../../src/framework/core/js/sfc-pars
+         +er.js"></script>                                               
+      23 +                                                               
+      24 +        <!-- The actual SFC files of the demo at demo/todo-list
+         +-sfc -->                                                       
+      25 +        <fluid-module id="todoApp" src="../../../../demo/todo-l
+         +ist-sfc/"></fluid-module>                                      
+      26 +                                                               
+      27 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoApp.vue
+         +"></fluid-import>                                              
+      28 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoList.vu
+         +e"></fluid-import>                                             
+      29 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoItem.vu
+         +e"></fluid-import>                                             
+      30 +                                                               
+      31 +        <script src="../../../lib/qunit/js/qunit.js"></script> 
+      32 +        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         +"></script>                                                    
+      33 +                                                               
+      34 +        <script src="../js/TodoListTestUtils.js"></script>     
+      35 +        <script src="../js/TodoListTests.js"></script>         
+      36 +    </head>                                                    
+      37 +    <body>                                                     
+      38 +    <div id="qunit"></div>                                     
+      39 +    <!-- Test HTML -->                                         
+      40 +    <div id="qunit-fixture">                                   
+     … 5 more lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >
+      tests/framework-tests/demos/js/TodoListTestUtils.js <<'EOF'
+      /* global QUnit */…)
+  ⎿  fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion
+     -6/src/framework/core/js/FluidCore.js
+     fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion
+     … +39 lines (ctrl+o to expand)
+  ⎿  Created tests/framework-tests/demos/js/TodoListTestUtils.js (+42 -0)
+       1 +/* global QUnit */                                             
+       2 +                                                               
+       3 +"use strict";                                                  
+       4 +                                                               
+       5 +fluid.registerNamespace("fluid.tests.todo");                   
+       6 +                                                               
+       7 +/**                                                            
+       8 + * Poll until a predicate holds, stabilising the signal graph b
+         +etween polls.                                                  
+       9 + * @param {Function} predicate - A function returning `true` on
+         +ce the awaited condition holds.                                
+      10 + * @param {Number} [timeout=5000] - The maximum time in millise
+         +conds to wait.                                                 
+      11 + * @return {Promise<Boolean>} Resolves to `true` once the predi
+         +cate holds, or `false` on timeout.                             
+      12 + */                                                            
+      13 +fluid.tests.todo.waitFor = function (predicate, timeout = 5000)
+         + {                                                             
+      14 +    const start = Date.now();                                  
+      15 +    return new Promise(resolve => {                            
+      16 +        const poll = () => {                                   
+      17 +            fluid.cell.stabilize();                            
+      18 +            if (predicate()) {                                 
+      19 +                resolve(true);                                 
+      20 +            } else if (Date.now() - start > timeout) {         
+      21 +                resolve(false);                                
+      22 +            } else {                                           
+      23 +                setTimeout(poll, 10);                          
+      24 +            }                                                  
+      25 +        };                                                     
+      26 +        poll();                                                
+      27 +    });                                                        
+      28 +};                                                             
+      29 +                                                               
+      30 +/**                                                            
+      31 + * Wait until the injections of all SFCs imported into the docu
+         +ment via `<fluid-import>` have completed.                      
+      32 + * @return {Promise<Boolean>} Resolves to `true` once all injec
+         +tions are complete, or `false` on timeout.                     
+      33 + */                                                            
+      34 +fluid.tests.todo.loadImports = function () {                   
+      35 +    if (!fluid.tests.todo.loadPromise) {                       
+      36 +        const layerNames = [...document.querySelectorAll("fluid
+         +-import")]                                                     
+      37 +            .map(node => fluid.pathToLayerName(node.getAttribut
+         +e("src")));                                                    
+      38 +        const injDones = layerNames.map(layerName => fluid.subs
+         +cribeDocToInjections(layerName, document));                    
+      39 +        fluid.tests.todo.loadPromise = fluid.tests.todo.waitFor
+         +(() => injDones.every(injDone => injDone.get() === true));     
+      40 +    }                                                          
+     … 2 more lines (ctrl+o to expand)
+  ⎿  Created tests/framework-tests/demos/js/TodoListTests.js (+22 -0)
+       1 +/* global QUnit */                                             
+       2 +                                                               
+       3 +"use strict";                                                  
+       4 +                                                               
+       5 +QUnit.module("Todo List Demo Tests");                          
+       6 +                                                               
+       7 +QUnit.config.reorder = false;                                  
+       8 +                                                               
+       9 +QUnit.test("Explore", async function (assert) {                
+      10 +    const loaded = await fluid.tests.todo.loadImports();       
+      11 +    assert.ok(loaded, "Loaded");                               
+      12 +    const container = document.querySelector(".container");    
+      13 +    const that = fluid.demos.todoApp({container});             
+      14 +    fluid.cell.stabilize();                                    
+      15 +    console.log("MARKUP", container.innerHTML);                
+      16 +    const item = that.todoList.todoItems.list[0];              
+      17 +    console.log("ITEM todo", item.todo, item.todo.text);       
+      18 +    item.toggle();                                             
+      19 +    fluid.cell.stabilize();                                    
+      20 +    console.log("TODOS", JSON.stringify(that.todoList.todos)); 
+      21 +    console.log("MARKUP", container.innerHTML);                
+      22 +});                                                            
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I found the issue: linkedom lacks readyState and the harness never fires
+  DOMContentLoaded, so bootDocument's applyOnLoad never runs, leaving the SFCs
+  unloaded. I'll update the harness to properly follow the browser's lifecycle.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/test-core/qunit/js/fqunit-html.js"…)
+  ⎿      onKey: 'click.stop',
+         onValue: '{todoList}.deleteItem({self}.itemIndex)'
+       }
+     … +47 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/qunit/js/fqunit-html.js (+12 -0)
+      172      // linkedom's own defaultView is a proxy onto node's globa
+           lThis - substitute the inner window
+      173      Object.defineProperty(document, "defaultView", {value: con
+           text});
+      174      Object.defineProperty(document, "location", {value: locati
+           on});
+      175 +    // linkedom supplies no readyState - as in a browser, it i
+          +s "loading" whilst the driver's scripts run                   
+      176 +    let readyState = "loading";                               
+      177 +    Object.defineProperty(document, "readyState", {           
+      178 +        get: () => readyState,                                
+      179 +        set: value => {                                       
+      180 +            readyState = value;                               
+      181 +        }                                                     
+      182 +    });                                                       
+      183      fQUnit.liveDocuments.set(document, context);
+      184      return context;
+      185  };
+     ...
+      236                      fluid.fail("Inner context for " + fullPath
+            + " has been polluted by the node global fluid");
+      237                  }
+      238                  fQUnit.attachReporter(QUnit, resolve);
+      239 +                // Follow the browser's document lifecycle - e
+          +.g. fluid.bootDocument awaits DOMContentLoaded                
+      240 +                context.document.readyState = "interactive";  
+      241 +                context.document.dispatchEvent(new linkedom.Ev
+          +ent("DOMContentLoaded"));                                     
+      242 +                context.document.readyState = "complete";     
+      243                  // QUnit's browser bootstrap awaits the window
+           's load event
+      244                  context.dispatchEvent(new linkedom.Event("load
+           "));
+      245              } else {
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's/JSON.stringify(that
+      .todoList.todos)/JSON.stringify(fluid.unwrapProxy(that.todoList.todos))/'
+      tests/framewo…)
+  ⎿  17:55:59.011:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListTests.html
+         todos: [Object: null prototype] {
+     … +32 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTests.js (+1 -1)
+      17      console.log("ITEM todo", item.todo, item.todo.text);
+      18      item.toggle();
+      19      fluid.cell.stabilize();
+      20 -    console.log("TODOS", JSON.stringify(that.todoList.todos)); 
+      20 +    console.log("TODOS", JSON.stringify(fluid.unwrapProxy(that.
+         +todoList.todos)));                                             
+      21      console.log("MARKUP", container.innerHTML);
+      22  });
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Imports load fine now, but the bulma.css link never fires load under linkedom,
+  blocking the todoList injection. I'll make connected stylesheet links fire
+  load/error based on whether the file exists.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/test-core/qunit/js/fqunit-html.js"…)
+  ⎿  271:    fluid.swapInjectedNode = function (dokkument, existing, fresh)
+      {
+     272-        if (existing) {
+     … +17 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/qunit/js/fqunit-html.js (+19 -1)
+      103  };
+      104  
+      105  /**
+      106 + * Simulate the loading of a stylesheet link element connected
+          + to a live document, as a browser does. linkedom neither      
+      107 + * fetches nor applies stylesheets, so a "load" event is dispa
+          +tched if the stylesheet's file exists, and otherwise an       
+      108 + * "error" event. Remote stylesheets are assumed to load.     
+      109 + * @param {Element} link - The link element which has just bee
+          +n connected                                                   
+      110 + */                                                           
+      111 +fQUnit.loadConnectedLink = function (link) {                  
+      112 +    const context = fQUnit.liveDocuments.get(link.ownerDocumen
+          +t);                                                           
+      113 +    const href = link.getAttribute("href");                   
+      114 +    if (context && link.getAttribute("rel") === "stylesheet" &
+          +& href && link.isConnected) {                                 
+      115 +        const url = new URL(href, context.location);          
+      116 +        const exists = url.protocol === "file:" ? fs.existsSyn
+          +c(fileURLToPath(url)) : true;                                 
+      117 +        setTimeout(() => link.dispatchEvent(new linkedom.Event
+          +(exists ? "load" : "error")), 0);                             
+      118 +    }                                                         
+      119 +};                                                            
+      120 +                                                              
+      121 +/**                                                           
+      122   * Patch the node insertion methods of linkedom so that inline
+            script elements inserted into a live document are
+      107 - * executed. This affects only documents registered in `fQUnit
+          -.liveDocuments`. Since linkedom defines these methods         
+      123 + * executed, and stylesheet links inserted into it are loaded.
+          + This affects only documents registered in `fQUnit.liveDocumen
+          +ts`. Since linkedom defines these methods                     
+      124   * on several prototypes, some of them (e.g. ParentNode) not e
+           xported, every prototype which owns one is patched.
+      125   */
+      126  fQUnit.patchScriptExecution = function () {
+     ...
+      138                          args.forEach(arg => {
+      139                              if (arg && arg.localName === "scri
+           pt") {
+      140                                  fQUnit.executeConnectedScript(
+           arg);
+      141 +                            } else if (arg && arg.localName ==
+          += "link") {                                                   
+      142 +                                fQUnit.loadConnectedLink(arg);
+      143                              }
+      144                          });
+      145                          return togo;
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >
+      tests/framework-tests/demos/js/TodoListTests.js <<'EOF'
+      /* global QUnit */…)
+  ⎿  17:56:37.383:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListTests.html
+     Allocated instanceId 0 at site globalDismissal-11
+     … +14 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTests.js (+7 -4)
+      12      const container = document.querySelector(".container");
+      13      const that = fluid.demos.todoApp({container});
+      14      fluid.cell.stabilize();
+      15 -    console.log("MARKUP", container.innerHTML);                
+      15      const item = that.todoList.todoItems.list[0];
+      17 -    console.log("ITEM todo", item.todo, item.todo.text);       
+      16 +    const todo = item.todo;                                    
+      17 +    console.log("XX todo proxy target site", todo[fluid.proxySy
+         +mbols?.$t]);                                                   
+      18 +    console.log("XX item.completed", item.completed, "item.todo
+         +.completed", item.todo.completed);                             
+      19      item.toggle();
+      20      fluid.cell.stabilize();
+      20 -    console.log("TODOS", JSON.stringify(fluid.unwrapProxy(that.
+         -todoList.todos)));                                             
+      21 -    console.log("MARKUP", container.innerHTML);                
+      21 +    console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+         +at.todoList.todos)));                                          
+      22 +    console.log("XX item.completed", item.completed, "item.todo
+         +.completed", item.todo.completed);                             
+      23 +    console.log("XX item live", item[$t].shadow.liveLayer);    
+      24 +    console.log("XX MARKUP", container.innerHTML);             
+      25  });
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListTests.js"…)
+  ⎿  XX todo proxy target site undefined
+     XX item.completed false item.todo.completed false
+     XX TODOS [{"text":"Write some code","completed":true},{"text":"Eat som
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTests.js (+7 -1)
+      20      fluid.cell.stabilize();
+      21      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      22      console.log("XX item.completed", item.completed, "item.todo
+          .completed", item.todo.completed);
+      23 -    console.log("XX item live", item[$t].shadow.liveLayer);    
+      23 +    const shadow = item[fluid.proxySymbol].shadow;             
+      24 +    console.log("XX item live", shadow.liveLayer, shadow.variab
+         +lesLayer);                                                     
+      25 +    console.log("XX getFor todo.completed", fluid.deSignal(flui
+         +d.getForComponent(shadow, "todo.completed")));                 
+      26 +    console.log("XX getFor todo", fluid.deSignal(fluid.getForCo
+         +mponent(shadow, "todo")));                                     
+      27 +    const listShadow = that.todoList[fluid.proxySymbol].shadow;
+      28 +    console.log("XX list todos.0", fluid.deSignal(fluid.getForC
+         +omponent(listShadow, "todos.0")));                             
+      29 +    console.log("XX list live", listShadow.liveLayer);         
+      30      console.log("XX MARKUP", container.innerHTML);
+      31  });
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found it: item.todo returns the raw data object, so toggle() mutates the
+  source directly and skips re-rendering. I'll check how the instance is
+  assembled to route the proxy to the upstream site instead.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now implementing the upstream hand-off in the proxy's get handler.
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 3 lines, removed 2 lines
+      2289                          // If it is another component, hand o
+            ff to fresh lineage of proxy
+      2290                          return fluid.isUnavailable(upcoming) 
+            ? fluid.unavailableProxy(upcoming) :
+      2291                              next.$variety === "$component" ? 
+            fluid.proxyMat(next, next.shadow, []) :
+      2292 -                                !fluid.isPlainObject(upcoming
+           -) || !proxyNext ? upcoming :                                 
+      2293 -                                    fluid.proxyMat(next, shad
+           -ow, nextSegs);                                               
+      2292 +                                !fluid.isPlainObject(upcoming
+           +) ? upcoming :                                               
+      2293 +                                    proxyNext ? fluid.proxyMa
+           +t(next, shadow, nextSegs) :                                  
+      2294 +                                        fluid.proxyUpstream(n
+           +ext, upcoming);                                              
+      2295                      } else {
+      2296                          return next;
+      2297                      }
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 18 lines
+      2223      };
+      2224  
+      2225      /**
+      2226 +     * "Follow fish upstream" - trace a signal held at a comp
+           +onent member through its chain of `$sitedRef`s to the        
+      2227 +     * terminal site which holds its data, e.g. from an itera
+           +tion variable `{self}.todo` to the element                   
+      2228 +     * `{todoList}.todos.0` of the list it was drawn from. If
+           + that site lies in mat-forming material, a proxy is returned 
+      2229 +     * onto it so that writes through it are applied to the o
+           +riginal data source rather than to the referring component.  
+      2230 +     * @param {Signal<any>} next - The signal held at the mem
+           +ber                                                          
+      2231 +     * @param {any} upcoming - The designalised value of the 
+           +signal                                                       
+      2232 +     * @return {Proxy|any} A proxy onto the terminal site if 
+           +it is mat-forming, otherwise the supplied value              
+      2233 +     */                                                      
+      2234 +    fluid.proxyUpstream = function (next, upcoming) {        
+      2235 +        const sited = fluid.deSignalToSite(next);            
+      2236 +        if (fluid.isSignal(sited) && sited.$variety === "$sit
+           +edRef" && fluid.isMatForming(sited.site.shadow, sited.site.se
+           +gs)) {                                                       
+      2237 +            return fluid.proxyMat(sited, sited.site.shadow, s
+           +ited.site.segs);                                             
+      2238 +        } else {                                             
+      2239 +            return upcoming;                                 
+      2240 +        }                                                    
+      2241 +    };                                                       
+      2242 +                                                             
+      2243 +    /**                                                      
+      2244       * Construct a proxy wrapper for a supplied component fro
+            m its computer - reads will be designalised, and writes
+      2245       * will be upgraded into a live layer, allocating a fresh
+             property in the layer if required.
+      2246       *
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      import re…)
+  ⎿  '\n'
+     diff --git a/demo/todo-list-sfc/sfc/fluid-demos-todoItem.vue b/demo/to
+     do-list-sfc/sfc/fluid-demos-todoItem.vue
+     … +43 lines (ctrl+o to expand)
+  ⎿  Updated demo/todo-list-sfc/sfc/fluid-demos-todoList.vue (+1 -3)
+      11                  source: "{todoList}.todos",
+      12                  valueAs: "todo",
+      13                  keyAs: "itemIndex"
+      14 -            },                                                 
+      15 -            text: "{self}.todo.text",                          
+      16 -            completed: "{self}.todo.completed"                 
+      14 +            }                                                  
+      15          }
+      16      },
+      17      toggleItem: {
+  ⎿  Updated demo/todo-list-sfc/sfc/fluid-demos-todoItem.vue (+2 -2)
+      14  <template>
+      15      <div>
+      16          <span class="todo tag is-large"
+      17 -              @class="completed:@{completed}, is-info:!@{comple
+         -ted}"                                                          
+      17 +              @class="completed:@{todo.completed}, is-info:!@{t
+         +odo.completed}"                                                
+      18                @onclick="{self}.toggle()">
+      19 -            <span>@{text}</span>                               
+      19 +            <span>@{todo.text}</span>                          
+      20              <button class="delete is-small"
+      21                  @onclick.stop="{todoList}.deleteItem({self}.ite
+          mIndex)"></button>
+      22          </span>
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's/console.log("XX
+      item.completed", item.completed, /console.log("XX /'
+      tests/framework-tests/demos/js/TodoLi…)
+  ⎿  17:58:10.829:   fq:  Error loading HTML test driver /mnt/outer-source/
+     gits/fluid-infusion-6/tests/framework-tests/demos/html/TodoListTests.h
+     tml - FAIL /mnt/outer-source/gits/fluid-infusion-6/tests/framework-tes
+     … +9 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTests.js (+2 -2)
+      15      const item = that.todoList.todoItems.list[0];
+      16      const todo = item.todo;
+      17      console.log("XX todo proxy target site", todo[fluid.proxySy
+          mbols?.$t]);
+      18 -    console.log("XX item.completed", item.completed, "item.todo
+         -.completed", item.todo.completed);                             
+      18 +    console.log("XX "item.todo.completed", item.todo.completed)
+         +;                                                              
+      19      item.toggle();
+      20      fluid.cell.stabilize();
+      21      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      22 -    console.log("XX item.completed", item.completed, "item.todo
+         -.completed", item.todo.completed);                             
+      22 +    console.log("XX "item.todo.completed", item.todo.completed)
+         +;                                                              
+      23      const shadow = item[fluid.proxySymbol].shadow;
+      24      console.log("XX item live", shadow.liveLayer, shadow.variab
+          lesLayer);
+      25      console.log("XX getFor todo.completed", fluid.deSignal(flui
+          d.getForComponent(shadow, "todo.completed")));
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's/console.log("XX
+      "item.todo.completed"/console.log("XX item.todo.completed"/'
+      tests/framework-tests/demos/j…)
+  ⎿  XX todo proxy target site undefined
+     XX item.todo.completed false
+     17:58:17.632:   Upgrading path  [ 'todos' ]  to live
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTests.js (+2 -2)
+      15      const item = that.todoList.todoItems.list[0];
+      16      const todo = item.todo;
+      17      console.log("XX todo proxy target site", todo[fluid.proxySy
+          mbols?.$t]);
+      18 -    console.log("XX "item.todo.completed", item.todo.completed)
+         -;                                                              
+      18 +    console.log("XX item.todo.completed", item.todo.completed);
+      19      item.toggle();
+      20      fluid.cell.stabilize();
+      21      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      22 -    console.log("XX "item.todo.completed", item.todo.completed)
+         -;                                                              
+      22 +    console.log("XX item.todo.completed", item.todo.completed);
+      23      const shadow = item[fluid.proxySymbol].shadow;
+      24      console.log("XX item live", shadow.liveLayer, shadow.variab
+          lesLayer);
+      25      console.log("XX getFor todo.completed", fluid.deSignal(flui
+          d.getForComponent(shadow, "todo.completed")));
+
+● Toggling via {self}.toggle() now writes through to todoList.todos and
+  re-renders. Checking the full suite for regressions:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now I'll add a deleteProperty trap so deletions propagate upstream and splice
+  from the source data, plus per-element site projection in $for so filtered
+  lists retain their provenance.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidIL.js"…)
+  ⎿  src/framework/core/js/Fluid.js:164:    fluid.fail = function (...messa
+     ges) {
+     src/framework/core/js/Fluid.js-165-        const activity = fluid.make
+     … +8 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+58 -16)
+      2210      fluid.mutatingArrayMethods = Object.fromEntries(["copyWit
+            hin", "fill", "pop", "push",
+      2211          "reverse", "shift", "sort", "splice", "unshift"].map(
+            key => [key, true]));
+      2212  
+      2213 -    fluid.wrapFilter = function (array) {                    
+      2214 -        return callback => {                                 
+      2215 -            return array.filter((e, i) => {                  
+      2216 -                console.log("Applying filter callback to elem
+           -ent ", e, " at index ", i);                                  
+      2217 -                // TODO: At this point, uncover the $siteRef 
+           -from inside the arguments, and then when we've established th
+           -e                                                            
+      2218 -                // alignment implied by filter, rewrap the re
+           -turned elements in the same $siteRef. In practice the proxy  
+      2219 -                // could probably do this all by itself ...  
+      2220 -                return callback(e, i);                       
+      2221 -            });                                              
+      2222 -        };                                                   
+      2223 -    };                                                       
+      2224 -                                                             
+      2213      /**
+      2214       * "Follow fish upstream" - trace a signal held at a comp
+            onent member through its chain of `$sitedRef`s to the
+      2215       * terminal site which holds its data, e.g. from an itera
+            tion variable `{self}.todo` to the element
+     ...
+      2229      };
+      2230  
+      2231      /**
+      2232 +     * Find the terminal site of the value held at a path wit
+           +hin a component by tracing its chain of `$sitedRef`s         
+      2233 +     * upstream. If the value is not sourced from elsewhere, 
+           +this is the site itself.                                     
+      2234 +     * @param {Shadow} shadow - The shadow record of the comp
+           +onent holding the path                                       
+      2235 +     * @param {String[]} segs - The path segments within the 
+           +component                                                    
+      2236 +     * @return {Site} The terminal site of the value         
+      2237 +     */                                                      
+      2238 +    fluid.upstreamSite = function (shadow, segs) {           
+      2239 +        const sited = fluid.deSignalToSite(fluid.getForCompon
+           +ent(shadow, segs));                                          
+      2240 +        if (fluid.isSignal(sited) && sited.$variety === "$sit
+           +edRef") {                                                    
+      2241 +            return sited.site;                               
+      2242 +        } else {                                             
+      2243 +            return {shadow, segs};                           
+      2244 +        }                                                    
+      2245 +    };                                                       
+      2246 +                                                             
+      2247 +    /**                                                      
+      2248 +     * Delete the value held at a path within a component, by
+           + immutable application of a fresh value to its parent        
+      2249 +     * path. An element of an array is spliced out of it, and
+           + a member of an object is removed from it.                   
+      2250 +     * @param {Object} component - The component holding the 
+           +path to be deleted                                           
+     … 69 more lines (ctrl+o to expand)
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 7 lines, removed 3 lines
+      1528                          allKeys.push("" + subKey);
+      1529                          const variables = {};
+      1530                          if (forRecord.valueAs !== undefined) 
+            {
+      1531 -                            // Where the source has a site, e
+           -xpress the value as a global reference to it so that it stays
+           - live                                                        
+      1532 -                            variables[forRecord.valueAs] = so
+           -urceSite ?                                                   
+      1533 -                                fluid.renderGlobalReference({
+           -shadow: sourceSite.shadow, segs: [...sourceSite.segs, "" + su
+           -bKey]}) : value;                                             
+      1531 +                            // A value which is itself a prox
+           +y onto a site, e.g. an element selected by filter() from     
+      1532 +                            // proxied material, retains the 
+           +provenance of that site. Otherwise, where the source has a   
+      1533 +                            // site, express the value as a g
+           +lobal reference to its element so that it stays live         
+      1534 +                            const valueRef = fluid.unProxy(va
+           +lue);                                                        
+      1535 +                            const valueSite = fluid.isSignal(
+           +valueRef) && valueRef.$variety === "$sitedRef" ? valueRef.sit
+           +e :                                                          
+      1536 +                                sourceSite ? {shadow: sourceS
+           +ite.shadow, segs: [...sourceSite.segs, "" + subKey]} : null; 
+      1537 +                            variables[forRecord.valueAs] = va
+           +lueSite ? fluid.renderGlobalReference(valueSite) : value;    
+      1538                          }
+      1539                          if (forRecord.keyAs !== undefined) {
+      1540                              variables[forRecord.keyAs] = subK
+            ey;
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now the demo edits: local toggle/remove methods in both todoItems, dropping
+  the copies and the global toggleItem/deleteItem/assignItem epicycles.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      import re…)
+  ⎿  diff --git a/demo/todo-list-assign/sfc/fluid-demos-todoItem-withAssign
+     ee.vue b/demo/todo-list-assign/sfc/fluid-demos-todoItem-withAssignee.v
+     ue
+     … +191 lines (ctrl+o to expand)
+  ⎿  Updated demo/todo-list-sfc/sfc/fluid-demos-todoItem.vue (+10 -1)
+       7              },
+       8              args: ["{self}"]
+       9          }
+      10 +    },                                                         
+      11 +    // Deleting the iteration variable follows its provenance u
+         +pstream and removes the element from the source list           
+      12 +    remove: {                                                  
+      13 +        $method: {                                             
+      14 +            func: (item) => {                                  
+      15 +                delete item.todo;                              
+      16 +            },                                                 
+      17 +            args: ["{self}"]                                   
+      18 +        }                                                      
+      19      }
+      20  });
+      21  </script>
+     ...
+      27                @onclick="{self}.toggle()">
+      28              <span>@{todo.text}</span>
+      29              <button class="delete is-small"
+      21 -                @onclick.stop="{todoList}.deleteItem({self}.ite
+         -mIndex)"></button>                                             
+      30 +                @onclick.stop="{self}.remove()"></button>      
+      31          </span>
+      32      </div>
+      33  </template>
+  ⎿  Updated demo/todo-list-assign/sfc/fluid-demos-todoItem.vue (+20 -3)
+       1  <script>
+       2  fluid.def("fluid.demos.todoItem", {
+       3 +    toggle: {                                                  
+       4 +        $method: {                                             
+       5 +            func: (item) => {                                  
+       6 +                item.todo.completed = !item.todo.completed;    
+       7 +            },                                                 
+       8 +            args: ["{self}"]                                   
+       9 +        }                                                      
+      10 +    },                                                         
+      11 +    // Deleting the iteration variable follows its provenance u
+         +pstream and removes the element from the source list           
+      12 +    remove: {                                                  
+      13 +        $method: {                                             
+      14 +            func: (item) => {                                  
+      15 +                delete item.todo;                              
+      16 +            },                                                 
+      17 +            args: ["{self}"]                                   
+      18 +        }                                                      
+      19 +    }                                                          
+      20  });
+      21  </script>
+      22  
+      23  <template>
+      24      <div>
+      25          <span class="todo tag is-large"
+       9 -              @class="completed:@{completed}, is-info:!@{comple
+         -ted}">                                                         
+      10 -            <span @onclick="{todoList}.toggleItem({self}.itemIn
+         -dex)" class="item-text">@{text}</span>                         
+      26 +              @class="completed:@{todo.completed}, is-info:!@{t
+         +odo.completed}">                                               
+      27 +            <span @onclick="{self}.toggle()" class="item-text">
+         +@{todo.text}</span>                                            
+      28              <button class="delete is-small"
+      12 -                @onclick.stop="{todoList}.deleteItem({self}.ite
+         -mIndex)"></button>                                             
+      29 +                @onclick.stop="{self}.remove()"></button>      
+      30          </span>
+      31      </div>
+      32  </template>
+  ⎿  Updated demo/todo-list-sfc/sfc/fluid-demos-todoList.vue (+0 -16)
+      13                  keyAs: "itemIndex"
+      14              }
+      15          }
+      16 -    },                                                         
+      17 -    toggleItem: {                                              
+      18 -        $method: {                                             
+      19 -            func: (todos, itemIndex) => {                      
+      20 -                todos[itemIndex].completed = !todos[itemIndex].
+         -completed;                                                     
+      21 -            },                                                 
+      22 -            args: ["{self}.todos", "{0}:itemIndex"]            
+      23 -        }                                                      
+      24 -    },                                                         
+      25 -    deleteItem: {                                              
+      26 -        $method: {                                             
+      27 -            func: (todos, itemIndex) => {                      
+      28 -                todos = todos.splice(itemIndex, 1);            
+      29 -            },                                                 
+      30 -            args: ["{self}.todos", "{0}:itemIndex"]            
+      31 -        }                                                      
+      16      }
+      17  });
+      18  
+  ⎿  Updated demo/todo-list-assign/sfc/fluid-demos-todoList.vue (+1 -19)
+      20                  source: "{todoList}.filteredTodos",
+      21                  valueAs: "todo",
+      22                  keyAs: "itemIndex"
+      23 -            },                                                 
+      24 -            text: "{self}.todo.text",                          
+      25 -            completed: "{self}.todo.completed"                 
+      23 +            }                                                  
+      24          }
+      25      },
+      26      facets: {
+     ...
+      32          $component: {
+      33              $layers: "fluid.demos.filters"
+      34          }
+      37 -    },                                                         
+      38 -    toggleItem: {                                              
+      39 -        $method: {                                             
+      40 -            func: (todos, itemIndex) => {                      
+      41 -                todos[itemIndex].completed = !todos[itemIndex].
+         -completed;                                                     
+      42 -            },                                                 
+      43 -            args: ["{self}.todos", "{0}:itemIndex"]            
+      44 -        }                                                      
+      45 -    },                                                         
+      46 -    deleteItem: {                                              
+      47 -        $method: {                                             
+      48 -            func: (todos, itemIndex) => {                      
+      49 -                todos = todos.splice(itemIndex, 1);            
+      50 -            },                                                 
+      51 -            args: ["{self}.todos", "{0}:itemIndex"]            
+      52 -        }                                                      
+      35      }
+      36  });
+      37  
+  ⎿  Updated
+     demo/todo-list-assign/sfc/fluid-demos-todoList-withAssignee.vue (+1 
+     -9)
+       3      $layers: "fluid.demos.assignees",
+       4      assignees: {
+       5          $reactiveRoot: ["Ashiata Shiemash", "Gornahoor Harharkh
+          ", "Makary Kronbernkzion"]
+       6 -    },                                                         
+       7 -    assignItem: {                                              
+       8 -        $method: {                                             
+       9 -            func: (todos, itemIndex, assignee) => {            
+      10 -                todos[itemIndex].assignee = assignee;          
+      11 -            },                                                 
+      12 -            args: ["{self}.todos", "{0}:itemIndex", "{1}:assign
+         -ee"]                                                           
+      13 -        }                                                      
+      14 -    },                                                         
+       6 +    }                                                          
+       7  });
+       8  
+       9  /** Tag layer to allow assignees to be resolved from around the
+           tree */
+  ⎿  … 1 more file changed
+
+● Now writing the real test fixtures against the demo SFCs. First, the base todo
+  list:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >>
+      tests/framework-tests/demos/js/TodoListTestUtils.js <<'EOF'…)
+  ⎿  "use strict";
+
+     fluid.registerNamespace("fluid.tests.todo");
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+74 -2)
+      1 -/* global QUnit */                                              
+      2 -                                                                
+      1  "use strict";
+      2  
+      3  fluid.registerNamespace("fluid.tests.todo");
+     ...
+       38      }
+       39      return fluid.tests.todo.loadPromise;
+       40  };
+       41 +                                                              
+       42 +fluid.tests.todo.qs = (sel, parent) => (parent || document).qu
+          +erySelector(sel);                                             
+       43 +fluid.tests.todo.qsa = (sel, parent) => [...(parent || documen
+          +t).querySelectorAll(sel)];                                    
+       44 +                                                              
+       45 +/**                                                           
+       46 + * Instantiate a fresh todo app from the demo's `fluid.demos.t
+          +odoApp` layer into the test container, once its imports       
+       47 + * have loaded.                                               
+       48 + * @return {Promise<Object>} A promise for a record holding th
+          +e app component `that` and its `container`                    
+       49 + */                                                           
+       50 +fluid.tests.todo.makeApp = async function () {                
+       51 +    await fluid.tests.todo.loadImports();                     
+       52 +    const container = fluid.tests.todo.qs(".container");      
+       53 +    const that = fluid.demos.todoApp({container});            
+       54 +    fluid.cell.stabilize();                                   
+       55 +    return {that, container};                                 
+       56 +};                                                            
+       57 +                                                              
+       58 +/**                                                           
+       59 + * Read the current value of the source todos held in the todo
+          + list component, without any proxy wrapping.                  
+       60 + * @param {Object} that - The todo app component              
+       61 + * @return {Object[]} The current source todos                
+       62 + */                                                           
+       63 +fluid.tests.todo.sourceTodos = function (that) {              
+       64 +    return fluid.copy(fluid.unwrapProxy(that.todoList.todos));
+       65 +};                                                            
+       66 +                                                              
+       67 +/**                                                           
+       68 + * Assert that the todo items in the component tree and the re
+          +ndered markup agree with the expected todos.                  
+       69 + * @param {Object} assert - The QUnit assert object           
+       70 + * @param {Object} that - The todo app component              
+       71 + * @param {HTMLElement} container - The container into which t
+          +he app is rendered                                            
+       72 + * @param {Object[]} expected - The todos which are expected t
+          +o be rendered, in order                                       
+     … 42 more lines (ctrl+o to expand)
+
+● Write(tests/framework-tests/demos/js/TodoListTests.js)
+  ⎿  Added 95 lines, removed 20 lines
+        6  
+        7  QUnit.config.reorder = false;
+        8  
+        9 -QUnit.test("Explore", async function (assert) {               
+       10 -    const loaded = await fluid.tests.todo.loadImports();      
+       11 -    assert.ok(loaded, "Loaded");                              
+       12 -    const container = document.querySelector(".container");   
+       13 -    const that = fluid.demos.todoApp({container});            
+       14 -    fluid.cell.stabilize();                                   
+        9 +fluid.tests.todo.initialTodos = fluid.demos.fetchTodos();     
+       10 +                                                              
+       11 +const {qsa, click} = fluid.tests.todo;                        
+       12 +                                                              
+       13 +QUnit.test("Demo SFCs load and render initial todos", async fu
+          +nction (assert) {                                             
+       14 +    const {that, container} = await fluid.tests.todo.makeApp()
+          +;                                                             
+       15 +    assert.ok(fluid.def("fluid.demos.todoItem"), "Item layer l
+          +oaded from demo SFC");                                        
+       16 +    fluid.tests.todo.checkRendering(assert, that, container, f
+          +luid.tests.todo.initialTodos, "Initial");                     
+       17 +                                                              
+       18 +    const items = that.todoList.todoItems.list;               
+       19 +    assert.equal(items[1].itemIndex, 1, "Iteration key exposed
+          + as member of item");                                         
+       20 +    assert.deepEqual(fluid.unwrapProxy(items[1].todo), fluid.t
+          +ests.todo.initialTodos[1], "Iteration value exposed as member 
+          +of item");                                                    
+       21 +    that.destroy();                                           
+       22 +});                                                           
+       23 +                                                              
+       24 +QUnit.test("Toggle through local method writes upstream to sou
+          +rce todos", async function (assert) {                         
+       25 +    const {that, container} = await fluid.tests.todo.makeApp()
+          +;                                                             
+       26 +    const initialSource = fluid.unwrapProxy(that.todoList.todo
+          +s);                                                           
+       27 +    const initialCopy = fluid.copy(initialSource);            
+       28 +                                                              
+       29 +    const rows = qsa(".todo", container);                     
+       30 +    click(rows[0]);                                           
+       31 +                                                              
+       32 +    const toggled = fluid.copy(fluid.tests.todo.initialTodos);
+       33 +    toggled[0].completed = true;                              
+       34 +    assert.deepEqual(fluid.tests.todo.sourceTodos(that), toggl
+          +ed, "Source todos in list updated");                          
+       35 +    assert.deepEqual(initialSource, initialCopy, "Original sou
+          +rce data not mutated in place");                              
+       36 +    fluid.tests.todo.checkRendering(assert, that, container, t
+          +oggled, "Toggled index 0");                                   
+       37 +                                                              
+       38      const item = that.todoList.todoItems.list[0];
+       16 -    const todo = item.todo;                                   
+       17 -    console.log("XX todo proxy target site", todo[fluid.proxyS
+          -ymbols?.$t]);                                                 
+       18 -    console.log("XX item.todo.completed", item.todo.completed)
+          -;                                                             
+       19 -    item.toggle();                                            
+       39 +    const itemShadow = item[fluid.proxySymbol].shadow;        
+       40 +    assert.deepEqual(Object.keys(itemShadow.liveLayer), [], "N
+          +o write was made into the item's own live layer");            
+       41 +                                                              
+       42 +    click(rows[0]);                                           
+       43 +    fluid.tests.todo.checkRendering(assert, that, container, f
+          +luid.tests.todo.initialTodos, "Toggled index 0 back");        
+       44 +                                                              
+       45 +    click(rows[1]);                                           
+       46 +    click(rows[2]);                                           
+       47 +    const toggledTwo = fluid.copy(fluid.tests.todo.initialTodo
+          +s);                                                           
+       48 +    toggledTwo[1].completed = false;                          
+       49 +    toggledTwo[2].completed = true;                           
+       50 +    fluid.tests.todo.checkRendering(assert, that, container, t
+          +oggledTwo, "Toggled indices 1 and 2");                        
+       51 +    that.destroy();                                           
+       52 +});                                                           
+       53 +                                                              
+       54 +QUnit.test("Direct writes through iteration variable proxy hit
+          + source", async function (assert) {                           
+       55 +    const {that, container} = await fluid.tests.todo.makeApp()
+          +;                                                             
+       56 +    const item = that.todoList.todoItems.list[2];             
+       57 +    item.todo.text = "Sleep soundly";                         
+       58      fluid.cell.stabilize();
+       21 -    console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(t
+          -hat.todoList.todos)));                                        
+       22 -    console.log("XX item.todo.completed", item.todo.completed)
+          -;                                                             
+       23 -    const shadow = item[fluid.proxySymbol].shadow;            
+       24 -    console.log("XX item live", shadow.liveLayer, shadow.varia
+          -blesLayer);                                                   
+       25 -    console.log("XX getFor todo.completed", fluid.deSignal(flu
+          -id.getForComponent(shadow, "todo.completed")));               
+       26 -    console.log("XX getFor todo", fluid.deSignal(fluid.getForC
+          -omponent(shadow, "todo")));                                   
+       27 -    const listShadow = that.todoList[fluid.proxySymbol].shadow
+          -;                                                             
+       28 -    console.log("XX list todos.0", fluid.deSignal(fluid.getFor
+          -Component(listShadow, "todos.0")));                           
+       29 -    console.log("XX list live", listShadow.liveLayer);        
+       30 -    console.log("XX MARKUP", container.innerHTML);            
+       59 +                                                              
+       60 +    const expected = fluid.copy(fluid.tests.todo.initialTodos)
+          +;                                                             
+       61 +    expected[2].text = "Sleep soundly";                       
+       62 +    assert.deepEqual(fluid.tests.todo.sourceTodos(that), expec
+          +ted, "Source todos in list updated");                         
+       63 +    fluid.tests.todo.checkRendering(assert, that, container, e
+          +xpected, "Text written via item");                            
+       64 +    that.destroy();                                           
+       65  });
+       66 +                                                              
+       67 +QUnit.test("Delete of iteration variable splices source todos"
+          +, async function (assert) {                                   
+       68 +    const {that, container} = await fluid.tests.todo.makeApp()
+          +;                                                             
+       69 +    const buttons = qsa("button.delete", container);          
+       70 +    click(buttons[1]);                                        
+       71 +                                                              
+       72 +    const expected = fluid.tests.todo.initialTodos.filter((tod
+          +o, index) => index !== 1);                                    
+       73 +    assert.deepEqual(fluid.tests.todo.sourceTodos(that), expec
+          +ted, "Element removed from source todos");                    
+       74 +    fluid.tests.todo.checkRendering(assert, that, container, e
+          +xpected, "Deleted index 1");                                  
+       75 +                                                              
+       76 +    // The item at index 1 is now drawn from what was previous
+          +ly index 2 - toggling it should target the right element      
+       77 +    click(qsa(".todo", container)[1]);                        
+       78 +    const toggled = fluid.copy(expected);                     
+       79 +    toggled[1].completed = true;                              
+       80 +    fluid.tests.todo.checkRendering(assert, that, container, t
+          +oggled, "Toggled slid item");                                 
+       81 +                                                              
+       82 +    delete that.todoList.todoItems.list[0].todo;              
+       83 +    fluid.cell.stabilize();                                   
+       84 +    fluid.tests.todo.checkRendering(assert, that, container, t
+          +oggled.slice(1), "Deleted index 0 via proxy");                
+       85 +                                                              
+       86 +    click(qsa("button.delete", container)[0]);                
+       87 +    fluid.tests.todo.checkRendering(assert, that, container, [
+          +], "Deleted last item");                                      
+       88 +    that.destroy();                                           
+       89 +});                                                           
+       90 +                                                              
+       91 +QUnit.test("Insert new todo and operate on it", async function
+          + (assert) {                                                   
+       92 +    const {that, container} = await fluid.tests.todo.makeApp()
+          +;                                                             
+       93 +    fluid.tests.todo.enterTodo(container, "Think about somethi
+          +ng");                                                         
+       94 +                                                              
+       95 +    const expected = fluid.tests.todo.initialTodos.concat([{te
+          +xt: "Think about something", completed: false}]);             
+       96 +    fluid.tests.todo.checkRendering(assert, that, container, e
+          +xpected, "Inserted item");                                    
+       97 +                                                              
+       98 +    click(qsa(".todo", container)[3]);                        
+       99 +    const toggled = fluid.copy(expected);                     
+      100 +    toggled[3].completed = true;                              
+      101 +    fluid.tests.todo.checkRendering(assert, that, container, t
+          +oggled, "Toggled inserted item");                             
+      102 +                                                              
+      103 +    click(qsa("button.delete", container)[0]);                
+      104 +    fluid.tests.todo.checkRendering(assert, that, container, t
+          +oggled.slice(1), "Deleted first item after insert");          
+      105 +    that.destroy();                                           
+      106 +});                                                           
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListTests.js"…)
+  ⎿  18:00:58.200:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListTests.html
+     Allocated instanceId 0 at site globalDismissal-11
+     … +21 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTests.js (+0 -2)
+       6  
+       7  QUnit.config.reorder = false;
+       8  
+       9 -fluid.tests.todo.initialTodos = fluid.demos.fetchTodos();      
+      10 -                                                               
+       9  const {qsa, click} = fluid.tests.todo;
+      10  
+      11  QUnit.test("Demo SFCs load and render initial todos", async fun
+          ction (assert) {
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+2 -1)
+      44  
+      45  /**
+      46   * Instantiate a fresh todo app from the demo's `fluid.demos.to
+          doApp` layer into the test container, once its imports
+      47 - * have loaded.                                                
+      47 + * have loaded. The demo's initial todos are recorded in `fluid
+         +.tests.todo.initialTodos`.                                     
+      48   * @return {Promise<Object>} A promise for a record holding the
+           app component `that` and its `container`
+      49   */
+      50  fluid.tests.todo.makeApp = async function () {
+      51      await fluid.tests.todo.loadImports();
+      52 +    fluid.tests.todo.initialTodos = fluid.demos.fetchTodos();  
+      53      const container = fluid.tests.todo.qs(".container");
+      54      const that = fluid.demos.todoApp({container});
+      55      fluid.cell.stabilize();
+
+● All 68 pass. To make sure they actually exercise the change, I'll temporarily
+  disable proxyUpstream and confirm they fail:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The tests catch the regression; the original is restored. Next is the
+  assignees demo fixture, with filtering and the assignee selects.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      src=open("tests/framework-tests/demos/html/TodoListTests.html").read()…)
+  ⎿  fluid-demos-assigneeControl.vue
+     fluid-demos-facets.vue
+     fluid-demos-filterAssignee.vue
+     … +10 lines (ctrl+o to expand)
+  ⎿  Created tests/framework-tests/demos/html/TodoListAssignTests.html (+62
+     -0)
+       1 +<!DOCTYPE html>                                                
+       2 +<html lang="en">                                               
+       3 +    <head>                                                     
+       4 +        <meta http-equiv="Content-Type" content="text/html; cha
+         +rset=utf-8" />                                                 
+       5 +        <title>Todo List With Assignees Demo Tests</title>     
+       6 +                                                               
+       7 +        <link rel="stylesheet" media="screen" href="../../../li
+         +b/qunit/css/qunit.css" />                                      
+       8 +                                                               
+       9 +        <fluid-module id="infusion-6" src="../../../../"></flui
+         +d-module>                                                      
+      10 +                                                               
+      11 +        <script src="../../../../src/lib/lezer/lezer-javascript
+         +-browser.js"></script>                                         
+      12 +                                                               
+      13 +        <script src="../../../../src/framework/core/js/FluidCor
+         +e.js"></script>                                                
+      14 +        <script src="../../../../src/framework/core/js/FluidSig
+         +nals.js"></script>                                             
+      15 +        <script src="../../../../src/framework/core/js/Fluid.js
+         +"></script>                                                    
+      16 +        <script src="../../../../src/framework/core/js/FluidMod
+         +ules.js"></script>                                             
+      17 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>                                                  
+      18 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w.js"></script>                                                
+      19 +        <script src="../../../../src/framework/core/js/FluidPTF
+         +.js"></script>                                                 
+      20 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w-browser.js"></script>                                        
+      21 +        <script src="../../../../src/framework/core/js/template
+         +-parser.js"></script>                                          
+      22 +        <script src="../../../../src/framework/core/js/sfc-pars
+         +er.js"></script>                                               
+      23 +                                                               
+      24 +        <!-- The actual SFC files of the demo at demo/todo-list
+         +-assign -->                                                    
+      25 +        <fluid-module id="todoApp" src="../../../../demo/todo-l
+         +ist-assign/"></fluid-module>                                   
+      26 +                                                               
+      27 +        <!-- definitions for base app -->                      
+      28 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoApp.vue
+         +"></fluid-import>                                              
+      29 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoList.vu
+         +e"></fluid-import>                                             
+      30 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoItem.vu
+         +e"></fluid-import>                                             
+      31 +                                                               
+      32 +        <!-- definitions for filtering per se -->              
+      33 +        <fluid-import src="%todoApp/sfc/fluid-demos-filter.vue"
+         +></fluid-import>                                               
+      34 +        <fluid-import src="%todoApp/sfc/fluid-demos-filters.vue
+         +"></fluid-import>                                              
+      35 +        <fluid-import src="%todoApp/sfc/fluid-demos-filterCompl
+         +eted.vue"></fluid-import>                                      
+      36 +                                                               
+      37 +        <!-- block of imports to enable assignees -->          
+      38 +        <fluid-import src="%todoApp/sfc/fluid-demos-assignee.vu
+         +e"></fluid-import>                                             
+      39 +        <fluid-import src="%todoApp/sfc/fluid-demos-assigneeCon
+         +trol.vue"></fluid-import>                                      
+      40 +        <fluid-import src="%todoApp/sfc/fluid-demos-todoList-wi
+         +thAssignee.vue"></fluid-import>                                
+     … 22 more lines (ctrl+o to expand)
+
+● The imported file fluid-demos-assignee.vue doesn't actually exist—that layer
+  is really defined in todoList-withAssignee.vue—so I'll exclude it from the
+  fixture.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i
+      '/fluid-demos-assignee.vue/d'
+      tests/framework-tests/demos/html/TodoListAssignTests.html; cat >
+      tests/framewor…)
+  ⎿  18:01:36.769:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListAssignTests.h
+     tml
+     … +24 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/html/TodoListAssignTests.html (+0 
+     -1)
+      35          <fluid-import src="%todoApp/sfc/fluid-demos-filterCompl
+          eted.vue"></fluid-import>
+      36  
+      37          <!-- block of imports to enable assignees -->
+      38 -        <fluid-import src="%todoApp/sfc/fluid-demos-assignee.vu
+         -e"></fluid-import>                                             
+      38          <fluid-import src="%todoApp/sfc/fluid-demos-assigneeCon
+          trol.vue"></fluid-import>
+      39          <fluid-import src="%todoApp/sfc/fluid-demos-todoList-wi
+          thAssignee.vue"></fluid-import>
+      40          <fluid-import src="%todoApp/sfc/fluid-demos-todoItem-wi
+          thAssignee.vue"></fluid-import>
+  ⎿  Created tests/framework-tests/demos/js/TodoListAssignTests.js (+24 -0)
+       1 +/* global QUnit */                                             
+       2 +                                                               
+       3 +"use strict";                                                  
+       4 +                                                               
+       5 +QUnit.module("Todo List With Assignees Demo Tests");           
+       6 +                                                               
+       7 +QUnit.config.reorder = false;                                  
+       8 +                                                               
+       9 +QUnit.test("Explore", async function (assert) {                
+      10 +    const {that, container} = await fluid.tests.todo.makeApp();
+      11 +    console.log("XX MARKUP", container.innerHTML);             
+      12 +    const select = container.querySelector(".fl-filter-complete
+         +d select");                                                    
+      13 +    select.value = "false";                                    
+      14 +    console.log("XX select value", select.value, select.selecte
+         +dIndex);                                                       
+      15 +    select.dispatchEvent(new Event("change"));                 
+      16 +    fluid.cell.stabilize();                                    
+      17 +    console.log("XX MARKUP", container.innerHTML);             
+      18 +    const check = container.querySelector("input[type=checkbox]
+         +");                                                            
+      19 +    check.checked = true;                                      
+      20 +    check.dispatchEvent(new Event("change"));                  
+      21 +    fluid.cell.stabilize();                                    
+      22 +    console.log("XX MARKUP", container.innerHTML);             
+      23 +    assert.ok(true);                                           
+      24 +});                                                            
+
+● UISelect loads lazily through $importMap, so the app needs to settle
+  asynchronously. I'll let makeApp wait for a readiness predicate.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListTestUtils.js"…)
+  ⎿  18:01:48.378:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListAssignTests.h
+     tml
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+3 -2)
+      44  
+      45  /**
+      46   * Instantiate a fresh todo app from the demo's `fluid.demos.to
+          doApp` layer into the test container, once its imports
+      47 - * have loaded. The demo's initial todos are recorded in `fluid
+         -.tests.todo.initialTodos`.                                     
+      47 + * have loaded, and wait until its todo items have rendered - l
+         +ayers imported lazily through an `$importMap` may              
+      48 + * still be loading on instantiation. The demo's initial todos 
+         +are recorded in `fluid.tests.todo.initialTodos`.               
+      49   * @return {Promise<Object>} A promise for a record holding the
+           app component `that` and its `container`
+      50   */
+      51  fluid.tests.todo.makeApp = async function () {
+     ...
+      53      fluid.tests.todo.initialTodos = fluid.demos.fetchTodos();
+      54      const container = fluid.tests.todo.qs(".container");
+      55      const that = fluid.demos.todoApp({container});
+      55 -    fluid.cell.stabilize();                                    
+      56 +    await fluid.tests.todo.waitFor(() => fluid.tests.todo.qsa("
+         +.todo", container).length === fluid.tests.todo.initialTodos.len
+         +gth);                                                          
+      57      return {that, container};
+      58  };
+      59  
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListAssignTests.js"…)
+  ⎿  XX UISelect def false {
+       loadStyle: 'sfc',
+       url: 'file:///mnt/outer-source/gits/fluid-infusion-6/demo/todo-list-
+     … +10 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+5 -0)
+       9  QUnit.test("Explore", async function (assert) {
+      10      const {that, container} = await fluid.tests.todo.makeApp();
+      11      console.log("XX MARKUP", container.innerHTML);
+      12 +    console.log("XX UISelect def", !!fluid.def("fluid.UISelect"
+         +), fluid.importMap["fluid.UISelect"]);                         
+      13 +    const rec = fluid.readSFC("fluid.UISelect");               
+      14 +    console.log("XX UISelect rec", rec.loadCompletion?.get(), t
+         +ypeof(rec.textSignal.get()));                                  
+      15 +    const sh = that.todoList[fluid.proxySymbol].shadow;        
+      16 +    console.log("XX filtered", fluid.deSignal(fluid.getForCompo
+         +nent(sh, "filteredTodos")));                                   
+      17      const select = container.querySelector(".fl-filter-complete
+          d select");
+      18      select.value = "false";
+      19      console.log("XX select value", select.value, select.selecte
+          dIndex);
+● I'm debugging why the lazily imported fluid.UISelect layer never gets defined
+  under node: its SFC text arrives, but the definition is never injected.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cp
+      src/framework/core/js/FluidView.js /tmp/claude-1000/-mnt-outer-source-gits
+      -fluid-infusion-6/36aecda2-647e-41cd-94…)
+  ⎿       * @return {Signal<true>} A signal which resolves when imports are
+      done
+          */
+     … +36 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+1 -0)
+      990      fluid.ensureImportsLoaded = function (shadow, layerName) {
+      991          const dokkument = fluid.findDocument(shadow);
+      992          const importRec = fluid.importMap[layerName];
+      993 +        if (layerName === "fluid.UISelect") { console.log("XX 
+          +ensureImportsLoaded UISelect", !!importRec, String(dokkument?.
+          +location)); }                                                 
+      994          if (importRec) {
+      995              // TODO: We could use the return value of this to 
+           stick in the layer store, so that we could report whether
+      996              // a layer was pending and what it was waiting for
+            - we could use fluid.writeLayer for this, and fix it
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I found three unrelated issues: resolveRelativePath mishandles filenames like
+  index.html, an empty <style> block gets treated as a stylesheet with undefined
+  href, and ensureImportsLoaded never runs for UISelect. I'll tackle the first
+  two now.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidView.js"…)
+  ⎿  XX UISelect def false {
+       loadStyle: 'sfc',
+       url: 'file:///mnt/outer-source/gits/fluid-infusion-6/demo/todo-list-
+     … +6 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+3 -3)
+      468          const shouldInject = !existing || !fluid.diffFields(ex
+           isting, injRec, diffFields);
+      469  
+      470          if (shouldInject) {
+      471 -            const injStyleKey = injRec.text ? "literal" : "lin
+          -k";                                                           
+      471 +            // Note that an empty block such as <style></style
+          +> has empty text but is still literal                         
+      472 +            const injStyleKey = injRec.url ? "link" : "literal
+          +";                                                            
+      473              const injStyle = injStyles[injStyleKey];
+      474              return {dokkument, injStyle, injRec, url};
+      475          } else {
+     ...
+      772                      const src = styleNode.attrs?.src;
+      773                      const injRec = src ?
+      774                          {url: src} :
+      774 -                        {text: styleNode.children[0]?.text};  
+      775 +                        {text: styleNode.children[0]?.text ?? 
+          +""};                                                          
+      776                      injRec.nodeId = nodeId;
+      777                      injRec.variety = "style";
+      778                      injRecs[nodeId] = injRec;
+     ...
+      991      fluid.ensureImportsLoaded = function (shadow, layerName) {
+      992          const dokkument = fluid.findDocument(shadow);
+      993          const importRec = fluid.importMap[layerName];
+      993 -        if (layerName === "fluid.UISelect") { console.log("XX 
+          -ensureImportsLoaded UISelect", !!importRec, String(dokkument?.
+          -location)); }                                                 
+      994          if (importRec) {
+      995              // TODO: We could use the return value of this to 
+           stick in the layer store, so that we could report whether
+      996              // a layer was pending and what it was waiting for
+            - we could use fluid.writeLayer for this, and fix it
+  ⎿  Updated src/framework/core/js/FluidModules.js (+3 -2)
+      84                  const moduleUrl = new URL(moduleBase);
+      85  
+      86                  if (baseUrl.protocol === moduleUrl.protocol && 
+          baseUrl.host === moduleUrl.host) {
+      87 -                    // Same origin - compute relative path     
+      88 -                    const baseSegments = baseUrl.pathname.split
+         -("/").filter(Boolean);                                         
+      87 +                    // Same origin - compute relative path from
+         + the directory holding the base document                       
+      88 +                    const baseDir = baseUrl.pathname.substring(
+         +0, baseUrl.pathname.lastIndexOf("/") + 1);                     
+      89 +                    const baseSegments = baseDir.split("/").fil
+         +ter(Boolean);                                                  
+      90                      const moduleSegments = moduleUrl.pathname.s
+          plit("/").filter(Boolean);
+      91  
+      92                      let prefixIndex = 0;
+
+● Both are fixed and the injection failures are gone. Now for why UISelect is
+  never demanded:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListAssignTests.js"…)
+  ⎿  XX unavailable []
+     XX paths [
+       'todoApp-12',
+     … +16 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+3 -0)
+      14      console.log("XX UISelect rec", rec.loadCompletion?.get(), t
+          ypeof(rec.textSignal.get()));
+      15      const sh = that.todoList[fluid.proxySymbol].shadow;
+      16      console.log("XX filtered", fluid.deSignal(fluid.getForCompo
+          nent(sh, "filteredTodos")));
+      17 +    console.log("XX unavailable", Object.keys(fluid.unavailable
+         +ComponentMap.get()));                                          
+      18 +    const fsh = fluid.globalInstantiator.pathToComponent;      
+      19 +    console.log("XX paths", Object.keys(fsh).filter(k => k.incl
+         +udes("todoApp")));                                             
+      20      const select = container.querySelector(".fl-filter-complete
+          d select");
+      21      select.value = "false";
+      22      console.log("XX select value", select.value, select.selecte
+          dIndex);
+
+● I'll temporarily swap in the HEAD versions of FluidIL.js and the assign demo
+  to check if the filterCompleted.select issue pre-dates my change, then restore
+  my versions afterward.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Same failure at HEAD, so it's a pre-existing problem under node, not a
+  regression. My versions are restored. Digging into why select isn't created:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListAssignTests.js"…)
+  ⎿  XX fc keys [ 'message', 'error', 'variety' ] {
+       message: 'Cannot convert undefined or null to object',
+       error: TypeError: Cannot convert undefined or null to object
+     … +33 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+5 -0)
+      17      console.log("XX unavailable", Object.keys(fluid.unavailable
+          ComponentMap.get()));
+      18      const fsh = fluid.globalInstantiator.pathToComponent;
+      19      console.log("XX paths", Object.keys(fsh).filter(k => k.incl
+          udes("todoApp")));
+      20 +    const fc = that.todoList.filters.filterCompleted;          
+      21 +    console.log("XX fc keys", Object.keys(fc), fc.$layers);    
+      22 +    console.log("XX fc select", fc.select);                    
+      23 +    const fcsh = fc[fluid.proxySymbol].shadow;                 
+      24 +    console.log("XX fc avail", fluid.isUnavailable(fcsh.availab
+         +leInstance.get?.() ?? fcsh.availableInstance));                
+      25      const select = container.querySelector(".fl-filter-complete
+          d select");
+      26      select.value = "false";
+      27      console.log("XX select value", select.value, select.selecte
+          dIndex);
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● filterCompleted's instance is unavailable because fluid.transferShadowMap
+  throws on a null/undefined entry in its layerMap. Finding which key:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I've identified the issue: a C3 linearisation conflict where the SFC loader
+  prepends fluid.sfcViewComponent to filterCompleted's $layers, but
+  fluid.demos.filter already inherits from it, reversing the required
+  parent-child order. Now I'll check when this change was introduced.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I found that fluid.sfcViewComponent, introduced in commit #15, is just an
+  empty tag layer that FluidPTF only checks for presence. I'll place it last in
+  the patched $layers since that's always C3-consistent.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidView.js"…)
+  ⎿  tests/framework-tests/core/js/FluidPTFTests.js:192:    assert.deepEqua
+     l(fluid.def("fluid.tests.ptf.plain").$layers, ["fluid.sfcViewComponent
+     ", "fluid.component"], "Tag layer added to explicit $layers");
+     … +40 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+5 -3)
+      743                  }
+      744  
+      745                  // If no $layers was written in the definition
+           , add one that will correctly resolve its template.
+      746 -                // In either case, add the tag layer marking t
+          -he layer as derived from an SFC                               
+      746 +                // In either case, add the tag layer marking t
+          +he layer as derived from an SFC. This must be placed last sinc
+          +e                                                             
+      747 +                // any of the existing layers may themselves b
+          +e derived from an SFC - C3 linearization will then demand     
+      748 +                // that they precede the tag layer.           
+      749                  // Reparse if the text has already been patche
+           d since an existing $layers entry may have moved
+      750                  const layersDef = patchedText === ourSNI.text 
+           ? ourDef :
+      751                      {scriptIndex: ourDef.scriptIndex, ...fluid
+           .parseDefMaps(patchedText, 0)[layerName]};
+      752                  if (!oldLayers) {
+      751 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, layersDef, "$layers", ["fluid.sfcViewComponent", ...addLaye
+          -rs], "first");                                                
+      753 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, layersDef, "$layers", [...addLayers, "fluid.sfcViewComponen
+          +t"], "first");                                                
+      754                  } else if (!fluid.makeArray(oldLayers).include
+           s("fluid.sfcViewComponent")) {
+      753 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, layersDef, "$layers", ["fluid.sfcViewComponent", ...fluid.m
+          -akeArray(oldLayers)], "first");                               
+      755 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, layersDef, "$layers", [...fluid.makeArray(oldLayers), "flui
+          +d.sfcViewComponent"], "first");                               
+      756                  }
+      757                  ourSNI.text = patchedText;
+      758  
+
+● The C3 fix works and the filter select renders. Next blocker is filteredTodos:
+  Cannot resolve context filters for {filters fluid.demos.filter}. Looking at
+  how scopes are populated:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I suspect the issue is that each child only bumps its own ownScopeTick, so a
+  parent context resolved before the child's scope effect runs (like
+  {filters...} at todoList) never gets re-evaluated. I'll test this hypothesis
+  now.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListAssignTests.js"…)
+  ⎿  XX scope filters true [
+       'todoItems',
+       'fluid.demos.facets',
+       'facets',
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+1 -0)
+      14      console.log("XX UISelect rec", rec.loadCompletion?.get(), t
+          ypeof(rec.textSignal.get()));
+      15      const sh = that.todoList[fluid.proxySymbol].shadow;
+      16      console.log("XX filtered", fluid.deSignal(fluid.getForCompo
+          nent(sh, "filteredTodos")));
+      17 +    console.log("XX scope filters", !!sh.ownScope.filters, Obje
+         +ct.keys(sh.childrenScope));                                    
+      18      console.log("XX unavailable", Object.keys(fluid.unavailable
+          ComponentMap.get()));
+      19      const fsh = fluid.globalInstantiator.pathToComponent;
+      20      console.log("XX paths", Object.keys(fsh).filter(k => k.incl
+          udes("todoApp")));
+
+● Confirmed: filters is in scope, but the resolution is stale. Applying the fix:
+  bump the parent's tick when a child writes into its childrenScope (the code
+  already does this for resolveRoot).
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 2 lines, removed 1 line
+      332                  fluid.applyToScope(shadow.ownScope, shadow.mem
+           berName, shadow, fluid.memberName);
+      333              }
+      334              const ownScope = Object.getOwnPropertyNames(shadow
+           .ownScope);
+      335 +            const applyToParent = shadow.parentShadow && !chil
+          +dOfRoot;                                                      
+      336              ownScope.forEach(context => {
+      337                  const rec = shadow.ownScope[context];
+      337 -                if (shadow.parentShadow && !childOfRoot) {    
+      338 +                if (applyToParent) {                          
+      339                      fluid.applyToScope(shadow.parentShadow.chi
+           ldrenScope, context, rec.value, rec.priority);
+      340                  }
+      341                  if (shadow.resolveRoot) {
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 6 lines
+      344                      // TODO: Remember to delete these again wh
+           en clearing
+      345                  }
+      346              });
+      347 +            if (applyToParent) {                              
+      348 +                // The parent's own scope has changed via its 
+          +childrenScope - any context already resolved at the parent,   
+      349 +                // e.g. a reference to this component from a s
+          +ibling member, may need to be reevaluated                     
+      350 +                const parentTick = shadow.parentShadow.ownScop
+          +eTick;                                                        
+      351 +                parentTick.set(parentTick._value + 1);        
+      352 +            }                                                 
+      353              shadow.ownScopeTick.set(shadow.ownScopeTick._value
+            + 1);
+      354          }, [], {name: `scopeEffect for path "${shadow.path}"`,
+            shadow});
+      355      };
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Items render now. The test just needs to also wait for the lazily loaded
+  UISelect, so I'm adding a readiness predicate to makeApp:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListTestUtils.js"…)
+  ⎿  18:07:20.677:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListAssignTests.h
+     tml
+     … +14 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+8 -2)
+      46   * Instantiate a fresh todo app from the demo's `fluid.demos.to
+          doApp` layer into the test container, once its imports
+      47   * have loaded, and wait until its todo items have rendered - l
+          ayers imported lazily through an `$importMap` may
+      48   * still be loading on instantiation. The demo's initial todos 
+          are recorded in `fluid.tests.todo.initialTodos`.
+      49 + * @param {Function} [ready] - An optional further predicate, a
+         +ccepting the container, which must hold before the app         
+      50 + * is considered ready                                         
+      51   * @return {Promise<Object>} A promise for a record holding the
+           app component `that` and its `container`
+      52   */
+      51 -fluid.tests.todo.makeApp = async function () {                 
+      53 +fluid.tests.todo.makeApp = async function (ready) {            
+      54      await fluid.tests.todo.loadImports();
+      55      fluid.tests.todo.initialTodos = fluid.demos.fetchTodos();
+      56      const container = fluid.tests.todo.qs(".container");
+      57      const that = fluid.demos.todoApp({container});
+      56 -    await fluid.tests.todo.waitFor(() => fluid.tests.todo.qsa("
+         -.todo", container).length === fluid.tests.todo.initialTodos.len
+         -gth);                                                          
+      58 +    const rendered = await fluid.tests.todo.waitFor(() =>      
+      59 +        fluid.tests.todo.qsa(".todo", container).length === flu
+         +id.tests.todo.initialTodos.length && (!ready || ready(container
+         +)));                                                           
+      60 +    if (!rendered) {                                           
+      61 +        fluid.fail("Todo app did not render within timeout");  
+      62 +    }                                                          
+      63      return {that, container};
+      64  };
+      65  
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+5 -16)
+       6  
+       7  QUnit.config.reorder = false;
+       8  
+       9 +fluid.tests.todo.selectsReady = container => container.querySel
+         +ectorAll(".fl-filter-completed option").length === 3;          
+      10 +                                                               
+      11  QUnit.test("Explore", async function (assert) {
+      10 -    const {that, container} = await fluid.tests.todo.makeApp();
+      12 +    const {that, container} = await fluid.tests.todo.makeApp(fl
+         +uid.tests.todo.selectsReady);                                  
+      13      console.log("XX MARKUP", container.innerHTML);
+      12 -    console.log("XX UISelect def", !!fluid.def("fluid.UISelect"
+         -), fluid.importMap["fluid.UISelect"]);                         
+      13 -    const rec = fluid.readSFC("fluid.UISelect");               
+      14 -    console.log("XX UISelect rec", rec.loadCompletion?.get(), t
+         -ypeof(rec.textSignal.get()));                                  
+      15 -    const sh = that.todoList[fluid.proxySymbol].shadow;        
+      16 -    console.log("XX filtered", fluid.deSignal(fluid.getForCompo
+         -nent(sh, "filteredTodos")));                                   
+      17 -    console.log("XX scope filters", !!sh.ownScope.filters, Obje
+         -ct.keys(sh.childrenScope));                                    
+      18 -    console.log("XX unavailable", Object.keys(fluid.unavailable
+         -ComponentMap.get()));                                          
+      19 -    const fsh = fluid.globalInstantiator.pathToComponent;      
+      20 -    console.log("XX paths", Object.keys(fsh).filter(k => k.incl
+         -udes("todoApp")));                                             
+      21 -    const fc = that.todoList.filters.filterCompleted;          
+      22 -    console.log("XX fc keys", Object.keys(fc), fc.$layers);    
+      23 -    console.log("XX fc select", fc.select);                    
+      24 -    const fcsh = fc[fluid.proxySymbol].shadow;                 
+      25 -    console.log("XX fc avail", fluid.isUnavailable(fcsh.availab
+         -leInstance.get?.() ?? fcsh.availableInstance));                
+      14      const select = container.querySelector(".fl-filter-complete
+          d select");
+      15      select.value = "false";
+      16      console.log("XX select value", select.value, select.selecte
+          dIndex);
+      17      select.dispatchEvent(new Event("change"));
+      18      fluid.cell.stabilize();
+      19      console.log("XX MARKUP", container.innerHTML);
+      20 +    console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+         +at.todoList.todos)));                                          
+      21      const check = container.querySelector("input[type=checkbox]
+          ");
+      22      check.checked = true;
+      23      check.dispatchEvent(new Event("change"));
+      35 -    fluid.cell.stabilize();                                    
+      24 +    await fluid.tests.todo.waitFor(() => container.querySelecto
+         +rAll(".item-assignee-select").length > 0);                     
+      25      console.log("XX MARKUP", container.innerHTML);
+      26      assert.ok(true);
+      27  });
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListTestUtils.js"…)  ⎿  XX timeout markup <section class="hero is-dark"><div class="hero-body"
+     ><h1 class="title">Todo List</h1><h2 class="subtitle">Get in charge of
+      your life</h2></div></section><section class="fl-controls-section"><d
+     … +24 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+2 -0)
+      58      const rendered = await fluid.tests.todo.waitFor(() =>
+      59          fluid.tests.todo.qsa(".todo", container).length === flu
+          id.tests.todo.initialTodos.length && (!ready || ready(container
+          )));
+      60      if (!rendered) {
+      61 +        console.log("XX timeout markup", container.innerHTML, J
+         +SON.stringify(fluid.unavailableComponentMap.get()));           
+      62 +        console.log("XX filtered", fluid.deSignal(fluid.getForC
+         +omponent(that.todoList[fluid.proxySymbol].shadow, "filteredTodo
+         +s")));                                                         
+      63          fluid.fail("Todo app did not render within timeout");
+      64      }
+      65      return {that, container};
+
+● Everything renders; my readiness selector was wrong because the
+  .fl-filter-completed wrapper gets elided. Fixing it:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListTestUtils.js"…)
+  ⎿  18:07:52.636:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListAssignTests.h
+     tml
+     … +30 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+0 -2)
+      58      const rendered = await fluid.tests.todo.waitFor(() =>
+      59          fluid.tests.todo.qsa(".todo", container).length === flu
+          id.tests.todo.initialTodos.length && (!ready || ready(container
+          )));
+      60      if (!rendered) {
+      61 -        console.log("XX timeout markup", container.innerHTML, J
+         -SON.stringify(fluid.unavailableComponentMap.get()));           
+      62 -        console.log("XX filtered", fluid.deSignal(fluid.getForC
+         -omponent(that.todoList[fluid.proxySymbol].shadow, "filteredTodo
+         -s")));                                                         
+      61          fluid.fail("Todo app did not render within timeout");
+      62      }
+      63      return {that, container};
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+2 -2)
+       6  
+       7  QUnit.config.reorder = false;
+       8  
+       9 -fluid.tests.todo.selectsReady = container => container.querySel
+         -ectorAll(".fl-filter-completed option").length === 3;          
+       9 +fluid.tests.todo.selectsReady = container => container.querySel
+         +ectorAll("select.fl-control option").length === 3;             
+      10  
+      11  QUnit.test("Explore", async function (assert) {
+      12      const {that, container} = await fluid.tests.todo.makeApp(fl
+          uid.tests.todo.selectsReady);
+      13      console.log("XX MARKUP", container.innerHTML);
+      14 -    const select = container.querySelector(".fl-filter-complete
+         -d select");                                                    
+      14 +    const select = container.querySelector("select.fl-control")
+         +;                                                              
+      15      select.value = "false";
+      16      console.log("XX select value", select.value, select.selecte
+          dIndex);
+      17      select.dispatchEvent(new Event("change"));
+
+● linkedom's select.value is read-only. I'll add a helper that selects via the
+  options' selected attribute:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >>
+      tests/framework-tests/demos/js/TodoListTestUtils.js <<'EOF'…)
+  ⎿  18:08:15.925:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/demos/html/TodoListAssignTests.h
+     tml
+     … +117 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListTestUtils.js (+24 -0)
+      120      input.dispatchEvent(new KeyboardEvent("keyup", {key: "Ente
+           r"}));
+      121      fluid.cell.stabilize();
+      122  };
+      123 +                                                              
+      124 +/**                                                           
+      125 + * Choose an option of a select element as a user would, dispa
+          +tching a change event and stabilising the signal graph.       
+      126 + * The option is selected via its `selected` attribute since t
+          +he linkedom mockup used under node does not support           
+      127 + * writing a select element's value.                          
+      128 + * @param {HTMLSelectElement} select - The select element     
+      129 + * @param {String} value - The value of the option to be chose
+          +n                                                             
+      130 + */                                                           
+      131 +fluid.tests.todo.choose = function (select, value) {          
+      132 +    fluid.tests.todo.qsa("option", select).forEach(option => o
+          +ption.toggleAttribute("selected", option.value === value));   
+      133 +    select.dispatchEvent(new Event("change"));                
+      134 +    fluid.cell.stabilize();                                   
+      135 +};                                                            
+      136 +                                                              
+      137 +/**                                                           
+      138 + * Check or uncheck a checkbox as a user would, dispatching a 
+          +change event and stabilising the signal graph.                
+      139 + * @param {HTMLInputElement} checkbox - The checkbox element  
+      140 + * @param {Boolean} checked - Whether the checkbox should be c
+          +hecked                                                        
+      141 + */                                                           
+      142 +fluid.tests.todo.check = function (checkbox, checked) {       
+      143 +    checkbox.checked = checked;                               
+      144 +    checkbox.dispatchEvent(new Event("change"));              
+      145 +    fluid.cell.stabilize();                                   
+      146 +};                                                            
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+6 -6)
+      12      const {that, container} = await fluid.tests.todo.makeApp(fl
+          uid.tests.todo.selectsReady);
+      13      console.log("XX MARKUP", container.innerHTML);
+      14      const select = container.querySelector("select.fl-control")
+          ;
+      15 -    select.value = "false";                                    
+      16 -    console.log("XX select value", select.value, select.selecte
+         -dIndex);                                                       
+      17 -    select.dispatchEvent(new Event("change"));                 
+      18 -    fluid.cell.stabilize();                                    
+      15 +    fluid.tests.todo.choose(select, "false");                  
+      16      console.log("XX MARKUP", container.innerHTML);
+      17      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      18      const check = container.querySelector("input[type=checkbox]
+          ");
+      22 -    check.checked = true;                                      
+      23 -    check.dispatchEvent(new Event("change"));                  
+      19 +    fluid.tests.todo.check(check, true);                       
+      20      await fluid.tests.todo.waitFor(() => container.querySelecto
+          rAll(".item-assignee-select").length > 0);
+      21      console.log("XX MARKUP", container.innerHTML);
+      22 +    const isel = container.querySelectorAll(".item-assignee-sel
+         +ect")[1];                                                      
+      23 +    fluid.tests.todo.choose(isel, "Ashiata Shiemash");         
+      24 +    console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+         +at.todoList.todos)));                                          
+      25 +    console.log("XX MARKUP", container.innerHTML);             
+      26      assert.ok(true);
+      27  });
+
+● Filtering and the assignee facet both work, but choosing an assignee on an
+  item didn't reach the source todos. Checking whether the selectEffect fires at
+  all:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● It never fires. Looking at how includeSource is handled:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/demos/js/
+      TodoListAssignTests.js"…)
+  ⎿  XX isel value before <none>
+     Allocated instanceId 3 at site todoApp-12.todoList.todoItems.1.select
+     Disposing unallocated effects for path todoApp-12.todoList.todoItems.1
+     … +37 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+4 -0)
+      20      await fluid.tests.todo.waitFor(() => container.querySelecto
+          rAll(".item-assignee-select").length > 0);
+      21      console.log("XX MARKUP", container.innerHTML);
+      22      const isel = container.querySelectorAll(".item-assignee-sel
+          ect")[1];
+      23 +    console.log("XX isel value before", isel.value);           
+      24      fluid.tests.todo.choose(isel, "Ashiata Shiemash");
+      25 +    console.log("XX isel value", isel.value, "selection", that.
+         +todoList.todoItems.list[1].select.selection);                  
+      26 +    const ssh = that.todoList.todoItems.list[1].select[fluid.pr
+         +oxySymbol].shadow;                                             
+      27 +    console.log("XX effects", Object.keys(ssh.effectsMap || {})
+         +, Object.keys(ssh).filter(k => /ffect/.test(k)));              
+      28      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      29      console.log("XX MARKUP", container.innerHTML);
+      30      assert.ok(true);
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/demos/js/
+      TodoListAssignTests.js"…)
+  ⎿  XX TODOS [{"text":"Write some code","completed":false,"assignee":"Maka
+     ry Kronbernkzion"},{"text":"Eat some food","completed":true,"assignee"
+     :"Makary Kronbernkzion"},{"text":"Sleep","completed":false,"assignee":
+     … +9 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+2 -1)
+      26      const ssh = that.todoList.todoItems.list[1].select[fluid.pr
+          oxySymbol].shadow;
+      27      console.log("XX effects", Object.keys(ssh.effectsMap || {})
+          , Object.keys(ssh).filter(k => /ffect/.test(k)));
+      28      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      29 -    console.log("XX MARKUP", container.innerHTML);             
+      29 +    fluid.tests.todo.choose(isel, "Gornahoor Harharkh");       
+      30 +    console.log("XX TODOS2", JSON.stringify(fluid.unwrapProxy(t
+         +hat.todoList.todos)));                                         
+      31      assert.ok(true);
+      32  });
+
+● Still nothing. Temporarily removing includeSource to see whether the effect
+  runs at all:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The filter projection works: filtered item 1 points at todos.2. But the write
+  todoItem.todo.assignee = ... doesn't land. Testing the same write directly
+  from the test:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/demos/js/
+      TodoListAssignTests.js"…)
+  ⎿  XX TODOS3 [{"text":"Write some code","completed":false,"assignee":"Mak
+     ary Kronbernkzion"},{"text":"Eat some food","completed":true,"assignee
+     ":"Makary Kronbernkzion"},{"text":"Sleep","completed":false,"assignee"
+     … +5 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+6 -0)
+      28      console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+          at.todoList.todos)));
+      29      fluid.tests.todo.choose(isel, "Gornahoor Harharkh");
+      30      console.log("XX TODOS2", JSON.stringify(fluid.unwrapProxy(t
+          hat.todoList.todos)));
+      31 +    that.todoList.todoItems.list[1].todo.assignee = "Direct";  
+      32 +    fluid.cell.stabilize();                                    
+      33 +    console.log("XX TODOS3", JSON.stringify(fluid.unwrapProxy(t
+         +hat.todoList.todos)));                                         
+      34 +    const viaSelect = that.todoList.todoItems.list[1].select;  
+      35 +    const ti = fluid.resolveContext("todoItem", viaSelect[fluid
+         +.proxySymbol].shadow);                                         
+      36 +    console.log("XX ti", fluid.deSignal(ti) === that.todoList.t
+         +odoItems.list[1], fluid.deSignal(ti)?.[fluid.proxySymbol]?.shad
+         +ow?.path);                                                     
+      37      assert.ok(true);
+      38  });
+
+● The direct write works, so the failure is specific to writing from inside the
+  effect. Instrumenting the effect again:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● With includeSource the effect never fires, even on a second change. Looking at
+  how fits propagate sources:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll skip debugging the fit/includeSource logic and instead remove the effect
+  entirely, overriding UISelect's updateSelection to write directly through the
+  projection into todo.assignee, eliminating the old workaround.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="/mnt/outer-source/gits/fluid-infusion-6/demo/todo-list-assign/sfc/fluid
+      -demos-todoItem-withAssi…)
+  ⎿  <script>
+     fluid.def("fluid.demos.todoItem.withAssignee", {
+         $layers: "fluid.partialViewComponent",
+     … +41 lines (ctrl+o to expand)
+  ⎿  Updated
+     demo/todo-list-assign/sfc/fluid-demos-todoItem-withAssignee.vue (+8 
+     -8)
+      17                      args: "{assignees}.assignees"
+      18                  },
+      19              },
+      20 -            selectEffect: {                                    
+      21 -                // The write to the todo follows its provenance
+         - upstream through the filter() projection to the source data   
+      22 -                // We need the "includeSource" to get around th
+         -e fact that reference sliding amongst members of the list will 
+         -activate this                                                  
+      23 -                $effect: {                                     
+      24 -                    func: (selection, todoItem) => {           
+      25 -                        todoItem.todo.assignee = selection === 
+         -"<none>" ? null : selection;                                   
+      20 +            // Rather than updating its own selection, write th
+         +e choice straight back through the projection of the           
+      21 +            // todo to the source data - the selection above wi
+         +ll then update from it                                         
+      22 +            updateSelection: {                                 
+      23 +                $method: {                                     
+      24 +                    func: (todoItem, e) => {                   
+      25 +                        const value = e.target.value;          
+      26 +                        todoItem.todo.assignee = value === "<no
+         +ne>" ? null : value;                                           
+      27                      },
+      27 -                    args: ["{self}.selection", "{todoItem}"],  
+      28 -                    includeSource: "dom"                       
+      28 +                    args: ["{todoItem}", "{0}:event"]          
+      29                  }
+      30              }
+      31          }
+
+● Still no write, so I'm instrumenting the method:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I found the issue: todoItem resolves to the raw component instance instead of
+  a proxy, so writes to todoItem.todo don't stick (whereas self works fine since
+  it's proxied). I'll fix this by having flattenSignals proxy any bare
+  component it encounters.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 6 lines, removed 1 line
+      1116                      fluid.proxyMat(ult, deref.shadow, []);
+      1117              }
+      1118          }
+      1119 -        if (fluid.isPrimitive(deref) || !fluid.isPlainObject(
+           -deref) || rawSignal) {                                       
+      1119 +        if (fluid.isComponent(deref) && !deref[$t]) {        
+      1120 +            // A bare component instance, e.g. resolved from 
+           +a named context such as {todoItem} - proxy it as for {self}  
+      1121 +            // so that reads are designalised and writes are 
+           +upgraded, following any sited material upstream              
+      1122 +            const shadow = deref[$m];                        
+      1123 +            return fluid.proxyMat(shadow.computer, shadow, []
+           +);                                                           
+      1124 +        } else if (fluid.isPrimitive(deref) || !fluid.isPlain
+           +Object(deref) || rawSignal) {                                
+      1125              return deref;
+      1126          } else {
+      1127              let unavailable;
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Assignee writes now land on the right source element through the filter()
+  projection. Running the full suite:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Only the expected PTF assertions on tag-layer order fail. Updating them:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/core/js/FluidPTFTests.js"…)  ⎿  18:12:12.278:   fq:  All tests concluded: 57/57 total passed in 344ms
+     - PASS
+  ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+20 -3)
+      189  </script>`;
+      190      const loaded = await fluid.tests.ptf.loadSFCText("fluid.te
+           sts.ptf.plain", plainSFC);
+      191      assert.ok(loaded, "Plain SFC loaded");
+      192 -    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layer
+          -s, ["fluid.sfcViewComponent", "fluid.component"], "Tag layer a
+          -dded to explicit $layers");                                   
+      192 +    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layer
+          +s, ["fluid.component", "fluid.sfcViewComponent"], "Tag layer a
+          +dded to explicit $layers");                                   
+      193      assert.equal(fluid.def("fluid.tests.ptf.plain").value, 2, 
+           "Remainder of definition intact");
+      194      assert.equal(fluid.layerMimeType("fluid.tests.ptf.plain"),
+            "text/x-vue", "SFC layer without template");
+      195  
+      196 +    // An SFC whose layer derives from another SFC's layer - t
+          +he tag layer must follow it to give a consistent C3 linearizat
+          +ion                                                           
+      197 +    const derivedSFC = `<script>                              
+      198 +fluid.def("fluid.tests.ptf.derived", {                        
+      199 +    $layers: "fluid.tests.ptf.plain",                         
+      200 +    extra: 3                                                  
+      201 +});                                                           
+      202 +</script>`;                                                   
+      203 +    const derivedLoaded = await fluid.tests.ptf.loadSFCText("f
+          +luid.tests.ptf.derived", derivedSFC);                         
+      204 +    assert.ok(derivedLoaded, "Derived SFC loaded");           
+      205 +    assert.deepEqual(fluid.def("fluid.tests.ptf.derived").$lay
+          +ers, ["fluid.tests.ptf.plain", "fluid.sfcViewComponent"],     
+      206 +        "Tag layer follows SFC-derived parent layer");        
+      207 +    const derived = fluid.tests.ptf.derived();                
+      208 +    assert.notOk(fluid.isUnavailable(derived), "Component deri
+          +ved from SFC layer instantiates");                            
+      209 +    assert.equal(derived.value, 2, "Member inherited from SFC 
+          +parent layer");                                               
+      210 +    assert.equal(derived.extra, 3, "Own member of derived SFC 
+          +layer");                                                      
+      211 +    derived.destroy();                                        
+      212 +                                                              
+      213      // An empty definition with a template requires both $laye
+           rs and templateLayer to be patched in
+      214      const emptySFC = `<script>
+      215  fluid.def("fluid.tests.ptf.empty", {});
+     ...
+      218      const emptyLoaded = await fluid.tests.ptf.loadSFCText("flu
+           id.tests.ptf.empty", emptySFC);
+      219      assert.ok(emptyLoaded, "SFC with empty definition loaded")
+           ;
+      220      assert.deepEqual(fluid.def("fluid.tests.ptf.empty"), {
+      204 -        $layers: ["fluid.sfcViewComponent", "fluid.sfcTemplate
+          -ViewComponent"],                                              
+      221 +        $layers: ["fluid.sfcTemplateViewComponent", "fluid.sfc
+          +ViewComponent"],                                              
+      222          templateLayer: "fluid.tests.ptf.empty"
+      223      }, "Empty definition patched with $layers and templateLaye
+           r");
+      224  
+      225      const counterLoaded = await fluid.tests.ptf.loadSFCText("f
+           luid.tests.ptf.counter", fluid.tests.ptf.counterSFC);
+      226      assert.ok(counterLoaded, "Counter SFC loaded");
+      210 -    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$lay
+          -ers, ["fluid.sfcViewComponent", "fluid.sfcTemplateViewComponen
+          -t"],                                                          
+      227 +    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$lay
+          +ers, ["fluid.sfcTemplateViewComponent", "fluid.sfcViewComponen
+          +t"],                                                          
+     … 3 more lines (ctrl+o to expand)
+
+● Checking that the new derived-SFC test would catch the old ordering:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The derived-SFC test catches the old ordering; my version is restored. Now
+  writing the real assign-demo tests:
+
+● Write(tests/framework-tests/demos/js/TodoListAssignTests.js)
+  ⎿  Added 72 lines, removed 28 lines
+       6  
+       7  QUnit.config.reorder = false;
+       8  
+       9 -fluid.tests.todo.selectsReady = container => container.querySel
+         -ectorAll("select.fl-control option").length === 3;             
+       9 +const {qs, qsa, click, choose, check} = fluid.tests.todo;      
+      10  
+      11 -QUnit.test("Explore", async function (assert) {                
+      12 -    const {that, container} = await fluid.tests.todo.makeApp(fl
+         -uid.tests.todo.selectsReady);                                  
+      13 -    console.log("XX MARKUP", container.innerHTML);             
+      14 -    const select = container.querySelector("select.fl-control")
+         -;                                                              
+      15 -    fluid.tests.todo.choose(select, "false");                  
+      16 -    console.log("XX MARKUP", container.innerHTML);             
+      17 -    console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+         -at.todoList.todos)));                                          
+      18 -    const check = container.querySelector("input[type=checkbox]
+         -");                                                            
+      19 -    fluid.tests.todo.check(check, true);                       
+      20 -    await fluid.tests.todo.waitFor(() => container.querySelecto
+         -rAll(".item-assignee-select").length > 0);                     
+      21 -    console.log("XX MARKUP", container.innerHTML);             
+      22 -    const isel = container.querySelectorAll(".item-assignee-sel
+         -ect")[1];                                                      
+      23 -    console.log("XX isel value before", isel.value);           
+      24 -    fluid.tests.todo.choose(isel, "Ashiata Shiemash");         
+      25 -    console.log("XX isel value", isel.value, "selection", that.
+         -todoList.todoItems.list[1].select.selection);                  
+      26 -    const ssh = that.todoList.todoItems.list[1].select[fluid.pr
+         -oxySymbol].shadow;                                             
+      27 -    console.log("XX effects", Object.keys(ssh.effectsMap || {})
+         -, Object.keys(ssh).filter(k => /ffect/.test(k)));              
+      28 -    console.log("XX TODOS", JSON.stringify(fluid.unwrapProxy(th
+         -at.todoList.todos)));                                          
+      29 -    fluid.tests.todo.choose(isel, "Gornahoor Harharkh");       
+      30 -    console.log("XX TODOS2", JSON.stringify(fluid.unwrapProxy(t
+         -hat.todoList.todos)));                                         
+      31 -    that.todoList.todoItems.list[1].todo.assignee = "Direct";  
+      32 -    fluid.cell.stabilize();                                    
+      33 -    console.log("XX TODOS3", JSON.stringify(fluid.unwrapProxy(t
+         -hat.todoList.todos)));                                         
+      34 -    const viaSelect = that.todoList.todoItems.list[1].select;  
+      35 -    const ti = fluid.resolveContext("todoItem", viaSelect[fluid
+         -.proxySymbol].shadow);                                         
+      36 -    console.log("XX ti", fluid.deSignal(ti) === that.todoList.t
+         -odoItems.list[1], fluid.deSignal(ti)?.[fluid.proxySymbol]?.shad
+         -ow?.path);                                                     
+      37 -    assert.ok(true);                                           
+      11 +/**                                                            
+      12 + * Determine whether the "Filter Completed" control has rendere
+         +d - its UISelect layer is loaded lazily via an $importMap.     
+      13 + * @param {HTMLElement} container - The container into which th
+         +e app is rendered                                              
+      14 + * @return {Boolean} `true` if the filter control has rendered 
+      15 + */                                                            
+      16 +fluid.tests.todo.filterReady = container => qsa("select.fl-cont
+         +rol option", container).length === 3;                          
+      17 +                                                               
+      18 +/**                                                            
+      19 + * Find the select element of the filter control with the suppl
+         +ied label.                                                     
+      20 + * @param {HTMLElement} container - The container into which th
+         +e app is rendered                                              
+      21 + * @param {String} label - The text of the filter control's lab
+         +el                                                             
+      22 + * @return {HTMLSelectElement} The select element of the filter
+         + control                                                       
+      23 + */                                                            
+      24 +fluid.tests.todo.filterSelect = function (container, label) {  
+      25 +    const holder = qsa(".fl-control-holder", container).find(el
+         +ement => qs("label", element).textContent.includes(label));    
+      26 +    return qs("select", holder);                               
+      27 +};                                                             
+      28 +                                                               
+      29 +/**                                                            
+      30 + * Assert that the iteration variables of the rendered todo ite
+         +ms are sited at the expected elements of the source todos.     
+      31 + * @param {Object} assert - The QUnit assert object            
+      32 + * @param {Object} that - The todo app component               
+      33 + * @param {Integer[]} sourceIndices - The indices in the source
+         + todos expected for each rendered item, in order               
+      34 + * @param {String} message - A message qualifying the assertion
+      35 + */                                                            
+      36 +fluid.tests.todo.checkProvenance = function (assert, that, sour
+         +ceIndices, message) {                                          
+      37 +    const listPath = that.todoList[fluid.proxySymbol].shadow.pa
+         +th;                                                            
+      38 +    const sites = that.todoList.todoItems.list.map(item => item
+         +[fluid.proxySymbol].shadow.variablesLayer.todo);               
+      39 +    assert.deepEqual(sites, sourceIndices.map(index => `{/${lis
+         +tPath}}.todos.${index}`), `Items sited at source todos: ${messa
+         +ge}`);                                                         
+      40 +};                                                             
+      41 +                                                               
+      42 +QUnit.test("Demo SFCs load and render unfiltered todos", async 
+         +function (assert) {                                            
+      43 +    const {that, container} = await fluid.tests.todo.makeApp(fl
+         +uid.tests.todo.filterReady);                                   
+      44 +    const initial = fluid.tests.todo.initialTodos;             
+      45 +    fluid.tests.todo.checkRendering(assert, that, container, in
+         +itial, "Initial");                                             
+      46 +    fluid.tests.todo.checkProvenance(assert, that, [0, 1, 2], "
+         +Initial");                                                     
+      47 +    that.destroy();                                            
+      48  });
+      49 +                                                               
+      50 +QUnit.test("Filtered items project through filter() onto source
+         + todos", async function (assert) {                             
+      51 +    const {that, container} = await fluid.tests.todo.makeApp(fl
+         +uid.tests.todo.filterReady);                                   
+      52 +    const initial = fluid.tests.todo.initialTodos;             
+      53 +    const completedSelect = fluid.tests.todo.filterSelect(conta
+         +iner, "Filter Completed");                                     
+      54 +                                                               
+      55 +    choose(completedSelect, "false");                          
+      56 +    fluid.tests.todo.checkRendering(assert, that, container, [i
+         +nitial[0], initial[2]], "Filtered to incomplete");             
+      57 +    fluid.tests.todo.checkProvenance(assert, that, [0, 2], "Fil
+         +tered to incomplete");                                         
+      58 +                                                               
+      59 +    choose(completedSelect, "true");                           
+      60 +    fluid.tests.todo.checkRendering(assert, that, container, [i
+         +nitial[1]], "Filtered to complete");                           
+      61 +    fluid.tests.todo.checkProvenance(assert, that, [1], "Filter
+         +ed to complete");                                              
+      62 +                                                               
+      63 +    choose(completedSelect, "all");                            
+      64 +    fluid.tests.todo.checkRendering(assert, that, container, in
+         +itial, "Filter removed");                                      
+      65 +    that.destroy();                                            
+      66 +});                                                            
+      67 +                                                               
+      68 +QUnit.test("Toggle of filtered item writes to its source elemen
+         +t", async function (assert) {                                  
+      69 +    const {that, container} = await fluid.tests.todo.makeApp(fl
+         +uid.tests.todo.filterReady);                                   
+      70 +    const initial = fluid.tests.todo.initialTodos;             
+      71 +    choose(fluid.tests.todo.filterSelect(container, "Filter Com
+         +pleted"), "false");                                            
+      72 +                                                               
+      73 +    // Filtered item 1 is drawn from source index 2            
+      74 +    click(qs(".todo:nth-child(1)", qsa(".todo", container)[1].p
+         +arentNode) || qsa(".todo .item-text", container)[1]);          
+      75 +    click(qsa(".todo .item-text", container)[1]);              
+      76 +    const expected = fluid.copy(initial);                      
+      77 +    expected[2].completed = true;                              
+      78 +    assert.deepEqual(fluid.tests.todo.sourceTodos(that), expect
+         +ed, "Source element at index 2 toggled");                      
+      79 +    fluid.tests.todo.checkRendering(assert, that, container, [e
+         +xpected[0]], "Toggled item filtered out");                     
+      80 +    fluid.tests.todo.checkProvenance(assert, that, [0], "Toggle
+         +d item filtered out");                                         
+      81 +    that.destroy();                                            
+      82 +});                                                            
+
+● I left a stray double click in the toggle test. Fixing that and adding the
+  delete, assignee and insert tests:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/demos/js/TodoListAssignTests.js"…)
+  ⎿  18:13:19.064:   fq:  All tests concluded: 79/79 total passed in 1972ms
+      - PASS
+     18:13:19.065:   fq:  ***************
+  ⎿  Updated tests/framework-tests/demos/js/TodoListAssignTests.js (+77 -1)
+      71      choose(fluid.tests.todo.filterSelect(container, "Filter Com
+          pleted"), "false");
+      72  
+      73      // Filtered item 1 is drawn from source index 2
+      74 -    click(qs(".todo:nth-child(1)", qsa(".todo", container)[1].p
+         -arentNode) || qsa(".todo .item-text", container)[1]);          
+      74      click(qsa(".todo .item-text", container)[1]);
+      75      const expected = fluid.copy(initial);
+      76      expected[2].completed = true;
+     ...
+       79      fluid.tests.todo.checkProvenance(assert, that, [0], "Toggl
+           ed item filtered out");
+       80      that.destroy();
+       81  });
+       82 +                                                              
+       83 +QUnit.test("Delete of filtered item removes its source element
+          +", async function (assert) {                                  
+       84 +    const {that, container} = await fluid.tests.todo.makeApp(f
+          +luid.tests.todo.filterReady);                                 
+       85 +    const initial = fluid.tests.todo.initialTodos;            
+       86 +    choose(fluid.tests.todo.filterSelect(container, "Filter Co
+          +mpleted"), "false");                                          
+       87 +                                                              
+       88 +    // Filtered item 1 is drawn from source index 2 - deleting
+          + via its filtered index would wrongly remove index 1          
+       89 +    click(qsa("button.delete", container)[1]);                
+       90 +    const expected = [initial[0], initial[1]];                
+       91 +    assert.deepEqual(fluid.tests.todo.sourceTodos(that), expec
+          +ted, "Source element at index 2 removed");                    
+       92 +    fluid.tests.todo.checkRendering(assert, that, container, [
+          +initial[0]], "Deleted filtered item");                        
+       93 +                                                              
+       94 +    choose(fluid.tests.todo.filterSelect(container, "Filter Co
+          +mpleted"), "all");                                            
+       95 +    fluid.tests.todo.checkRendering(assert, that, container, e
+          +xpected, "Filter removed after delete");                      
+       96 +    that.destroy();                                           
+       97 +});                                                           
+       98 +                                                              
+       99 +QUnit.test("Assignee facet - assignment through filtered item 
+          +and filtering by assignee", async function (assert) {         
+      100 +    const {that, container} = await fluid.tests.todo.makeApp(f
+          +luid.tests.todo.filterReady);                                 
+      101 +    const initial = fluid.tests.todo.initialTodos;            
+      102 +                                                              
+      103 +    check(qs("input[type=checkbox]", container), true);       
+      104 +    const facetReady = await fluid.tests.todo.waitFor(() => qs
+          +a(".item-assignee-select", container).length === 3            
+      105 +        && fluid.tests.todo.filterSelect(container, "Filter As
+          +signee"));                                                    
+      106 +    assert.ok(facetReady, "Assignee controls rendered on enabl
+          +ing facet");                                                  
+      107 +                                                              
+      108 +    const renderedAssignees = () => qsa(".item-assignee-select
+          +", container).map(select => select.value);                    
+      109 +    assert.deepEqual(renderedAssignees(), initial.map(todo => 
+          +todo.assignee), "Initial assignees rendered");                
+      110 +                                                              
+      111 +    choose(fluid.tests.todo.filterSelect(container, "Filter Co
+          +mpleted"), "false");                                          
+     … 47 more lines (ctrl+o to expand)
+
+● All 79 pass. Now registering the new drivers in package.json:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="package.json"…)
+  ⎿  demo
+     src
+     tests
+     … +7 lines (ctrl+o to expand)
+  ⎿  Updated package.json (+3 -1)
+      123                  "tests/framework-tests/core/html/FluidILTests.
+           html",
+      124                  "tests/framework-tests/core/html/FluidViewTest
+           s.html",
+      125                  "tests/framework-tests/core/html/FluidViewSFCT
+           ests.html",
+      126 -                "tests/framework-tests/core/html/FluidPTFTests
+          -.html"                                                        
+      126 +                "tests/framework-tests/core/html/FluidPTFTests
+          +.html",                                                       
+      127 +                "tests/framework-tests/demos/html/TodoListTest
+          +s.html",                                                      
+      128 +                "tests/framework-tests/demos/html/TodoListAssi
+          +gnTests.html"                                                 
+      129              ]
+      130          }
+      131      }
+
+● 965/965 pass. Running lint on the changed files:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidIL.js"…)
+  ⎿  LINT OK
+     {
+         "sources": {
+     … +28 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+3 -1)
+      2270       */
+      2271      fluid.deleteForComponent = function (component, path) {
+      2272          const segs = fluid.pathToSegs(path);
+      2273 +        let togo;                                            
+      2274          if (segs.length > 1) {
+      2275              const parentSegs = segs.slice(0, -1),
+      2276                  key = fluid.peek(segs);
+     ...
+      2283                  const {[key]: _deleted, ...rest} = parent;
+      2284                  updated = rest;
+      2285              }
+      2285 -            return fluid.setForComponent(component, parentSeg
+           -s, updated);                                                 
+      2286 +            togo = fluid.setForComponent(component, parentSeg
+           +s, updated);                                                 
+      2287          } else {
+      2288              fluid.fail(`Cannot delete top-level member ${segs
+            [0]} of component at path ${component[$m].path}`);
+      2289          }
+      2290 +        return togo;                                         
+      2291      };
+      2292  
+      2293      /**
+
+● Lint is clean. Reviewing the full source diff:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● One overlong doc-comment line to rewrap in fqunit-html.js:
+
+● Update(tests/test-core/qunit/js/fqunit-html.js)
+  ⎿  Added 3 lines, removed 2 lines
+      120  
+      121  /**
+      122   * Patch the node insertion methods of linkedom so that inline
+            script elements inserted into a live document are
+      123 - * executed, and stylesheet links inserted into it are loaded.
+          - This affects only documents registered in `fQUnit.liveDocumen
+          -ts`. Since linkedom defines these methods                     
+      124 - * on several prototypes, some of them (e.g. ParentNode) not e
+          -xported, every prototype which owns one is patched.           
+      123 + * executed, and stylesheet links inserted into it are loaded.
+          + This affects only documents registered in                    
+      124 + * `fQUnit.liveDocuments`. Since linkedom defines these method
+          +s on several prototypes, some of them (e.g. ParentNode)       
+      125 + * not exported, every prototype which owns one is patched.   
+      126   */
+      127  fQUnit.patchScriptExecution = function () {
+      128      const methods = ["appendChild", "insertBefore", "replaceCh
+           ild", "replaceWith", "before", "after", "append", "prepend"];
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Issue #16 is done in both demos. item.todo.completed = … now writes upstream
+  to {todoList}.todos.N, including through the filter() projection in the
+  assignees version. The full suite passes (965/965, up from 813) and lint is
+  clean. I haven't run anything in a real browser.
+
+  The core change (FluidIL.js)
+  - What was wrong: with the field copies removed, item.todo returned the raw
+    data object. The local toggle method you added was mutating the source data
+    in place, so nothing re-rendered.
+  - Writes: the proxy's get handler now follows the $sitedRef chain to its end.
+    If that lands in reactive material, it hands back a proxy onto that site, so
+    the existing set handler writes to the right place. Assigning item.todo = x
+    itself still only rebinds the item's own member, the same way JS object
+    references behave.
+  - Delete (extra credit): delete item.todo follows the same chain and splices
+    the array element, or removes the object key, in the source data. Deleting a
+    top-level member of a component throws an error.
+  - Filter: $for now keeps the site of any element that is itself a proxy. Plain
+    Array.prototype.filter over proxied elements already returns proxies, so I
+    deleted fluid.wrapFilter and the "filter" branch entirely.
+  - Named contexts: {todoItem} used to arrive in method/effect arguments as a
+    bare component, so writes through it went nowhere. It's now proxied the same
+    way {self} is.
+
+  Demo changes
+  - Copies removed: in both todoLists I removed the text/completed copies and
+    the global toggleItem/deleteItem. Templates now use
+    @{todo.text}/@{todo.completed}, and items use local toggle() and remove()
+    methods.
+  - Assignees: assignItem and the selectEffect are gone. The item's select
+    overrides UISelect's updateSelection to write todoItem.todo.assignee
+    directly. This also fixes a real bug: delete and assign used to act on the
+    filtered index, so they hit the wrong item whenever a filter was active.
+
+  Tests: new drivers tests/framework-tests/demos/html/TodoListTests.html and
+  TodoListAssignTests.html load the actual demo SFCs through
+  <fluid-module>/<fluid-import>. They're registered in package.json. They cover
+  toggling, direct writes, deletes and index sliding, inserts, filtering,
+  provenance checks, and assignment and assignee filtering through the filter.
+  With proxyUpstream disabled, the toggle, write, delete and insert tests fail.
+
+  Other bugs fixed along the way
+  1. SFC tag layer order (from #15): fluid.sfcViewComponent was prepended to
+     $layers, which breaks C3 when another listed layer is also an SFC. The
+     assignees demo couldn't instantiate filterCompleted at HEAD. It now goes
+     last. I updated the PTF test expectations to match and added a test for a
+     derived SFC.
+  2. Stale context resolution: when a child component registered itself in its
+     parent's scope, contexts already resolved at the parent, like {filters …},
+     were never re-evaluated. The parent is now notified.
+  3. fluid.module.resolveRelativePath counted the document's filename as a
+     directory, so %todoApp/css/bulma.css broke on any page URL ending in a
+     filename like index.html.
+  4. Empty <style></style> was treated as a stylesheet link with an undefined
+     href.
+  5. Test harness: fqunit-html now sets readyState, fires DOMContentLoaded, and
+     fires load/error on stylesheet links, so bootDocument and SFC style imports
+     work under node.
+
+  Things to note
+  - Index-based provenance: a todo's link back to its data is a list index like
+    todos.2. After a delete, item components keep their places and get
+    re-pointed at shifted elements; identity doesn't follow the data. It works,
+    but anything stateful on an item would end up on the wrong todo. That's the
+    instability you expected for delete.
+  - includeSource: "dom" bug: the old effect never fired after a select change
+    under node, even on a second change. I went around it rather than fixing it,
+    so it may still affect other effects.
+  - Missing file: demo/todo-list-assign/index.html imports
+    fluid-demos-assignee.vue, which doesn't exist. I left the demo page alone
+    and just omitted it from the test fixture.
+
+  Nothing is committed. A suggested message is "Writes and deletes through
+  $sitedRef chains reach original data source, including via filter() projection
+  - Resolves fluid-project/infusion-6#16".
+
+✻ Cooked for 24m 2s · done 18:15
+
+※ recap: Issue #16 is done: writes and deletes through todo items now reach the source data in both demos, including through the filter, and all 965 tests pass. Next, you review the uncommitted changes and try the demos in a browser, which I haven't done. (disable recaps in /config)
+  ⎿  Read tests/test-core/qunit/js/fqunit-html.js (276 lines)
+  ⎿  Referenced file src/framework/core/js/FluidIL.js
+  ⎿  Read tests/framework-tests/demos/js/TodoListAssignTests.js (159 lines)
+  ⎿  Read tests/framework-tests/demos/js/TodoListTests.js (105 lines)
+  ⎿  Skills restored (anthropic-skills:house-js-style)
+
+● Compacted while idle, before the prompt cache expired
+
+❯ /cd                                                                           
+  ⎿  Usage: /cd <path>

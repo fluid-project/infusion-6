@@ -123,7 +123,9 @@
                 "tests/framework-tests/core/html/FluidILTests.html",
                 "tests/framework-tests/core/html/FluidViewTests.html",
                 "tests/framework-tests/core/html/FluidViewSFCTests.html",
-                "tests/framework-tests/core/html/FluidPTFTests.html"
+                "tests/framework-tests/core/html/FluidPTFTests.html",
+                "tests/framework-tests/from-demos/html/TodoListTests.html",
+                "tests/framework-tests/from-demos/html/TodoListAssignTests.html"
             ]
         }
     }

@@ -332,9 +332,10 @@ const $fluidILScope = function (fluid) {
                 fluid.applyToScope(shadow.ownScope, shadow.memberName, shadow, fluid.memberName);
             }
             const ownScope = Object.getOwnPropertyNames(shadow.ownScope);
+            const applyToParent = shadow.parentShadow && !childOfRoot;
             ownScope.forEach(context => {
                 const rec = shadow.ownScope[context];
-                if (shadow.parentShadow && !childOfRoot) {
+                if (applyToParent) {
                     fluid.applyToScope(shadow.parentShadow.childrenScope, context, rec.value, rec.priority);
                 }
                 if (shadow.resolveRoot) {
@@ -343,6 +344,12 @@ const $fluidILScope = function (fluid) {
                     // TODO: Remember to delete these again when clearing
                 }
             });
+            if (applyToParent) {
+                // The parent's own scope has changed via its childrenScope - any context already resolved at the parent,
+                // e.g. a reference to this component from a sibling member, may need to be reevaluated
+                const parentTick = shadow.parentShadow.ownScopeTick;
+                parentTick.set(parentTick._value + 1);
+            }
             shadow.ownScopeTick.set(shadow.ownScopeTick._value + 1);
         }, [], {name: `scopeEffect for path "${shadow.path}"`, shadow});
     };
@@ -1109,7 +1116,12 @@ const $fluidILScope = function (fluid) {
                     fluid.proxyMat(ult, deref.shadow, []);
             }
         }
-        if (fluid.isPrimitive(deref) || !fluid.isPlainObject(deref) || rawSignal) {
+        if (fluid.isComponent(deref) && !deref[$t]) {
+            // A bare component instance, e.g. resolved from a named context such as {todoItem} - proxy it as for {self}
+            // so that reads are designalised and writes are upgraded, following any sited material upstream
+            const shadow = deref[$m];
+            return fluid.proxyMat(shadow.computer, shadow, []);
+        } else if (fluid.isPrimitive(deref) || !fluid.isPlainObject(deref) || rawSignal) {
             return deref;
         } else {
             let unavailable;
@@ -1528,9 +1540,13 @@ const $fluidILScope = function (fluid) {
                         allKeys.push("" + subKey);
                         const variables = {};
                         if (forRecord.valueAs !== undefined) {
-                            // Where the source has a site, express the value as a global reference to it so that it stays live
-                            variables[forRecord.valueAs] = sourceSite ?
-                                fluid.renderGlobalReference({shadow: sourceSite.shadow, segs: [...sourceSite.segs, "" + subKey]}) : value;
+                            // A value which is itself a proxy onto a site, e.g. an element selected by filter() from
+                            // proxied material, retains the provenance of that site. Otherwise, where the source has a
+                            // site, express the value as a global reference to its element so that it stays live
+                            const valueRef = fluid.unProxy(value);
+                            const valueSite = fluid.isSignal(valueRef) && valueRef.$variety === "$sitedRef" ? valueRef.site :
+                                sourceSite ? {shadow: sourceSite.shadow, segs: [...sourceSite.segs, "" + subKey]} : null;
+                            variables[forRecord.valueAs] = valueSite ? fluid.renderGlobalReference(valueSite) : value;
                         }
                         if (forRecord.keyAs !== undefined) {
                             variables[forRecord.keyAs] = subKey;
@@ -2210,16 +2226,68 @@ const $fluidILScope = function (fluid) {
     fluid.mutatingArrayMethods = Object.fromEntries(["copyWithin", "fill", "pop", "push",
         "reverse", "shift", "sort", "splice", "unshift"].map(key => [key, true]));
 
-    fluid.wrapFilter = function (array) {
-        return callback => {
-            return array.filter((e, i) => {
-                console.log("Applying filter callback to element ", e, " at index ", i);
-                // TODO: At this point, uncover the $siteRef from inside the arguments, and then when we've established the
-                // alignment implied by filter, rewrap the returned elements in the same $siteRef. In practice the proxy
-                // could probably do this all by itself ...
-                return callback(e, i);
-            });
-        };
+    /**
+     * "Follow fish upstream" - trace a signal held at a component member through its chain of `$sitedRef`s to the
+     * terminal site which holds its data, e.g. from an iteration variable `{self}.todo` to the element
+     * `{todoList}.todos.0` of the list it was drawn from. If that site lies in mat-forming material, a proxy is returned
+     * onto it so that writes through it are applied to the original data source rather than to the referring component.
+     * @param {Signal<any>} next - The signal held at the member
+     * @param {any} upcoming - The designalised value of the signal
+     * @return {Proxy|any} A proxy onto the terminal site if it is mat-forming, otherwise the supplied value
+     */
+    fluid.proxyUpstream = function (next, upcoming) {
+        const sited = fluid.deSignalToSite(next);
+        if (fluid.isSignal(sited) && sited.$variety === "$sitedRef" && fluid.isMatForming(sited.site.shadow, sited.site.segs)) {
+            return fluid.proxyMat(sited, sited.site.shadow, sited.site.segs);
+        } else {
+            return upcoming;
+        }
+    };
+
+    /**
+     * Find the terminal site of the value held at a path within a component by tracing its chain of `$sitedRef`s
+     * upstream. If the value is not sourced from elsewhere, this is the site itself.
+     * @param {Shadow} shadow - The shadow record of the component holding the path
+     * @param {String[]} segs - The path segments within the component
+     * @return {Site} The terminal site of the value
+     */
+    fluid.upstreamSite = function (shadow, segs) {
+        const sited = fluid.deSignalToSite(fluid.getForComponent(shadow, segs));
+        if (fluid.isSignal(sited) && sited.$variety === "$sitedRef") {
+            return sited.site;
+        } else {
+            return {shadow, segs};
+        }
+    };
+
+    /**
+     * Delete the value held at a path within a component, by immutable application of a fresh value to its parent
+     * path. An element of an array is spliced out of it, and a member of an object is removed from it.
+     * @param {Object} component - The component holding the path to be deleted
+     * @param {String|String[]} path - The path to be deleted, as a string or array of segments - this must have a
+     * parent path within the component
+     * @return {Cell<Object>} Signal for the value at the parent path, which will now have been raised into the live layer
+     */
+    fluid.deleteForComponent = function (component, path) {
+        const segs = fluid.pathToSegs(path);
+        let togo;
+        if (segs.length > 1) {
+            const parentSegs = segs.slice(0, -1),
+                key = fluid.peek(segs);
+            const parent = fluid.deSignal(fluid.getForComponent(component[$m], parentSegs));
+            let updated;
+            if (Array.isArray(parent)) {
+                updated = parent.filter((element, index) => "" + index !== "" + key);
+            } else {
+                // eslint-disable-next-line no-unused-vars
+                const {[key]: _deleted, ...rest} = parent;
+                updated = rest;
+            }
+            togo = fluid.setForComponent(component, parentSegs, updated);
+        } else {
+            fluid.fail(`Cannot delete top-level member ${segs[0]} of component at path ${component[$m].path}`);
+        }
+        return togo;
     };
 
     /**
@@ -2274,10 +2342,9 @@ const $fluidILScope = function (fluid) {
                                 });
                                 return togo;
                             };
-                        } if (prop === "filter") {
-                            const unwrapped = deTarget.map((element, key) => getHandler(target, key));
-                            return fluid.wrapFilter(unwrapped);
                         } else {
+                            // Non-mutating methods such as filter operate on proxied elements, so that their
+                            // results retain the provenance of the elements they select
                             const unwrapped = deTarget.map((element, key) => getHandler(target, key));
                             return Array.prototype[prop].bind(unwrapped);
                         }
@@ -2289,24 +2356,36 @@ const $fluidILScope = function (fluid) {
                         // If it is another component, hand off to fresh lineage of proxy
                         return fluid.isUnavailable(upcoming) ? fluid.unavailableProxy(upcoming) :
                             next.$variety === "$component" ? fluid.proxyMat(next, next.shadow, []) :
-                                !fluid.isPlainObject(upcoming) || !proxyNext ? upcoming :
-                                    fluid.proxyMat(next, shadow, nextSegs);
+                                !fluid.isPlainObject(upcoming) ? upcoming :
+                                    proxyNext ? fluid.proxyMat(next, shadow, nextSegs) :
+                                        fluid.proxyUpstream(next, upcoming);
                     } else {
                         return next;
                     }
                 }
             };
+            // Note that writes into material sourced from another site are already directed upstream since getHandler
+            // will have handed off to a proxy onto that site via fluid.proxyUpstream. A write to the member itself
+            // rebinds it locally.
             const setHandler = function (target, prop, value) {
                 fluid.expectLiveComponent(shadow, prop);
                 const nextSegs = [...segs, prop];
-                // TODO: We should now already be able to FOLLOW FISH UPSTREAM through deSignalToSite's penultimate slipping
                 fluid.setForComponent(shadow.that, nextSegs, value);
+                return true;
+            };
+            // A deletion of a member sourced from another site, e.g. `delete item.todo` for an iteration variable,
+            // follows the fish upstream and removes the original element from its source
+            const deleteHandler = function (target, prop) {
+                fluid.expectLiveComponent(shadow, prop);
+                const site = fluid.upstreamSite(shadow, [...segs, prop]);
+                fluid.deleteForComponent(site.shadow.that, site.segs);
                 return true;
             };
 
             const proxy = new Proxy(target, {
                 get: getHandler,
                 set: setHandler,
+                deleteProperty: deleteHandler,
                 // Pattern described at https://stackoverflow.com/a/50139861/1381443
                 ownKeys: () => {
                     return Reflect.ownKeys(fluid.deSignalSoft(target));

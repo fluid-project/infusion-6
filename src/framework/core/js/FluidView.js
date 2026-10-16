@@ -468,7 +468,8 @@ const fluidViewScope = function (fluid) {
         const shouldInject = !existing || !fluid.diffFields(existing, injRec, diffFields);
 
         if (shouldInject) {
-            const injStyleKey = injRec.text ? "literal" : "link";
+            // Note that an empty block such as <style></style> has empty text but is still literal
+            const injStyleKey = injRec.url ? "link" : "literal";
             const injStyle = injStyles[injStyleKey];
             return {dokkument, injStyle, injRec, url};
         } else {
@@ -742,14 +743,16 @@ const fluidViewScope = function (fluid) {
                 }
 
                 // If no $layers was written in the definition, add one that will correctly resolve its template.
-                // In either case, add the tag layer marking the layer as derived from an SFC
+                // In either case, add the tag layer marking the layer as derived from an SFC. This must be placed last since
+                // any of the existing layers may themselves be derived from an SFC - C3 linearization will then demand
+                // that they precede the tag layer.
                 // Reparse if the text has already been patched since an existing $layers entry may have moved
                 const layersDef = patchedText === ourSNI.text ? ourDef :
                     {scriptIndex: ourDef.scriptIndex, ...fluid.parseDefMaps(patchedText, 0)[layerName]};
                 if (!oldLayers) {
-                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", ["fluid.sfcViewComponent", ...addLayers], "first");
+                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", [...addLayers, "fluid.sfcViewComponent"], "first");
                 } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcViewComponent")) {
-                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", ["fluid.sfcViewComponent", ...fluid.makeArray(oldLayers)], "first");
+                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", [...fluid.makeArray(oldLayers), "fluid.sfcViewComponent"], "first");
                 }
                 ourSNI.text = patchedText;
 
@@ -771,7 +774,7 @@ const fluidViewScope = function (fluid) {
                     const src = styleNode.attrs?.src;
                     const injRec = src ?
                         {url: src} :
-                        {text: styleNode.children[0]?.text};
+                        {text: styleNode.children[0]?.text ?? ""};
                     injRec.nodeId = nodeId;
                     injRec.variety = "style";
                     injRecs[nodeId] = injRec;

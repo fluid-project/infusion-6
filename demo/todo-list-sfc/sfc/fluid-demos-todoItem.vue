@@ -1,16 +1,33 @@
 <script>
 fluid.def("fluid.demos.todoItem", {
+    toggle: {
+        $method: {
+            func: (item) => {
+                item.todo.completed = !item.todo.completed;
+            },
+            args: ["{self}"]
+        }
+    },
+    // Deleting the iteration variable follows its provenance upstream and removes the element from the source list
+    remove: {
+        $method: {
+            func: (item) => {
+                delete item.todo;
+            },
+            args: ["{self}"]
+        }
+    }
 });
 </script>
 
 <template>
     <div>
         <span class="todo tag is-large"
-              @class="completed:@{completed}, is-info:!@{completed}"
-              @onclick="{todoList}.toggleItem({self}.itemIndex)">
-            <span>@{text}</span>
+              @class="completed:@{todo.completed}, is-info:!@{todo.completed}"
+              @onclick="{self}.toggle()">
+            <span>@{todo.text}</span>
             <button class="delete is-small"
-                @onclick.stop="{todoList}.deleteItem({self}.itemIndex)"></button>
+                @onclick.stop="{self}.remove()"></button>
         </span>
     </div>
 </template>
