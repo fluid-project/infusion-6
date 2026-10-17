@@ -21,55 +21,24 @@ fluid.tests.sfc.url = new URL("../testData/fluid-tests-sfc-component.vue", docum
 const qs = (sel, parent) => (parent || document).querySelector(sel);
 
 /**
- * Poll until a predicate holds, stabilising the signal graph between polls.
- * @param {Function} predicate - A function returning `true` once the awaited condition holds.
- * @param {Number} [timeout=5000] - The maximum time in milliseconds to wait.
- * @return {Promise<Boolean>} Resolves to `true` once the predicate holds, or `false` on timeout.
- */
-fluid.tests.sfc.waitFor = function (predicate, timeout = 5000) {
-    const start = Date.now();
-    return new Promise(resolve => {
-        const poll = () => {
-            fluid.cell.stabilize();
-            if (predicate()) {
-                resolve(true);
-            } else if (Date.now() - start > timeout) {
-                resolve(false);
-            } else {
-                setTimeout(poll, 10);
-            }
-        };
-        poll();
-    });
-};
-
-/**
- * Wait for a single macrotask so that any pending asynchronous injection work can run.
- * @return {Promise} Resolves after a short delay.
- */
-fluid.tests.sfc.tick = function () {
-    return new Promise(resolve => setTimeout(resolve, 50));
-};
-
-/**
  * Fetch and load the test SFC via `fluid.loadSFC`, and subscribe the current document to its injections. Loading
  * happens only once across all tests.
- * @return {Promise<Object>} A promise for a record holding the SFC record `rec` and the injection signal `injDone`.
+ * @return {Promise<Object>} A promise, resolving once injections are complete, for a record holding the SFC record `rec`
+ * and the injection signal `injDone`.
  */
 fluid.tests.sfc.load = function () {
     if (!fluid.tests.sfc.loadPromise) {
         const layerName = fluid.tests.sfc.layerName;
         const rec = fluid.loadSFC(layerName, fluid.tests.sfc.url);
         const injDone = fluid.subscribeDocToInjections(layerName, document);
-        fluid.tests.sfc.loadPromise = fluid.tests.sfc.waitFor(() => injDone.get() === true)
-            .then(completed => ({rec, injDone, completed}));
+        fluid.tests.sfc.loadPromise = fluid.cell.waitFor(injDone).then(() => ({rec, injDone}));
     }
     return fluid.tests.sfc.loadPromise;
 };
 
 QUnit.test("SFC parse produces injection records", async function (assert) {
-    const {rec, completed} = await fluid.tests.sfc.load();
-    assert.ok(completed, "Injections completed within timeout");
+    const {rec, injDone} = await fluid.tests.sfc.load();
+    assert.equal(injDone.get(), true, "Injections completed");
     assert.equal(rec.loadCompletion.get(), true, "Load completion signalled");
     assert.equal(fluid.pathToLayerName(fluid.tests.sfc.url), fluid.tests.sfc.layerName, "Layer name agrees with SFC file name");
     assert.equal(typeof(rec.textSignal.get()), "string", "SFC text fetched");
@@ -108,8 +77,7 @@ QUnit.test("SFC script is not re-executed on repeated parse or subscription", as
 
     // Same text again - the parse effect should cull this
     rec.textSignal.set(rec.textSignal.get());
-    fluid.cell.stabilize();
-    await fluid.tests.sfc.tick();
+    await fluid.cell.settle();
 
     // Subscribing again should return the existing injection signal rather than allocating a fresh effect
     const injDone2 = fluid.subscribeDocToInjections(fluid.tests.sfc.layerName, document);
@@ -117,9 +85,7 @@ QUnit.test("SFC script is not re-executed on repeated parse or subscription", as
 
     // Identical injection records - no element differs from those previously injected so nothing should be committed
     rec.injRecsSignal.set({...rec.injRecsSignal.get()});
-    fluid.cell.stabilize();
-    await fluid.tests.sfc.tick();
-    fluid.cell.stabilize();
+    await fluid.cell.settle();
 
     assert.equal(fluid.tests.sfc.executions, 1, "SFC script still executed exactly once");
 });

@@ -3,38 +3,15 @@
 fluid.registerNamespace("fluid.tests.todo");
 
 /**
- * Poll until a predicate holds, stabilising the signal graph between polls.
- * @param {Function} predicate - A function returning `true` once the awaited condition holds.
- * @param {Number} [timeout=5000] - The maximum time in milliseconds to wait.
- * @return {Promise<Boolean>} Resolves to `true` once the predicate holds, or `false` on timeout.
- */
-fluid.tests.todo.waitFor = function (predicate, timeout = 5000) {
-    const start = Date.now();
-    return new Promise(resolve => {
-        const poll = () => {
-            fluid.cell.stabilize();
-            if (predicate()) {
-                resolve(true);
-            } else if (Date.now() - start > timeout) {
-                resolve(false);
-            } else {
-                setTimeout(poll, 10);
-            }
-        };
-        poll();
-    });
-};
-
-/**
  * Wait until the injections of all SFCs imported into the document via `<fluid-import>` have completed.
- * @return {Promise<Boolean>} Resolves to `true` once all injections are complete, or `false` on timeout.
+ * @return {Promise} Resolves once all injections are complete.
  */
 fluid.tests.todo.loadImports = function () {
     if (!fluid.tests.todo.loadPromise) {
         const layerNames = [...document.querySelectorAll("fluid-import")]
             .map(node => fluid.pathToLayerName(node.getAttribute("src")));
         const injDones = layerNames.map(layerName => fluid.subscribeDocToInjections(layerName, document));
-        fluid.tests.todo.loadPromise = fluid.tests.todo.waitFor(() => injDones.every(injDone => injDone.get() === true));
+        fluid.tests.todo.loadPromise = Promise.all(injDones.map(injDone => fluid.cell.waitFor(injDone)));
     }
     return fluid.tests.todo.loadPromise;
 };
@@ -44,10 +21,11 @@ fluid.tests.todo.qsa = (sel, parent) => [...(parent || document).querySelectorAl
 
 /**
  * Instantiate a fresh todo app from the demo's `fluid.demos.todoApp` layer into the test container, once its imports
- * have loaded, and wait until its todo items have rendered - layers imported lazily through an `$importMap` may
- * still be loading on instantiation. The demo's initial todos are recorded in `fluid.tests.todo.initialTodos`.
- * @param {Function} [ready] - An optional further predicate, accepting the container, which must hold before the app
- * is considered ready
+ * have loaded, and wait for the graph to settle - layers imported lazily through an `$importMap` may still be loading
+ * on instantiation. The app must then have rendered its todo items. The demo's initial todos are recorded in
+ * `fluid.tests.todo.initialTodos`.
+ * @param {Function} [ready] - An optional further predicate, accepting the container, which must hold once the graph
+ * has settled
  * @return {Promise<Object>} A promise for a record holding the app component `that` and its `container`
  */
 fluid.tests.todo.makeApp = async function (ready) {
@@ -55,10 +33,11 @@ fluid.tests.todo.makeApp = async function (ready) {
     fluid.tests.todo.initialTodos = fluid.demos.fetchTodos();
     const container = fluid.tests.todo.qs(".container");
     const that = fluid.demos.todoApp({container});
-    const rendered = await fluid.tests.todo.waitFor(() =>
-        fluid.tests.todo.qsa(".todo", container).length === fluid.tests.todo.initialTodos.length && (!ready || ready(container)));
+    await fluid.cell.settle();
+    const rendered = fluid.tests.todo.qsa(".todo", container).length === fluid.tests.todo.initialTodos.length
+        && (!ready || ready(container));
     if (!rendered) {
-        fluid.fail("Todo app did not render within timeout");
+        fluid.fail("Todo app had not rendered once the graph settled");
     }
     return {that, container};
 };

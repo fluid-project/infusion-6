@@ -490,15 +490,12 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
-     * Await the availability of a component. A stabilization is queued since the effect awaiting it will otherwise not
-     * run until something else stabilizes the signal graph.
+     * Await the availability of a component.
      * @param {Shadow} shadow - The shadow of the component
      * @return {Promise<fluid.component>} A promise resolving once the component is available
      */
     fluid.ptf.awaitAvailable = function (shadow) {
-        const togo = fluid.cell.signalToPromise(shadow.availableInstance);
-        fluid.cell.deferredStabilize();
-        return togo;
+        return fluid.cell.waitFor(shadow.availableInstance);
     };
 
     /**

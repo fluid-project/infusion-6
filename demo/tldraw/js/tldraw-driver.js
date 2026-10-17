@@ -56,8 +56,6 @@ fluid.demos.tldrawHost.bindShapes = function (editor) {
     shapesCell.unsubscribe = editor.store.listen(() => {
         // Coarse-grained: every document change, e.g. every frame of a drag, replaces the whole array
         shapesCell.set(editor.getCurrentPageShapes());
-        // GAP: changes arriving from outside Infusion are not rendered until something stabilizes
-        fluid.cell.deferredStabilize();
     }, {scope: "document"});
     return shapesCell;
 };
@@ -113,8 +111,6 @@ const InfusionHost = function ({layerName, shapeId, ptfToken}) {
             } else {
                 that = constructed;
                 infusionInstances.set(shapeId, that);
-                // Flush the component's rendering effects
-                fluid.cell.stabilize();
                 console.log(`${how} Infusion component ${layerName} with id ${that.$id}`);
             }
         };
@@ -294,7 +290,6 @@ const onMount = function (editor) {
     tldraw.editorInstance = editor;
     tldraw.instances = infusionInstances;
     const tldrawHost = fluid.demos.tldrawHost({editor});
-    fluid.cell.stabilize();
     if (editor.getCurrentPageShapes().length === 0) {
         editor.createShape({
             type: "infusion",

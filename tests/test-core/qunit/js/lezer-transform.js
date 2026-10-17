@@ -12,11 +12,11 @@ fluid.registerNamespace("fluid.lezer");
  * @typedef {Object} LezerNode
  * @property {String} [name] - The node type name (e.g., "MemberExpression", "VariableDefinition").
  * @property {String} text - The text content of the node.
- * @property {number} [from] - The start offset of the node in the source text.
- * @property {number} [to] - The end offset of the node in the source text.
+ * @property {Number} [from] - The start offset of the node in the source text.
+ * @property {Number} [to] - The end offset of the node in the source text.
  * @property {LezerNode[]} [children] - The child nodes of this node.
  * @property {LezerNode|null} [parent] - The parent node, or null if this is the root.
- * @property {boolean} [isStale] - Whether the node is marked as stale and needs regeneration.
+ * @property {Boolean} [isStale] - Whether the node is marked as stale and needs regeneration.
  */
 
 /**
@@ -224,7 +224,7 @@ fluid.lezer.getFunctionBody = function (token) {
  *  - Injecting a `{name: "varName"}` argument into the `fluid.cell()` call
  *  - Replacing `.computed` property names with `vizReactiveAsyncComputed`
  *  - Inserting a unique arcId as the first argument to `vizReactiveAsyncComputed`
- *  - Wrapping `.get` calls with `await fluid.cell.signalToPromise(...)`
+ *  - Wrapping `.get` calls with `await fluid.cell.waitFor(...)`
  *
  * @param {LezerTransformState} state - Transformation state, including arcId and arcTokens.
  * @param {LezerNode} token - The statement node to transform.
@@ -276,7 +276,7 @@ fluid.lezer.transformStatement = function (state, token) {
 
     const getCall = fluid.lezer.queryNode(token, "PropertyName", "get")[0];
     if (getCall) {
-        const awaitFront = {text: "await fluid.cell.signalToPromise("};
+        const awaitFront = {text: "await fluid.cell.waitFor("};
         const awaitBack = {text: ")"};
         const getParent = getCall.parent;
         const variableNode = {text: getParent.children[0].text};

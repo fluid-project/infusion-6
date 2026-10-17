@@ -6,8 +6,8 @@ Here are all the Infusion limitations found across the three draft ports (storyT
     * Resolved by binding absence for boolean attributes and live state properties with write-back - fluid-project/infusion-6#14
 3. No two-way input binding. Every input needs its own $method that copies e.target.value into state. DONE
     * Resolved - a bound value, checked, selected or open attribute writes the user's change back to a writeable model site - fluid-project/infusion-6#14
-4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to call fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
-    * Do this in the tldraw driver for the time being
+4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to call fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug. DONE
+    * Resolved by making stabilize() a cancellable flush with deferred auto-stabilization on by default, plus fluid.cell.settle() and fluid.cell.waitFor() for async code - fluid-project/infusion-6#17
 5. No first-class way to subscribe to an outside data source. $effect has no cleanup, and $bindable is experimental and never rebinds when its arguments change. It's also unverified whether a bindable that returns a cell lets readers see the cell's value.
     * This is something we want to do with $bindable and so should firm it up. Should clarify that $bindable is only notified on changes from available to unavailable, but it can
     bind to a signal which can stream updates for the lifetime of the $bindable.

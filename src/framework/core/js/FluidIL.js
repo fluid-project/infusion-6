@@ -193,7 +193,7 @@ const $fluidILScope = function (fluid) {
     fluid.contextRefToPromise = function (contextRef, root) {
         const shadow = root[$t].shadow;
         const ref = fluid.fetchContextReference(contextRef, shadow);
-        return fluid.cell.signalToPromise(fluid.deSignalToSite(ref));
+        return fluid.cell.waitFor(fluid.deSignalToSite(ref));
     };
 
     // TODO: This implementation is obviously poor and has numerous flaws - in particular it does no backtracking as well as matching backwards through the selector

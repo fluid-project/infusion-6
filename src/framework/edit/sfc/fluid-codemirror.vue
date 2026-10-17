@@ -103,7 +103,6 @@ fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
         if (instance.firstValid && holder.writeText && !instance.inReadUpdate) {
             // instance.selfWrite = true;
             holder.writeText(validText);
-            fluid.cell.deferredStabilize();
         }
         instance.firstValid = true;
     }, [validText], {name: "writeEffect for fluid.codemirror at " + self[$m].path});

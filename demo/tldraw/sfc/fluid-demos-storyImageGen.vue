@@ -70,8 +70,6 @@ fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
             state.imageError = err.message || "Failed to generate image.";
         } finally {
             state.isGenerating = false;
-            // GAP: writes made after an await are not rendered until something stabilizes
-            fluid.cell.stabilize();
         }
     }
 };

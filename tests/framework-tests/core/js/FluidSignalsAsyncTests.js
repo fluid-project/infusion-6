@@ -289,7 +289,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         fluid.cell.effect(
             () => {
                 (async () => { // Untracked async read
-                    value = await fluid.cell.signalToPromise(a);
+                    value = await fluid.cell.waitFor(a);
                 })();
             },
             []
@@ -378,7 +378,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         fluid.cell.effect(
             () => {
                 fluid.cell.untracked(() => {
-                    fluid.cell.signalToPromise(a).then(v => {
+                    fluid.cell.waitFor(a).then(v => {
                         callCount++;
                         lastValue = v;
                     });
@@ -453,13 +453,13 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         celsiusCell.asyncComputed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
 
         // Celsius value has spread in both directions
-        assert.equal(await fluid.cell.signalToPromise(kelvinCell), 288.15, "Spread from Celsius to Kelvin");
-        assert.equal(await fluid.cell.signalToPromise(fahrenheitCell), 59, "Spread from Celsius to Fahrenheit");
+        assert.equal(await fluid.cell.waitFor(kelvinCell), 288.15, "Spread from Celsius to Kelvin");
+        assert.equal(await fluid.cell.waitFor(fahrenheitCell), 59, "Spread from Celsius to Fahrenheit");
 
         kelvinCell.set(293.15);
 
-        assert.nearEqual(await fluid.cell.signalToPromise(celsiusCell), 20, "Spread from Kelvin to Celsius");
-        assert.nearEqual(await fluid.cell.signalToPromise(fahrenheitCell), 68, "Spread from Kelvin to Fahrenheit");
+        assert.nearEqual(await fluid.cell.waitFor(celsiusCell), 20, "Spread from Kelvin to Celsius");
+        assert.nearEqual(await fluid.cell.waitFor(fahrenheitCell), 68, "Spread from Kelvin to Fahrenheit");
     });
 
     QUnit.test("Bidirectional async test with sync return", async assert => {
@@ -668,12 +668,12 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         // eslint-disable-next-line no-unused-vars
         const blockTargetPull = fluid.cell.effect(bT => blockTargetResult = bT, [blockTarget]);
 
-        assert.equal(await fluid.cell.signalToPromise(F), 59, "Spread from Celsius to Fahrenheit");
+        assert.equal(await fluid.cell.waitFor(F), 59, "Spread from Celsius to Fahrenheit");
 
         // This leg might fail because if does not clear.
         F.set(68);
 
-        assert.equal(await fluid.cell.signalToPromise(C), 20, "Spread back Fahrenheit to Celsius");
+        assert.equal(await fluid.cell.waitFor(C), 20, "Spread back Fahrenheit to Celsius");
 
         blockWaitResolve();
 
@@ -743,7 +743,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         A.set(2);
 
         try {
-            await fluid.cell.signalToPromise(C);
+            await fluid.cell.waitFor(C);
             assert.notOk("Evaluation did not throw");
         } catch (e) {
             assert.ok(e.message.includes("Failure computing async arc"));
@@ -780,10 +780,10 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             [b, c]
         );
 
-        assert.equal(await fluid.cell.signalToPromise(d), "a c");
+        assert.equal(await fluid.cell.waitFor(d), "a c");
 
         a.set("aa");
-        await fluid.cell.signalToPromise(d);
+        await fluid.cell.waitFor(d);
         assert.equal(spyResult, "aa c");
     });
 
@@ -848,13 +848,13 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         // Initial computation
         headCell.set(1);
-        assert.equal(await fluid.cell.signalToPromise(c5Cell), 6, "Computed value 6");
+        assert.equal(await fluid.cell.waitFor(c5Cell), 6, "Computed value 6");
         assert.equal(busyCount, 1, "One lot of busy on init");
 
         headCell.set(0);
         let settled = false;
 
-        fluid.cell.signalToPromise(c5Cell).then(() => settled = true);
+        fluid.cell.waitFor(c5Cell).then(() => settled = true);
 
         await fluid.cell.stabilizeAsync();
 
@@ -865,4 +865,164 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
     });
 
 
+});
+
+QUnit.module("Fluid Signals Auto-stabilization Tests", function () {
+
+    QUnit.test("Auto-stabilization is on by default and runs before the next macrotask", async assert => {
+        const source = fluid.cell(1, {name: "source"});
+        const log = [];
+        const logEffect = fluid.cell.effect(value => log.push(value), [source], {name: "logEffect"});
+        assert.deepEqual(log, [], "Effect not run synchronously on creation");
+
+        await Promise.resolve();
+        assert.deepEqual(log, [1], "Effect run in deferred pass without an explicit stabilize");
+
+        source.set(2);
+        assert.deepEqual(log, [1], "Effect not run synchronously on set");
+        await Promise.resolve();
+        assert.deepEqual(log, [1, 2], "Effect run in deferred pass after set");
+        logEffect.dispose();
+    });
+
+    QUnit.test("Synchronous stabilize consumes the deferred stabilization", async assert => {
+        const source = fluid.cell(1, {name: "source"});
+        let runs = 0;
+        const countEffect = fluid.cell.effect(() => runs++, [source], {name: "countEffect"});
+        fluid.cell.stabilize();
+        source.set(2);
+        assert.ok(fluid.cell.stabilizationQueued, "Deferred stabilization queued by set");
+
+        const processed = fluid.cell.stabilize();
+        assert.deepEqual(processed, [countEffect], "Synchronous stabilize processes the dirty effect");
+        assert.notOk(fluid.cell.stabilizationQueued, "Deferred stabilization consumed");
+        assert.equal(runs, 2, "Effect run on startup and after set");
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.equal(runs, 2, "Deferred pass is a no-op");
+        countEffect.dispose();
+    });
+
+    QUnit.test("Reentrant stabilize is folded into the outer pass", assert => {
+        const a = fluid.cell(1, {name: "a"});
+        const b = fluid.cell(0, {name: "b"});
+        const bLog = [];
+        const innerResults = [];
+        const aEffect = fluid.cell.effect(aValue => {
+            b.set(aValue * 10);
+            innerResults.push(fluid.cell.stabilize());
+        }, [a], {name: "aEffect"});
+        const bEffect = fluid.cell.effect(bValue => bLog.push(bValue), [b], {name: "bEffect"});
+
+        const processed = fluid.cell.stabilize();
+        assert.deepEqual(innerResults, [[]], "Reentrant stabilize processes nothing itself");
+        assert.deepEqual(bLog, [10], "Effect dirtied during the pass is run once by the outer pass");
+        assert.ok(processed.includes(aEffect) && processed.includes(bEffect), "Outer pass reports both effects");
+        assert.notOk(fluid.cell.isStabilizing, "Stabilization flag cleared");
+
+        a.set(2);
+        fluid.cell.stabilize();
+        assert.deepEqual(bLog, [10, 20], "Downstream effect updated synchronously after reentrant write");
+        aEffect.dispose();
+        bEffect.dispose();
+    });
+
+    QUnit.test("Auto-stabilization may be turned off", async assert => {
+        fluid.cell.autoStabilize(null);
+        try {
+            const source = fluid.cell(1, {name: "source"});
+            const log = [];
+            const logEffect = fluid.cell.effect(value => log.push(value), [source], {name: "logEffect"});
+            await new Promise(resolve => setTimeout(resolve, 0));
+            assert.deepEqual(log, [], "Effect not run without auto-stabilization");
+            fluid.cell.stabilize();
+            assert.deepEqual(log, [1], "Effect run by explicit stabilize");
+            logEffect.dispose();
+        } finally {
+            fluid.cell.autoStabilize();
+        }
+    });
+
+    QUnit.test("settle() waits for a chain of async computations", async assert => {
+        const head = fluid.cell(1, {name: "head"});
+        const c1 = fluid.cell(undefined, {name: "c1"}).asyncComputed(h => fluid.returnAsync(h + 1), [head]);
+        const c2 = fluid.cell(undefined, {name: "c2"}).asyncComputed(v => fluid.returnAsync(v * 10), [c1]);
+        const log = [];
+        const logEffect = fluid.cell.effect(value => log.push(value), [c2], {name: "logEffect"});
+
+        await fluid.cell.settle();
+        assert.deepEqual(log, [20], "Effect received settled value");
+        assert.ok(fluid.cell.isQuiescent(), "Graph is quiescent after settle");
+
+        head.set(2);
+        await fluid.cell.settle();
+        assert.deepEqual(log, [20, 30], "Effect received value settled after update");
+        logEffect.dispose();
+    });
+
+    QUnit.test("settle() resolves exactly when outstanding work completes", async assert => {
+        let release;
+        const blocker = new Promise(resolve => {
+            release = resolve;
+        });
+        const source = fluid.cell(1, {name: "source"});
+        const blocked = fluid.cell(undefined, {name: "blocked"}).asyncComputed(async value => {
+            await blocker;
+            return value;
+        }, [source]);
+        const log = [];
+        const logEffect = fluid.cell.effect(value => log.push(value), [blocked], {name: "blockedEffect"});
+
+        let settled = false;
+        const settling = fluid.cell.settle().then(() => settled = true);
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.notOk(settled, "settle() has not resolved whilst computation is blocked");
+        assert.deepEqual(fluid.cell.pendingEffects(), [logEffect], "Blocked effect reported as pending");
+
+        release();
+        await settling;
+        assert.deepEqual(log, [1], "settle() resolved once blocked effect has run");
+        assert.deepEqual(fluid.cell.pendingEffects(), [], "No pending effects once settled");
+        logEffect.dispose();
+    });
+
+    QUnit.test("A disposed effect does not hold its fit open", async assert => {
+        const source = fluid.cell(1, {name: "source"});
+        const waiting = fluid.cell.waitFor(source);
+        fluid.cell.stabilize();
+        // Before the watcher of waitFor is disposed, its source goes pending again and it is pulled within a fresh fit
+        source.set(fluid.unavailable("Gone pending again", "pending"));
+        fluid.cell.stabilize();
+        assert.equal(await waiting, 1, "Resolved with the value which was available");
+        await fluid.cell.settle();
+        assert.ok(fluid.cell.isQuiescent(), "Graph settled despite disposed watcher of pending source");
+    });
+
+    QUnit.test("waitFor() resolves on a condition whose timing lies outside the graph", async assert => {
+        const counter = fluid.cell(0, {name: "counter"});
+        const timer = setInterval(() => counter.set(counter.get() + 1), 1);
+        try {
+            const value = await fluid.cell.waitFor(counter, count => count >= 3);
+            assert.equal(value, 3, "Resolved with first value satisfying predicate");
+        } finally {
+            clearInterval(timer);
+        }
+        const already = fluid.cell("ready", {name: "already"});
+        assert.equal(await fluid.cell.waitFor(already), "ready", "Resolves with a value which is already available");
+
+        const deferred = fluid.cell(fluid.unavailable("Not yet", "pending"), {name: "deferred"});
+        setTimeout(() => deferred.set("arrived"), 1);
+        assert.equal(await fluid.cell.waitFor(deferred), "arrived", "Unavailable values are skipped");
+
+        const failing = fluid.cell(fluid.unavailable("Not yet", "pending"), {name: "failing"});
+        setTimeout(() => failing.set(fluid.unavailable("Broke", "error")), 1);
+        let rejection = null;
+        try {
+            await fluid.cell.waitFor(failing, () => true);
+        } catch (e) {
+            rejection = e;
+        }
+        assert.equal(rejection?.variety, "error", "Rejects with the cell's value when it becomes an error");
+        await fluid.cell.settle();
+    });
 });

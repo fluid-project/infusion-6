@@ -13,43 +13,6 @@ QUnit.config.reorder = false;
 const qs = (sel, parent) => (parent || document).querySelector(sel);
 
 /**
- * Poll until a predicate holds, stabilising the signal graph between polls.
- * @param {Function} predicate - A function returning `true` once the awaited condition holds.
- * @param {Number} [timeout=5000] - The maximum time in milliseconds to wait.
- * @return {Promise<Boolean>} Resolves to `true` once the predicate holds, or `false` on timeout.
- */
-fluid.tests.ptf.waitFor = function (predicate, timeout = 5000) {
-    const start = Date.now();
-    return new Promise(resolve => {
-        const poll = () => {
-            fluid.cell.stabilize();
-            if (predicate()) {
-                resolve(true);
-            } else if (Date.now() - start > timeout) {
-                resolve(false);
-            } else {
-                setTimeout(poll, 10);
-            }
-        };
-        poll();
-    });
-};
-
-/**
- * Await the result of a promise, stabilising the signal graph while it is pending.
- * @param {Promise} promise - The promise to be awaited
- * @return {Promise} A promise for the same result
- */
-fluid.tests.ptf.settle = function (promise) {
-    let settled = false;
-    const togo = promise.finally(() => {
-        settled = true;
-    });
-    fluid.tests.ptf.waitFor(() => settled);
-    return togo;
-};
-
-/**
  * Load an SFC from text and await the definition of its layer.
  * @param {String} layerName - The name of the layer defined by the SFC
  * @param {String} text - The text of the SFC
@@ -58,7 +21,7 @@ fluid.tests.ptf.settle = function (promise) {
 fluid.tests.ptf.loadSFCText = function (layerName, text) {
     fluid.loadSFCText(layerName, text);
     const injDone = fluid.subscribeDocToInjections(layerName, document);
-    return fluid.tests.ptf.waitFor(() => injDone.get() === true && !fluid.isUnavailable(fluid.def(layerName)));
+    return fluid.cell.waitFor(injDone).then(() => fluid.cell.settle()).then(() => !fluid.isUnavailable(fluid.def(layerName)));
 };
 
 fluid.tests.ptf.counterSFC = `<script>
@@ -250,7 +213,7 @@ QUnit.test("SFC component transmitted and reconstructed", async function (assert
     // Rename the layer throughout the document so that reconstruction must register it afresh
     const text = fluid.ptf.componentToPTF(that).replaceAll("fluid.tests.ptf.counter", "fluid.tests.ptf.counterCopy");
     const target = qs(".target-container");
-    const {that: copy, unresolved} = await fluid.tests.ptf.settle(fluid.ptf.instantiate(text, {potentia: {container: target}}));
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text, {potentia: {container: target}});
     assert.deepEqual(unresolved, [], "All parts applied");
     assert.equal(fluid.layerMimeType("fluid.tests.ptf.counterCopy"), "text/x-vue", "Transmitted layer registered as SFC");
     assert.equal(copy.text, "User text", "User potentia reconstructed");
@@ -299,7 +262,7 @@ QUnit.test("JavaScript component with subcomponent transmitted and reconstructed
     ], "Expected parts assembled for parent and subcomponent");
 
     const text = fluid.ptf.componentToPTF(that).replaceAll("fluid.tests.ptf.js", "fluid.tests.ptf.copied");
-    const {that: copy, unresolved} = await fluid.tests.ptf.settle(fluid.ptf.instantiate(text));
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text);
     assert.deepEqual(unresolved, [], "All parts applied");
     assert.deepEqual(copy.extra, {deep: [1, 2]}, "User potentia reconstructed");
     assert.equal(copy.child.value, 5, "Subcomponent live state reconstructed");

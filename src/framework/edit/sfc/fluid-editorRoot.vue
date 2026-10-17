@@ -64,13 +64,9 @@ fluid.def("fluid.editorRoot", {
         $method: {
             func: async (editorsPane, layerName) => {
                 const childSearch = fluid.liveQueryILSelector(editorsPane, "fluid.editor");
-
-                // Horrid hacks to wait long enough - need FDS
-                let children = await(fluid.cell.signalToPromise(childSearch));
-                fluid.cell.stabilize();
-                children = await(fluid.cell.signalToPromise(childSearch));
-
-                return children.find(child => child.layerRec.layerName === layerName);
+                const findHolder = children => children.find(child => child.layerRec.layerName === layerName);
+                // The editor for a freshly opened layer tab is constructed asynchronously - wait until it appears
+                return findHolder(await fluid.cell.waitFor(childSearch, findHolder));
             },
             args: ["{editorsPane}", "{0}:layerName"]
         }
@@ -194,7 +190,6 @@ fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
                     const newText = origText.slice(0, from) + editRoot.innerHTML + origText.slice(to);
                     console.log(`Proposing updating text from\n${origText} to \n${newText}`);
                     sfcRec.textSignal.set(newText);
-                    fluid.cell.deferredStabilize();
                 }
             }
         });

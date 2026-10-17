@@ -101,8 +101,9 @@ QUnit.test("Assignee facet - assignment through filtered item and filtering by a
     const initial = fluid.tests.todo.initialTodos;
 
     check(qs("input[type=checkbox]", container), true);
-    const facetReady = await fluid.tests.todo.waitFor(() => qsa(".item-assignee-select", container).length === 3
-        && fluid.tests.todo.filterSelect(container, "Filter Assignee"));
+    await fluid.cell.settle();
+    const facetReady = qsa(".item-assignee-select", container).length === 3
+        && fluid.tests.todo.filterSelect(container, "Filter Assignee");
     assert.ok(facetReady, "Assignee controls rendered on enabling facet");
 
     const renderedAssignees = () => qsa(".item-assignee-select", container).map(select => select.value);

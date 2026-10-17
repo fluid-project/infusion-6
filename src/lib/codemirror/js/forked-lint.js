@@ -246,10 +246,9 @@
     }
       // AMB edit to relay non-error states into text update signal
       if (maxSeverity !== "error") {
+          // Rendered by deferred auto-stabilization - a synchronous stabilize here would invoke codeMirror.refresh()
+          // before it is constructed
           cm.options.validText.set(value);
-          // TODO: Eventually move signals framework to auto-stabilize as per https://claude.ai/chat/fa4e9b14-8c68-4e20-8983-0f3580de50a8
-          fluid.cell.deferredStabilize();
-          // Tried just "stabilize" but this then tries to invoke codeMirror.refresh() before it is constructed
       }
     if (options.onUpdateLinting) options.onUpdateLinting(annotationsNotSorted, annotations, cm);
   }

@@ -985,3 +985,37 @@ QUnit.test("Structured method argument containing unavailable value is delivered
 
     that.destroy();
 });
+
+QUnit.test("Layer definition released from its gate whilst being read by an instantiating component", async assert => {
+    const loading = fluid.cell(fluid.unavailable("Loading fluid.tests.gated", "pending"), {name: "loading"});
+    // A loader which is an effect, pending whilst its source is - pulling an effect ends its fit
+    const loader = fluid.cell.effect(() => true, [loading], {name: "loader for fluid.tests.gated"});
+    // As fluid.ensureImportsLoaded does, the layer's record holds the pending loader until its definition arrives
+    fluid.writeLayer("fluid.tests.gated", loader);
+    const that = fluid.initFreeComponent("fluid.tests.gated", {});
+    fluid.cell.stabilize();
+
+    const effectLog = [];
+    // As the SFC's script does - the definition arrives whilst injection is still pending, and so is gated on it
+    fluid.writeLayer("fluid.tests.gated", {
+        $layers: ["fluid.component"],
+        value: 42,
+        logEffect: {
+            $effect: {
+                func: value => effectLog.push(value),
+                args: "{self}.value"
+            }
+        }
+    });
+    assert.ok(fluid.gatedLayers.has("fluid.tests.gated"), "Definition gated on pending injection");
+    fluid.cell.stabilize();
+
+    // On completion the component re-reads its layer, whose record still holds the injection signal - pulling it to
+    // test its availability ends its fit, which runs the gate effect and writes the definition mid-read
+    loading.set(true);
+    await fluid.cell.settle();
+    assert.notOk(fluid.gatedLayers.has("fluid.tests.gated"), "Gate released");
+    assert.deepEqual(effectLog, [42], "Component's effects allocated");
+    assert.equal(that.value, 42, "Component instantiated from released definition");
+    that.destroy();
+});

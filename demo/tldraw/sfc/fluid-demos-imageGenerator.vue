@@ -106,8 +106,6 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
             console.error("Image generation error:", err);
         } finally {
             state.isGenerating = false;
-            // GAP: writes made after an await are not rendered until something stabilizes
-            fluid.cell.stabilize();
         }
     }
 };

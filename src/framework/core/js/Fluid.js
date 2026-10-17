@@ -1849,7 +1849,6 @@ const $fluidScope = function (fluid) {
                     rec.effect.dispose();
                     fluid.gatedLayers.delete(layerName);
                     fluid.writeLayer(layerName, rec.layer);
-                    fluid.cell.deferredStabilize();
                 }
             }, [pending], {name: `Release of layer ${layerName} gated on ${pending.name}`});
             fluid.gatedLayers.set(layerName, rec);
@@ -2352,13 +2351,19 @@ const $fluidScope = function (fluid) {
                 // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
                 this.flatDefs[layerName] = "in progress";
 
-                const layer = fluid.readLayer(layerName, true).get();
-                const unavailableLayer = fluid.layerRecToUnavailable(layer);
+                let layer = fluid.readLayer(layerName, true).get();
+                let unavailableLayer = fluid.layerRecToUnavailable(layer);
                 if (unavailableLayer !== null) {
                     this.layerFetcher(layerName);
-                    // Read it again since presumably it is now pending if successfully fetched
-                    const pendingUnavailableLayer = fluid.layerRecToUnavailable(fluid.readLayer(layerName, true).get());
-                    this.unavailableLayers[layerName] = pendingUnavailableLayer;
+                    // Read it again - it is presumably now pending if successfully fetched, but fetching may instead have
+                    // released a definition which was gated on a load that had already completed
+                    // Apparently this epicycle could be removed once we reform fit tracking and not cause a get() to end a fit synchronously -
+                    // see transcript for issue #17
+                    layer = fluid.readLayer(layerName, true).get();
+                    unavailableLayer = fluid.layerRecToUnavailable(layer);
+                }
+                if (unavailableLayer !== null) {
+                    this.unavailableLayers[layerName] = unavailableLayer;
                     layerDef = {$layers: []};
                 } else {
                     const readerExpanded = fluid.readerExpandLayer(fluid.deSignal(layer.raw));
@@ -2494,7 +2499,6 @@ const $fluidScope = function (fluid) {
         fluid.writeLayer(layerName, layer);
         // TODO: Generalised mechanism for side-effects for layer registration
         fluid.makeComponentCreator(layerName);
-        fluid.cell.deferredStabilize();
     };
 
     /**
@@ -2865,7 +2869,7 @@ const $fluidScope = function (fluid) {
      */
     fluid.siteToPromise = function (component, path) {
         const pathSignal = fluid.getForComponent(component[$m], path);
-        return fluid.cell.signalToPromise(pathSignal);
+        return fluid.cell.waitFor(pathSignal);
     };
 
 };

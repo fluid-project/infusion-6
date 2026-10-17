@@ -835,6 +835,12 @@ const fluidViewScope = function (fluid) {
     /** @type {Map<Document, DocLayerInjectionRec>} */
     fluid.documentInjections = new Map();
 
+    /**
+     * Record the injection signal for a layer in the injection record of its document, so that the document's
+     * `injectionsComplete` signal reflects it.
+     * @param {Cell<Boolean>} injDone - The injection signal allocated by fluid.subscribeDocToInjections, tagged with its
+     * `layerName` and `dokkument`
+     */
     fluid.noteLayerInjectionInProgress = function (injDone) {
         const existing = fluid.documentInjections.get(injDone.dokkument);
         if (existing) {
@@ -849,10 +855,12 @@ const fluidViewScope = function (fluid) {
         } else {
             /** @type {DocLayerInjectionRec} **/
             const rec = {
-                injRecsSignal: fluid.cell([], {name: `Document injections for ${injDone.dokkument.location}`})
+                injRecsSignal: fluid.cell([injDone], {name: `Document injections for ${injDone.dokkument.location}`})
             };
             rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${injDone.dokkument.location}`})
-                .computed( injRecs => fluid.signalsToAvailable(injRecs), [rec.injRecsSignal]);
+                // Read each layer's injDone signal here, rather than returning a signal for them, which would itself be
+                // an available value
+                .computed( injRecs => fluid.processSignalArgs(injRecs).unavailable || true, [rec.injRecsSignal]);
             fluid.documentInjections.set(injDone.dokkument, rec);
         }
     };
