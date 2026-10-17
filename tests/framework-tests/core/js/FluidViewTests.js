@@ -564,10 +564,12 @@ QUnit.test("Conditional rendering", function (assert) {
     fluid.cell.stabilize();
     // Unfortunately we can't prevent allocation of the "outer container", even if there is no component
     assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+    // The conditional component's container acquires a default id derived from its path whilst it is rendered
+    const assigneeId = `fl-id-${that[fluid.metadataSymbol].path}.assignee`;
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct");
+    assert.equal(container.innerHTML, `<div id="${assigneeId}" class="assignee"></div>`, "Conditional render correct");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -575,7 +577,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct 2");
+    assert.equal(container.innerHTML, `<div id="${assigneeId}" class="assignee"></div>`, "Conditional render correct 2");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -604,18 +606,55 @@ QUnit.test("Conditional rendering with long-form $if record - fluid-project/infu
     const that = fluid.tests.longFormIf({container});
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+    const distanceId = `fl-id-${that[fluid.metadataSymbol].path}.distanceLine`;
 
     that.distance = 0;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="distance">0</div>`, "Falsy value accepted by condition renders");
+    assert.equal(container.innerHTML, `<div id="${distanceId}" class="distance">0</div>`, "Falsy value accepted by condition renders");
 
     that.distance = 5;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="distance">5</div>`, "Updated value renders");
+    assert.equal(container.innerHTML, `<div id="${distanceId}" class="distance">5</div>`, "Updated value renders");
 
     that.distance = null;
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+});
+
+fluid.def("fluid.tests.containerIds", {
+    $layers: "fluid.templateViewComponent",
+    template: `<div class="outer"><div @id="plain"></div><div @id="identified"></div></div>`,
+    plain: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="plain">Plain</div>`
+        }
+    },
+    identified: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div id="own-id" class="identified">Own</div>`
+        }
+    }
+});
+
+QUnit.test("Rendered containers acquire default ids derived from component paths", function (assert) {
+    const container = qs(".container");
+    const presetId = container.id;
+    const that = fluid.tests.containerIds({container});
+    fluid.cell.stabilize();
+    assert.ok(presetId, "Fixture container has an id of its own");
+    assert.equal(container.id, presetId, "Existing id of container is preserved");
+    assert.equal(qs(".plain", container).id, `fl-id-${that[fluid.metadataSymbol].path}.plain`, "Child container acquires id from component path");
+    assert.equal(qs(".identified", container).id, "own-id", "Id specified in template takes precedence");
+    that.destroy();
+
+    container.removeAttribute("id");
+    const that2 = fluid.tests.containerIds({container});
+    fluid.cell.stabilize();
+    assert.equal(container.id, `fl-id-${that2[fluid.metadataSymbol].path}`, "Root container without id acquires id from component path");
+    that2.destroy();
+    container.id = presetId;
 });
 
 fluid.def("fluid.tests.attrBinding", {

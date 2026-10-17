@@ -10,6 +10,7 @@ const fluidViewScope = function (fluid) {
      * @typedef {Object} VNode
      * @property {String} [tag] - The tag name of the element (e.g., 'div', 'span').
      * @property {Object<String, String>} [attrs] - A key-value map of the element's attributes.
+     * @property {Object<String, String>} [defaultAttrs] - Attributes applied to the element only if it does not already have them
      * @property {Object<String, Boolean>} [class] - A map of strings to `true` determining whether a CSS class name is present on the node
      * @property {VNode[]} [children] - An array of child virtual nodes.
      * @property {String} [text] - The text content in the case this VNode represents a DOM TextNode.
@@ -422,6 +423,7 @@ const fluidViewScope = function (fluid) {
      * @property {String} [url] - A resolved URL for the script or style source.
      * @property {String} [text] - The inline script or style content with a source map comment.
      * @property {String} [scope] - For a "script" its injection scope style
+     * @property {Boolean} [ownLayer] - For a "script", `true` if it holds the definition of the SFC's own layer
      */
 
     fluid.clearInjRec = function (dokkument, nodeId) {
@@ -765,6 +767,7 @@ const fluidViewScope = function (fluid) {
                     injRec.defMaps = sni.defMaps;
                     injRec.nodeId = nodeId;
                     injRec.variety = "script";
+                    injRec.ownLayer = index === ourDef.scriptIndex;
                     injRecs[nodeId] = injRec;
                 });
 
@@ -782,6 +785,20 @@ const fluidViewScope = function (fluid) {
             }
         }
         return injRecs;
+    };
+
+    /**
+     * Record in the layer history an edit to the text of an SFC which did not rewrite its layer's definition. The
+     * layer's current value is recorded as both its old and new values, together with the SFC's old and new text.
+     * @param {String} layerName - The name of the layer defined by the SFC
+     * @param {String} oldText - The text of the SFC before the edit
+     * @param {String} newText - The text of the SFC after the edit
+     */
+    fluid.pushSFCHistory = function (layerName, oldText, newText) {
+        const layerValue = fluid.layerStore._value[layerName]?._value;
+        if (layerValue) {
+            fluid.pushHistory({type: "updateLayer", oldValue: layerValue, newValue: layerValue, layerName, oldText, newText});
+        }
     };
 
     /**
@@ -803,9 +820,18 @@ const fluidViewScope = function (fluid) {
                 return;
             }
             fluid.log("**** Beginning to parse SFC for layer ", layerName);
+            const previousText = oldText;
             oldText = text;
             const vTree = fluid.parseHTMLToTree(text);
-            rec.injRecsSignal.set(fluid.sfcToInjRecs(vTree, layerName));
+            const injRecs = fluid.sfcToInjRecs(vTree, layerName);
+            const ownScriptText = Object.values(injRecs).find(injRec => injRec.ownLayer)?.text;
+            // An edit which leaves the script defining our layer unchanged, e.g. to the template alone, will not
+            // reinject it, and so will not reach fluid.writeLayer - record the edit in the history here instead
+            if (previousText !== undefined && ownScriptText !== undefined && ownScriptText === rec.ownScriptText) {
+                fluid.pushSFCHistory(layerName, previousText, text);
+            }
+            rec.ownScriptText = ownScriptText;
+            rec.injRecsSignal.set(injRecs);
             rec.loadCompletion.set(true);
             fluid.log("**** SFC completion for layer ", layerName);
 
@@ -817,6 +843,7 @@ const fluidViewScope = function (fluid) {
      * @property {Signal} textSignal - A signal containing the SFC's text content or an "unavailable" placeholder.
      * @property {Signal} injRecsSignal - A signal containing the injection records for the SFC.
      * @property {Map<Document, Effect>} docInjectEffects - A map of document-specific injection effects.
+     * @property {String} [ownScriptText] - The text of the script defining the SFC's own layer when last parsed
      */
 
     /** @type {Object<String, SFCRecord>} */
@@ -1730,9 +1757,25 @@ const fluidViewScope = function (fluid) {
 
         const filteredTree = !fluid.isUnavailable(selfEditing) && selfEditing ? selfEditingRef.get().site.shadow.that.filterForSelfEditing(activatedTree, self) : activatedTree;
 
+        fluid.assignContainerId(filteredTree, shadow);
         fluid.bindContainer(templateEffects, filteredTree, self);
         return filteredTree;
 
+    };
+
+    fluid.containerIdPrefix = "fl-id-";
+
+    /**
+     * Assign a default id derived from a component's path to the root VNode of its rendered tree, which is rendered onto
+     * its container, so that rendered components are easily distinguished in markup. The id is applied only if the
+     * template does not specify one and the container does not already have one.
+     * @param {VNode} vTree - The root VNode of the component's rendered tree
+     * @param {Shadow} shadow - The shadow of the rendering component
+     */
+    fluid.assignContainerId = function (vTree, shadow) {
+        if (vTree.attrs?.id === undefined) {
+            vTree.defaultAttrs = {...vTree.defaultAttrs, id: fluid.containerIdPrefix + shadow.path};
+        }
     };
 
     fluid.unbindDom = function (/*vnode, element*/) {
@@ -1755,7 +1798,8 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
-     * Cause the attributes of the supplied DOM node to agree with the `attrs` member of the supplied VNode
+     * Cause the attributes of the supplied DOM node to agree with the `attrs` member of the supplied VNode. Any
+     * attributes in its `defaultAttrs` member are applied only if the node does not already have them.
      *
      * @param {VNode} vnode - The VNode whose attributes are to be applied
      * @param {HTMLElement} element - The DOM node whose attributes are to be patched
@@ -1765,13 +1809,18 @@ const fluidViewScope = function (fluid) {
         if (!isRoot) {
             for (let i = element.attributes.length - 1; i >= 0; i--) {
                 const attrName = element.attributes[i].name;
-                if (!(attrName in vnode.attrs) && !attrName.startsWith("data-fl-transient")) {
+                if (!(attrName in (vnode.attrs ?? {})) && !(attrName in (vnode.defaultAttrs ?? {})) && !attrName.startsWith("data-fl-transient")) {
                     fluid.applyAttr(element, attrName, null);
                 }
             }
         }
-        for (const [key, value] of Object.entries(vnode.attrs)) {
+        for (const [key, value] of Object.entries(vnode.attrs ?? {})) {
             if (!fluid.isSignal(value) && element.getAttribute(key) !== value) {
+                fluid.applyAttr(element, key, value);
+            }
+        }
+        for (const [key, value] of Object.entries(vnode.defaultAttrs ?? {})) {
+            if (!element.hasAttribute(key)) {
                 fluid.applyAttr(element, key, value);
             }
         }
@@ -1802,7 +1851,7 @@ const fluidViewScope = function (fluid) {
         if (vnode.text !== undefined && !fluid.isSignal(vnode.text) && vnode.text !== element.nodeValue) {
             element.nodeValue = vnode.text;
         }
-        if (vnode.attrs !== undefined) {
+        if (vnode.attrs !== undefined || vnode.defaultAttrs !== undefined) {
             fluid.patchAttrs(vnode, element, isRoot);
         }
 

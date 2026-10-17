@@ -44,7 +44,8 @@ fluid.def("fluid.editor.sfc", {
             func: (self, text, layerRec) => {
                 console.log("sfc.writeText called with text ", text.substring(0, 100));
                 self.inWrite = true;
-                layerRec.sfcDef.set(text);
+                // Look up the text signal afresh since reading layerRec.sfcDef through the proxy designalises it
+                fluid.readSFC(layerRec.layerName).textSignal.set(text);
                 self.inWrite = false;
             },
             args: ["{self}", "{0}:text", "{fluid.editor}.layerRec"]

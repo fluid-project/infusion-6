@@ -132,7 +132,7 @@ fluid.def("fluid.editorRoot", {
                 if (self.inspectingSite) {
                     const that = self.inspectingSite.shadow.that;
                     const layerName = fluid.peek(that.$layers);
-                    self.menu.inspect.inspecting = false;
+                    self.menu.inspect.active = false;
                     self.inspectingSite = null;
                     // In time go direct to part of definition
                     self.openLayerTab(layerName);
@@ -378,10 +378,12 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
     display: none;
     opacity: 0.5;
     position: absolute;
+    box-sizing: border-box;
     cursor: pointer;
 }
 
-#fl-inspect-overlay {
+/* Highlights which must not intercept the pointer events determining what they highlight */
+#fl-inspect-overlay, #fl-editor-inspect-overlay {
     pointer-events: none;
     cursor: default;
 }

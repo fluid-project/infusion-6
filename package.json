@@ -40,6 +40,7 @@
         "lint": "fluid-lint-all",
         "start": "serve",
         "test": "node tests/test-core/qunit/js/fqunit-cli.js",
+        "test:browser": "node tests/test-core/browser/js/demo-runner.js",
         "hydrate-test": "node tests/framework-tests/server/hydrate-test.js"
     },
     "engines": {
@@ -80,6 +81,7 @@
         "rimraf": "3.0.2",
         "serve": "13.0.2",
         "terser": "5.39.0",
+        "puppeteer": "19.4.0",
         "qunit": "2.21.0",
         "xhr-mock": "2.5.1"
     },
@@ -126,6 +128,9 @@
                 "tests/framework-tests/core/html/FluidPTFTests.html",
                 "tests/framework-tests/from-demos/html/TodoListTests.html",
                 "tests/framework-tests/from-demos/html/TodoListAssignTests.html"
+            ],
+            "browser": [
+                "demo/compose-edit/demo-script.json"
             ]
         }
     }

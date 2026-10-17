@@ -208,32 +208,45 @@ fluid.textDiff = function (vNode, node) {
     return false;
 };
 
+/**
+ * Position an overlay so that it exactly covers some bounds in viewport coordinates. The origin of the overlay's
+ * containing block depends on the positioning and containment of its ancestors - e.g. the docking area applies
+ * `contain: paint` to the body - and so is measured by first placing the overlay at that origin.
+ * @param {HTMLElement} overlay - The absolutely positioned overlay element
+ * @param {Object} bounds - The bounds to cover, holding top, left, width and height in viewport coordinates
+ */
+fluid.positionOverlay = function (overlay, bounds) {
+    overlay.style.top = "0px";
+    overlay.style.left = "0px";
+    overlay.style.display = "block";
+    const origin = overlay.getBoundingClientRect();
+    overlay.style.top = `${bounds.top - origin.top}px`;
+    overlay.style.left = `${bounds.left - origin.left}px`;
+    overlay.style.width = `${bounds.width}px`;
+    overlay.style.height = `${bounds.height}px`;
+};
+
+/**
+ * Display an overlay covering a target element, choosing the overlay for the application if the target lies within
+ * the document's body, and otherwise the one for the editor itself. All other overlays are hidden.
+ * @param {Object<String, HTMLElement>} overlays - The overlays available, keyed by "overlay" for the application and
+ * "selfOverlay" for the editor
+ * @param {HTMLElement|Unavailable|null} target - The element to be covered, or none, in which case all overlays are
+ * hidden
+ * @param {String} colour - The background colour of the overlay
+ */
 fluid.applyOverlay = function (overlays, target, colour) {
-    if (target && !fluid.isUnavailable(target)) {
-        const bounds = fluid.getClippedBounds(target);
-
-        const targetInBody = target.closest("body");
-        const overlay = targetInBody ? overlays.overlay : overlays.selfOverlay;
-
-        let relLeft = 0;
-        if (!targetInBody) {
-            const relative = document.querySelector(".fl-editor-root");
-            const relBounds = relative.getBoundingClientRect();
-            relLeft = relBounds.left + 2; // Somehow we are off by a little ....
+    const available = target && !fluid.isUnavailable(target);
+    const useKey = available ? (target.closest("body") ? "overlay" : "selfOverlay") : null;
+    Object.entries(overlays).forEach(([key, overlay]) => {
+        if (key === useKey) {
+            fluid.positionOverlay(overlay, fluid.getClippedBounds(target));
+            overlay.style.backgroundColor = colour;
+            overlay.style.border = `1px solid ${fluid.darkenColour(colour)}`;
+        } else {
+            overlay.style.display = "none";
         }
-
-        overlay.style.top = `${bounds.top + window.scrollY}px`;
-        overlay.style.left = `${bounds.left + window.scrollX - relLeft}px`;
-        overlay.style.width = `${bounds.width}px`;
-        overlay.style.height = `${bounds.height}px`;
-
-        // Set the overlay's background color and border
-        overlay.style.backgroundColor = colour;
-        overlay.style.border = `1px solid ${fluid.darkenColour(colour)}`;
-        overlay.style.display = "block";
-    } else {
-        Object.values(overlays).map(overlay => overlay.style.display = "none");
-    }
+    });
 };
 
 // Hack this using pseudo-globals for now - in time we perhaps want some kind of auto-mount using live query?

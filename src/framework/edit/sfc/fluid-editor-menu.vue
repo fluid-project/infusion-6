@@ -118,6 +118,7 @@ fluid.def("fluid.editor.menu.inspect", {
 </div>`,
     inspectEffect: "$effect:fluid.inspect.effect({self}, {self}.active, {global}.document)",
     mouseMove: "$method:fluid.inspect.mouseMove({self}, {0}:event, {editorRoot})",
+    pageClick: "$method:fluid.inspect.pageClick({0}:event, {editorRoot})",
     click: "$method:fluid.clickMagic({inspect}, {selfEdit}, 0)",
 
     $variety: "frameworkAux"
@@ -138,14 +139,32 @@ fluid.inspect.mouseMove = function (self, event, editorRoot) {
     editorRoot.inspectingSite = useShadow ? {shadow: useShadow} : null;
 };
 
+/**
+ * Open the layer of the component being inspected in the editor on a click within the application. The inspect overlay
+ * does not receive pointer events, so that the component beneath it can be found, and so the click is intercepted
+ * here, during capture, before it can reach the application.
+ * @param {MouseEvent} event - The click event
+ * @param {fluid.editorRoot} editorRoot - The editor root, whose `inspectingSite` holds any component being inspected
+ */
+fluid.inspect.pageClick = function (event, editorRoot) {
+    if (editorRoot.inspectingSite && event.target.closest("body")) {
+        event.preventDefault();
+        event.stopPropagation();
+        editorRoot.overlayClick();
+    }
+};
+
 fluid.inspect.effect = function (self, inspecting, document) {
     const listener = self.mouseMove;
+    const clickListener = self.pageClick;
     if (inspecting) {
         document.addEventListener("mousemove", listener);
+        document.addEventListener("click", clickListener, true);
     } else {
         // TODO: Not bound to anything
         self.inspectTarget = null;
         document.removeEventListener("mousemove", listener);
+        document.removeEventListener("click", clickListener, true);
     }
 };
 

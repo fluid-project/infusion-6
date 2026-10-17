@@ -1697,6 +1697,8 @@ const $fluidScope = function (fluid) {
      * @property {Object} [newValue] - The updated value of the layer
      * @property {Object} [oldStore] - The value of the layer store before the update
      * @property {Object} [newStore] - The value of the layer store after the update
+     * @property {String} [oldText] - For an edit to an SFC which did not rewrite its layer, the SFC's previous text
+     * @property {String} [newText] - For an edit to an SFC which did not rewrite its layer, the SFC's updated text
      */
 
     /**

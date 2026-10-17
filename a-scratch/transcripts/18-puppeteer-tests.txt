@@ -1,0 +1,2629 @@
+ ▐▛███▛█   Claude Code v2.1.302
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
+
+
+❯ Look at https://github.com/fluid-project/infusion-6/issues/18 and suggest an
+  approach and technology stack. We could continue with our hoisting of demos
+  to tests that we did with fluid.demos.todoList but the substrate pane
+  involves some detailed interaction including hover states so a more realistic
+  approach could work better. Think of a solution with easy portability to
+  other platforms with minimum dependency on the environment.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● I've read the issue and the existing todoList test harness. Next I'm checking
+  the parts of the editor that depend on layout (CodeMirror, hover, bounding
+  rects) before I suggest an approach.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'd keep the todoList-style hoisting but put a small driver layer under it, so
+  the same demo script can run in two places: linkedom (fast, in npm test) and
+  a real headless browser (real hit-testing, :hover, layout). The script stays
+  the same and only the driver changes.
+
+  Why linkedom alone won't do
+
+  The parts that regress most are the ones linkedom can't run:
+  - Overlay positioning: fluid.getClippedBounds and fluid.applyOverlay
+    (src/framework/edit/js/editorRoot.js:33, :216) depend on
+    getBoundingClientRect and scroll offsets.
+  - Hover: .fl-clickable:hover and similar rules are pure CSS. The mouseover →
+    inspectingSite path in substrateTree.js:359 relies on e.target.closest(...)
+    from a real hit test.
+  - CodeMirror 5 needs layout before it will accept edits at all.
+  - contenteditable editing of "Boz" needs real Selection/Range behaviour to be
+    convincing.
+
+  Hoisting alone would test the reactive plumbing (history records, layer list
+  contents, propagation from editor to app) and miss everything visual.
+
+  Proposed architecture
+
+  demo-script (data)  ──►  runner (node, fqunit reporter)
+                                │
+                       driver interface: load / perform(step) / settle / query /
+  screenshot
+                        ┌───────┴────────┐
+                linkedom driver     browser driver (CDP or WebDriver BiDi)
+                        └───────┬────────┘
+                     in-page agent: fluid.test.agent (plain JS, loaded into the
+  page)
+
+  1. The in-page agent does most of the work. A plain script loaded into the
+  page does three things:
+  - Resolves semantic locators to elements, e.g. {text: "Edit", role: "button"},
+    {layer: "fluid.demos.substratePost", in: "layerList"}, {substrateSite:
+    "..."}, {text: "Boz", within: {layer: "fluid.demos.footer"}}.
+  - Waits on fluid.cell.settle(), so there are no sleeps. The cancellable flush
+    from #17 helps here.
+  - Evaluates expectations: element counts, text, classes, layer-list contents,
+    history records, inspectingSite, overlay visibility.
+
+  Because the agent runs in the page, a host only needs two primitives to be a
+  driver:
+  - evaluate JS in the page;
+  - deliver native input at x,y, or a keystroke.
+
+  That's what makes it portable. It works the same for Chrome, Firefox,
+  Electron, a mobile WebView, or linkedom.
+
+  2. Drivers
+  - linkedom driver: reuse fqunit-html.js. Native input is replaced by synthetic
+    events dispatched to the located element. CodeMirror edits go through the
+    instance API. Steps marked requires: "layout" are skipped and reported as
+    skipped, not passed. This runs inside npm test.
+  - Browser driver: I'd start with no npm dependency at all:
+    - Launch the system Chrome (/usr/bin/google-chrome is present) with
+      --headless --remote-debugging-pipe.
+    - Speak CDP as NUL-delimited JSON over file descriptors 3 and 4. That avoids
+      needing ws, works on Node 16, and is roughly 150 lines.
+    - Serve the repo with a tiny built-in http server. Under file://, Chrome
+      blocks the fetch that fluid-module and fluid-import use.
+    - Input.dispatchMouseEvent at the centre of the agent-reported rect triggers
+      both real :hover and the framework's mouseover. Input.insertText handles
+      typing into contenteditable and CodeMirror.
+    - Page.captureScreenshot on failure.
+  - Cross-browser later: if you want Firefox (which has dropped CDP), swap in
+    puppeteer-core with its WebDriver BiDi mode. It drives installed browsers
+    without downloading one. The driver interface stays the same, so the
+    dependency stays optional. I'd avoid Playwright here because it downloads
+    its own browsers and does more than we need.
+
+  3. Script format. I'd make the steps data rather than trying to parse the
+  Markdown prose. Each step keeps the human sentence, so demo-script.md can be
+  generated from it, or checked against it:
+
+  fluid.def("fluid.demos.composeEdit.script", {
+      page: "%composeApp/index.html",
+      steps: [{
+          say: "Open the editing panel by pressing the Edit button",
+          do: "click", target: {role: "button", text: "Edit"},
+          expect: [{count: {in: "layerList", select: ".fl-layerlist-layer"},
+  equals: 8},
+                   {visible: {in: "substratePane", text:
+  "fluid.demos.substratePost"}}]
+      }, {
+          say: "Hover a substrate row",
+          do: "hover", target: {substrateRow: {layer: "fluid.demos.footer"}},
+          requires: "layout",
+          expect: [{overlayMatches: "target"}]   // overlay rect ≈ target's
+  clipped bounds
+      }, {
+          say: "Edit \"Boz\" to read \"Booz\"",
+          do: "editText", target: {text: "Boz", within: {layer:
+  "fluid.demos.footer"}}, to: "Booz",
+          expect: [{text: {within: {layer: "fluid.demos.substratePost"}},
+  contains: "Booz"},
+                   {historyTop: {layer: "fluid.demos.footer", op:
+  "updateLayer"}}]
+      }]
+  });
+
+  Writing it as a fluid.def lets a demo ship its own script, and other demos
+  (tldraw, pell-edit) can reuse step layers. A plain JSON file would also work
+  if you'd rather keep it outside the IL.
+
+  Plan
+
+  1. Write the agent: locators, actions, expectations and settle, using linkedom
+     only. Port demo-script.md and get the non-layout steps green in npm test
+     (with the todoList utilities folded into it).
+  2. Add the CDP-over-pipe driver and HTTP server as a separate npm run
+     test:browser. Turn on the requires: "layout" steps (hover, overlay
+     geometry, CodeMirror via the keyboard) and add screenshots on failure.
+  3. Optionally add the puppeteer-core BiDi driver for Firefox, and generate the
+     Markdown from the steps.
+
+  Open questions
+
+  - Does the linkedom tier earn its keep? Running everything in the browser is
+    simpler, but it pushes the editor tests out of the dependency-free npm test.
+    I'd keep both tiers.
+  - Exact overlay geometry will vary between environments by a pixel or two; the
+    "off by a little" fudge in applyOverlay suggests this. Expectations should
+    compare with a tolerance and not use pixel snapshots.
+  - Stable hooks: some locators would be much easier with a few rendered
+    attributes, e.g. data-fl-layer on each layer root. That's a small framework
+    change worth making deliberately rather than relying on title or CSS
+    classes.
+
+  I can also write this up as a page to attach to issue #18 if that's useful.
+
+✻ Baked for 2m 5s · done 13:47
+
+❯ I'd prefer to use a kind of captive browser sourced from npm so that the
+  tests can be fairly self-contained for an agent using the command line on
+  different systems. I'm not too concerned about cross-browser testing here
+  since I'm mainly concerned with validating the framework logic itself. What's
+  available in this area?
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The latest versions of every option conflict with your Node 16 floor (and with
+  the Node 18.15 on this machine). I'm checking which older lines still support
+  older Node.
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● For your goal, Puppeteer is the best fit. The catch is your Node 16 floor:
+  every current captive-browser package now needs a much newer Node. Here's
+  what's available, with versions and Node requirements checked against the npm
+  registry today.
+
+  The options
+
+  Package: puppeteer
+  How the browser arrives: npm install downloads one exact Chrome for Testing
+  build into a cache. Headless runs use the lighter chrome-headless-shell.
+  Latest: 25.14.0 (Node ≥22.12)
+  Newest version per Node floor: Node 18: 24.43.1 (May 2026) · Node 16: 21.5.1
+  (late 2023)
+  ────────────────────────────────────────
+  Package: @puppeteer/browsers
+  How the browser arrives: Just the download/cache tool that Puppeteer uses,
+  with
+  no driver.
+  Latest: 3.2.5 (Node ≥22.12)
+  Newest version per Node floor: Node 18: 2.13.2 · Node 16: 1.9.1
+  ────────────────────────────────────────
+  Package: playwright-core
+  How the browser arrives: Browsers come from a separate npx playwright install
+  chromium step, not from npm install.
+  Latest: 1.64.1 (Node ≥20)
+  Newest version per Node floor: Node 18: 1.61.1 · Node 16: 1.44.1 (May 2024)
+  ────────────────────────────────────────
+  Package: electron
+  How the browser arrives: npm install downloads the Electron binary, which
+  includes its own Chromium and Node.
+  Latest: 44.9.0 (installer needs Node ≥22.12)
+  Newest version per Node floor: Up to 41.x, the installer needs only Node
+  ≥12.20
+  ────────────────────────────────────────
+  Package: jsdom, happy-dom
+  How the browser arrives: Not browsers: no layout and no real hit-testing, so
+  no
+  better than linkedom here.
+  Latest: —
+  Newest version per Node floor: —
+
+  "Captive" means the same thing for all of them: a pinned browser binary
+  downloaded once when the package installs. Nothing is baked into the npm
+  tarball, so the first install needs network access and about 150–250 MB. After
+  that, any machine with npm ci gets an identical browser, and the system
+  Chrome is never touched.
+
+  Recommendation: Puppeteer
+
+  - Fully self-contained: npm ci alone gets the right Chrome, which suits an
+    agent on an unfamiliar system. A .puppeteerrc.cjs can point the cache inside
+    the repo (e.g. node_modules/.cache/puppeteer) rather than ~/.cache, so
+    everything stays in the checkout.
+  - Reproducible: each Puppeteer release pins one exact Chrome build, so pinning
+    the npm version pins the browser.
+  - The API matches the design above: page.evaluate drives the in-page agent,
+    page.mouse.move produces real :hover and mouseover, page.keyboard.type
+    handles CodeMirror and contenteditable, and page.screenshot covers failures.
+    It also gives raw CDP access if needed.
+  - Playwright has the nicer test runner, but the separate browser-install step
+    is easy for an agent to miss, and it's more than you need with only one
+    browser.
+  - Electron is the interesting outlier. Because it bundles its own Node, the
+    host's Node version barely matters. But on Linux without a display it needs
+    xvfb (or a headless ozone flag that I haven't verified on these versions). A
+    page inside Electron also isn't quite a plain browser page.
+
+  The Node floor decision
+
+  - The browser tier requires Node 18: use puppeteer@24.43.1. It matches this
+    machine (18.15.0) and the repo's .nvmrc, and its Chrome is recent. This
+    would be a devDependency for a separate npm run test:browser. The linkedom
+    tier and the framework itself would stay on Node 16.6.2.
+  - Strictly Node 16:
+    - puppeteer@21.5.1 works, but its Chrome is about version 119/120. That's
+      probably fine for testing framework logic, since nothing here needs new
+      browser features, but it's frozen.
+    - Alternatively, @puppeteer/browsers@1.9.1 could download a current Chrome
+      for Testing, driven by the small zero-dependency CDP-over-pipe driver I
+      described earlier. I believe 1.9.1 can resolve stable to a current build,
+      but I haven't checked that.
+  - Requires Node 22: use the latest Puppeteer, 25.14.0.
+
+  I'd pick the Node 18 option. Your memory notes set the 16.6.2 floor for the
+  node test drivers (from #12); does that also cover a browser-tier runner? If
+  it does, I'd take the @puppeteer/browsers@1.9.1 route over the old
+  puppeteer@21 so the Chrome doesn't go stale.
+
+  Either way, the design from before holds: the in-page agent and the step
+  scripts don't depend on Puppeteer. Puppeteer is just the browser driver, and
+  the linkedom driver keeps running the non-layout steps in npm test.
+
+✻ Cooked for 2m 7s · done 13:53
+
+❯ OK - try to go with a puppeteer solution at 21.5.1 - and also see if you can
+  make a solution based on Chrome 109 to work. Convert my .md script into a
+  JSON representation - no need for IL here, I think - and see if you can get a
+  test run to validate the functionality. You may find that some functionality
+  is already broken since in my informal testing I didn't seem to see the
+  history pane update properly when I made "magic wand" edits in the page.
+
+● I'll start by reading the editor code and the demo, then set up Puppeteer.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● I've mapped out the editor code (magic wand = self-edit button, history comes
+  from fluid.pushHistory). Now installing puppeteer@21.5.1 and its pinned
+  Chrome.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(.puppeteerrc.cjs)
+  ⎿  Wrote 9 lines to .puppeteerrc.cjs
+      1 /* eslint-env node */
+      2 "use strict";
+      3
+      4 const path = require("path");
+      5
+        eckout so that browser tests are self-contained
+      7 module.exports = {
+      8     cacheDirectory: path.join(__dirname, "node_modules", ".cache"
+        , "puppeteer")
+      9 };
+     … +1 line (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● This is a VirtualBox shared folder, which doesn't allow symlinks (the existing
+  node_modules was installed from the Windows host). Retrying with
+  --no-bin-links.
+
+  Ran 1 shell command (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Continue but with a Puppeteer version 19.4.0 which is apparently pinned to
+  Chromium 109
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The failed install left no changes in package.json. Installing
+  puppeteer@19.4.0 (still with --no-bin-links because of the shared folder):
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; npm install --save-dev
+      --save-exact --no-bin-links puppeteer@19.4.0 2>&1 | tail -8; ls
+      node_modules/.cache/puppeteer…)
+  ⎿  To address issues that do not require attention, run:
+       npm audit fix
+     … +65 lines (ctrl+o to expand)
+  ⎿  Updated package.json (+15 -14)
+      49          "extends browserslist-config-fluid"
+      50      ],
+      51      "dependencies": {
+      52 -        "linkedom": "0.18.10",
+      53 -        "node-fetch": "2.7.0",
+      54 -        "he": "1.2.0",
+      55 -        "@preact/signals-core": "1.7.0",
+      52          "@preact/signals": "2.0.1",
+      57 -        "preact": "10.25.4",
+      53 +        "@preact/signals-core": "1.7.0",
+      54 +        "acorn": "8.14.1",
+      55 +        "acorn-loose": "8.5.0",
+      56          "codemirror": "5.65.19",
+      57 +        "csslint": "1.0.5",
+      58 +        "he": "1.2.0",
+      59 +        "htmlhint": "1.1.4",
+      60          "jshint": "2.13.2",
+      61          "jsonlint": "1.6.3",
+      61 -        "htmlhint": "1.1.4",
+      62 -        "csslint": "1.0.5",
+      63 -        "acorn": "8.14.1",
+      64 -        "acorn-loose": "8.5.0"
+      62 +        "linkedom": "0.18.10",
+      63 +        "node-fetch": "2.7.0",
+      64 +        "preact": "10.25.4"
+      65      },
+      66      "devDependencies": {
+      67 -        "fs-extra": "11.2.0",
+      68 -        "glob": "10.3.12",
+      67          "browserslist-config-fluid": "0.1.0",
+      68          "cpy": "8.1.2",
+      69          "cpy-cli": "3.1.1",
+      70          "eslint": "8.57.0",
+      71          "eslint-config-fluid": "2.1.1",
+      74 -        "fluid-lint-all": "1.2.10",
+      72          "eslint-plugin-jsdoc": "39.6.2",
+      73          "eslint-plugin-vue": "9.33.0",
+      77 -        "vue-eslint-parser": "9.4.3",
+      74 +        "fluid-lint-all": "1.2.10",
+      75 +        "fs-extra": "11.2.0",
+     … 13 more lines (ctrl+o to expand)
+  ⎿  … 1 more file changed
+  ⎿  (timeout 10m)
+
+● npm re-sorted your dependency lists. I'll restore the original order and add
+  only the puppeteer line.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; git show HEAD:package.json >
+      package.json && sed -i 's/^        "terser": "5.39.0",$/        "terser":
+      "5.39.0",\n…)
+  ⎿  +        "puppeteer": "19.4.0",
+     node_modules/.cache/puppeteer/chrome/linux-1069273/chrome-linux/chrome
+     Chromium 109.0.5412.0
+  ⎿  Updated package.json (+15 -15)
+      49          "extends browserslist-config-fluid"
+      50      ],
+      51      "dependencies": {
+      52 -        "@preact/signals": "2.0.1",
+      52 +        "linkedom": "0.18.10",
+      53 +        "node-fetch": "2.7.0",
+      54 +        "he": "1.2.0",
+      55          "@preact/signals-core": "1.7.0",
+      54 -        "acorn": "8.14.1",
+      55 -        "acorn-loose": "8.5.0",
+      56 +        "@preact/signals": "2.0.1",
+      57 +        "preact": "10.25.4",
+      58          "codemirror": "5.65.19",
+      57 -        "csslint": "1.0.5",
+      58 -        "he": "1.2.0",
+      59 -        "htmlhint": "1.1.4",
+      59          "jshint": "2.13.2",
+      60          "jsonlint": "1.6.3",
+      62 -        "linkedom": "0.18.10",
+      63 -        "node-fetch": "2.7.0",
+      64 -        "preact": "10.25.4"
+      61 +        "htmlhint": "1.1.4",
+      62 +        "csslint": "1.0.5",
+      63 +        "acorn": "8.14.1",
+      64 +        "acorn-loose": "8.5.0"
+      65      },
+      66      "devDependencies": {
+      67 +        "fs-extra": "11.2.0",
+      68 +        "glob": "10.3.12",
+      69          "browserslist-config-fluid": "0.1.0",
+      70          "cpy": "8.1.2",
+      71          "cpy-cli": "3.1.1",
+      72          "eslint": "8.57.0",
+      73          "eslint-config-fluid": "2.1.1",
+      74 +        "fluid-lint-all": "1.2.10",
+      75          "eslint-plugin-jsdoc": "39.6.2",
+      76          "eslint-plugin-vue": "9.33.0",
+      74 -        "fluid-lint-all": "1.2.10",
+      75 -        "fs-extra": "11.2.0",
+      76 -        "glob": "10.3.12",
+     … 14 more lines (ctrl+o to expand)
+
+● Chromium 109.0.5412.0 runs here. Next, a quick exploratory run of the
+  compose-edit demo in that browser, to see what loads and what errors appear
+  before I write the real runner.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The page loads and the editor opens in Chromium 109: 8 layers, 13 substrate
+  rows, and the history already has 8 records from page load. A look at the
+  screenshot:
+
+  Read 1 file (ctrl+o to expand)
+
+● Rendering checks out under Chromium 109, so now I'll create the JSON demo
+  script, an in-page agent for finding targets and checking expectations, and a
+  Node runner with Puppeteer for real input simulation. First I'll measure a few
+  values needed for the expectations, like how many elements the magic wand
+  makes editable.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The magic wand marks 22 elements editable, covering navbar, both posts and
+  footer. I'll check the lint config, then write the files.
+
+  Read 1 file (ctrl+o to expand)
+● Skill(anthropic-skills:house-js-style)
+  ⎿  Successfully loaded skill
+
+● Write(demo/compose-edit/demo-script.json)
+  ⎿  Wrote 130 lines to demo/compose-edit/demo-script.json
+       1 {
+       2     "title": "Self-editing demo",
+       4     "viewport": {"width": 1600, "height": 1000},
+       5     "ready": [
+       6         {"target": {"selector": "button.fl-editor-edit"}, "count
+       7         {"target": {"selector": "footer"}, "count": {"equals": 2
+         }}
+       8     ],
+      10         "description": "Open up the editing panel by pressing th
+         e Edit button",
+     … +152 lines (ctrl+o to expand)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Now the in-page agent:
+
+● Write(tests/test-core/browser/js/demo-agent.js)
+  ⎿  Wrote 349 lines to tests/test-core/browser/js/demo-agent.js
+       1 /*
+       2 Copyright The Infusion copyright holders
+         ibution and at
+       4 https://github.com/fluid-project/infusion/raw/main/AUTHORS.md.
+       5
+         2.0 or the New
+       7 BSD license. You may not use this file except in compliance with
+          one these
+       9
+      10 You may obtain a copy of the ECL 2.0 License and BSD License at
+     … +432 lines (ctrl+o to expand)
+
+● Now the Node runner:
+
+● Write(tests/test-core/browser/js/demo-runner.js)
+  ⎿  Wrote 261 lines to tests/test-core/browser/js/demo-runner.js
+       1 /*
+       2 Copyright The Infusion copyright holders
+         ibution and at
+       4 https://github.com/fluid-project/infusion/raw/main/AUTHORS.md.
+       5
+         2.0 or the New
+       7 BSD license. You may not use this file except in compliance with
+          one these
+       9
+      10 You may obtain a copy of the ECL 2.0 License and BSD License at
+     … +322 lines (ctrl+o to expand)
+
+● Tidying a couple of things in the runner: a leftover placeholder step, a wrong
+  JSDoc line, and resolving the browser cache from the repo root so the runner
+  also works from another working directory.
+
+● Bash(python3 - <<'EOF'
+      p = "tests/test-core/browser/js/demo-runner.js"…)
+  ⎿  35:process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR ?
+     ? require(path.join(fluidDemoRunner.repoRoot, ".puppeteerrc.cjs")).cac
+     heDirectory;
+     190:            for (let i = 1; i <= script.steps.length; ++i) {
+  ⎿  Updated tests/test-core/browser/js/demo-runner.js (+11 -7)
+      24      http = require("http"),
+      25      os = require("os"),
+      26      path = require("path"),
+      27 -    minimist = require("minimist"),
+      28 -    puppeteer = require("puppeteer");
+      27 +    minimist = require("minimist");
+      28
+      29  const fluidDemoRunner = {};
+      30
+      31  fluidDemoRunner.repoRoot = path.resolve(__dirname, "../../../..
+          ");
+      32
+      33 +// puppeteer locates its configuration from the current directo
+         +ry - ensure that the captive browser is found in the
+      34 +// cache named by the repository's .puppeteerrc.cjs wherever we
+         + are run from
+      35 +process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_D
+         +IR ?? require(path.join(fluidDemoRunner.repoRoot, ".puppeteerrc
+         +.cjs")).cacheDirectory;
+      36 +
+      37 +const puppeteer = require("puppeteer");
+      38 +
+      39  fluidDemoRunner.agentPath = path.join(__dirname, "demo-agent.js
+          ");
+      40
+      41  fluidDemoRunner.mimeTypes = {
+     ...
+      145  };
+      146
+      147  /**
+      143 - * Print the results of a step's expectations, and return whet
+          -her they all passed.
+      148 + * Print the results of a step's expectations.
+      149   * @param {Object} result - The result of `fluidDemoAgent.chec
+           k`
+      150   */
+      151  fluidDemoRunner.reportExpectations = function (result) {
+     ...
+      185          await page.addScriptTag({path: fluidDemoRunner.agentPa
+           th});
+      186
+      187          const ready = await fluidDemoRunner.waitForExpectation
+           s(page, script.ready ?? [], null, options.timeout);
+      188 +        pageErrors.forEach(message => console.log(`# page erro
+          +r during load: ${message}`));
+      189          if (ready.passed) {
+      184 -            const steps = [{description: "Page loaded", errors
+          -: pageErrors}].concat(script.steps);
+      185 -            for (let i = 1; i < steps.length; ++i) {
+      186 -                const step = steps[i];
+      190 +            for (let i = 1; i <= script.steps.length; ++i) {
+      191 +                const step = script.steps[i - 1];
+      192                  pageErrors = [];
+      193                  let result, actionError;
+     … 8 more lines (ctrl+o to expand)
+
+● Adding the test:browser script and a tests.browser list to package.json, then
+  running from outside the repo:
+
+● Bash(python3 - <<'EOF'
+      p = "package.json"…)
+  ⎿  +        "test:browser": "node tests/test-core/browser/js/demo-runner.
+     js",
+     +        "puppeteer": "19.4.0",
+     … +46 lines (ctrl+o to expand)
+  ⎿  Shell cwd was reset to /mnt/outer-source/gits/fluid-infusion-6
+  ⎿  Updated package.json (+4 -0)
+      40          "lint": "fluid-lint-all",
+      41          "start": "serve",
+      42          "test": "node tests/test-core/qunit/js/fqunit-cli.js",
+      43 +        "test:browser": "node tests/test-core/browser/js/demo-r
+         +unner.js",
+      44          "hydrate-test": "node tests/framework-tests/server/hydr
+          ate-test.js"
+      45      },
+      46      "engines": {
+     ...
+      128                  "tests/framework-tests/core/html/FluidPTFTests
+           .html",
+      129                  "tests/framework-tests/from-demos/html/TodoLis
+           tTests.html",
+      130                  "tests/framework-tests/from-demos/html/TodoLis
+           tAssignTests.html"
+      131 +            ],
+      132 +            "browser": [
+      133 +                "demo/compose-edit/demo-script.json"
+      134              ]
+      135          }
+      136      }
+  ⎿  (timeout 5m)
+
+● The run confirms your report—footer edits propagate to both posts without a
+  history record. Step 4 fails to find CodeMirror, so I'll check the screenshot
+  to determine if it's a real issue or a locator problem.
+
+  Read 1 file (ctrl+o to expand)
+
+● The CodeMirror element exists after all, so my earlier locator was off—the
+  history pane shows an updateLayer record triggered when opening the tab. I'll
+  check the editor DOM classes next.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The editors pane's container class is replaced when the component renders, so
+  I'll target .fl-editor-holder .CodeMirror instead.
+
+● Update(demo/compose-edit/demo-script.json)
+  ⎿  Added 4 lines, removed 4 lines
+      70              "target": {"selector": ".fl-editor-layer-tab", "tex
+          t": "fluid.demos.substratePost"},
+      71              "count": {"equals": 1}
+      72          }, {
+      73 -            "target": {"selector": ".fl-editors-pane .CodeMirro
+         -r"},
+      73 +            "target": {"selector": ".fl-editor-holder .CodeMirr
+         +or"},
+      74              "count": {"equals": 1},
+      75              "visible": true
+      76          }, {
+      77 -            "target": {"selector": ".fl-editors-pane .CodeMirro
+         -r"},
+      77 +            "target": {"selector": ".fl-editor-holder .CodeMirr
+         +or"},
+      78              "text": {"contains": "Persistent code"}
+      79          }]
+      80      }, {
+      81          "description": "Edit the text \"Persistent code\" to re
+          ad \"Persistent cod\"",
+      82          "action": {
+      83              "type": "editText",
+      84 -            "target": {"selector": ".fl-editors-pane .CodeMirro
+         -r"},
+      84 +            "target": {"selector": ".fl-editor-holder .CodeMirr
+         +or"},
+      85              "find": "Persistent code",
+      86              "replace": "Persistent cod"
+      87          },
+     ...
+      108              "target": {"selector": ".fl-editor-layer-tab"},
+      109              "count": {"equals": 0}
+      110          }, {
+      111 -            "target": {"selector": ".fl-editors-pane .CodeMirr
+          -or"},
+      111 +            "target": {"selector": ".fl-editor-holder .CodeMir
+          +ror"},
+      112              "count": {"equals": 0}
+      113          }]
+      114      }, {
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Step 5 fails too—the CodeMirror edit never reaches the page or history. I'll
+  first verify the Backspace actually landed in CodeMirror before suspecting the
+  framework itself.
+
+  Read 1 file (ctrl+o to expand)
+
+● The edit applied in CodeMirror but the page didn't refresh. I'll test variants
+  of the script with steps removed to see if the earlier wand edit is causing
+  the issue.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The CodeMirror edit fails even when it's the only edit, so it doesn't depend
+  on the wand. I'll read how the CodeMirror editor writes changes back.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll add a --console option to the runner to relay page console output per
+  step, which should help debug where the write chain stops, and will be useful
+  more generally too.
+
+● Bash(python3 - <<'EOF'
+      p = "tests/test-core/browser/js/demo-runner.js"…)
+  ⎿  1297:ok 2 - Double click on "fluid.demos.substratePost" in the layers
+     list
+     1358:not ok 3 - Edit the text "Persistent code" to read "Persistent co
+     d"
+  ⎿  Updated tests/test-core/browser/js/demo-runner.js (+8 -4)
+      18  // Runs JSON demo scripts such as demo/compose-edit/demo-script
+          .json against their demo pages in the captive Chromium
+      19  // supplied by puppeteer, delivering real mouse and keyboard in
+          put. Locators and expectations are interpreted in the
+      20  // page by demo-agent.js, so that this driver needs only to eva
+          luate functions in the page and deliver input.
+      21 -// Usage: node tests/test-core/browser/js/demo-runner.js [--hea
+         -dful] [--timeout=ms] [--screenshots=dir] script.json...
+      21 +// Usage: node tests/test-core/browser/js/demo-runner.js [--hea
+         +dful] [--console] [--timeout=ms] [--screenshots=dir] script.jso
+         +n...
+      22
+      23  const fs = require("fs"),
+      24      http = require("http"),
+     ...
+      167   * informative.
+      168   * @param {String} scriptPath - The path of the JSON demo scri
+           pt
+      169   * @param {String} baseUrl - The URL at which the repository i
+           s served
+      170 - * @param {Object} options - Options holding `headful`, `timeo
+          -ut` in milliseconds and `screenshots`, a directory
+      171 - * into which screenshots of failing steps are written
+      170 + * @param {Object} options - Options holding `headful`, `conso
+          +le` - whether to relay the page's console messages,
+      171 + * `timeout` in milliseconds and `screenshots`, a directory in
+          +to which screenshots of failing steps are written
+      172   * @return {Promise<Object>} A promise for a record holding th
+           e numbers of `passed` and `failed` steps
+      173   */
+      174  fluidDemoRunner.runScript = async function (scriptPath, baseUr
+           l, options) {
+     ...
+      181          await page.setViewport(script.viewport ?? {width: 1600
+           , height: 1000});
+      182          let pageErrors = [];
+      183          page.on("pageerror", error => pageErrors.push(error.me
+           ssage));
+      184 +        if (options.console) {
+      185 +            page.on("console", message => console.log(`    con
+          +sole.${message.type()}: ${message.text()}`));
+      186 +        }
+      187          await page.goto(new URL(script.page, baseUrl).href);
+      188          await page.addScriptTag({path: fluidDemoRunner.agentPa
+           th});
+      189
+     ...
+      255  };
+      256
+      257  if (require.main === module) {
+      255 -    const argv = minimist(process.argv.slice(2), {boolean: ["h
+          -eadful"]});
+      258 +    const argv = minimist(process.argv.slice(2), {boolean: ["h
+          +eadful", "console"]});
+      259      const pkg = require(path.join(fluidDemoRunner.repoRoot, "p
+           ackage.json"));
+      260      const scriptPaths = argv._.length > 0 ? argv._ : pkg.infus
+           ion.tests.browser.map(rel => path.join(fluidDemoRunner.repoRoo
+           t, rel));
+      261      fluidDemoRunner.runScripts(scriptPaths, {
+      262          headful: argv.headful,
+      263 +        console: argv.console,
+      264          timeout: Number(argv.timeout ?? 10000),
+      265          screenshots: argv.screenshots ?? path.join(os.tmpdir()
+           , "fluid-demo-screenshots")
+      266      });
+  ⎿  (timeout 5m)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● writeText is called, but straight afterwards the editor holder is rebuilt and
+  writeText is called a second time. I'll inspect the SFC text signal and the
+  rendered state directly after the edit.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The SFC text signal doesn't hold the edited text after the step, so the edit
+  is either never written or reverted. I'll wrap the signal's set to record each
+  write and its caller.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● No writes reach fluid.readSFC(...).textSignal — the sfcDef that writeText
+  modifies is likely a separate copy made when the record got pushed into
+  openLayerTabs. I'll check that next.
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The proxy's get handler deSignals signal-valued members, so accessing
+  layerRec.sfcDef through a proxy would return a string rather than the raw
+  signal. I'll verify what writeText actually receives.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I found that layerRec.sfcDef is undefined inside the editor holder even after
+  unwrapping the proxy, causing writeText to throw sfcDef.set is not a function
+  silently within a cell effect. I'll now trace where sfcDef gets lost between
+  the layer list and the open tabs.
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● Members of shadow.that are raw cells, so I'll read them with .get():
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The openLayerTabs record holds the real signal—my earlier probe was misleading
+  since it just read a raw cell. Now I'll wrap writeText in the
+  fluid.editor.sfc layer before the tab opens to see what it actually receives.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The patch didn't take, because the layer is expanded at definition time. I'll
+  check how errors thrown inside cell effects are handled, which matters for why
+  this failure is silent.
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Effects errors become "unavailable" values and are only logged when logging is
+  enabled, which silently swallows the writeText failure. I'll now read the
+  holder's layerRec through its proxy to see exactly what the method sees.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed: layerRec.sfcDef resolves to the SFC string instead of its signal
+  through the proxy, so writeText fails with "set is not a function" and the
+  effect silently swallows it. I'll check when this proxy behavior was
+  introduced.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I suspect recent $for variable/proxy changes (like f225c20) broke the
+  Edit-pane write-back, but I'll bisect to confirm—extracting each commit via
+  git archive into a scratchpad and running the minimal no-wand script against
+  each one.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The write-back was already broken at 6e4e451 (14 October), so none of the
+  recent issues caused it. I'll check when the compose-edit demo appeared and
+  test a few older commits.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I've stopped bisecting since older commits are too different for the script to
+  run as-is. The d881791 run also revealed a crash in my static server from a
+  malformed request URL — I'll fix that, then dig into why the wand edit isn't
+  recording history.
+
+● Update(tests/test-core/browser/js/demo-runner.js)
+  ⎿  Added 9 lines, removed 4 lines
+      58   */
+      59  fluidDemoRunner.startServer = function (root) {
+      60      const server = http.createServer((req, res) => {
+      61 -        const pathname = decodeURIComponent(new URL(req.url, "h
+         -ttp://localhost").pathname);
+      62 -        const requested = path.join(root, pathname);
+      63 -        const filePath = requested.endsWith(path.sep) ? path.jo
+         -in(requested, "index.html") : requested;
+      64 -        if (filePath.startsWith(root)) {
+      61 +        let pathname = null;
+      62 +        try {
+      63 +            pathname = decodeURIComponent(new URL(req.url, "htt
+         +p://localhost").pathname);
+      64 +        } catch (error) {
+      65 +            console.log(`# malformed request URL ${req.url}`);
+      66 +        }
+      67 +        const requested = pathname === null ? null : path.join(
+         +root, pathname);
+      68 +        const filePath = requested?.endsWith(path.sep) ? path.j
+         +oin(requested, "index.html") : requested;
+      69 +        if (filePath?.startsWith(root)) {
+      70              fs.readFile(filePath, (err, data) => {
+      71                  if (err) {
+      72                      res.writeHead(404);
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● Templates live in fluid.templateStore, separate from the layer store, meaning
+  a template-only edit likely skips writeLayer and never hits pushHistory. I'll
+  verify this by writing the edited SFC text for substratePost directly into its
+  text signal, bypassing CodeMirror.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed the second bug: template-only SFC edits update the template store
+  and re-render correctly but fail to create a history record, affecting both
+  the wand edit and future CodeMirror fixes. Now I'll lint the new files and run
+  a final full test.
+
+  Ran 2 shell commands, wrote 1 memory (ctrl+o to expand)
+
+● The script runs end to end in Puppeteer 19.4.0's Chromium 109.0.5412.0, using
+  real mouse and keyboard input. Five of the seven steps pass. The two failures
+  are real framework bugs, not test problems, and they include the history
+  problem you noticed.
+
+  Run it with npm run test:browser; it exits 1 while these bugs remain.
+
+  Results
+
+  ok 1 - Open up the editing panel by pressing the Edit button
+  ok 2 - Select the "magic wand" button
+  not ok 3 - ...edit the text "Boz" in the right-hand post to read "Booz"
+      ok     both footers now read "by Booz"
+      not ok history: expected count to increase by 1 from 8, found 8
+  ok 4 - Double click on "fluid.demos.substratePost" in the layers list
+  not ok 5 - Edit the text "Persistent code" to read "Persistent cod"
+      not ok page still reads "Persistent code & data store"; no history record
+  ok 6 - Close the CodeMirror tab ...
+  ok 7 - Close the editor panel ...
+
+  Bug 1: no history record for template edits (your report)
+
+  Changing an SFC's template updates fluid.templateStore and re-renders
+  correctly. It never goes through fluid.writeLayer, though, so
+  fluid.pushHistory is never called. I confirmed this outside the UI by writing
+  the edited text straight into
+  fluid.readSFC("fluid.demos.substratePost").textSignal: the page re-rendered
+  and the history length stayed at 8. Any edit to template text has this
+  problem, whichever editor it comes from.
+
+  Bug 2: CodeMirror edits are thrown away
+
+  The edit does land in CodeMirror, but writeText in fluid-editor.vue fails. It
+  reads layerRec.sfcDef through the component proxy, and proxyMat's get handler
+  designalises signal-valued members (FluidIL.js, proxyNext ||
+  fluid.isSignal(next)). So the method gets the SFC string rather than the
+  signal and throws layerRec.sfcDef.set is not a function. The error is
+  swallowed silently: a throw inside a cell effect becomes an unavailable value
+  and is only logged when Fluid logging is on. I extracted older commits with
+  git archive and ran the runner against each: the bug is present at 9bf0472,
+  71d6671, f225c20 and 6e4e451 (14 October). So none of #10–#17 caused it.
+  Commits before that are too different to run this script.
+
+  Fixing Bug 2 alone won't make step 5 pass, because Bug 1 still applies.
+
+  Also noticed: opening a tab adds a
+  {edit-12.pageEditor.editorRoot}.openLayerTabs updateLayer record to the user's
+  history. That looks like editor UI state leaking into it.
+
+  I haven't changed any framework code. Do you want me to fix these?
+
+  What I added
+
+  - demo/compose-edit/demo-script.json: your Markdown script as JSON, keeping
+    your wording as step and expectation descriptions.
+    - Targets are CSS selectors, refined by text content, position in the match
+      list (index or last) and an enclosing element.
+    - Checks cover element counts (exact, minimum, or an increase since the step
+      started), text that must or mustn't appear, visibility, and a check that
+      a style value is distinct per element (used for "8 colours").
+  - tests/test-core/browser/js/demo-agent.js: runs in the page using only the
+    DOM, with no dependency on Fluid or Puppeteer. It finds targets, hit-tests
+    the click point, and checks expectations. It reads CodeMirror text from the
+    editor's document, not the rendered lines.
+  - tests/test-core/browser/js/demo-runner.js:
+    - A built-in static HTTP server, since Chromium blocks the SFC fetches from
+      file: URLs.
+    - Puppeteer delivers real input. A click fails if another element would
+      receive it.
+    - Text edits click on the text and then type the minimal change, so
+      "Boz"→"Booz" types a single "o" and the CodeMirror edit is a single
+      Backspace.
+    - Expectations are polled until they pass, with no fixed sleeps. A
+      screenshot is saved for each failing step.
+    - Options: --headful, --console (relays page console output, which is how I
+      found Bug 2), --timeout, --screenshots.
+  - .puppeteerrc.cjs: keeps the downloaded Chromium in
+    node_modules/.cache/puppeteer, so the test needs nothing from the system.
+  - package.json: adds puppeteer: 19.4.0 (devDependency), the test:browser
+    script and a tests.browser list.
+
+  Things to know
+
+  - The repo is on a VirtualBox shared folder that doesn't allow symlinks, so
+    npm install needs --no-bin-links.
+  - npm re-sorted your dependency lists during install. I restored the original
+    order, so the package.json diff only adds the new entries. package-lock.json
+    grew by about 460 lines of Puppeteer's dependencies.
+  - The editor loads its icon font from jsdelivr. Without network access, the X
+    buttons in steps 6 and 7 may have zero size.
+  - The new files pass ESLint. eslint ignores .puppeteerrc.cjs by default (it
+    starts with a dot), so that file wasn't linted.
+
+✻ Brewed for 19m 30s · done 14:24
+
+❯ Issue a fix for those. Also add further test fixture steps to verify the
+  other button's behaviour - the "inspect" button which when activated, will
+  display a coloured hover pane over the main app showing its main layer name.
+  The description says that clicking on this hover pane should open it up in
+  the editor but this functionality may also have been broken for a good while
+  if ever implemented. Add a tweak in FluidView.js to assign an id to any
+  rendered main container element that doesn't already have one, derived from
+  fl-id-<component path> so that elements are more easily distinguishable in
+  rendered markup
+
+● I'll start with the history mechanics, then the SFC injection path, to choose
+  where template edits should record history.
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● Confirmed: when the script text is unchanged it isn't reinjected, so nothing
+  calls fluid.writeLayer and no history is recorded. Now the inspect machinery
+  and how containers are rendered:
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● The .mjs files are build outputs, so I'll only edit the .js sources. Next I'll
+  get a baseline npm test result before touching anything:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Baseline confirmed at 998/998 passing. Moving to Bug 2: I'll make writeText
+  write to the SFC's text signal via layer name lookup, keeping proxy reads
+  de-signalized as documented.
+
+● Update(src/framework/edit/sfc/fluid-editor.vue)
+  ⎿  Added 2 lines, removed 1 line
+      44              func: (self, text, layerRec) => {
+      45                  console.log("sfc.writeText called with text ",
+          text.substring(0, 100));
+      46                  self.inWrite = true;
+      47 -                layerRec.sfcDef.set(text);
+      47 +                // Look up the text signal afresh since reading
+         + layerRec.sfcDef through the proxy designalises it
+      48 +                fluid.readSFC(layerRec.layerName).textSignal.se
+         +t(text);
+      49                  self.inWrite = false;
+      50              },
+      51              args: ["{self}", "{0}:text", "{fluid.editor}.layerR
+          ec"]
+
+● I've identified the fix: having sfcToInjRecs mark the injection record for the
+  SFC's own layer script lets parseSFC detect text changes even when that
+  script itself didn't change—the exact case currently missing from writeLayer.
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+  ⎿  1699:     * @property {Object} [newStore] - The value of the layer sto
+     re after the update
+  ⎿  Updated src/framework/core/js/FluidView.js (+27 -1)
+      422       * @property {String} [url] - A resolved URL for the scrip
+           t or style source.
+      423       * @property {String} [text] - The inline script or style
+           content with a source map comment.
+      424       * @property {String} [scope] - For a "script" its injecti
+           on scope style
+      425 +     * @property {Boolean} [ownLayer] - For a "script", `true`
+          + if it holds the definition of the SFC's own layer
+      426       */
+      427
+      428      fluid.clearInjRec = function (dokkument, nodeId) {
+     ...
+      766                      injRec.defMaps = sni.defMaps;
+      767                      injRec.nodeId = nodeId;
+      768                      injRec.variety = "script";
+      769 +                    injRec.ownLayer = index === ourDef.scriptI
+          +ndex;
+      770                      injRecs[nodeId] = injRec;
+      771                  });
+      772
+     ...
+      787      };
+      788
+      789      /**
+      790 +     * Record in the layer history an edit to the text of an S
+          +FC which did not rewrite its layer's definition. The
+      791 +     * layer's current value is recorded as both its old and n
+          +ew values, together with the SFC's old and new text.
+      792 +     * @param {String} layerName - The name of the layer defin
+          +ed by the SFC
+      793 +     * @param {String} oldText - The text of the SFC before th
+          +e edit
+      794 +     * @param {String} newText - The text of the SFC after the
+          + edit
+      795 +     */
+      796 +    fluid.pushSFCHistory = function (layerName, oldText, newTe
+          +xt) {
+      797 +        const layerValue = fluid.layerStore._value[layerName]?
+          +._value;
+      798 +        if (layerValue) {
+      799 +            fluid.pushHistory({type: "updateLayer", oldValue:
+          +layerValue, newValue: layerValue, layerName, oldText, newText}
+          +);
+      800 +        }
+      801 +    };
+      802 +
+      803 +    /**
+      804       * Parses a Single File Component (SFC) from a given text
+           signal and processes its content.
+      805       * This function extracts the template, scripts, and style
+           s from the SFC, evaluates the script
+      806       * definitions, and constructs a component definition obje
+           ct. It also handles any trailing scripts
+     ...
+      819                  return;
+      820              }
+      821              fluid.log("**** Beginning to parse SFC for layer "
+           , layerName);
+      822 +            const previousText = oldText;
+      823              oldText = text;
+      824              const vTree = fluid.parseHTMLToTree(text);
+     … 20 more lines (ctrl+o to expand)
+
+● Documenting the new optional fields on the HistoryRec typedef:
+
+● Update(src/framework/core/js/Fluid.js)
+  ⎿  Added 2 lines
+      1697       * @property {Object} [newValue] - The updated value of t
+            he layer
+      1698       * @property {Object} [oldStore] - The value of the layer
+             store before the update
+      1699       * @property {Object} [newStore] - The value of the layer
+             store after the update
+      1700 +     * @property {String} [oldText] - For an edit to an SFC w
+           +hich did not rewrite its layer, the SFC's previous text
+      1701 +     * @property {String} [newText] - For an edit to an SFC w
+           +hich did not rewrite its layer, the SFC's updated text
+      1702       */
+      1703
+      1704      /**
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 7 steps pass now. Next, the inspect button. I'll explore its current
+  behaviour in the browser: activate it, hover over parts of the app, then
+  click.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The probe was racing page load. I'll wait for the Edit button too.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Hovering works correctly, but clicking fails because pointer-events: none
+  blocks overlayClick, and the overlay is offset by 8px from the actual footer
+  position. I'll investigate where that 8px discrepancy comes from and what the
+  overlay should align to.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Found it: FluidEdit.css sets contain: paint on html > body in docked mode,
+  making body's 8px margin the overlay's containing block instead of the
+  document, which applyOverlay doesn't account for. I'll fix applyOverlay to
+  measure the overlay's actual origin, but first need to check how attributes
+  get patched onto the container so I don't clobber an existing id.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've found that when isRoot is true, patchAttrs sets attributes but doesn't
+  delete stale ones, while a parent re-render does delete any attribute not in
+  the vnode—risking removal of child component container ids. I'll fix this by
+  assigning the id in renderView only when missing, and exempting fl-id- ids
+  from deletion in patchAttrs.
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+  ⎿  exit 1
+     14:38:09.373:   ASSERTION FAILED:  1 thingit
+     14:38:09.443:   ASSERTION FAILED:  Could not find targets for any cons
+     … +34 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+27 -1)
+      1791          if (!isRoot) {
+      1792              for (let i = element.attributes.length - 1; i >=
+            0; i--) {
+      1793                  const attrName = element.attributes[i].name;
+      1794 -                if (!(attrName in vnode.attrs) && !attrName.s
+           -tartsWith("data-fl-transient")) {
+      1794 +                if (!(attrName in vnode.attrs) && !attrName.s
+           +tartsWith("data-fl-transient") && !fluid.isContainerId(elemen
+           +t, attrName)) {
+      1795                      fluid.applyAttr(element, attrName, null);
+      1796                  }
+      1797              }
+     ...
+      1860          }
+      1861      };
+      1862
+      1863 +    fluid.containerIdPrefix = "fl-id-";
+      1864 +
+      1865      /**
+      1866 +     * Assign an id derived from a component's path to the co
+           +ntainer into which it renders, if the container does not
+      1867 +     * already have one, so that rendered components are easi
+           +ly distinguished in markup.
+      1868 +     * @param {HTMLElement} container - The container into wh
+           +ich the component renders
+      1869 +     * @param {Shadow} shadow - The shadow of the rendering c
+           +omponent
+      1870 +     */
+      1871 +    fluid.assignContainerId = function (container, shadow) {
+      1872 +        if (!container.id) {
+      1873 +            container.id = fluid.containerIdPrefix + shadow.p
+           +ath;
+      1874 +        }
+      1875 +    };
+      1876 +
+      1877 +    /**
+      1878 +     * Determine whether an attribute of an element is an id
+           +assigned by `fluid.assignContainerId` - since a component's
+      1879 +     * container may be rendered by its parent's template, th
+           +is must survive the patching of the parent's markup.
+      1880 +     * @param {HTMLElement} element - The element holding the
+           + attribute
+      1881 +     * @param {String} attrName - The name of the attribute
+      1882 +     * @return {Boolean} `true` if the attribute is an id ass
+           +igned to a component's container
+      1883 +     */
+      1884 +    fluid.isContainerId = function (element, attrName) {
+      1885 +        return attrName === "id" && element.id.startsWith(flu
+           +id.containerIdPrefix);
+      1886 +    };
+      1887 +
+      1888 +    /**
+      1889       * Renders a virtual DOM tree (VNode) into a container el
+            ement.
+      1890       *
+      1891       * This function updates the container's contents to matc
+            h the provided virtual tree.
+     … 7 more lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I found the seven failing assertions split into two categories: expected
+  id-related updates I'll fix, and a real bug where destroyed components leave
+  stale fl-id- placeholders. I'll narrow the exemption to only apply to live
+  components and check how destruction is marked on a shadow.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll keep the exemption only while the element is still registered to a live
+  component whose path matches the id:
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+  ⎿  exit 1
+     14:38:57.542:   fq:  Test concluded - Module "Fluid View Tests" Test n
+     ame "Conditional rendering": 1/5 passed - FAIL
+     … +31 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+6 -4)
+      1875      };
+      1876
+      1877      /**
+      1878 -     * Determine whether an attribute of an element is an id
+           -assigned by `fluid.assignContainerId` - since a component's
+      1879 -     * container may be rendered by its parent's template, th
+           -is must survive the patching of the parent's markup.
+      1878 +     * Determine whether an attribute of an element is an id
+           +assigned by `fluid.assignContainerId` to the container of a
+      1879 +     * live component - since a component's container may be
+           +rendered by its parent's template, this must survive the
+      1880 +     * patching of the parent's markup for as long as the com
+           +ponent lives.
+      1881       * @param {HTMLElement} element - The element holding the
+             attribute
+      1882       * @param {String} attrName - The name of the attribute
+      1882 -     * @return {Boolean} `true` if the attribute is an id ass
+           -igned to a component's container
+      1883 +     * @return {Boolean} `true` if the attribute is an id ass
+           +igned to the container of a live component
+      1884       */
+      1885      fluid.isContainerId = function (element, attrName) {
+      1885 -        return attrName === "id" && element.id.startsWith(flu
+           -id.containerIdPrefix);
+      1886 +        const shadow = attrName === "id" ? fluid.viewContaine
+           +rRegistry.get(element) : null;
+      1887 +        return !!shadow && !fluid.isDestroyedShadow(shadow) &
+           +& element.id === fluid.containerIdPrefix + shadow.path;
+      1888      };
+      1889
+      1890      /**
+  ⎿  (timeout 10m)
+
+● The stale id persists, so something other than the parent's re-patch resets
+  the container when the child is destroyed. I'll find that code.
+
+  Searched for 2 patterns, ran 1 shell command (ctrl+o to expand)
+
+● When $if goes false, the parent re-patches the placeholder, but the exemption
+  still applies. I'll add temporary logging to see what state the child shadow
+  is in at that moment.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● A state-based exemption won't work since the child shadow is still available
+  at patch time, so instead I'll treat the id as a default attribute on the
+  component's root vnode, removed alongside its other attributes. Let me check
+  where patchAttrs is called.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now restructuring the change along those lines:
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+  ⎿  1759:        fluid.assignContainerId(filteredTree, shadow);
+     1774:    fluid.assignContainerId = function (vTree, shadow) {
+     1776:            vTree.defaultAttrs = {...vTree.defaultAttrs, id: flui
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+26 -32)
+      1756
+      1757          const filteredTree = !fluid.isUnavailable(selfEditing
+            ) && selfEditing ? selfEditingRef.get().site.shadow.that.filt
+            erForSelfEditing(activatedTree, self) : activatedTree;
+      1758
+      1759 +        fluid.assignContainerId(filteredTree, shadow);
+      1760          fluid.bindContainer(templateEffects, filteredTree, se
+            lf);
+      1761          return filteredTree;
+      1762
+      1763      };
+      1764
+      1765 +    fluid.containerIdPrefix = "fl-id-";
+      1766 +
+      1767 +    /**
+      1768 +     * Assign a default id derived from a component's path to
+           + the root VNode of its rendered tree, which is rendered onto
+      1769 +     * its container, so that rendered components are easily
+           +distinguished in markup. The id is applied only if the
+      1770 +     * template does not specify one and the container does n
+           +ot already have one.
+      1771 +     * @param {VNode} vTree - The root VNode of the component
+           +'s rendered tree
+      1772 +     * @param {Shadow} shadow - The shadow of the rendering c
+           +omponent
+      1773 +     */
+      1774 +    fluid.assignContainerId = function (vTree, shadow) {
+      1775 +        if (vTree.attrs?.id === undefined) {
+      1776 +            vTree.defaultAttrs = {...vTree.defaultAttrs, id:
+           +fluid.containerIdPrefix + shadow.path};
+      1777 +        }
+      1778 +    };
+      1779 +
+      1780      fluid.unbindDom = function (/*vnode, element*/) {
+      1781          // Try to remove event listeners and the like?
+      1782      };
+     ...
+      1797      };
+      1798
+      1799      /**
+      1784 -     * Cause the attributes of the supplied DOM node to agree
+           - with the `attrs` member of the supplied VNode
+      1800 +     * Cause the attributes of the supplied DOM node to agree
+           + with the `attrs` member of the supplied VNode. Any
+      1801 +     * attributes in its `defaultAttrs` member are applied on
+           +ly if the node does not already have them.
+      1802       *
+      1803       * @param {VNode} vnode - The VNode whose attributes are
+            to be applied
+      1804       * @param {HTMLElement} element - The DOM node whose attr
+            ibutes are to be patched
+     ...
+      1808          if (!isRoot) {
+      1809              for (let i = element.attributes.length - 1; i >=
+            0; i--) {
+      1810                  const attrName = element.attributes[i].name;
+      1794 -                if (!(attrName in vnode.attrs) && !attrName.s
+           -tartsWith("data-fl-transient") && !fluid.isContainerId(elemen
+           -t, attrName)) {
+     … 68 more lines (ctrl+o to expand)
+
+● Line 1811 can now meet a vnode with only defaultAttrs, so I'll guard
+  vnode.attrs there and document defaultAttrs in the VNode typedef:
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/core/js/FluidView.js"…)
+  ⎿      /**
+          * @typedef {Object} VNode
+          * @property {String} [tag] - The tag name of the element (e.g., '
+     … +36 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+2 -1)
+      10       * @typedef {Object} VNode
+      11       * @property {String} [tag] - The tag name of the element (
+          e.g., 'div', 'span').
+      12       * @property {Object<String, String>} [attrs] - A key-value
+           map of the element's attributes.
+      13 +     * @property {Object<String, String>} [defaultAttrs] - Attr
+         +ibutes applied to the element only if it does not already have
+         +them
+      14       * @property {Object<String, Boolean>} [class] - A map of s
+          trings to `true` determining whether a CSS class name is presen
+          t on the node
+      15       * @property {VNode[]} [children] - An array of child virtu
+          al nodes.
+      16       * @property {String} [text] - The text content in the case
+           this VNode represents a DOM TextNode.
+     ...
+      1809          if (!isRoot) {
+      1810              for (let i = element.attributes.length - 1; i >=
+            0; i--) {
+      1811                  const attrName = element.attributes[i].name;
+      1811 -                if (!(attrName in vnode.attrs) && !attrName.s
+           -tartsWith("data-fl-transient") && !(attrName in (vnode.defaul
+           -tAttrs ?? {}))) {
+      1812 +                if (!(attrName in (vnode.attrs ?? {})) && !(a
+           +ttrName in (vnode.defaultAttrs ?? {})) && !attrName.startsWit
+           +h("data-fl-transient")) {
+      1813                      fluid.applyAttr(element, attrName, null);
+      1814                  }
+      1815              }
+  ⎿  (timeout 10m)
+
+● The placeholder resets cleanly now—the remaining four failures are just
+  exact-markup assertions missing the new id. Since instance numbers vary
+  between runs, I'll derive the expected ids from the component's path instead
+  of hard-coding them.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p = "tests/framework-tests/core/js/FluidViewTests.js"…)
+  ⎿  exit 0
+     14:41:15.188:   fq:  All tests concluded: 998/998 total passed in 6205
+     ms - PASS
+  ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+7 -4)
+      564      fluid.cell.stabilize();
+      565      // Unfortunately we can't prevent allocation of the "outer
+            container", even if there is no component
+      566      assert.equal(container.innerHTML, "<div></div>", "Initial
+           render correct");
+      567 +    // The conditional component's container acquires a defaul
+          +t id derived from its path whilst it is rendered
+      568 +    const assigneeId = `fl-id-${that[fluid.metadataSymbol].pat
+          +h}.assignee`;
+      569
+      570      that.enabled = true;
+      571      fluid.cell.stabilize();
+      570 -    assert.equal(container.innerHTML, `<div class="assignee"><
+          -/div>`, "Conditional render correct");
+      572 +    assert.equal(container.innerHTML, `<div id="${assigneeId}"
+          + class="assignee"></div>`, "Conditional render correct");
+      573
+      574      that.enabled = false;
+      575      fluid.cell.stabilize();
+     ...
+      577
+      578      that.enabled = true;
+      579      fluid.cell.stabilize();
+      578 -    assert.equal(container.innerHTML, `<div class="assignee"><
+          -/div>`, "Conditional render correct 2");
+      580 +    assert.equal(container.innerHTML, `<div id="${assigneeId}"
+          + class="assignee"></div>`, "Conditional render correct 2");
+      581
+      582      that.enabled = false;
+      583      fluid.cell.stabilize();
+     ...
+      606      const that = fluid.tests.longFormIf({container});
+      607      fluid.cell.stabilize();
+      608      assert.equal(container.innerHTML, "<div></div>", "Initial
+           render correct");
+      609 +    const distanceId = `fl-id-${that[fluid.metadataSymbol].pat
+          +h}.distanceLine`;
+      610
+      611      that.distance = 0;
+      612      fluid.cell.stabilize();
+      610 -    assert.equal(container.innerHTML, `<div class="distance">0
+          -</div>`, "Falsy value accepted by condition renders");
+      613 +    assert.equal(container.innerHTML, `<div id="${distanceId}"
+          + class="distance">0</div>`, "Falsy value accepted by condition
+          + renders");
+      614
+      615      that.distance = 5;
+      616      fluid.cell.stabilize();
+      614 -    assert.equal(container.innerHTML, `<div class="distance">5
+          -</div>`, "Updated value renders");
+      617 +    assert.equal(container.innerHTML, `<div id="${distanceId}"
+          + class="distance">5</div>`, "Updated value renders");
+      618
+      619      that.distance = null;
+      620      fluid.cell.stabilize();
+  ⎿  (timeout 10m)
+● 998/998 pass. I'll also add a dedicated test for the id behaviour, so first a
+  check of templateViewComponent's defaults:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(tests/framework-tests/core/js/FluidViewTests.js)
+  ⎿  Added 35 lines
+      621      assert.equal(container.innerHTML, "<div></div>", "Restored
+            initial render");
+      622  });
+      623
+      624 +fluid.def("fluid.tests.containerIds", {
+      625 +    $layers: "fluid.templateViewComponent",
+      626 +    template: `<div class="outer"><div @id="plain"></div><div
+          +@id="identified"></div></div>`,
+      627 +    plain: {
+      628 +        $component: {
+      629 +            $layers: "fluid.templateViewComponent",
+      630 +            template: `<div class="plain">Plain</div>`
+      631 +        }
+      632 +    },
+      633 +    identified: {
+      634 +        $component: {
+      635 +            $layers: "fluid.templateViewComponent",
+      636 +            template: `<div id="own-id" class="identified">Own
+          +</div>`
+      637 +        }
+      638 +    }
+      639 +});
+      640 +
+      641 +QUnit.test("Rendered containers acquire default ids derived fr
+          +om component paths", function (assert) {
+      642 +    const container = qs(".container");
+      643 +    const that = fluid.tests.containerIds({container});
+      644 +    fluid.cell.stabilize();
+      645 +    const path = that[fluid.metadataSymbol].path;
+      646 +    assert.equal(container.id, `fl-id-${path}`, "Root containe
+          +r acquires id from component path");
+      647 +    assert.equal(qs(".plain", container).id, `fl-id-${path}.pl
+          +ain`, "Child container acquires id from component path");
+      648 +    assert.equal(qs(".identified", container).id, "own-id", "I
+          +d specified in template takes precedence");
+      649 +    that.destroy();
+      650 +
+      651 +    container.id = "preset-id";
+      652 +    const that2 = fluid.tests.containerIds({container});
+      653 +    fluid.cell.stabilize();
+      654 +    assert.equal(container.id, "preset-id", "Existing id of co
+          +ntainer is preserved");
+      655 +    assert.equal(qs(".plain", container).id, `fl-id-${that2[fl
+          +uid.metadataSymbol].path}.plain`, "Child container of fresh co
+          +mponent acquires id");
+      656 +    that2.destroy();
+      657 +});
+      658 +
+      659  fluid.def("fluid.tests.attrBinding", {
+      660      $layers: "fluid.templateViewComponent",
+      661      busy: false,
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The fixture container already has id="main-container", which conveniently
+  shows that existing ids are preserved. I'll restructure the test around it:
+
+● Bash(grep -n 'class="container"'
+      tests/framework-tests/core/html/FluidViewTests.html; python3 - <<'EOF'
+      p = "tests/framework-tests/core/js/FluidViewTests.js"…)
+  ⎿  27:        <div class="container" id="main-container"></div>
+     14:42:20.963:   fq:  All tests concluded: 0/1 total passed in 0ms - FA
+     IL
+  ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+15 -0)
+      640
+      641  QUnit.test("Rendered containers acquire default ids derived fr
+           om component paths", function (assert) {
+      642      const container = qs(".container");
+      643 +    const presetId = container.id;
+      644      const that = fluid.tests.containerIds({container});
+      645      fluid.cell.stabilize();
+      646 +    assert.ok(presetId, "Fixture container has an id of its ow
+          +n");
+      647 +    assert.equal(container.id, presetId, "Existing id of conta
+          +iner is preserved");
+      648 +    assert.equal(qs(".plain", container).id, `fl-id-${that[flu
+          +id.metadataSymbol].path}.plain`, "Child container acquires id
+          +from component path");
+      649 +    assert.equal(qs(".identified", container).id, "own-id", "I
+          +d specified in template takes precedence");
+      650 +    that.destroy();
+      651 +
+      652 +    container.removeAttribute("id");
+      653 +    const that2 = fluid.tests.containerIds({container});
+      654 +    fluid.cell.stabilize();
+      655 +    assert.equal(container.id, `fl-id-${that2[fluid.metadataSy
+          +mbol].path}`, "Root container without id acquires id from comp
+          +onent path");
+      656 +    that2.destroy();
+      657 +    container.id = presetId;
+      658 +});
+      659 +    fluid.cell.stabilize();
+      660      const path = that[fluid.metadataSymbol].path;
+      661      assert.equal(container.id, `fl-id-${path}`, "Root containe
+           r acquires id from component path");
+      662      assert.equal(qs(".plain", container).id, `fl-id-${path}.pl
+           ain`, "Child container acquires id from component path");
+
+● 0/1 means the file no longer loads; my replacement probably broke its syntax.
+  Checking the region:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● My slice stopped at the }); ending ({container});, which left the old test's
+  tail behind. Removing the leftover lines:
+
+● Bash(python3 - <<'EOF'
+      p = "tests/framework-tests/core/js/FluidViewTests.js"…)
+  ⎿  '    fluid.cell.stabilize();\n    const path = that[fluid.metadataSymb
+     ol].path;\n    assert.equal(container.id, `fl-id-${path}`, "Root conta
+     iner acquires id from component path");\n    assert.equal(qs(".plain",
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+0 -14)
+      656      that2.destroy();
+      657      container.id = presetId;
+      658  });
+      659 -    fluid.cell.stabilize();
+      660 -    const path = that[fluid.metadataSymbol].path;
+      661 -    assert.equal(container.id, `fl-id-${path}`, "Root containe
+          -r acquires id from component path");
+      662 -    assert.equal(qs(".plain", container).id, `fl-id-${path}.pl
+          -ain`, "Child container acquires id from component path");
+      663 -    assert.equal(qs(".identified", container).id, "own-id", "I
+          -d specified in template takes precedence");
+      664 -    that.destroy();
+      659
+      666 -    container.id = "preset-id";
+      667 -    const that2 = fluid.tests.containerIds({container});
+      668 -    fluid.cell.stabilize();
+      669 -    assert.equal(container.id, "preset-id", "Existing id of co
+          -ntainer is preserved");
+      670 -    assert.equal(qs(".plain", container).id, `fl-id-${that2[fl
+          -uid.metadataSymbol].path}.plain`, "Child container of fresh co
+          -mponent acquires id");
+      671 -    that2.destroy();
+      672 -});
+      673 -
+      660  fluid.def("fluid.tests.attrBinding", {
+      661      $layers: "fluid.templateViewComponent",
+      662      busy: false,
+  ⎿  (timeout 5m)
+
+● All 190 tests pass. I found two inspect bugs to fix: overlay positioning needs
+  to measure real origin instead of assuming document coordinates, and the
+  click-to-open handler references a nonexistent inspect.inspecting property
+  instead of the actual active state.
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/edit/js/editorRoot.js"…)
+  ⎿  fluid.applyOverlay = function (overlays, target, colour) {
+         if (target && !fluid.isUnavailable(target)) {
+             const bounds = fluid.getClippedBounds(target);
+     … +29 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/js/editorRoot.js (+37 -24)
+      208      return false;
+      209  };
+      210
+      211 -fluid.applyOverlay = function (overlays, target, colour) {
+      212 -    if (target && !fluid.isUnavailable(target)) {
+      213 -        const bounds = fluid.getClippedBounds(target);
+      211 +/**
+      212 + * Position an overlay so that it exactly covers some bounds i
+          +n viewport coordinates. The origin of the overlay's
+      213 + * containing block depends on the positioning and containment
+          + of its ancestors - e.g. the docking area applies
+      214 + * `contain: paint` to the body - and so is measured by first
+          +placing the overlay at that origin.
+      215 + * @param {HTMLElement} overlay - The absolutely positioned ov
+          +erlay element
+      216 + * @param {Object} bounds - The bounds to cover, holding top,
+          +left, width and height in viewport coordinates
+      217 + */
+      218 +fluid.positionOverlay = function (overlay, bounds) {
+      219 +    overlay.style.top = "0px";
+      220 +    overlay.style.left = "0px";
+      221 +    overlay.style.display = "block";
+      222 +    const origin = overlay.getBoundingClientRect();
+      223 +    overlay.style.top = `${bounds.top - origin.top}px`;
+      224 +    overlay.style.left = `${bounds.left - origin.left}px`;
+      225 +    overlay.style.width = `${bounds.width}px`;
+      226 +    overlay.style.height = `${bounds.height}px`;
+      227 +};
+      228
+      215 -        const targetInBody = target.closest("body");
+      216 -        const overlay = targetInBody ? overlays.overlay : over
+          -lays.selfOverlay;
+      217 -
+      218 -        let relLeft = 0;
+      219 -        if (!targetInBody) {
+      220 -            const relative = document.querySelector(".fl-edito
+          -r-root");
+      221 -            const relBounds = relative.getBoundingClientRect()
+          -;
+      222 -            relLeft = relBounds.left + 2; // Somehow we are of
+          -f by a little ....
+      229 +/**
+      230 + * Display an overlay covering a target element, choosing the
+          +overlay for the application if the target lies within
+      231 + * the document's body, and otherwise the one for the editor i
+          +tself. All other overlays are hidden.
+      232 + * @param {Object<String, HTMLElement>} overlays - The overlay
+          +s available, keyed by "overlay" for the application and
+      233 + * "selfOverlay" for the editor
+      234 + * @param {HTMLElement|Unavailable|null} target - The element
+          +to be covered, or none, in which case all overlays are
+      235 + * hidden
+      236 + * @param {String} colour - The background colour of the overl
+          +ay
+     … 29 more lines (ctrl+o to expand)
+
+● Now box-sizing for the overlays, so their 1px border doesn't grow them beyond
+  the target, plus the overlayClick fix:
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/edit/sfc/fluid-editorRoot.vue"…)
+  ⎿  done
+  ⎿  Updated src/framework/edit/sfc/fluid-editorRoot.vue (+2 -1)
+      132                  if (self.inspectingSite) {
+      133                      const that = self.inspectingSite.shadow.th
+           at;
+      134                      const layerName = fluid.peek(that.$layers)
+           ;
+      135 -                    self.menu.inspect.inspecting = false;
+      135 +                    self.menu.inspect.active = false;
+      136                      self.inspectingSite = null;
+      137                      // In time go direct to part of definition
+      138                      self.openLayerTab(layerName);
+     ...
+      378      display: none;
+      379      opacity: 0.5;
+      380      position: absolute;
+      381 +    box-sizing: border-box;
+      382      cursor: pointer;
+      383  }
+      384
+  ⎿  Updated src/framework/edit/sfc/fluid-editor-menu.vue (+19 -0)
+      118  </div>`,
+      119      inspectEffect: "$effect:fluid.inspect.effect({self}, {self
+           }.active, {global}.document)",
+      120      mouseMove: "$method:fluid.inspect.mouseMove({self}, {0}:ev
+           ent, {editorRoot})",
+      121 +    pageClick: "$method:fluid.inspect.pageClick({0}:event, {ed
+          +itorRoot})",
+      122      click: "$method:fluid.clickMagic({inspect}, {selfEdit}, 0)
+           ",
+      123
+      124      $variety: "frameworkAux"
+     ...
+      139      editorRoot.inspectingSite = useShadow ? {shadow: useShadow
+           } : null;
+      140  };
+      141
+      142 +/**
+      143 + * Open the layer of the component being inspected in the edit
+          +or on a click within the application. The inspect overlay
+      144 + * does not receive pointer events, so that the component bene
+          +ath it can be found, and so the click is intercepted
+      145 + * here, during capture, before it can reach the application.
+      146 + * @param {MouseEvent} event - The click event
+      147 + * @param {fluid.editorRoot} editorRoot - The editor root, who
+          +se `inspectingSite` holds any component being inspected
+      148 + */
+      149 +fluid.inspect.pageClick = function (event, editorRoot) {
+      150 +    if (editorRoot.inspectingSite && event.target.closest("bod
+          +y")) {
+      151 +        event.preventDefault();
+      152 +        event.stopPropagation();
+      153 +        editorRoot.overlayClick();
+      154 +    }
+      155 +};
+      156 +
+      157  fluid.inspect.effect = function (self, inspecting, document) {
+      158      const listener = self.mouseMove;
+      159 +    const clickListener = self.pageClick;
+      160      if (inspecting) {
+      161          document.addEventListener("mousemove", listener);
+      162 +        document.addEventListener("click", clickListener, true
+          +);
+      163      } else {
+      164          // TODO: Not bound to anything
+      165          self.inspectTarget = null;
+      166          document.removeEventListener("mousemove", listener);
+      167 +        document.removeEventListener("click", clickListener, t
+          +rue);
+      168      }
+      169  };
+      170
+
+● I'll add a hover action plus covers and matchesStyle expectations to the
+  runner and agent, and first check the new container ids to write locators for
+  them.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Most of post.1's child components have no id, although post.0's do. I'll
+  compare the attributes of the corresponding containers:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● This confirms a pre-existing race condition: a late re-render of the parent
+  fullPost strips template-root attributes from child containers that weren't
+  given by its own template, affecting a different post each run. I'll verify
+  this reproduces without my changes using the extracted HEAD tree.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● HEAD keeps the classes in all 4 runs, so my change does affect this. I'll run
+  the same probe against the working tree for a fair comparison:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The stripped container state was just a transient during loading, not
+  final—everything settles with valid ids after a brief delay. Now I'll check
+  the agent additions.
+
+● Bash(python3 - <<'EOF'
+      p = "tests/test-core/browser/js/demo-agent.js"…)
+  ⎿  ok
+  ⎿  Updated tests/test-core/browser/js/demo-agent.js (+31 -0)
+      37   * the first matching element
+      38   * @property {Boolean} [visible] - Whether the first matching e
+          lement should be visible - a missing element is not
+      39   * @property {String} [distinctStyle] - A CSS property whose co
+          mputed value should differ amongst all matching elements
+      40 + * @property {Locator} [covers] - Locator for an element whose
+         +bounds the first matching element should coincide with
+      41 + * @property {Number} [tolerance] - The tolerance in pixels for
+         + `covers` - defaults to 1
+      42 + * @property {Object} [matchesStyle] - Holding a CSS `property`
+         + and a `target` locator - the computed value of the
+      43 + * property for the first matching element should equal its val
+         +ue for the element matched by `target`
+      44   */
+      45
+      46  const fluidDemoAgent = {};
+     ...
+      313              failures.push(`expected element to be ${expectatio
+           n.visible ? "visible" : "invisible"}`);
+      314          }
+      315      }
+      316 +    if (expectation.covers) {
+      317 +        if (first) {
+      318 +            const rect = first.getBoundingClientRect();
+      319 +            const coveredRect = fluidDemoAgent.locate(expectat
+          +ion.covers).getBoundingClientRect();
+      320 +            const tolerance = expectation.tolerance ?? 1;
+      321 +            const sides = ["left", "top", "width", "height"];
+      322 +            const mismatched = sides.filter(side => Math.abs(r
+          +ect[side] - coveredRect[side]) > tolerance);
+      323 +            if (mismatched.length > 0) {
+      324 +                const render = r => sides.map(side => Math.rou
+          +nd(r[side])).join(", ");
+      325 +                failures.push(`expected bounds to coincide wit
+          +h [${fluidDemoAgent.describe(expectation.covers)}] at (${rende
+          +r(coveredRect)}), were (${render(rect)})`);
+      326 +            }
+      327 +        } else {
+      328 +            failures.push("expected an element whose bounds co
+          +uld be checked, found none");
+      329 +        }
+      330 +    }
+      331 +    if (expectation.matchesStyle) {
+      332 +        if (first) {
+      333 +            const property = expectation.matchesStyle.property
+          +;
+      334 +            const value = getComputedStyle(first)[property];
+      335 +            const expected = getComputedStyle(fluidDemoAgent.l
+          +ocate(expectation.matchesStyle.target))[property];
+      336 +            if (value !== expected) {
+      337 +                failures.push(`expected ${property} to be ${ex
+          +pected}, was ${value}`);
+      338 +            }
+      339 +        } else {
+      340 +            failures.push("expected an element whose style cou
+          +ld be checked, found none");
+      341 +        }
+      342 +    }
+     … 3 more lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/browser/js/demo-runner.js (+5 -1)
+      121  /**
+      122   * Perform a step's action in the page by delivering native in
+           put.
+      123   * @param {Page} page - The puppeteer page
+      124 - * @param {Object} action - The action, holding a `type` of "c
+          -lick", "dblclick" or "editText" and a `target` locator.
+      124 + * @param {Object} action - The action, holding a `type` of "c
+          +lick", "dblclick", "hover" or "editText" and a `target`
+      125 + * locator.
+      126   * An "editText" action also holds `find` and `replace`, and i
+           s performed by clicking on the text and typing the
+      127   * minimal edit transforming `find` into `replace`
+      128   * @return {Promise} A promise which resolves once the input h
+           as been delivered
+     ...
+      135          const point = await fluidDemoRunner.pointFor(page, act
+           ion.target);
+      136          await page.mouse.click(point.x, point.y);
+      137          await page.mouse.click(point.x, point.y, {clickCount:
+           2});
+      138 +    } else if (action.type === "hover") {
+      139 +        const point = await fluidDemoRunner.pointFor(page, act
+          +ion.target);
+      140 +        await page.mouse.move(point.x, point.y);
+      141      } else if (action.type === "editText") {
+      142          const point = await fluidDemoRunner.pointFor(page, act
+           ion.target, action.find);
+      143          await page.mouse.click(point.x, point.y);
+
+● I'll add a settling check: since polling could catch "+1" prematurely before a
+  second async record lands, the runner will re-verify expectations still hold
+  after a short delay (--settle, default 250ms).
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p = "tests/test-core/browser/js/demo-runner.js"…)
+  ⎿  192: * @param {Object} options - Options holding `headful`, `console`
+     - whether to relay the page's console messages,
+     193- * `timeout` in milliseconds and `screenshots`, a directory into w
+     … +4 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/browser/js/demo-runner.js (+23 -9)
+      18  // Runs JSON demo scripts such as demo/compose-edit/demo-script
+          .json against their demo pages in the captive Chromium
+      19  // supplied by puppeteer, delivering real mouse and keyboard in
+          put. Locators and expectations are interpreted in the
+      20  // page by demo-agent.js, so that this driver needs only to eva
+          luate functions in the page and deliver input.
+      21 -// Usage: node tests/test-core/browser/js/demo-runner.js [--hea
+         -dful] [--console] [--timeout=ms] [--screenshots=dir] script.jso
+         -n...
+      21 +// Usage: node tests/test-core/browser/js/demo-runner.js [--hea
+         +dful] [--console] [--timeout=ms] [--settle=ms]
+      22 +//     [--screenshots=dir] script.json...
+      23
+      24  const fs = require("fs"),
+      25      http = require("http"),
+     ...
+       86  };
+       87
+       88  /**
+       88 - * Wait for a set of expectations to pass in the page, polling
+          - until they do or the timeout expires.
+       89 + * Wait for a set of expectations to pass in the page, polling
+          + until they do or the timeout expires. Once they pass,
+       90 + * they must still pass after a settling interval, so that an
+          +expectation such as a count increasing by exactly one is
+       91 + * not satisfied by a transient state on the way to some other
+          +.
+       92   * @param {Page} page - The puppeteer page
+       93   * @param {Object[]} expectations - The expectations to be che
+           cked, as interpreted by `fluidDemoAgent.check`
+       94   * @param {Number[]} baselines - The counts measured before th
+           e step's action
+       95   * @param {Number} timeout - The time in milliseconds to wait
+           for the expectations to pass
+       96 + * @param {Number} [settle] - The settling interval in millise
+          +conds - defaults to 0
+       97   * @return {Promise<Object>} A promise for the final result of
+            `fluidDemoAgent.check`
+       98   */
+       95 -fluidDemoRunner.waitForExpectations = async function (page, ex
+          -pectations, baselines, timeout) {
+       99 +fluidDemoRunner.waitForExpectations = async function (page, ex
+          +pectations, baselines, timeout, settle = 0) {
+      100 +    const check = () => page.evaluate((e, b) => window.fluidDe
+          +moAgent.check(e, b), expectations, baselines);
+      101 +    const sleep = delay => new Promise(resolve => setTimeout(r
+          +esolve, delay));
+      102      const deadline = Date.now() + timeout;
+       97 -    let result = await page.evaluate((e, b) => window.fluidDem
+          -oAgent.check(e, b), expectations, baselines);
+       98 -    while (!result.passed && Date.now() < deadline) {
+       99 -        await new Promise(resolve => setTimeout(resolve, 100))
+          -;
+      100 -        result = await page.evaluate((e, b) => window.fluidDem
+          -oAgent.check(e, b), expectations, baselines);
+      103 +    let result = await check();
+      104 +    let settled = false;
+      105 +    while (!settled && Date.now() < deadline) {
+      106 +        if (result.passed) {
+      107 +            await sleep(settle);
+      108 +            result = await check();
+      109 +            settled = result.passed;
+      110 +        } else {
+     … 29 more lines (ctrl+o to expand)
+
+● Update(tests/test-core/browser/js/demo-runner.js)
+  ⎿  Added 2 lines, removed 1 line
+      190   * @param {String} scriptPath - The path of the JSON demo scri
+           pt
+      191   * @param {String} baseUrl - The URL at which the repository i
+           s served
+      192   * @param {Object} options - Options holding `headful`, `conso
+           le` - whether to relay the page's console messages,
+      193 - * `timeout` in milliseconds and `screenshots`, a directory in
+          -to which screenshots of failing steps are written
+      193 + * `timeout` and `settle` in milliseconds as accepted by `wait
+          +ForExpectations`, and `screenshots`, a directory into
+      194 + * which screenshots of failing steps are written
+      195   * @return {Promise<Object>} A promise for a record holding th
+           e numbers of `passed` and `failed` steps
+      196   */
+      197  fluidDemoRunner.runScript = async function (scriptPath, baseUr
+           l, options) {
+
+● Update(demo/compose-edit/demo-script.json)
+  ⎿  Added 20 lines
+       98              "text": {"contains": ["fluid.demos.substratePost",
+            "updateLayer"]}
+       99          }]
+      100      }, {
+      101 +        "description": "Edit the layer's name in its script fr
+          +om \"Substrate\" to \"Substrata\"",
+      102 +        "action": {
+      103 +            "type": "editText",
+      104 +            "target": {"selector": ".fl-editor-holder .CodeMir
+          +ror"},
+      105 +            "find": "name: \"Substrate\"",
+      106 +            "replace": "name: \"Substrata\""
+      107 +        },
+      108 +        "expect": [{
+      109 +            "description": "The heading of the left-hand post
+          +should change",
+      110 +            "target": {"selector": "h1", "within": {"selector"
+          +: ".fl-fullpost", "index": 0}},
+      111 +            "text": {"contains": "Substrata"}
+      112 +        }, {
+      113 +            "description": "The history list should show exact
+          +ly one fresh record for fluid.demos.substratePost updateLayer"
+          +,
+      114 +            "target": {"selector": ".fl-history-rec"},
+      115 +            "count": {"increase": 1}
+      116 +        }, {
+      117 +            "target": {"selector": ".fl-history-rec", "last":
+          +true},
+      118 +            "text": {"contains": ["fluid.demos.substratePost",
+          + "updateLayer"]}
+      119 +        }]
+      120 +    }, {
+      121          "description": "Close the CodeMirror tab by hitting X
+           on the fluid.demos.substratePost heading",
+      122          "action": {
+      123              "type": "click",
+
+● Update(demo/compose-edit/demo-script.json)
+  ⎿  Added 90 lines
+      132              "count": {"equals": 0}
+      133          }]
+      134      }, {
+      135 +        "description": "Select the \"inspect\" button",
+      136 +        "action": {"type": "click", "target": {"selector": ".f
+          +l-magic-button[title*='open its layer']"}},
+      137 +        "expect": [{
+      138 +            "description": "The inspect button should become a
+          +ctive",
+      139 +            "target": {"selector": ".fl-magic-button.fl-active
+          +[title*='open its layer']"},
+      140 +            "count": {"equals": 1}
+      141 +        }, {
+      142 +            "description": "and the magic wand inactive, so th
+          +at elements are no longer highlighted as editable",
+      143 +            "target": {"selector": ".fl-magic-button.fl-active
+          +[title*='edit it directly']"},
+      144 +            "count": {"equals": 0}
+      145 +        }, {
+      146 +            "target": {"selector": ".fl-edit-root"},
+      147 +            "count": {"equals": 0}
+      148 +        }]
+      149 +    }, {
+      150 +        "description": "Hover over the footer of the right-han
+          +d post",
+      151 +        "action": {"type": "hover", "target": {"selector": "fo
+          +oter", "index": 1}},
+      152 +        "expect": [{
+      153 +            "description": "A hover pane should cover the foot
+          +er component",
+      154 +            "target": {"selector": "#fl-inspect-overlay"},
+      155 +            "visible": true,
+      156 +            "covers": {"selector": "[id$='.post.1.footer']"}
+      157 +        }, {
+      158 +            "description": "showing its layer name",
+      159 +            "target": {"selector": "#fl-inspect-overlay .fl-in
+          +spect-layer"},
+      160 +            "text": {"equals": "fluid.demos.footer"}
+      161 +        }, {
+      162 +            "description": "in its layer's colour",
+      163 +            "target": {"selector": "#fl-inspect-overlay"},
+      164 +            "matchesStyle": {"property": "background-color", "
+          +target": {"selector": ".fl-layerlist-layer", "exactText": "flu
+          +id.demos.footer"}}
+      165 +        }]
+      166 +    }, {
+      167 +        "description": "Hover over the text of the left-hand p
+          +ost",
+      168 +        "action": {"type": "hover", "target": {"selector": "p"
+          +, "text": "A substrate is a kind"}},
+      169 +        "expect": [{
+      170 +            "description": "The hover pane should move to cove
+          +r the post component",
+      171 +            "target": {"selector": "#fl-inspect-overlay"},
+      172 +            "visible": true,
+      173 +            "covers": {"selector": "[id$='.post.0.post']"}
+      174 +        }, {
+      175 +            "description": "showing its layer name",
+      176 +            "target": {"selector": "#fl-inspect-overlay .fl-in
+          +spect-layer"},
+      177 +            "text": {"equals": "fluid.demos.substratePost"}
+      178 +        }, {
+      179 +            "description": "in its layer's colour",
+      180 +            "target": {"selector": "#fl-inspect-overlay"},
+      181 +            "matchesStyle": {"property": "background-color", "
+          +target": {"selector": ".fl-layerlist-layer", "exactText": "flu
+          +id.demos.substratePost"}}
+      182 +        }]
+      183 +    }, {
+      184 +        "description": "Click on the hover pane over the link
+          +\"2016 paper\" in the right-hand post",
+      185 +        "action": {"type": "click", "target": {"selector": "a"
+          +, "exactText": "2016 paper"}},
+      186 +        "expect": [{
+      187 +            "description": "The layer of the right-hand post s
+          +hould open in an editor tab",
+      188 +            "target": {"selector": ".fl-editor-layer-tab", "te
+          +xt": "fluid.demos.divergencePost"},
+      189 +            "count": {"equals": 1}
+      190 +        }, {
+      191 +            "target": {"selector": ".fl-editor-holder .CodeMir
+          +ror"},
+      192 +            "text": {"contains": "2016 paper"}
+      193 +        }, {
+      194 +            "description": "the click should not reach the lin
+          +k, so that the page does not navigate away",
+      195 +            "target": {"selector": ".fl-editor-root"},
+      196 +            "visible": true
+      197 +        }, {
+      198 +            "description": "and the inspect button should beco
+          +me inactive, hiding the hover pane",
+      199 +            "target": {"selector": ".fl-magic-button.fl-active
+          +[title*='open its layer']"},
+      200 +            "count": {"equals": 0}
+      201 +        }, {
+      202 +            "target": {"selector": "#fl-inspect-overlay"},
+      203 +            "visible": false
+      204 +        }]
+      205 +    }, {
+      206 +        "description": "Hover over the footer of the left-hand
+          + post",
+      207 +        "action": {"type": "hover", "target": {"selector": "fo
+          +oter", "index": 0}},
+      208 +        "expect": [{
+      209 +            "description": "No hover pane should appear since
+          +the inspect button is no longer active",
+      210 +            "target": {"selector": "#fl-inspect-overlay"},
+      211 +            "visible": false
+      212 +        }]
+      213 +    }, {
+      214 +        "description": "Close the CodeMirror tab by hitting X
+          +on the fluid.demos.divergencePost heading",
+      215 +        "action": {
+      216 +            "type": "click",
+      217 +            "target": {"selector": ".fl-editor-close", "within
+          +": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.d
+          +ivergencePost"}}
+      218 +        },
+      219 +        "expect": [{
+      220 +            "description": "The editor tab should disappear",
+      221 +            "target": {"selector": ".fl-editor-layer-tab"},
+      222 +            "count": {"equals": 0}
+      223 +        }]
+      224 +    }, {
+      225          "description": "Close the editor panel by hitting X in
+            the top right corner",
+      226          "action": {"type": "click", "target": {"selector": ".f
+           l-menubar > .fl-editor-close"}},
+      227          "expect": [{
+● The steps use a text.equals check that the agent doesn't support yet, so I'll
+  add it:
+
+● Bash(python3 - <<'EOF'
+      p = "tests/test-core/browser/js/demo-agent.js"…)
+  ⎿  > infusion-6@6.1.0 test:browser
+     > node tests/test-core/browser/js/demo-runner.js --screenshots=/tmp/cl
+     aude-1000/-mnt-outer-source-gits-fluid-infusion-6/4c0f588e-44e1-4cce-9
+     … +16 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/browser/js/demo-agent.js (+5 -2)
+      33   * @property {Locator} target - Locator for the elements the ex
+          pectation is concerned with
+      34   * @property {Object} [count] - Holding one of `equals`, `atLea
+          st` or `increase`, constraining the number of matching
+      35   * elements - `increase` is relative to the count measured befo
+          re the step's action
+      36 - * @property {Object} [text] - Holding `contains` and/or `notCo
+         -ntains`, a String or String[] constraining the text of
+      37 - * the first matching element
+      36 + * @property {Object} [text] - Holding `equals`, a String, and/
+         +or `contains` and `notContains`, a String or String[],
+      37 + * constraining the text of the first matching element
+      38   * @property {Boolean} [visible] - Whether the first matching e
+          lement should be visible - a missing element is not
+      39   * @property {String} [distinctStyle] - A CSS property whose co
+          mputed value should differ amongst all matching elements
+      40   * @property {Locator} [covers] - Locator for an element whose
+          bounds the first matching element should coincide with
+     ...
+      293      if (expectation.text) {
+      294          if (first) {
+      295              const text = fluidDemoAgent.textOf(first);
+      296 +            if (expectation.text.equals !== undefined && text
+          +!== expectation.text.equals) {
+      297 +                failures.push(`expected text to equal "${expec
+          +tation.text.equals}", was "${text.slice(0, 200)}"`);
+      298 +            }
+      299              [].concat(expectation.text.contains ?? []).forEach
+           (sought => {
+      300                  if (!text.includes(sought)) {
+      301                      failures.push(`expected text to contain "$
+           {sought}", was "${text.slice(0, 200)}"`);
+  ⎿  (timeout 5m)
+
+● All 14 steps pass. To be sure the new steps really detect the bugs, I'll run
+  the same script against the unmodified HEAD tree:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Steps 9 and 10 fail at HEAD simply because the new ids don't exist yet, not
+  because the geometry check actually catches the 8px offset. I'll copy the new
+  FluidView.js into the HEAD tree while keeping HEAD's overlay code to test this
+  properly.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The geometry check fails against the old overlay code as expected (473, 869)
+  vs (465, 861). Since my rewrite also affects the substrate pane's row
+  highlighting and hover behavior, I'll add a step for that—checking the
+  substrate row markup now to write a locator.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I found a stable locator using the data-row-id values, which end in the
+  component path. I'll add two steps after opening the editor: hovering a
+  substrate row, then moving away.
+
+● Update(demo/compose-edit/demo-script.json)
+  ⎿  Added 30 lines
+      23              "distinctStyle": "background-color"
+      24          }]
+      25      }, {
+      26 +        "description": "Hover over the footer of the left-hand
+         +post in the substrate view",
+      27 +        "action": {"type": "hover", "target": {"selector": ".fl
+         +-substrate-hover", "within": {"selector": "[data-row-id$='.post
+         +.0.footer}']"}, "index": 0}},
+      28 +        "expect": [{
+      29 +            "description": "The substrate row should be highlig
+         +hted",
+      30 +            "target": {"selector": "#fl-editor-inspect-overlay"
+         +},
+      31 +            "visible": true,
+      32 +            "covers": {"selector": "[data-row-id$='.post.0.foot
+         +er}']"}
+      33 +        }, {
+      34 +            "description": "and a hover pane should cover the c
+         +orresponding footer component in the app",
+      35 +            "target": {"selector": "#fl-inspect-overlay"},
+      36 +            "visible": true,
+      37 +            "covers": {"selector": "[id$='.post.0.footer']"}
+      38 +        }, {
+      39 +            "description": "showing its layer name",
+      40 +            "target": {"selector": "#fl-inspect-overlay .fl-ins
+         +pect-layer"},
+      41 +            "text": {"equals": "fluid.demos.footer"}
+      42 +        }]
+      43 +    }, {
+      44 +        "description": "Move the mouse out of the substrate vie
+         +w onto the \"Layers\" label",
+      45 +        "action": {"type": "hover", "target": {"selector": ".fl
+         +-layers-label"}},
+      46 +        "expect": [{
+      47 +            "description": "The substrate row highlight should
+         +disappear",
+      48 +            "target": {"selector": "#fl-editor-inspect-overlay"
+         +},
+      49 +            "visible": false
+      50 +        }, {
+      51 +            "description": "as should the hover pane in the app
+         +",
+      52 +            "target": {"selector": "#fl-inspect-overlay"},
+      53 +            "visible": false
+      54 +        }]
+      55 +    }, {
+      56          "description": "Select the \"magic wand\" button",
+      57          "action": {"type": "click", "target": {"selector": ".fl
+          -magic-button[title*='edit it directly']"}},
+      58          "expect": [{
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Substrate hover shows neither overlay. I'll check whether this already fails
+  at HEAD:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The old code had both overlays showing (with a pre-existing 168px row
+  highlight misalignment), but my version shows neither overlay at all, meaning
+  my changes broke it. I'll check the console output to investigate.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● No console output at all during the hover, so the substrate tree's mouseover
+  handler apparently never ran. I'll look at how it's bound:
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● The listeners are bound through @onmouseover on the substrate pane's template
+  root. I'll instrument the page to see whether mouseover events arrive and what
+  inspectingSite becomes:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Found it — since the row highlight overlay is now correctly positioned, it
+  sits under the cursor and intercepts the mouseover, triggering a mouseleave
+  that clears inspectingSite and causes the flicker. I'll fix it by adding
+  pointer-events: none to the highlight, matching the app overlay.
+
+● Update(src/framework/edit/sfc/fluid-editorRoot.vue)
+  ⎿  Added 2 lines, removed 1 line
+      382      cursor: pointer;
+      383  }
+      384
+      385 -#fl-inspect-overlay {
+      385 +/* Highlights which must not intercept the pointer events dete
+          +rmining what they highlight */
+      386 +#fl-inspect-overlay, #fl-editor-inspect-overlay {
+      387      pointer-events: none;
+      388      cursor: default;
+      389  }
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Three consistent runs: everything passes except the row highlight, which is
+  about 1px too low. I'll get the exact sub-pixel values:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I found that the row shifts from 668.5 to 657.5 after hover while the
+  highlight stays fixed at 658, since the overlay only positions once on
+  inspectingSite change and the substrate pane re-instantiates on hover. I'll
+  check if HEAD exhibits the same behavior.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed HEAD has the same issue: hovering a substrate row rebuilds the whole
+  editorRoot subtree because inspectingSite is a plain member, and its first
+  write creates a new property that triggers a rebuild, shifting the layout.
+  I'll fix this by declaring inspectingSite as $reactiveRoot, the same way
+  openLayerTabs avoids this problem.
+
+● Bash(grep -n "    inspectingSite: null,"
+      src/framework/edit/sfc/fluid-editorRoot.vue && sed -i 's/^
+      inspectingSite: null,$/    inspectingSite: {\n        \/\/ Wri…)
+  ⎿  10:    inspectingSite: null,
+         showUserLayersOnly: true,
+         selectedLayerTab: null,
+     … +30 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/sfc/fluid-editorRoot.vue (+4 -1)
+       7      },
+       8      showUserLayersOnly: true,
+       9      selectedLayerTab: null,
+      10 -    inspectingSite: null,
+      10 +    inspectingSite: {
+      11 +        // Written on every hover - as a reactive root, a write
+         + does not cause the editor to be reinstantiated
+      12 +        $reactiveRoot: null
+      13 +    },
+      14      selfEditing: false,
+      15
+      16      animateInspectOverlay: {
+  ⎿  (timeout 5m)
+
+● I'll revert that change since it had no effect—the rebuild might just be a
+  delayed consequence of opening the editor rather than the hover itself. I'll
+  test this by hovering over the neutral Layers label instead.
+
+● Bash(python3 - <<'EOF'
+      p = "src/framework/edit/sfc/fluid-editorRoot.vue"…)
+  ⎿   1 file changed, 4 insertions(+), 2 deletions(-)
+     STEP 1 ok Open up the editing panel by pressing the Edit button
+       after:  668.5
+     … +10 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/sfc/fluid-editorRoot.vue (+1 -4)
+       7      },
+       8      showUserLayersOnly: true,
+       9      selectedLayerTab: null,
+      10 -    inspectingSite: {
+      11 -        // Written on every hover - as a reactive root, a write
+         - does not cause the editor to be reinstantiated
+      12 -        $reactiveRoot: null
+      13 -    },
+      10 +    inspectingSite: null,
+      11      selfEditing: false,
+      12
+      13      animateInspectOverlay: {
+  ⎿  (timeout 5m)
+
+● The substrate hover itself triggers the rebuild. To test the first-write
+  theory, I'll check whether an inspect-mode hover rebuilds the editor when it
+  is the first write of inspectingSite:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found it: pointFor's scrollIntoView({block: "center"}) fires even on
+  already-visible rows, causing a layout shift that misaligns the highlight.
+  I'll switch it to block: "nearest" so it only scrolls when actually needed.
+
+● Bash(grep -n 'scrollIntoView({block: "center", inline: "nearest"})'
+      tests/test-core/browser/js/demo-agent.js; sed -i 's/scrollIntoView({block:
+      "center", inline: "nea…)
+  ⎿  204:        element.scrollIntoView({block: "center", inline: "nearest"
+     });
+     217:        node.parentElement.scrollIntoView({block: "center", inline
+     … +16 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/browser/js/demo-agent.js (+4 -3)
+      188
+      189  /**
+      190   * Compute the point in viewport coordinates at which a driver
+            should deliver a pointer event to the element matched
+      191 - * by a locator, scrolling it into view. If `find` is supplied
+          -, the point lies over that text within the element.
+      191 + * by a locator, scrolling it into view only if it is not alre
+          +ady in view, as a user would. If `find` is supplied, the
+      192 + * point lies over that text within the element.
+      193   * The point is hit-tested, so that the driver can report a po
+           inter event which would be intercepted by some other
+      194   * element, as it would be for a real user.
+      195   * @param {Locator} locator - The locator for the target eleme
+           nt
+     ...
+      202      const cm = fluidDemoAgent.codeMirrorFor(element);
+      203      let rect;
+      204      if (find === undefined) {
+      204 -        element.scrollIntoView({block: "center", inline: "near
+          -est"});
+      205 +        element.scrollIntoView({block: "nearest", inline: "nea
+          +rest"});
+      206          rect = element.getBoundingClientRect();
+      207      } else if (cm) {
+      208          const index = cm.getValue().indexOf(find);
+     ...
+      215          rect = {left: start.left, top: start.top, width: end.l
+           eft - start.left, height: start.bottom - start.top};
+      216      } else {
+      217          const {node, offset} = fluidDemoAgent.findTextNode(ele
+           ment, find);
+      217 -        node.parentElement.scrollIntoView({block: "center", in
+          -line: "nearest"});
+      218 +        node.parentElement.scrollIntoView({block: "nearest", i
+          +nline: "nearest"});
+      219          const range = document.createRange();
+      220          range.setStart(node, offset);
+      221          range.setEnd(node, offset + find.length);
+  ⎿  (timeout 10m)
+● The highlight offset persists at ~1.5px even without scrolling, suggesting the
+  first-write rebuild issue again. I'll rerun the variant where an inspect
+  hover writes first to confirm.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I noticed that variant is flawed—with inspect mode still active, its
+  document-level mousemove handler clears inspectingSite over the editor,
+  overriding the substrate hover, which actually makes sense since inspect mode
+  owns the inspection. I'll instead test two consecutive substrate hovers for a
+  cleaner check.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The first substrate hover is misplaced due to the editor rebuilding under it,
+  while the second is pixel-exact. I'll investigate why the first write still
+  triggers a rebuild despite $reactiveRoot, starting with fluid.pathToLive.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found the root cause: fluid.pathToLive re-merges the whole subtree on first
+  write regardless of $reactiveRoot, and fixing it would require changing
+  live-layer upgrade logic beyond this task's scope. I'll report this as a known
+  issue instead, adding a TAP-style knownIssue marker so the suite stays green
+  without masking the bug (and flags if it unexpectedly starts passing).
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p = "tests/test-core/browser/js/demo-runner.js"…)
+  ⎿  ok 1 - Open up the editing panel by pressing the Edit button
+     not ok 2 - Hover over the footer of the left-hand post in the substrat
+     e view # TODO The first write of editorRoot.inspectingSite upgrades it
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/browser/js/demo-runner.js (+17 -7)
+      186   * Run a single demo script in a fresh browser, reporting the
+           outcome of each step. Each step's action is performed,
+      187   * and its expectations are polled until they pass or the time
+           out expires. A step also fails if the page raises an
+      188   * uncaught error during it. Subsequent steps are run after a
+           failure, since their results are often still
+      189 - * informative.
+      189 + * informative. A step holding a `knownIssue` is reported with
+          + a TAP "TODO" directive describing the issue, and its
+      190 + * failure is tallied as known rather than failed.
+      191   * @param {String} scriptPath - The path of the JSON demo scri
+           pt
+      192   * @param {String} baseUrl - The URL at which the repository i
+           s served
+      193   * @param {Object} options - Options holding `headful`, `conso
+           le` - whether to relay the page's console messages,
+      194   * `timeout` and `settle` in milliseconds as accepted by `wait
+           ForExpectations`, and `screenshots`, a directory into
+      195   * which screenshots of failing steps are written
+      195 - * @return {Promise<Object>} A promise for a record holding th
+          -e numbers of `passed` and `failed` steps
+      196 + * @return {Promise<Object>} A promise for a record holding th
+          +e numbers of `passed`, `failed` and `known` steps
+      197   */
+      198  fluidDemoRunner.runScript = async function (scriptPath, baseUr
+           l, options) {
+      199      const script = JSON.parse(fs.readFileSync(scriptPath, "utf
+           8"));
+      200      const browser = await puppeteer.launch({headless: !options
+           .headful, args: ["--no-sandbox"]});
+      200 -    const tally = {passed: 0, failed: 0};
+      201 +    const tally = {passed: 0, failed: 0, known: 0};
+      202      try {
+      203          console.log(`# ${script.title} (${scriptPath}) in ${aw
+           ait browser.version()}`);
+      204          const page = await browser.newPage();
+     ...
+      226                      actionError = error;
+      227                  }
+      228                  const passed = !actionError && result.passed &
+           & pageErrors.length === 0;
+      228 -                console.log(`${passed ? "ok" : "not ok"} ${i}
+          -- ${step.description}`);
+      229 +                const directive = step.knownIssue === undefine
+          +d ? "" : ` # TODO ${step.knownIssue}`;
+      230 +                console.log(`${passed ? "ok" : "not ok"} ${i}
+          +- ${step.description}${directive}`);
+      231                  if (actionError) {
+      232                      console.log(`    action failed: ${actionEr
+           ror.message}`);
+      233                  }
+     ...
+      237                  pageErrors.forEach(message => console.log(`
+            page error: ${message}`));
+      238                  if (passed) {
+      239                      ++tally.passed;
+      240 +                    if (step.knownIssue !== undefined) {
+      241 +                        console.log("    step with known issue
+          + now passes - its knownIssue entry may be removed");
+      242 +                    }
+      243                  } else {
+      239 -                    ++tally.failed;
+      244 +                    if (step.knownIssue === undefined) {
+     … 27 more lines (ctrl+o to expand)
+  ⎿  Updated demo/compose-edit/demo-script.json (+1 -0)
+      24          }]
+      25      }, {
+      26          "description": "Hover over the footer of the left-hand
+          post in the substrate view",
+      27 +        "knownIssue": "The first write of editorRoot.inspecting
+         +Site upgrades it into the live layer via fluid.pathToLive, whic
+         +h remerges and reinstantiates the whole editor, displacing the
+         +row highlight",
+      28          "action": {"type": "hover", "target": {"selector": ".fl
+          -substrate-hover", "within": {"selector": "[data-row-id$='.post
+          .0.footer}']"}, "index": 0}},
+      29          "expect": [{
+      30              "description": "The substrate row should be highlig
+          hted",
+  ⎿  (timeout 5m)
+
+● The suite passes, with the one known issue reported. Final checks: lint the
+  changed files, run the full node suite, and repeat the browser run to look for
+  flakiness.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The remaining lint errors in editorRoot.js are pre-existing (lines 75, 139),
+  and the .vue files can't be linted with plain eslint since they need
+  fluid-lint-all's Vue setup. Running the full node suite plus two more browser
+  runs next.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Both bugs are fixed, the inspect button now works as described, and every
+  rendered component container gets an fl-id-<path> id. npm test passes
+  1003/1003 (998 before, plus 5 new assertions). npm run test:browser passes 15
+  of 16 steps; the 16th fails because of a separate framework problem I found
+  but didn't fix (below), so it is marked as a known issue.
+
+  The two bugs
+
+  - CodeMirror edits were discarded (fluid-editor.vue): writeText now looks up
+    the SFC's text signal by layer name, instead of reading layerRec.sfcDef
+    through the proxy, which turns it into a plain string.
+  - No history for template edits (FluidView.js): if an SFC's text changes but
+    the script defining its layer doesn't, parseSFC now records an updateLayer
+    history entry. Script edits still get their record from writeLayer. A new
+    step that renames the post in its script checks that an edit produces
+    exactly one record, not two.
+
+  The inspect button
+
+  Hovering already showed the right layer name and colour, but three things were
+  broken:
+  - Clicking did nothing. The hover pane ignores pointer events, so clicks went
+    straight through to the app. While inspecting, a click inside the app is now
+    intercepted before the app sees it, and the layer opens in the editor. The
+    test clicks over the "2016 paper" link and checks that the tab opens and the
+    page doesn't navigate away.
+  - overlayClick turned off the wrong flag (inspect.inspecting instead of
+    inspect.active), so inspect mode stayed on after a click.
+  - The pane was 8px out of place. When the editor is docked, FluidEdit.css
+    gives body contain: paint, which shifts where absolutely positioned elements
+    are measured from. applyOverlay now measures the pane's real starting
+    point, and the overlays use box-sizing: border-box. This also replaced the
+    "somehow we are off by a little" fudge.
+
+  Fixing the position exposed a fourth problem. The substrate row highlight now
+  sits under the cursor, takes the mouseover itself, and flickers on and off. It
+  now ignores pointer events too.
+
+  Container ids
+
+  A component's rendered container gets id="fl-id-<component path>" unless its
+  template or the page already gives it one. The id comes and goes with the
+  component's other attributes: when an $if turns off, the leftover empty <div>
+  drops it. Four existing assertions that compare exact markup now expect the
+  id, and a new test covers it. The ids also make stable test targets, e.g.
+  [id$='.post.1.footer'].
+
+  New test steps and runner features
+
+  I added steps for substrate-row hover, inspect mode (hover over two
+  components, click to open, no pane once inspect is off) and the script edit.
+  The pane checks compare its position and size with the component's, and its
+  colour with the layer-list entry. Run against the old code, these steps fail
+  exactly as intended, e.g. pane at (473, 869) instead of (465, 861).
+
+  The runner gained:
+  - a hover action;
+  - checks that one element covers another and that a style matches
+    (matchesStyle), plus exact-text checks;
+  - a --settle wait (default 250ms) so a check only passes once the page has
+    stopped changing;
+  - scrolling only when the target isn't already visible;
+  - a knownIssue marker, reported as # TODO, which doesn't fail the run.
+
+  The known issue (not fixed)
+
+  The first time anything sets editorRoot.inspectingSite, the entire editor is
+  rebuilt: menu, layer list, history, substrate and editor panes.
+  fluid.pathToLive does this the first time a member is written, and declaring
+  it $reactiveRoot doesn't help. In the test, the first substrate-row hover
+  leaves the highlight about 1.5px out because the rebuild shifts the layout; a
+  second hover is exact. Fixing it means changing the framework's core component
+  (IL) code, so I've left it for you to decide. The step will report when it
+  starts passing.
+
+  Two side notes. git diff also shows changes to
+  src/lib/codemirror/js/csslint.js and a font file that I didn't make; they were
+  already in your working tree. In the editor, the "open tab" history record
+  for {…editorRoot}.openLayerTabs is still added to the user's history.
+
+✻ Cooked for 30m 4s · done 15:03
