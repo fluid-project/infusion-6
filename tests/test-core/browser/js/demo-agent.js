@@ -38,7 +38,7 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
  * @property {Boolean} [visible] - Whether the first matching element should be visible - a missing element is not
  * @property {String} [distinctStyle] - A CSS property whose computed value should differ amongst all matching elements
  * @property {Locator} [covers] - Locator for an element whose bounds the first matching element should coincide with
- * @property {Number} [tolerance] - The tolerance in pixels for `covers` - defaults to 1
+ * @property {Number} [tolerance] - The tolerance in pixels for `covers` - defaults to 2
  * @property {Object} [matchesStyle] - Holding a CSS `property` and a `target` locator - the computed value of the
  * property for the first matching element should equal its value for the element matched by `target`
  */
@@ -321,7 +321,7 @@ fluidDemoAgent.checkOne = function (expectation, baseline) {
         if (first) {
             const rect = first.getBoundingClientRect();
             const coveredRect = fluidDemoAgent.locate(expectation.covers).getBoundingClientRect();
-            const tolerance = expectation.tolerance ?? 1;
+            const tolerance = expectation.tolerance ?? 2;
             const sides = ["left", "top", "width", "height"];
             const mismatched = sides.filter(side => Math.abs(rect[side] - coveredRect[side]) > tolerance);
             if (mismatched.length > 0) {

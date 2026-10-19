@@ -1,7 +1,12 @@
 <script>
 fluid.def("fluid.demos.todoItem.withAssignee", {
-    $layers: "fluid.partialViewComponent",
-    relativeContainer: "after: .item-text",
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.partialViewComponent",
+            relativeContainer: "after: .item-text"
+        }
+    },
     select: {
         $component: {
             $layers: "fluid.UISelect",

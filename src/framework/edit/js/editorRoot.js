@@ -133,7 +133,9 @@ fluid.addToAttrs = function (attrs, attrName, extra, delimiter) {
 fluid.filterForSelfEditing = function (vTree, component, editorRoot, layerColours) {
     const shadow = component[$m];
     console.log("Filtering for selfEditing at path ", shadow.path);
-    const templateLayer = fluid.hasLayer(component, "fluid.sfcTemplateViewComponent") ? component.templateLayer : shadow.layerMap.template?.[$m]?.source;
+    // The template is configured on the component's view, whose layer map records the layer in which it was written
+    const viewShadow = fluid.viewShadowFor(shadow);
+    const templateLayer = fluid.hasLayer(component.view, "fluid.sfcTemplateViewComponent") ? component.view.templateLayer : viewShadow?.layerMap.template?.[$m]?.source;
     if (templateLayer && fluid.isUserLayer(templateLayer)) {
         const layerColour = layerColours[templateLayer];
         const liveColour = layerColours.$live;

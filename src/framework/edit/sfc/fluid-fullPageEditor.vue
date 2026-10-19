@@ -1,6 +1,6 @@
 <script>
 fluid.def("fluid.fullPageEditor", {
-    $layers: "fluid.sfcTemplateViewComponent",
+    $layers: "fluid.component",
     $importMap: {
         "fluid.editorRoot": "%fluid-edit/sfc/fluid-editorRoot.vue",
         "fluid.editor": "%fluid-edit/sfc/fluid-editor.vue",
@@ -15,32 +15,51 @@ fluid.def("fluid.fullPageEditor", {
     editorVisible: false,
     editButton: {
         $component: {
-            $layers: "fluid.templateViewComponent",
-            elideParent: true,
-            template: `<button class="fl-editor-edit" @onclick="{fullPageEditor}.editorVisible = true">Edit</button>`,
-            container: "$compute:fluid.insertChildContainer(last, editButton, {self}.templateTree, {fullPageEditor}.container)"
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: true,
+                    template: `<button class="fl-editor-edit" @onclick="{fullPageEditor}.editorVisible = true">Edit</button>`,
+                    container: "$compute:fluid.insertChildContainer(last, editButton, {self}.templateTree, {fullPageEditor}.view.container)"
+                }
+            }
         }
     },
     inspectOverlay: {
         $component: {
-            $layers: "fluid.templateViewComponent",
-            template: `<div id="fl-inspect-overlay" class="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()"><div class="fl-inspect-layer"></div></div>`,
-            container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.templateTree, {fullPageEditor}.container)"
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div id="fl-inspect-overlay" class="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()"><div class="fl-inspect-layer"></div></div>`,
+                    container: "$compute:fluid.insertChildContainer(last, inspectOverlay, {self}.templateTree, {fullPageEditor}.view.container)"
+                }
+            }
         }
     },
     resizeBar: {
         $component: {
-            $layers: "fluid.templateViewComponent",
-            elideParent: true,
-            template: `<div class="fl-resizer"></div>`,
-            container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.templateTree, {fullPageEditor}.html, {fullPageEditor}.container)"
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: true,
+                    template: `<div class="fl-resizer"></div>`,
+                    container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.templateTree, {fullPageEditor}.html, {fullPageEditor}.view.container)"
+                }
+            }
         }
     },
     editorRoot: {
         $component: {
             $layers: "fluid.editorRoot",
-            container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.templateTree, {fullPageEditor}.html)",
-            elideParent: true,
+            view: {
+                $component: {
+                    container: "$compute:fluid.insertChildContainer(last, editorRoot, {self}.templateTree, {fullPageEditor}.html)",
+                    elideParent: true
+                }
+            },
             editorVisible: "{fullPageEditor}.editorVisible"
         }
     },
@@ -53,11 +72,16 @@ fluid.def("fluid.fullPageEditor", {
     rootEffect: {
         $effect: {
             func: (body, editorVisible) => body.parentElement.setAttribute("fl-docking-area-mode", editorVisible ? "right edge" : "minimized"),
-            args: ["{self}.container", "{self}.editorVisible"]
+            args: ["{self}.view.container", "{self}.editorVisible"]
         }
     },
-    // Override this definition from viewComponent so we don't obliterate the document
-    renderView: "$effect:fluid.identity({self}.vTree)",
+    view: {
+        $component: {
+            $layers: "fluid.sfcTemplateViewComponent",
+            // Override this definition from fluid.viewComponent so we don't obliterate the document
+            renderView: "$effect:fluid.identity({self}.vTree)"
+        }
+    },
     $variety: "frameworkAux"
 
 });

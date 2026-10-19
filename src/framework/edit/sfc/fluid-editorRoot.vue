@@ -1,12 +1,28 @@
 <script>
 fluid.def("fluid.editorRoot", {
-    $layers: ["fluid.sfcTemplateViewComponent", "fluid.resolveRoot"],
+    $layers: "fluid.resolveRoot",
+    view: {
+        $component: {
+            $layers: "fluid.sfcTemplateViewComponent"
+        }
+    },
     openLayerTabs: {
         // Holds an array of LayerRec structures as dispensed from {layerList}
         $reactiveRoot: []
     },
     showUserLayersOnly: true,
     selectedLayerTab: null,
+    // The tab whose editor is shown - the selected tab if it is open, otherwise the last open tab. Only openLayerTabs
+    // is recorded in history, so that navigating history may restore tabs without restoring their selection
+    activeLayerTab: {
+        $compute: {
+            func: (openLayerTabs, selectedLayerTab) => {
+                const isOpen = openLayerTabs.some(layerRec => layerRec.layerName === selectedLayerTab);
+                return isOpen ? selectedLayerTab : openLayerTabs[openLayerTabs.length - 1]?.layerName ?? null;
+            },
+            args: ["{self}.openLayerTabs", "{self}.selectedLayerTab"]
+        }
+    },
     inspectingSite: null,
     selfEditing: false,
 
@@ -176,7 +192,7 @@ fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
                 console.log("Found mutation of target ", target, " within root ", editRoot, " within container ", container);
                 const path = fluid.pathToNode(editRoot, container);
                 console.log("Path from editRoot to parent ", path.join(""));
-                const vTree = shadow.that.vTree._value;
+                const vTree = fluid.viewShadowFor(shadow).that.vTree._value;
                 const vNode = fluid.navigatePath(vTree, path);
                 console.log("Found corresponding vNode ", vNode);
                 if (fluid.textDiff(vNode, editRoot)) {
@@ -216,7 +232,7 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
             const layerName = fluid.peek(that.$layers);
             colour = layerColours[layerName] || "transparent";
             Object.values(overlays).map(overlay => overlay.querySelector(".fl-inspect-layer").innerText = layerName);
-            target = fluid.deSignal(that.renderedContainer);
+            target = fluid.renderedContainerFor(inspectingSite.shadow);
         }
         fluid.applyOverlay(overlays, target, colour);
     }

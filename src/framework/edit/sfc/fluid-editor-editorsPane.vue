@@ -2,7 +2,7 @@
 fluid.def("fluid.editor.editorsPane", {
     tabs: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $for: {
                 source: "{fluid.editorRoot}.openLayerTabs",
                 valueAs: "layerRec"
@@ -11,11 +11,14 @@ fluid.def("fluid.editor.editorsPane", {
             colour: "{self}.layerRec.colour",
             isActive: {
                 $compute: {
-                    func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
-                    args: ["{self}.layerName", "{fluid.editorRoot}.selectedLayerTab"]
+                    func: (layerName, activeLayerTab) => layerName === activeLayerTab,
+                    args: ["{self}.layerName", "{fluid.editorRoot}.activeLayerTab"]
                 }
             },
-            template: `
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `
 <div class="fl-editor-layer-tab fl-clickable" @class="active:@{isActive}"
     @onclick="{editorRoot}.selectedLayerTab = {self}.layerName"
     style="background-color: @{colour}">@{layerName}
@@ -23,6 +26,8 @@ fluid.def("fluid.editor.editorsPane", {
             <span class="mdi mdi-close"></span>
         </span>
 </div>`
+                }
+            }
         }
     },
     editorHolders: {

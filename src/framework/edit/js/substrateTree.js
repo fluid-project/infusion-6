@@ -1,7 +1,7 @@
 "use strict";
 
 fluid.def("fluid.substrateTree", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     defaultState: "$compute:fluid.substrateTree.defaultState({self}.rootEntries)",
     userState: {
         $reactiveRoot: {}
@@ -34,7 +34,12 @@ fluid.def("fluid.substrateTree", {
             args: ["{0}:layer", "{colourManager}.layerColours"]
         }
     },
-    template: "$compute:fluid.substrateTree.renderTemplate({self}, {self}.rootEntries, {self}.idToState)",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "$compute:fluid.substrateTree.renderTemplate({$parent}, {$parent}.rootEntries, {$parent}.idToState)"
+        }
+    },
     domListeners: {
         // Ad hoc event binding syntax to deal with the fact that we synthesize our template afresh on every render
         // rather than via a template or vDOM generator, operated by fluid.substrateTree.renderTemplate
@@ -88,7 +93,7 @@ fluid.deSignalLight = ref => {
     return ref;
 };
 
-const displayLayers = ["fluid.viewComponentList", "fluid.componentList", "fluid.viewComponent", "fluid.component"];
+const displayLayers = ["fluid.listViewComponent", "fluid.componentList", "fluid.viewComponent", "fluid.component"];
 
 fluid.substrateTree.componentToEntry = function (self, shadow, layer, parent) {
     const selfShadow = self[$m];
@@ -105,7 +110,10 @@ fluid.substrateTree.componentToEntry = function (self, shadow, layer, parent) {
         const that = shadow.that;
         const layers = fluid.deSignalLight(that.$layers);
 
-        const displayLayer = displayLayers.find(layer => layers.includes(layer)).slice("fluid.".length);
+        // A component which "has a" view is displayed according to its view's layers as well as its own
+        const viewShadow = fluid.viewShadowFor(shadow);
+        const viewLayers = viewShadow ? fluid.deSignalLight(viewShadow.that.$layers) : [];
+        const displayLayer = displayLayers.find(layer => layers.includes(layer) || viewLayers.includes(layer)).slice("fluid.".length);
         const filteredLayers = [...layers].filter(layer => self.userLayersOnly ? fluid.isUserLayer(layer) : true).reverse()
             .map(layer => `<span class="fl-layer-link" data-fl-layer-name="${layer}">${layer}</span>`).join(", ");
 
@@ -133,7 +141,8 @@ fluid.substrateTree.componentToEntry = function (self, shadow, layer, parent) {
                 return fluid.NoValue;
             }
         } else {
-            const keys = Object.keys(shadow.layerMap || {});
+            // A component may "have a" view, whose machinery is only shown when framework layers are
+            const keys = Object.keys(shadow.layerMap || {}).filter(key => !(self.userLayersOnly && key === "view" && fluid.viewShadowFor(shadow)));
             keys.sort((a, b) => (a === "$layers" ? -1 : b === "$layers" ? 1 : 0));
             togo.children = fluid.map(keys, key => self.valueToEntry(shadow, [key], shadow.that[key], null, parent));
         }
@@ -185,15 +194,8 @@ fluid.substrateTree.renderShadowRec = function (rec) {
 
 const styleForCol = colour => `style="background-color: ${colour}"`;
 
-// TODO: Quick hack to filter out these properties created by the SFC parser since we can't be bothered to create a fresh
-// layer for it just now
-const censoredMap = {
-    "templateLayer": true,
-    "partialTemplateLayers": true
-};
-
 fluid.substrateTree.valueToEntry = function (self, shadow, segs, valueSignal, inLayer, parent) {
-    if (segs.length > 3 || fluid.get(censoredMap, segs)) {
+    if (segs.length > 3) {
         return fluid.NoValue;
     }
     const id = fluid.renderSite({shadow, segs});
@@ -351,7 +353,7 @@ fluid.substrateTree.highlight = function (self, inspectingSite, document) {
     const overlay = document.getElementById("fl-editor-inspect-overlay");
     if (overlay) {
         const id = inspectingSite && fluid.renderSite(inspectingSite);
-        const target = id && self.container.querySelector(`[data-row-id="${id}"]`);
+        const target = id && self.view.container.querySelector(`[data-row-id="${id}"]`);
         fluid.applyOverlay({selfOverlay: overlay}, target, "hsl(0 0% 70%)");
     }
 };

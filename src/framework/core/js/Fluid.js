@@ -1957,9 +1957,18 @@ const $fluidScope = function (fluid) {
     // Like a "reader macro" - currently just ensures that "$layers" is an array
     // Do we actually need this in this role?
     // TODO: Called from expandComponentRecord and storeLayer, and now computeInstance does its own expansion - can axe?
+    // Expansions are cached per layer object, which is treated as immutable, so that an unchanged layer always expands to
+    // the same object - this allows fluid.flatMergedComputer to detect that its inputs are unchanged
+    fluid.readerExpansionCache = new WeakMap();
+
     fluid.readerExpandLayer = function (layer) {
         // TODO: Create links between old and new data so that we can route errors back
-        return {...layer, $layers: fluid.makeArray(layer.$layers)};
+        let togo = fluid.readerExpansionCache.get(layer);
+        if (!togo) {
+            togo = {...layer, $layers: fluid.makeArray(layer.$layers)};
+            fluid.readerExpansionCache.set(layer, togo);
+        }
+        return togo;
     };
 
     /**
@@ -2009,6 +2018,59 @@ const $fluidScope = function (fluid) {
      */
 
     /**
+     * The contributions of several layers to the record of a subcomponent at the same path. As with the
+     * `fluid.deferringMergePolicy` applied to `components` in Infusion 4 to resolve FLUID-5614, these are not merged with
+     * one another, which would cause a `$layers` entry from one layer to override that of another, but retained in
+     * priority order so that each may be supplied to the subcomponent as a merge record of its own. Its layers then
+     * accumulate, and its members are merged by priority, within the subcomponent's own hierarchy resolution.
+     * @param {ComponentContribution[]} contributions - The contributions, weakest first
+     */
+    fluid.componentRecords = function (contributions) {
+        this.contributions = contributions;
+    };
+
+    /**
+     * @typedef {Object} ComponentContribution
+     * @property {Object} record - The contents of a `$component` record as written in a layer
+     * @property {String} mergeRecordName - The name of the merge record holding the layer in which it was written
+     */
+
+    /**
+     * Determine whether a layer value holds a subcomponent record, i.e. is an object with a `$component` member
+     * @param {any} value - The value to be tested
+     * @return {Boolean} `true` if the value holds a subcomponent record
+     */
+    fluid.isComponentRecordHolder = function (value) {
+        return fluid.isPlainObject(value, true) && "$component" in value;
+    };
+
+    /**
+     * Collect the contributions of a set of layers to a subcomponent record at a path into a `fluid.componentRecords`
+     * rather than merging them. Any value at that path which is not a subcomponent record is an error.
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {String} key - The key at which the subcomponent record is held
+     * @param {String[]} segs - The path of the layers' parent within the root being merged
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @return {Object} A value holding the collected contributions as its `$component` member
+     */
+    fluid.collectComponentRecords = function (layers, key, segs, mergeRecords) {
+        const contributions = [];
+        layers.forEach((layer, i) => {
+            if (fluid.isPlainObject(layer) && key in layer) {
+                const value = layer[key];
+                if (fluid.isComponentRecordHolder(value)) {
+                    contributions.push({record: value.$component, mergeRecordName: mergeRecords[i].mergeRecordName});
+                } else if (value !== undefined) {
+                    const from = mergeRecords[i].mergeRecordName ?? mergeRecords[i].mergeRecordType;
+                    fluid.fail(`Cannot merge value ${JSON.stringify(value)} at path ${[...segs, key].join(".")} from ` +
+                        `${from} with a subcomponent record - this should be written as {$component: ...}`);
+                }
+            }
+        });
+        return {$component: new fluid.componentRecords(contributions)};
+    };
+
+    /**
      * Recursively merge multiple layers into a target object, maintaining a mapping of values to their originating layers.
      *
      * @param {Object} target - The target object where merged results will be stored.
@@ -2041,7 +2103,9 @@ const $fluidScope = function (fluid) {
                     lastIndex = i;
                 }
             }
-            if (count > 1 && fluid.isPlainObject(last, true)) {
+            if (layers.some(layer => fluid.isPlainObject(layer) && fluid.isComponentRecordHolder(layer[key]))) {
+                newTarget = fluid.collectComponentRecords(layers, key, segs, mergeRecords);
+            } else if (count > 1 && fluid.isPlainObject(last, true)) {
                 newTarget = fluid.makeLayer(key, target);
                 const newLayers = layers.map(layer => layer?.[key]);
                 segs.push(key);

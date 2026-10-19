@@ -9,11 +9,15 @@ fluid.def("fluid.codemirror", {
         gutters: ["CodeMirror-lint-markers"],
     },
     text: "",
-    elideParent: false,
-    template: "<textarea>@{text}</textarea>",
+    view: {
+        $component: {
+            elideParent: false,
+            template: "<textarea>@{text}</textarea>"
+        }
+    },
     instance: {
         $bindable: {
-            bind: "fluid.codemirror.construct({self}, {fluid.editor}, {self}.renderedContainer, {global}.CodeMirror)"
+            bind: "fluid.codemirror.construct({self}, {fluid.editor}, {self}.view.renderedContainer, {global}.CodeMirror)"
         }
     },
     refreshOnActive: {

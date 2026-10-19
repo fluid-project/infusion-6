@@ -1019,3 +1019,118 @@ QUnit.test("Layer definition released from its gate whilst being read by an inst
     assert.equal(that.value, 42, "Component instantiated from released definition");
     that.destroy();
 });
+
+fluid.def("fluid.tests.parentBase", {
+    $layers: "fluid.component",
+    value: 1,
+    child: {
+        $component: {
+            $layers: "fluid.component",
+            parentValue: "{$parent}.value"
+        }
+    }
+});
+
+// Contributes to the child's record, so that it is merged afresh from two layers whenever the parent turns over
+fluid.def("fluid.tests.parentExtra", {
+    child: {
+        $component: {
+            extra: true
+        }
+    }
+});
+
+QUnit.test("{$parent} reference and subcomponent merged from several layers survives turnover - fluid-project/infusion-6#19", function (assert) {
+    const that = fluid.tests.parentBase({$layers: "fluid.tests.parentExtra"});
+    fluid.cell.stabilize();
+    const childShadow = that.child[fluid.metadataSymbol];
+    assert.equal(that.child.parentValue, 1, "Child resolves member of its parent via {$parent}");
+    assert.equal(that.child.extra, true, "Child record merged from both layers");
+
+    // Cause the parent to turn over by replacing its definition
+    const oldDef = fluid.def("fluid.tests.parentBase");
+    fluid.def("fluid.tests.parentBase", {...oldDef, value: 2});
+    fluid.cell.stabilize();
+    assert.equal(that.child.parentValue, 2, "Child observes updated parent value");
+    assert.equal(that.child[fluid.metadataSymbol], childShadow, "Child component preserved across parent turnover");
+    assert.notOk(fluid.isDestroyed(that.child), "Child component not destroyed");
+    fluid.def("fluid.tests.parentBase", oldDef);
+    that.destroy();
+});
+
+// FLUID-5614 "double deep trees": a subcomponent record contributed along two paths through the layer hierarchy
+fluid.def("fluid.tests.deepC", {
+    $layers: "fluid.component",
+    fromC: "C",
+    overridden: "C"
+});
+
+fluid.def("fluid.tests.deepD", {
+    $layers: "fluid.component",
+    fromD: "D",
+    overridden: "D"
+});
+
+fluid.def("fluid.tests.deepA", {
+    $layers: "fluid.component",
+    value: 0,
+    sub: {
+        $component: {
+            $layers: "fluid.tests.deepC",
+            fromA: "A",
+            shared: "A"
+        }
+    }
+});
+
+fluid.def("fluid.tests.deepB", {
+    $layers: "fluid.tests.deepA",
+    sub: {
+        $component: {
+            $layers: "fluid.tests.deepD",
+            fromB: "B",
+            shared: "B"
+        }
+    }
+});
+
+QUnit.test("Subcomponent records contributed along two paths accumulate - FLUID-5614, fluid-project/infusion-6#19", function (assert) {
+    const that = fluid.tests.deepB({
+        sub: {
+            $component: {
+                fromUser: "user"
+            }
+        }
+    });
+    fluid.cell.stabilize();
+    const sub = that.sub;
+    assert.ok(fluid.hasLayer(sub, "fluid.tests.deepC"), "Layer contributed by base layer's record retained");
+    assert.ok(fluid.hasLayer(sub, "fluid.tests.deepD"), "Layer contributed by derived layer's record retained");
+    assert.deepEqual([sub.fromA, sub.fromB, sub.fromC, sub.fromD, sub.fromUser], ["A", "B", "C", "D", "user"],
+        "Members of every contribution and of all contributed layers present");
+    assert.equal(sub.shared, "B", "Member contributed by derived layer's record overrides that of base layer's");
+    assert.equal(sub.overridden, "D", "Later contributed layer overrides earlier one");
+
+    const instanceId = sub.instanceId;
+    that.value = 1;
+    fluid.cell.stabilize();
+    assert.equal(that.sub.instanceId, instanceId, "Subcomponent not turned over when its parent turns over with unchanged contributions");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.mixedRecord", {
+    $layers: "fluid.component",
+    sub: {
+        $component: {
+            $layers: "fluid.component"
+        }
+    }
+});
+
+QUnit.test("Plain value merged with a subcomponent record is reported - fluid-project/infusion-6#19", function (assert) {
+    const that = fluid.tests.mixedRecord({sub: {value: 1}});
+    assert.ok(fluid.isUnavailable(that), "Component holding malformed subcomponent record is unavailable");
+    const message = fluid.deSignal(that[fluid.proxySymbol].shadow.flatMerged).message;
+    assert.ok(message.includes("at path sub from user"), "Error identifies the path and source of the malformed value");
+    assert.ok(message.includes("{$component: ...}"), "Error explains how the record should be written");
+});

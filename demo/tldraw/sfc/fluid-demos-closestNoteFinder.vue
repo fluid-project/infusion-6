@@ -15,13 +15,18 @@ fluid.def("fluid.demos.closestNoteFinder", {
     distance: "{self}.closest.distance",
     distanceLine: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             // Long-form $if so that a distance of 0 still shows the line
             $if: {
                 func: distance => distance !== null,
                 args: "{closestNoteFinder}.distance"
             },
-            template: `<div class="notefinder-distance">Distance: @{{closestNoteFinder}.distance}px</div>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="notefinder-distance">Distance: @{{closestNoteFinder}.distance}px</div>`
+                }
+            }
         }
     }
 });

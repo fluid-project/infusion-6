@@ -17,6 +17,14 @@
             "target": {"selector": ".fl-substrate-row", "text": "fluid.demos.divergencePost"},
             "count": {"atLeast": 1}
         }, {
+            "description": "in which components having a view are shown as viewComponent",
+            "target": {"selector": ".fl-substrate-hover", "within": {"selector": "[data-row-id$='.post.0.footer}']"}, "index": 0},
+            "text": {"equals": "viewComponent"}
+        }, {
+            "description": "and the list of posts as listViewComponent",
+            "target": {"selector": ".fl-substrate-hover", "within": {"selector": "[data-row-id$='.post}']"}, "index": 0},
+            "text": {"equals": "listViewComponent"}
+        }, {
             "description": "and a layer list of 8 colours",
             "target": {"selector": ".fl-layerlist-layer"},
             "count": {"equals": 8},
@@ -24,7 +32,6 @@
         }]
     }, {
         "description": "Hover over the footer of the left-hand post in the substrate view",
-        "knownIssue": "The first write of editorRoot.inspectingSite upgrades it into the live layer via fluid.pathToLive, which remerges and reinstantiates the whole editor, displacing the row highlight",
         "action": {"type": "hover", "target": {"selector": ".fl-substrate-hover", "within": {"selector": "[data-row-id$='.post.0.footer}']"}, "index": 0}},
         "expect": [{
             "description": "The substrate row should be highlighted",
@@ -250,6 +257,57 @@
         "expect": [{
             "description": "The editor tab should disappear",
             "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Go back in history by hitting the back arrow in the history pane",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-left-top"}},
+        "expect": [{
+            "description": "The fluid.demos.divergencePost tab should reappear",
+            "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"},
+            "count": {"equals": 1}
+        }, {
+            "description": "together with its editor body",
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 1},
+            "visible": true
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "text": {"contains": "2016 paper"}
+        }]
+    }, {
+        "description": "Go back in history again",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-left-top"}},
+        "expect": [{
+            "description": "The tab should disappear, as before it was opened",
+            "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Go forward in history by hitting the forward arrow in the history pane",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-right-top"}},
+        "expect": [{
+            "description": "The fluid.demos.divergencePost tab should reappear",
+            "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"},
+            "count": {"equals": 1}
+        }, {
+            "description": "together with its editor body",
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 1},
+            "visible": true
+        }]
+    }, {
+        "description": "Go forward in history again",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-right-top"}},
+        "expect": [{
+            "description": "The tab should disappear, as after it was closed",
+            "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
             "count": {"equals": 0}
         }]
     }, {

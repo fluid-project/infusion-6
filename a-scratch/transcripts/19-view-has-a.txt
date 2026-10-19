@@ -1,0 +1,2947 @@
+
+❯ Try to resolve https://github.com/fluid-project/infusion-6/issues/19 - report
+  if you run into an issue which requires fundamental new framework machinery or
+  other kinds of bulky new construction
+
+  Ran 4 shell commands
+
+  Read 3 files
+
+● Baseline is green (1003/1003). Now surveying how view-layer members are used
+  across the framework, demos and tests.
+
+  Ran 15 shell commands
+
+  Read 3 files
+
+● Starting the edits: adding the `{$parent}` context and protecting component
+  lists' non-element children in FluidIL.js.
+
+  Ran 1 shell command
+
+  ⎿  Updated src/framework/core/js/FluidIL.js
+  ⎿  Updated src/framework/core/js/FluidIL.js
+  ⎿  Updated src/framework/core/js/FluidIL.js
+  ⎿  Updated src/framework/core/js/FluidIL.js
+  ⎿  Updated src/framework/core/js/FluidIL.js
+
+● Now the core change in FluidView.js — `activateTemplate`/`bindContainer` take
+  the view as well as the principal.
+
+  Ran 2 shell commands
+
+● Now run the test suite to see where things stand.
+
+  Ran 5 shell commands
+
+  Read 1 file
+
+● The list's vTree recomputes correctly but its view's `renderView` effect
+  doesn't fire after turnover — digging into why.
+
+  Ran 6 shell commands
+
+● The view's second instance apparently loses its `fluid.view` layer — checking
+  what layers it gets on turnover.
+
+  Ran 4 shell commands
+
+  ⎿  Updated src/framework/core/js/FluidIL.js
+
+● All 1003 tests pass. Next: substrate tree presentation (hide the `view`
+  subcomponent unless framework layers are shown), new tests, lint, and the
+  browser/puppeteer suite.
+
+  Ran 1 shell command
+
+● Kicking off the browser (puppeteer) demo suite in the background while I edit
+  the substrate tree.
+
+  Ran 3 shell commands
+
+● Adding an IL test for `{$parent}` and the merged-`$component` survival fix,
+  plus a view test for the has-a structure.
+
+  Ran 2 shell commands
+
+● Verifying that test actually catches the disposal bug by temporarily disabling
+  the fix:
+
+  Ran 1 shell command
+
+● Fix confirmed necessary and restored. Browser suite finished — checking its
+  output:
+
+  Ran 2 shell commands
+
+● Browser suite: 15 passed, 0 failed, 1 pre-existing known issue (already tagged
+  in `demo-script.json`). Now a view test for the has-a structure:
+
+  Ran 1 shell command
+
+● Now lint, plus a final full run of both suites.
+
+  Ran 3 shell commands
+
+● Lint failures are identical to the HEAD baseline (pre-existing CSS/other
+  issues). Final full runs:
+
+  Ran 2 shell commands
+
+● I've resolved fluid-project/infusion-6#19: all rendering machinery now lives
+  on a `view` subcomponent of each view component. No fundamental new framework
+  machinery was needed. I did have to fix one existing bug in FluidIL that this
+  refactor exposed.
+
+  `npm test` passes (1016/1016, up from 1003 with the new tests). The puppeteer
+  suite (`npm run test:browser`) shows 15 steps passed and 0 failed, plus the
+  one step already tagged as a known issue in `demo-script.json`. Lint errors
+  are the same as at HEAD. Nothing is committed.
+
+  **What moved, and what stayed**
+
+  I had to choose where configuration lives; this is the call you'll most want
+  to check. Since a template's `{self}` has to keep meaning the principal
+  component (e.g. UISelect's `templateTree` reads `{self}.selection`), I split
+  it this way:
+  - **Stays on the principal (unchanged client code):** `container`, `template`,
+    `templateTree`, `elideParent`, `templateLayer`, `parentTemplate`,
+    `partialTemplateLayers`. `fluid.viewComponent` remains as the tag meaning
+    the component "has a" view.
+  - **Moves to `{self}.view` (new `fluid.view` layer):** `vTree`, `renderView`,
+    `renderedContainer`, a `container` that just points back to the parent's,
+    and the template effects.
+  - Template references still resolve against the principal, and
+    `viewContainerRegistry` still maps elements to the principal's shadow.
+
+  If you'd rather the configuration itself move into `view`, that's doable, but
+  every `{container}` constructor argument, `elideParent` and template would
+  need to change.
+
+  **Framework changes**
+  - **`{$parent}` context:** added in `fluid.resolveContext`, resolving to the
+    parent component.
+  - **Component lists:** a list now has a `view` child as well as its items, so
+    the `$for` clean-up only destroys keys it pushed itself (now stored as
+    `listShadow.listKeys`). Previously it would have destroyed the view.
+  - **The latent bug:** `fluid.disposeLayerEffects` disposed a subcomponent
+    whenever its `$component` record changed identity. A record merged from
+    several layers is a new object on every merge, so the subcomponent was
+    destroyed straight after being re-pushed. This hit the list view
+    (`fluid.viewComponent` + `fluid.viewComponentList`) and fullPageEditor's
+    `renderView` override. It now skips anything carried over into the new
+    shadow map.
+  - **Helpers:** `fluid.viewShadowFor(shadow)` and
+    `fluid.renderedContainerFor(shadow)`. `possiblyRenderError` now works from
+    the view and reads the container from the parent.
+
+  **Framework-aware code updated**
+  - `fluid-fullPageEditor.vue`: its `renderView` override is now `view:
+    {$component: {renderView: ...}}`.
+  - `fluid-codemirror.vue`: `{self}.view.renderedContainer`.
+    `fluid.disableRendering` now writes `self.view.vTree`.
+  - `fluid-editorRoot.vue`: the mutation listener and inspect overlay go through
+    the new helpers.
+  - `substrateTree.js`: the `view` subcomponent is hidden while "user layers
+    only" is on and appears when it's toggled off.
+  - One test now references `{fullPageEditor}.view.renderedContainer`.
+
+  **New tests**
+  - An IL test for `{$parent}` and for a subcomponent merged from two layers
+    surviving its parent's turnover. I checked that it fails without the
+    disposal fix.
+  - A view test checking the has-a structure: `that.view`, no `vTree` on the
+    principal, `renderedContainer`, and the registry entry.
+
+  The legacy `src/framework/edit/js/FluidEdit.js` (used only by the old
+  `todo-list` demo) needed no changes.
+
+  When you commit, the message should mention `Resolves
+  fluid-project/infusion-6#19`.
+
+❯ Everything needs to move onto {self}.view including container, template,
+  templateTree etc.- there should be no view-specific machinery on the top-level
+  component. As a courtesy to those using the free creator function we can
+  continue to accept container in the arguments there but forward it down. It
+  feels like we'll need some special machinery to allow template {self}
+  references to refer to the parent transparently - but they always will, a
+  template would have no reason to refer to the view machinery from within
+  itself
+
+  Ran 8 shell commands
+
+● Now sfc-parser: nested-path patching so SFC loading can write
+  `view.templateLayer` into an existing `view: {...}` block or add one.
+
+  Ran 1 shell command
+
+● Now FluidView.js — SFC patching first:
+
+  Ran 1 shell command
+
+● Now findDocument, activateTemplate and the `@id` template record:
+
+  Ran 3 shell commands
+
+  Read 1 file
+
+● Framework view layers done. Now migrating framework-aware editor code; viewing
+  the editor SFCs that author templates:
+
+  Ran 2 shell commands
+
+● Writing a small one-off migration script (in the scratchpad) that wraps each
+  run of adjacent view-config properties into a single `view: {...}` block:
+
+  Ran 1 shell command
+
+  ⎿  Wrote /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/2462d8b2-4a18-4a5d-a177-5448ba24bca2/scratchpad/wrapview.py
+
+● Script output looks right. Now hand-fixing fullPageEditor (references to
+  `{fullPageEditor}.container`, the existing `view` override):
+
+  Ran 3 shell commands
+
+● Now the tests diff:
+
+  Ran 2 shell commands
+
+● Mostly working, with a set of reactivity failures. Inspecting the simplest
+  ones first:
+
+  Ran 2 shell commands
+
+● The view's `renderView` effect stops firing after its second rapid turnover.
+  Instrumenting effect allocation and disposal for view shadows:
+
+  Ran 1 shell command
+
+● The same effect (631) is reused and never disposed — it just isn't re-run on
+  the view's second turnover. Looking at how effects handle unavailable
+  arguments:
+
+  Ran 13 shell commands
+
+● That fixed the bulk (1011/1020, with no signals/IL regressions). Remaining
+  failures:
+
+  Ran 6 shell commands
+
+● Only two PTF expectations left. Looking at the second:
+
+  Ran 2 shell commands
+
+● Now checking whether both signals changes are needed, or whether the second
+  (re-run on self-staleness) subsumes the first (multi-pass over sources):
+
+  Ran 1 shell command
+
+● Both signals fixes are needed. Adding focused regression tests to
+  FluidSignalsTests for each, so they're pinned independently of the view code:
+
+  Ran 4 shell commands
+
+● All 1030 tests pass. Sweeping for anything still reading view members off a
+  principal:
+
+  Ran 1 shell command
+
+● Only `docs/` (a built snapshot) still has old forms, and I've left it alone.
+  Lint and the browser suite next:
+
+  Ran 1 shell command
+
+● Lint matches baseline. Browser suite: all 16 steps pass, including the step
+  previously tagged as a known issue:
+
+  Ran 3 shell commands
+
+● Everything view-related now lives on `{self}.view`: container, template,
+  templateTree, elideParent, templateLayer, parentTemplate,
+  partialTemplateLayers, relativeContainer, vTree, renderView and
+  renderedContainer. The principal keeps only the `fluid.viewComponent` layer
+  and its `view` member. `npm test` passes (1030/1030), the browser suite passes
+  16/16 steps, and lint shows the same errors as at HEAD. Nothing is committed.
+
+  **Making template `{self}` refer to the principal didn't need special
+  machinery.** `activateTemplate` resolves template references (and event
+  handlers) against the view's parent. A template never sees the view, so
+  `@{text}` and `@onclick="{self}.increment()"` are unchanged. Config that lives
+  *in* the view but needs principal state uses `{$parent}`, e.g. UISelect's
+  computed `templateTree` and substrateTree's `template`.
+
+  **The IL additions are small:**
+  - **Sibling folding:** members written next to a `$component` record are
+    folded into it (`fluid.foldComponentRecord`). So a layer writes `view:
+    {template: "...", elideParent: false}` rather than `view: {$component:
+    {...}}`. Each view variant (`templateViewComponent`,
+    `sfcTemplateViewComponent`, `selfTemplate`, `partialViewComponent`, …) just
+    contributes members under `view`, and every view has the single layer
+    `fluid.view`.
+  - **`container` forwarding:** a `fluid.upgradeFreeComponentArgs` hook lets
+    FluidView move `container` from free-creator args to `view.container`.
+    Self-boot, PTF `instantiate` and the tldraw driver all go through it
+    unchanged.
+  - **SFC patching:** loading an SFC now writes `view.templateLayer` /
+    `view.partialTemplateLayers`, into an existing `view: {...}` block if there
+    is one (`fluid.patchDefMapPath`).
+
+  **Decision for you: I fixed two bugs in the signals core (FluidSignals.js).**
+  This isn't new machinery, but it's the most delicate part of the change, so
+  please review it carefully. Folded `view` records are rebuilt on every merge,
+  so the view now turns over whenever its principal does, and that turnover
+  happens while other cells are mid-evaluation. Two notifications were being
+  lost:
+  1. In `updateIfNecessary`, refreshing one source could re-dirty another source
+     already refreshed in the same pass. `findDirtyEdge` then found no runnable
+     edge, and the cell was marked `Clean` anyway, so the effect was orphaned.
+     It now repeats the source pass, at most 10 times
+     (`fluid.cell.maxSourcePasses`).
+  2. A cell marked stale by a side effect of its own update (reading an argument
+     turned a component over) kept its stale result. It is now re-run, under the
+     same bound.
+
+  Each fix has its own test in FluidSignalsTests, and I confirmed each test
+  fails without its fix. Removing either fix brings back dozens of view and
+  todo-demo failures. A side effect: the compose-edit browser step tagged as a
+  known issue ("first write of `editorRoot.inspectingSite` … displacing the row
+  highlight") now passes on two consecutive runs, so I removed its `knownIssue`
+  entry. Put it back if you think it's still flaky.
+
+  **Smaller changes:**
+  - `fluid.ptf.toJSONAmenable` now drops an object whose members were *all*
+    discarded, so a transmitted potentia doesn't carry `view: {}` once the
+    container is stripped.
+  - substrateTree's `censoredMap` hack for `templateLayer` /
+    `partialTemplateLayers` is gone, since those members are no longer
+    top-level.
+  - The `$for` list keys and `carriedOver` disposal fixes from the first pass
+    are still in place.
+
+  **Client code that moved into `view: {...}`:** I used a one-off script plus
+  hand fixes.
+  - All framework-aware editor SFCs, `FluidView-browser`'s `globalDismissal`,
+    and substrateTree.
+  - Demo SFCs: footer, UISelect, the two `-withAssignee` partials, and three
+    tldraw SFCs.
+  - The view tests.
+  - References to a component's DOM now read `{x}.view.container` /
+    `{x}.view.renderedContainer`.
+
+  `docs/` (a built copy) and the legacy `FluidEdit.js` were left untouched. The
+  has-a test now asserts that none of the view members exist on the principal.
+
+❯ I'm inclined to revert the sibling folding addition - it seems to make the
+  meaning of configuration ambiguous - what is meant by "next to", do you mean
+  that a layer is found including a key that another layer has used that key to
+  hold a $component? This seems to make the layer merging process
+  non-deterministic unless we can defend it. Also you said "none of the view
+  members exist on the principal" - do other such members exist other than
+  "view" itself? The naming of view layers has become a bit haphazard, with some
+  mentioning "component" and some not. I would incline to putting no layer at
+  all on the principal and putting fluid.viewComponent itself just on the view,
+  what negative consequences will this have? I'm concerned about the signals
+  core changes, it would seem preferable to prevent the behaviour leading to the
+  self-dirtying than condone it - can you trace through the exact sequence of
+  events in the substrate which leads to this behaviour and see if there is an
+  alternative there. Also please read this blog posting on the future direction
+  of the reactive system and comment on whether this architectural change would
+  lead to a more principled solution to such problems -
+  https://ponder.org.uk/post/2026-06-28-fully-deferred-stabilization/ - is the
+  issue that the dirtying of the other source happens synchronously on the same
+  stack frame, or would we expect the same phenomenon where we permit only one
+  update per reactive stack frame? Note that we *do* expect in general for there
+  to be the possibility for multiple activations of the same cell within the
+  same fit in future, so the fix isn't a priori wrong.
+
+● I'll fetch the blog post and, in parallel, instrument the signals core with
+  both fixes disabled so I can capture the exact call stack at the moment the
+  effect's sources get re-dirtied.
+
+  Called 1 ToolSearch
+
+  Ran 2 shell commands
+
+  Called 1 WebFetch
+
+● My counter caught a successful activation. I'll buffer the re-dirty stacks per
+  activation and print only the activation that actually drops its notification:
+
+  Ran 1 shell command
+
+● Node's default 10-frame stack limit cut it off. Raising the limit to see the
+  full chain back to the effect:
+
+  Ran 4 shell commands
+
+● I haven't changed the working tree this turn. Everything below came from
+  scratch copies.
+
+  ## 1. Sibling folding
+
+  "Next to" happens after merging. Layers are merged deterministically in
+  priority order first. Then, if the merged value at a member such as `view`
+  contains a `$component` key, all its other keys are spread over the
+  `$component` record.
+
+  So it is deterministic, but I can't defend it. The sibling always wins,
+  whatever its layer's priority. A weak layer's `view: {template: B}` beats a
+  stronger layer's `view: {$component: {template: A}}`: the result depends on
+  how the config is spelled, not on priority. I agree it should go.
+
+  Reverting it doesn't remove the turnover problem in section 4, though.
+  Whenever `view.$component` is merged from more than one layer,
+  `fluid.mergeLayers` builds a fresh object. The record then changes identity on
+  every parent turnover, so the view is re-pushed.
+
+  ## 2. Other members on the principal
+
+  There are none. Every framework view layer (`viewComponent`,
+  `templateViewComponent`, `sfcTemplateViewComponent`, `selfTemplate`,
+  `selfTemplateRoot`, `partialViewComponent`, `viewComponentList`) contributes
+  only `view`. `fluid.sfcViewComponent` contributes nothing. The principal also
+  has `fluid.component`'s `events` and `destroy`, which aren't view-specific. I
+  checked this by reading the definitions, not by listing a live component's
+  keys.
+
+  ## 3. Moving all view layers onto the view
+
+  What would break:
+  - **No layer accumulation.** C3 resolves only a component's top-level
+    `$layers`. Inside a nested `$component` record, `$layers` is a plain array,
+    and `fluid.mergeLayers` lets the last writer win. Combinations that work
+    today would clobber each other:
+    - `filters.withAssignee` combines `sfcTemplateViewComponent` with
+      `partialViewComponent`.
+    - The `select` subcomponent in `filterCompleted.vue` combines `UISelect`
+      with `selfTemplate`.
+    - The `@id` template record would overwrite whatever view layers the child
+      defines.
+
+    This is the serious one, and it's the same gap folding was papering over.
+    We'd need either a union policy for nested `$layers` (another merge special
+    case) or views whose variety is expressed only through members.
+  - **Co-occurrence.** `fluid.viewComponentList` needs `viewComponent` and
+    `componentList` on the same component, and they'd be on different
+    components.
+  - **Tag checks move to the view.** Substrate's `displayLayers`, the partial
+    check in `activateTemplate`, `filterForSelfEditing`, and the partial
+    detection in `sfcToInjRecs` would all need updating. IL selectors such as
+    `"fluid.viewComponent"` would match views rather than principals.
+  - **The MIME tag.** `fluid.sfcViewComponent` marks the *layer* as SFC-derived,
+    so it should stay on the principal. Its name is part of the naming mess;
+    something like `fluid.sfcLayer` would fit.
+
+  If we go this way, I'd name the view layers consistently: `fluid.view`,
+  `fluid.templateView`, `fluid.sfcTemplateView`, `fluid.selfTemplateView`,
+  `fluid.partialView`, `fluid.listView`.
+
+  ## 4. The exact sequence behind the self-dirtying
+
+  I traced it with both signals fixes disabled, in the multiClass test after
+  `that.b = false`:
+
+  1. The write upgrades `b` into the live layer. Marking propagates to the
+     principal's `flatMerged` and on down to the principal's own dependents.
+     **Nothing reaches the view.** The view depends on its parent only through
+     an imperative `pushPotentia` *write* inside the parent's `computeInstance`,
+     which is not a graph edge.
+  2. The view's `renderView` effect is queued through `{$parent}` in its vTree
+     compute. In `updateIfNecessary` it refreshes `{self}.container` and
+     `{self}.vTree` in order. The view's `availableInstance` and `flatMerged`
+     look clean, so both are marked clean.
+  3. Refreshing the vTree compute evaluates its `{$parent}` argument through
+     `flattenSignals` and pulls the principal's computer. The principal now
+     recomputes:
+
+     `computeInstance → expandLayer → expandComponentRecord →
+     pushSubcomponentPotentia → pushPotentia → potentia.set(...)`
+
+  4. That `set` marks the view's `flatMerged`, `availableInstance`, and the
+     `{self}.container` / `{self}.vTree` references `Dirty`. These are sources
+     the effect has already refreshed.
+  5. `findDirtyEdge` requires clean sources, so it finds none.
+     `updateIfNecessary` then unconditionally marks the effect `Clean`, and the
+     notification is lost.
+
+  The stale vTree in the conditional-rendering test is the same chain one level
+  down. The compute reads `{self}.templateTree` before `{$parent}`, and pulling
+  `{$parent}` writes the view's potentia while the compute is still tracking.
+
+  **Alternative.** Make the dependency a real edge. One line in
+  `fluid.flatMergedComputer` does it: `shadow.parentShadow?.computer?.get()`
+  before reading `shadow.potentia`. The principal's change then propagates to
+  the view through ordinary marking, and any pull of a view member brings the
+  parent up to date first. In a scratch copy with **both signals changes
+  removed**, every IL, view, SFC, PTF and todo-demo test passes (only my two
+  synthetic signals tests fail, as expected).
+
+  The browser demo's old known issue (the first `inspectingSite` write
+  re-instantiating the editor) comes back, though. So my signals fix was masking
+  another write-during-evaluation path that the parent edge doesn't cover. The
+  `@id` template record, pushed into a child from the parent view's vTree
+  compute, is the other remaining instance of the pattern.
+
+  ## 5. The blog post and fully deferred stabilization
+
+  The post doesn't discuss fits or multiple activations. It does say the graph
+  reshapes itself during propagation, so the priority queue won't be monotonic,
+  and that nodes with large influence on the graph should jump the queue.
+  Component instantiation is exactly such a node.
+
+  The phenomenon isn't an artefact of the synchronous stack; it's semantic. A
+  write during evaluation, with no edge behind it, dirties things the scheduler
+  believed were settled.
+  - **Today:** the loss comes from bookkeeping that assumes no new dirtiness can
+    appear during a pull: `_isQueued` suppressing re-queueing, the unconditional
+    `Clean` at the end of `updateIfNecessary`, and the early return while
+    `_trackingRecord` is set.
+  - **Under one update per reactive stack frame:** a queue-based scheduler that
+    marks a cell clean when its activation *starts* would record the re-dirty as
+    a new entry. The lost notification would become a second activation of the
+    same cell within the fit, after a first activation that ran on stale inputs
+    (a glitch). My rerun fix is a synchronous emulation of that. So I agree it
+    isn't wrong a priori, and the deferred design would make it structural
+    rather than patched.
+  - **What deferral can't do:** stop the wasted, glitched first activation. That
+    needs the edge, so the scheduler knows the parent's instantiation must
+    precede the child's dependents.
+
+  So the parent edge is the principled fix for ordering, and engine tolerance of
+  re-dirtying is a separate robustness property that fully deferred
+  stabilization would supply naturally.
+
+  ## Recommendation
+
+  1. Revert folding.
+  2. Replace both signals changes with the parent edge, restore the `knownIssue`
+     tag, and record the remaining write-during-evaluation paths
+     (template-record pushes, `pathToLive` remerges) as known.
+  3. Before anything else, you need to decide layer placement. Moving the layers
+     onto the view needs either a nested-`$layers` accumulation policy or
+     member-only view variants, and without folding, config is written as `view:
+     {$component: {...}}` either way.
+
+  Shall I go ahead with 1 and 2, and which do you want for 3?
+
+❯ I agree with 1 and 2. Note that under the fully deferred stabilization model,
+  the notion of "glitches" becomes much weaker since we can always guarantee to
+  settle cyclic parts of graphs before we proceed to notify on their more
+  irreversible consequence. Consult this chat
+  https://claude.ai/share/ffd5f2b3-5a67-4e76-b485-cfedafaa4d19 and see if its
+  analysis seems to bear on the problem we're facing. For 3 can you clarify what
+  is meant by "nested-$layers accumulation policy" vs "member-only view
+  variants"? For the former, is what is meant similar to this issue experienced
+  with an earlier version of Infusion?
+  https://issues.fluidproject.org/browse/FLUID-5614/
+
+● I'll read both links first, then make the two agreed changes.
+
+  Called 2 WebFetch
+
+● The share page came back as just a footer, probably because it renders
+  client-side. Trying a direct fetch before giving up on it:
+
+  Ran 3 shell commands
+
+  ⎿  Wrote /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/2462d8b2-4a18-4a5d-a177-5448ba24bca2/scratchpad/nestview.py
+
+● Blocks are nested. Now the hand edits: path-based reads/patches, the free-args
+  forwarder, comments, and removing the folding from the IL:
+
+  Ran 1 shell command
+
+● Now 2: restore the signals core and the demo script's `knownIssue` from HEAD,
+  drop my two signals tests, and add the parent edge:
+
+  Ran 3 shell commands
+
+● The patch itself is right; only the expectation didn't get the script's
+  treatment, because it isn't a `view: {` line. Fixing it:
+
+  Ran 1 shell command
+
+● All pass. Checking that the new IL test fails without the parent edge, then
+  lint and the browser suite:
+
+  Ran 4 shell commands
+
+● Both agreed changes are in: sibling folding is reverted, and the signals-core
+  changes are replaced by the parent edge. `npm test` passes (1025/1025), lint
+  matches HEAD, and the browser suite is back to its baseline (15 passed, plus
+  the one step restored as a known issue).
+
+  **1. Folding reverted.** `fluid.foldComponentRecord` is gone, and the IL test
+  is back to plain `$component` records. View configuration is now always
+  written as `view: {$component: {...}}`. That covers the framework view layers,
+  the `@id` template record, self-boot, the free-creator `container` forwarding,
+  and all client SFCs and tests. SFC loading now patches
+  `view.$component.templateLayer` / `partialTemplateLayers`.
+
+  **2. Signals core restored to HEAD.** `FluidSignals.js` and its tests are back
+  to HEAD content, and the `knownIssue` entry in `demo-script.json` is restored.
+  In their place, `fluid.flatMergedComputer` reads
+  `shadow.parentShadow?.computer?.get()` before its potentia. The parent's write
+  of the child's potentia therefore happens before the child is evaluated,
+  instead of invalidating it partway through. Without that line, 14 view tests
+  fail.
+
+  I tried writing a dedicated IL test for the edge, but couldn't reproduce the
+  failure faithfully. Reads through a whole-component argument like `{$parent}`
+  are untracked, so the simple versions either pass without the edge or fail
+  with it. I dropped it, and the view tests are what pin the edge.
+
+  On glitches under fully deferred stabilization: agreed. The edge still earns
+  its keep there, because a scheduler can only settle the parent's instantiation
+  before the child's dependents if it can see the dependency. Without the edge,
+  the potentia write still arrives out of band.
+
+  **The shared chat:** I couldn't read it. The share page renders client-side, a
+  plain fetch returns only the app shell, and the snapshot API returns 403. If
+  you paste the text I'll check its analysis against this problem.
+
+  **3. The two options:**
+  - **Nested-`$layers` accumulation policy.** Several layers each contribute
+    `view: {$component: {$layers: [...]}}`. Today `fluid.mergeLayers` lets the
+    last array win, so earlier contributions are lost. The policy would combine
+    the arrays and then resolve the view's layer list through the hierarchy as
+    for any component. Yes, this is FLUID-5614 exactly: gradeA declares `sub`
+    with gradeC, gradeB extends gradeA and declares `sub` with gradeD, and
+    gradeC disappears. The JIRA page says it was fixed in 4.0 but not how. The
+    fault is latent in Infusion 6 already: any `$component` record whose
+    `$layers` arrives along two paths drops layers.
+  - **Member-only view variants.** This is what the code does now. Every view
+    has the single layer `fluid.view`, and the variety comes from *members* that
+    the principal's layers contribute into `view.$component` (`templateTree`
+    computations, `elideParent`, `relativeContainer`…). Members merge key by key
+    with ordinary priority, so nothing is lost. The cost is that the principal
+    keeps layers whose only job is to contribute those members, and tag checks
+    like `partialViewComponent` and `viewComponentList` stay on the principal.
+
+  So "no layer on the principal" needs the accumulation policy, which means
+  solving FLUID-5614 for Infusion 6. Member-only variants avoid that, at the
+  price of the principal-side layers you found haphazardly named. A middle path
+  would be to keep member-only variants but rename the principal layers
+  consistently, for example `fluid.viewComponent`,
+  `fluid.templateViewComponent`, `fluid.sfcTemplateViewComponent`,
+  `fluid.selfTemplateViewComponent`, `fluid.partialViewComponent`,
+  `fluid.viewComponentList`.
+
+  Which do you want? If it's the accumulation policy, should it be a general fix
+  to deep-tree merging of `$layers` (the proper FLUID-5614 fix), or limited to
+  `$component` records?
+
+❯ The chat on fds is now dumped in /a-scratch/chats/fds.md
+
+  Ran 2 shell commands
+
+  Read 1 file
+
+● The comparison run broke off at the todo tests because I didn't copy `demo/`
+  into it. Redoing it:
+
+  Ran 1 shell command
+
+● The chat does bear on this, quite closely. Our failure is the case it calls a
+  **missed wake**, and its framework explains both the fix I reverted and the
+  parent edge that replaced it.
+
+  **What our failure is.** The chat calls `computeInstance` "an effect disguised
+  as a computed", and our trace shows exactly that. During the effect's pull,
+  the parent's `computeInstance` runs `pushPotentia`, a "cod write" in the
+  chat's terms, onto the view's potentia. That write lands on sources the same
+  pass had already validated, and the effect is dropped. The chat cites Solid
+  2.0's `REACTIVE_MISSED_WAKE` (#3037) for precisely this: "a pass writes to a
+  link that the same pass had already validated, so the node is rerun at the end
+  instead of the wake being silently lost". The reverted signals fix was a
+  synchronous version of that latch.
+
+  **Your stack-frame question.** The chat's risk #1 answers it: fully deferred
+  stabilization "protects effects from glitches, but it doesn't make a stale
+  read safe". The problem splits in two:
+  - **The extra activation is inherent.** A write that invalidates something
+    already read needs another activation of the reader, however updates are
+    scheduled. That matches your expectation of multiple activations of a cell
+    within one fit.
+  - **The loss belongs to the synchronous pull.** Our engine does record the
+    read: `markStale` reaches the effect through its observer list. The wake is
+    then discarded by bookkeeping that assumes nothing new can be dirtied during
+    a pull: `_isQueued` suppressing re-queueing, and the unconditional `Clean`
+    at the end of `updateIfNecessary`. A queue that marks a cell clean when its
+    activation *starts*, and re-enqueues it on any later mark, would provide the
+    latch structurally. With effects held until the queue is quiescent, the
+    first, stale `renderView` would never reach the DOM.
+
+  **What the parent edge corresponds to.** The nearest match is Solid's
+  projection firewall. It carries an ordering obligation: before a projection
+  serves a value, its derive must be brought up to date *without the reader
+  subscribing*. Our edge has to subscribe, because in a pull model an
+  unsubscribed child is never marked stale and so never pulls its parent. The
+  chat's longer-term shape would replace the edge. Two of its ideas apply:
+  - **Declared channel.** The parent owns its subcomponents' records, so
+    `pushPotentia` is a write the parent is entitled to make. It would be staged
+    for the next iteration coordinate rather than applied mid-pass.
+  - **Stratification.** Instantiation is an allocating, non-monotone step, so it
+    runs after merging has settled. Within that stratum, parents come before
+    children, which can be read off the component tree.
+
+  The parent-to-child dependency is then a "moral" one, known from addressing
+  alone. The one-line edge is its literal-graph stand-in until that scheduler
+  exists. Even then, the latch is still needed for reads that happen before a
+  staged write is applied.
+
+  **Cost of the edge.** Since the edge is a tracked read, I measured whether
+  whole subtrees now turn over with their parent. They don't: across `npm test`
+  the edge version allocates 1065 component instances, against 1083 for the
+  reverted signals-fix version, and both pass 1025/1025.
+
+  **What's still open.** The same pattern has two other instances the edge
+  doesn't cover. One is the `@id` template record, which a parent's view pushes
+  into a child while computing its vTree. The other is the `pathToLive` remerge
+  behind the browser demo's known issue. Both fall under the chat's "declared
+  channel" step, and a missed-wake latch would also cover them.
+
+  For 3, my previous message has the comparison and the link to FLUID-5614. I
+  still need your choice there, member-only view variants or a nested-`$layers`
+  accumulation policy, before changing anything else.
+
+❯ We must certainly have the "nested-$layers accumulation policy" - here is the
+  implementation of old FluidIoC.js which had a basic solution for "double deep
+  trees" - https://github.com/fluid-project/infusion/blob/main/src/framework/cor
+  e/js/FluidIoC.js#L1696 check whether this indeed seems to solve the same
+  problem by the kind of mechanism you were considering
+
+  Ran 6 shell commands
+
+● Yes — it addresses the same problem, and by a better version of the mechanism
+  I had in mind. Rather than unioning arrays during the parent's merge, Infusion
+  4 **declines to merge subcomponent records in the parent at all** and lets the
+  child's ordinary hierarchy resolution do the accumulating.
+
+  **How Infusion 4 does it** (from `Fluid.js` and `FluidIoC.js` on `main`):
+  1. **No merging in the parent.** The root merge policy gives `components` (and
+     `dynamicComponents`) `fluid.deferringMergePolicy` with `noexpand`. For each
+     key, each grade's record is *pushed* onto a `fluid.mergingArray`, so all
+     contributions survive unmerged, in priority order.
+  2. **A "light merge" of the scalars.** `fluid.lightMergeRecords` takes only
+     the members needed before construction (`type`, `createOnEvent`,
+     `source`/`sources`), each last-wins. All the records stay in `toMerge`.
+  3. **Each record becomes its own merge block in the child.**
+     `fluid.registerConcreteSubPotentia` tags every record `recordType:
+     "subcomponentRecord"` (priority 700, between defaults and user), and
+     `fluid.expandComponentOptions` makes a separate block from each one.
+  4. **Grades accumulate in the child.** `fluid.computeDynamicGrades` walks all
+     the blocks and concatenates each block's `gradeNames`, so gradeC and gradeD
+     both survive. Plain options merge across blocks by priority, which also
+     covers the later comment on FLUID-5614 about plain options corrupting along
+     two paths.
+  5. **It was a basic solution, as you said.** The line you linked notes that
+     `componentDepth` "is currently unused but will be incorporated in
+     mergeBlocks sort for refined versions of FLUID-5614". Ordering between
+     records from different nesting depths was left unrefined.
+
+  **How it maps onto Infusion 6.** Half of it is already there.
+  `fluid.flatMergedComputer` takes the union of `$layers` across *all* of a
+  component's merge records plus its `layerNames`, and resolves that through the
+  hierarchy. A child given several subcomponent records would accumulate their
+  layers already. The gap is upstream: `fluid.mergeLayers` fuses the per-layer
+  `view: {$component: ...}` contributions into one object, and arrays are
+  last-wins, before the child ever sees them. So the port would be:
+  - **Collect, don't merge.** When `fluid.mergeLayers` finds a `$component`
+    record at a key in any layer, it collects that key's contributions with
+    their source layer and priority, instead of recursing. Infusion 4 could key
+    this off the fixed `components` namespace; we have to detect `$component` at
+    any member. A layer with a plain object where another has a `$component`
+    should probably be an error.
+  - **Light merge `$for`/`$if`.** These are our `type`/`createOnEvent`/`source`
+    equivalents and need deciding before construction.
+  - **Push one subcomponent merge record per contribution.**
+    `fluid.expandComponentRecord` would push each one with its priority and its
+    source layer as `mergeRecordName`. The child's C3 resolution then sees every
+    contributed `$layers`, and its members merge with their own priorities
+    rather than the parent's flattened ones. Provenance comes for free, so
+    `filterForSelfEditing` could read a template's source layer directly.
+
+  Two consequences matter for our current problem:
+  - **Turnover churn largely goes away.** The contributed records are the
+    original layer objects, stable across parent turnovers.
+    `fluid.mountSignalRecord` can compare the list element by element and skip
+    the re-push when nothing changed. Today's fused record is a fresh object on
+    every merge, which is what turns the view over on every parent turnover and
+    set up the missed wakes. The parent edge stays, for record changes that are
+    real.
+  - **It unblocks moving `fluid.viewComponent` onto the view.** With
+    accumulation in place, `filters.withAssignee` can contribute `$layers:
+    "fluid.partialViewComponent"` to `view.$component` alongside the base SFC's
+    `fluid.sfcTemplateViewComponent`. The `@id` template record becomes just
+    another record, and the principal needs no layer at all.
+
+  What's still open:
+  - **Where the record list goes.** Infusion 4's `componentDepth` caveat becomes
+    ours, since a grandparent's `@id` template record and the parent's own
+    records come from different depths. Our `mergeRecordTypes` already order
+    `subcomponent` (700) below `template` (200), so I'd start with type priority
+    plus layer rank within type, and treat depth as the later refinement
+    Infusion 4 left it as.
+  - **Co-occurrences.** `fluid.viewComponentList` would need restating once
+    `viewComponent` lives on the view. It could become a co-occurrence on the
+    view of `fluid.viewComponent` with the parent being a list, or the list's
+    `$for` record could contribute a list view layer directly.
+
+  Suggested order: (a) implement deferred `$component` merging, with tests
+  reproducing FLUID-5614's gradeA/gradeB/gradeC/gradeD case in `$layers` form;
+  then (b) move the view layers off the principal onto the view, with consistent
+  names. Shall I go ahead with (a)?
+
+❯ Yes, do both if you find no obstacles with (a)
+
+● Starting (a). First, checking the pieces it touches: how compact-element
+  expansion treats object values, and where else the merge runs.
+
+  Ran 3 shell commands
+
+● Now the IL side: expand each contribution into its own subcomponent merge
+  record, light-merge `$for`/`$if`, and reuse the existing child when its
+  contributions are unchanged.
+
+  Ran 7 shell commands
+
+● The comparison only helps if hierarchy resolution returns stable layer
+  objects. Checking: the resolver calls `fluid.readerExpandLayer`, which may
+  copy them every time.
+
+  Ran 6 shell commands
+
+● The FLUID-5614 test passes. In the second test, the component is unavailable
+  as expected; I just need to see how the thrown error is represented:
+
+  Ran 1 shell command
+
+● The error is on `flatMerged`'s unavailable value, but the message says "from
+  undefined" because user records have no `mergeRecordName`. Falling back to the
+  record type:
+
+  Ran 1 shell command
+
+● (a) went in without obstacles. Starting (b) by inventorying every place that
+  names a view layer on a principal:
+
+  Ran 2 shell commands
+
+  ⎿  Wrote /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/2462d8b2-4a18-4a5d-a177-5448ba24bca2/scratchpad/movelayers.py
+
+  ✗ Session ended here: the last command (a file rewrite script) looped indefinitely and the
+    session was killed. It was restored in a following session:
+
+
+It was working on
+  fluid-project/infusion-6#19, and your last instruction was "Yes, do both if
+  you find no obstacles with (a)".
+  - (a) Deferred $component merging was finished. It is the Infusion 4 approach
+    from FLUID-5614: each layer's contribution becomes its own subcomponent
+    merge record, and $for/$if are merged before construction. The FLUID-5614
+    test was added to FluidILTests.js, and it reported no obstacles.
+  - (b) Moving the view layers off the principal onto view.$component, with
+    consistent names, was just starting. These were the planned renames:
+    - fluid.selfTemplate → fluid.selfTemplateViewComponent
+    - fluid.selfTemplateRoot → fluid.selfTemplateRootViewComponent
+    - fluid.viewComponentList → fluid.listViewComponent
+
+  What actually went wrong: the session wasn't killed by a crash. Its throwaway
+  rewrite script for (b) went into an infinite loop: it re-matched the $layers
+  line it had just inserted inside view.$component and kept wrapping it again.
+  The script also opened each file for writing before transforming it. So the
+  first file in its list, src/framework/core/js/FluidView-browser.js, was left
+  at 0 bytes. None of the other 18 files reached the script; their modification
+  times are all older than the crash.
+
+  What I fixed: I rebuilt FluidView-browser.js from HEAD and re-applied the only
+  edit the session had made to it, which moves fluid.globalDismissal's
+  container: document under view:. HEAD was committed 8 minutes before the
+  session started, so the result is exact.
+
+  Test status: npm test passes, 1034/1034. One loose end: the new check from (a)
+  logs an ASSERTION FAILED during the two todo-list demo test files, although
+  their tests still pass:
+
+  ▎ Cannot merge value {"container":…} at path view from fluid.globalDismissal
+  ▎ with a subcomponent record - this should be written as {$component: ...}
+
+  globalDismissal gives view a plain object, while fluid.viewComponent gives it
+  a $component record. (a) deliberately makes that mix an error, and (b) is the
+  step that should fix it.
+
+  Shall I carry on with (b)? I'd redo the rewrite with a fixed script that
+  doesn't truncate files, and fix the globalDismissal mismatch as part of it.
+
+✻ Cooked for 1m 58s · done Saturday 22:29
+
+❯ yes, go ahead with (b)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Before rewriting anything, I'm reading the session's earlier design discussion
+  so (b) follows what you and it agreed.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll move every view layer into view.$component.$layers, removing them from
+  the principal, and standardize naming under a *ViewComponent scheme. First,
+  let me read the current view layer definitions.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've read the design discussion. Next, a full inventory of every place that
+  names a view layer, with context:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Two cases need more than a mechanical move: the viewComponentList
+  co-occurrence, and the @id template record. Reading both:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The list case is tricky: fluid.viewComponentList currently emerges from
+  fluid.viewComponent and fluid.componentList coinciding on one component, but
+  splitting view from logic breaks that co-occurrence. I'll inspect how
+  $component records appear in the merged output to figure out a replacement.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Component records are stored with all their contributions in
+  fluid.componentRecords, letting me determine deterministically whether a child
+  is a $for list directly from the parent's merged config. I'll check what
+  flatMerged holds next.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've laid out the plan for (b): consolidating view-related layers under a
+  single fluid.viewComponent naming scheme with variants for templates, SFCs,
+  partials, and lists, with lists selected via $for in the merged record instead
+  of co-occurrence. Now I'll check how client code currently spells the view
+  config.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Client code is already uniformly written as view: {$component: ...};
+  globalDismissal was the only plain one left. Next, the SFC loader, which
+  currently patches $layers on the principal:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'm writing a safer rewrite script for the client definitions that transforms
+  everything in memory first and never rescans inserted lines, avoiding the
+  earlier crash. It also flags inline records like {$layers: "x", ...} for
+  manual editing rather than auto-transforming them.
+
+  Made 1 scratchpad edit +81 (ctrl+o to expand)
+
+● Before running the script: when a definition loses all its $layers, does it
+  still resolve fluid.component implicitly?
+  Ran 1 shell command (ctrl+o to expand)
+
+● Nothing implicit, so an emptied $layers must fall back to fluid.component:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; python3…)
+  ⎿  src/framework/core/js/FluidView-browser.js src/framework/edit/sfc/flui
+     d-edit.vue src/framework/edit/sfc/fluid-editor-editorsPane.vue src/fra
+     mework/edit/sfc/fluid-editor-historyPane.vue src/framework/edit/sfc/fl
+     … +14 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView-browser.js (+6 -1)
+      156      fluid.globalDismissalSignal = fluid.cell(0, {name: "Global
+            dismissal signal"});
+      157
+      158      fluid.def("fluid.globalDismissal", {
+      159 -        $layers: ["fluid.resolveRoot", "fluid.viewComponent"],
+      159 +        $layers: "fluid.resolveRoot",
+      160          view: {
+      161 +            $component: {
+      162 +                $layers: "fluid.viewComponent"
+      163 +            }
+      164 +        },
+      165 +        view: {
+      166              container: document
+      167          },
+      168          clicked: 0,
+  ⎿  Updated src/framework/edit/sfc/fluid-edit.vue (+6 -1)
+       1  <script>
+       2  fluid.def("fluid.edit", {
+       3 -    $layers: "fluid.viewComponent",
+       3 +    $layers: "fluid.component",
+       4 +    view: {
+       5 +        $component: {
+       6 +            $layers: "fluid.viewComponent"
+       7 +        }
+       8 +    },
+       9      $importMap: {
+      10          "fluid.fullPageEditor": "%fluid-edit/sfc/fluid-fullPage
+          Editor.vue"
+      11      },
+  ⎿  Updated src/framework/edit/sfc/fluid-editor-editorsPane.vue (+2 -1)
+      2  fluid.def("fluid.editor.editorsPane", {
+      3      tabs: {
+      4          $component: {
+      5 -            $layers: "fluid.templateViewComponent",
+      5 +            $layers: "fluid.component",
+      6              $for: {
+      7                  source: "{fluid.editorRoot}.openLayerTabs",
+      8                  valueAs: "layerRec"
+     ...
+      17              },
+      18              view: {
+      19                  $component: {
+      20 +                    $layers: "fluid.templateViewComponent",
+      21                      template: `
+      22  <div class="fl-editor-layer-tab fl-clickable" @class="active:@{
+          isActive}"
+      23      @onclick="{editorRoot}.selectedLayerTab = {self}.layerName"
+  ⎿  Updated src/framework/edit/sfc/fluid-editor-historyPane.vue (+4 -2)
+      15  };
+      16
+      17  fluid.def("fluid.editor.historyList", {
+      18 -    $layers: "fluid.templateViewComponent",
+      18 +    $layers: "fluid.component",
+      19      records: {
+      20          $compute: {
+      21              func: "fluid.editor.historyList.fromStore",
+     ...
+      24      },
+      25      view: {
+      26          $component: {
+      27 +            $layers: "fluid.templateViewComponent",
+      28              template: `<div @id="history" class="fl-history-pan
+          e"></div>`
+      29          }
+      30      },
+      31      history: {
+      32          $component: {
+      32 -            $layers: "fluid.templateViewComponent",
+      33 +            $layers: "fluid.component",
+      34              layerName: "{self}.historyRec.layerName",
+      35              view: {
+      36                  $component: {
+      37 +                    $layers: "fluid.templateViewComponent",
+      38                      template: `
+      39  <div class="fl-history-rec" @class="current:@{historyRec.curren
+          t}" style="background-color: @{historyRec.colour}" title="@{lay
+          erName}">
+      40      <div class="fl-history-layer">@{layerName}</div>
+  ⎿  Updated src/framework/edit/sfc/fluid-editor-layerList.vue (+2 -1)
+      13      },
+      14      layers: {
+      15          $component: {
+      16 -            $layers: "fluid.templateViewComponent",
+      16 +            $layers: "fluid.component",
+      17              layerName: "{self}.layerRec.layerName",
+      18              view: {
+      19                  $component: {
+      20 +                    $layers: "fluid.templateViewComponent",
+      21                      template: `<div class="fl-layerlist-layer f
+          l-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self
+          }.layerName)"
+      22                  style="background-color: @{layerRec.colour}" ti
+          tle="@{layerName}">@{layerName}</div>`
+      23                  }
+  ⎿  … 15 more files changed
+
+● The script ran cleanly; one free-creator call is flagged for a manual edit.
+  Reviewing the diff of what it changed against the backup:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Spotted two issues needing manual fixes: globalDismissal has duplicate view:
+  keys, and menuBodyItems only has a dynamic $layers reference that could
+  resolve to [], so it needs fluid.component added too. Next I'll check the test
+  diff.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The test rewrites look right. The dynamicLayerName child also needs
+  fluid.component beside its dynamic reference. Applying the hand fixes:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      def patch(p, pairs):…)
+  ⎿  });
+     … +23 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView-browser.js (+2 -4)
+      159          $layers: "fluid.resolveRoot",
+      160          view: {
+      161              $component: {
+      162 -                $layers: "fluid.viewComponent"
+      162 +                $layers: "fluid.viewComponent",
+      163 +                container: document
+      164              }
+      165          },
+      165 -        view: {
+      166 -            container: document
+      167 -        },
+      166          clicked: 0,
+      167          register: {
+      168              $effect: {
+  ⎿  Updated src/framework/edit/sfc/fluid-editor-menu.vue (+1 -1)
+      78              },
+      79              menuBodyItems: {
+      80                  $component: {
+      81 -                    $layers: "{self}.menuRecord.layers",
+      81 +                    $layers: ["fluid.component", "{self}.menuRe
+         +cord.layers"],
+      82                      $for: {
+      83                          source: "{self}.menuRecords",
+      84                          valueAs: "menuRecord"
+  ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+5 -4)
+      51      fluid.cell.stabilize();
+      52      const shadow = that[fluid.metadataSymbol];
+      53
+      54 -    assert.ok(fluid.hasLayer(that, "fluid.viewComponent"), "Pri
+         -ncipal component is tagged as having a view");
+      55 -    assert.ok(fluid.hasLayer(that.view, "fluid.view"), "Princip
+         -al component has a view subcomponent");
+      54 +    assert.notOk(that.$layers.some(layerName => layerName !== "
+         +fluid.component" && layerName !== "fluid.tests.basicRender"),
+      55 +        "Principal component has no view layers");
+      56 +    assert.ok(fluid.hasLayer(that.view, "fluid.viewComponent"),
+         + "Principal component has a view subcomponent");
+      57      ["container", "template", "templateTree", "elideParent", "v
+          Tree", "renderView", "renderedContainer"].forEach(member => {
+      58          assert.equal(that[member], undefined, `View member ${me
+          mber} is not a member of the principal component`);
+      59      });
+     ...
+      595
+      596  QUnit.test("Reference up through rendering effect", function (
+           assert) {
+      597      const container = qs(".container");
+      597 -    fluid.tests.fullPageEditor({container, $layers: "fluid.sel
+          -fTemplateRoot"});
+      598 +    fluid.tests.fullPageEditor({container, view: {$component:
+          +{$layers: "fluid.selfTemplateRootViewComponent"}}});
+      599      fluid.cell.stabilize();
+      600
+      601      const button = qs("button", container);
+     ...
+      624      },
+      625      child: {
+      626          $component: {
+      626 -            $layers: "{self}.dynamicLayerName",
+      627 +            $layers: ["fluid.component", "{self}.dynamicLayerN
+          +ame"],
+      628              dynamicLayerName: "{dynamicLayerName}.dynamicLayer
+           Name",
+      629              view: {
+      630                  $component: {
+
+● Now the framework side in FluidView.js. First the layer definitions:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidView.js"…)
+  ⎿  src/framework/core/js/FluidPTF.js:24:     * `fluid.sfcViewComponent` w
+     ere loaded from a Single File Component. All other layers are JavaScri
+     pt.
+     … +10 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+33 -67)
+      1622          // by this route. In future components can start to e
+            valuate (at least $computeds can) before layer is defined.
+      1623          const shadows = fluid.shadowsToRoot(shadow).reverse()
+            ;
+      1624          const container = fluid.find(shadows, oneShadow => {
+      1625 -            const viewShadow = oneShadow.that && fluid.hasLay
+           -er(oneShadow.that, "fluid.view") ? oneShadow : fluid.viewShad
+           -owFor(oneShadow);
+      1625 +            const viewShadow = oneShadow.that && fluid.hasLay
+           +er(oneShadow.that, "fluid.viewComponent") ? oneShadow : fluid
+           +.viewShadowFor(oneShadow);
+      1626              if (viewShadow) {
+      1627                  return viewShadow.that.container;
+      1628              } else {
+     ...
+      1768          const useTree = fluid.effVTree(tree, view.elideParent
+            );
+      1769          let compositedTree = assignParents(useTree);
+      1770
+      1771 -        if (fluid.hasLayer(self, "fluid.partialViewComponent"
+           -)) {
+      1771 +        if (fluid.hasLayer(view, "fluid.partialViewComponent"
+           +)) {
+      1772              fluid.each(view.partialTemplateLayers, (rec, laye
+            rName) => {
+      1773                  compositedTree = fluid.compositeVTree(composi
+            tedTree, rec, layerName);
+      1774              });
+     ...
+      1929          self.view.vTree = fluid.unavailable({cause: "Renderin
+            g is disabled", variety: "config"});
+      1930      };
+      1931
+      1932 -    // A component which has a view - its subcomponent "view"
+           - holds all of its view configuration, e.g. its container and
+      1933 -    // template, as well as all the machinery which renders i
+           -t. Other layers configure the view by contributing members
+      1934 -    // to its component record at view.$component
+      1932 +    // The view of a component, held as its subcomponent "vie
+           +w", which holds all of its view configuration, e.g. its
+      1933 +    // container and template, as well as all the machinery w
+           +hich renders it. A component acquires a view by writing a
+      1934 +    // record at view.$component holding this layer or one de
+           +rived from it - the component itself bears no view layer.
+      1935 +    // The view renders its template into its container. Refe
+           +rences within the template are resolved in the context of
+      1936 +    // its parent, by fluid.activateTemplate
+      1937      fluid.def("fluid.viewComponent", {
+      1938          $layers: "fluid.component",
+      1937 -        view: {
+      1938 -            $component: {
+      1939 -                $layers: "fluid.view"
+      1940 -            }
+      1941 -        },
+      1942 -        $variety: "framework"
+      1943 -    });
+      1944 -
+      1945 -    // The view of a fluid.viewComponent, which renders its t
+           -emplate into its container. References within the template
+      1946 -    // are resolved in the context of its parent, by fluid.ac
+           -tivateTemplate
+      1947 -    fluid.def("fluid.view", {
+     … 137 more lines (ctrl+o to expand)
+
+● Layer definitions are complete. Now I'll check whether flatMerged holds raw
+  member records, since this determines if the @id template picks
+  fluid.listViewComponent based on $for in the parent's merged record.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidView.js"…)
+  ⎿  Updated src/framework/core/js/FluidView.js (+17 -1)
+      1602          return vnode;
+      1603      };
+      1604
+      1605 +    /**
+      1606 +     * Determine whether a member of a component is configure
+           +d to hold a component list, i.e. holds a subcomponent
+      1607 +     * record with a `$for` member, as determined by the ligh
+           +t merge of its contributions
+      1608 +     * @param {Shadow} shadow - The shadow of the component h
+           +olding the member
+      1609 +     * @param {String} memberName - The name of the member
+      1610 +     * @return {Boolean} `true` if the member is configured t
+           +o hold a component list
+      1611 +     */
+      1612 +    fluid.isComponentListMember = function (shadow, memberNam
+           +e) {
+      1613 +        const record = shadow.flatMerged.get()[memberName]?.$
+           +component;
+      1614 +        return record ? fluid.expandComponentContributions(re
+           +cord).forRecord !== undefined : false;
+      1615 +    };
+      1616 +
+      1617      fluid.shadowsToRoot = function (shadow) {
+      1618          const togo = [];
+      1619          while (shadow) {
+     ...
+      1706                          delete vnode.children;
+      1707                          vnode.attrs = fluid.filterObjKeys(vno
+            de.attrs, key => !key.startsWith("@"));
+      1708
+      1709 +                        // The template record supplies the c
+           +hild's view, which renders the markup supplied here unless
+      1710 +                        // the child is a component list, who
+           +se view instead renders its members' views in sequence
+      1711 +                        const viewLayer = fluid.isComponentLi
+           +stMember(shadow, idValue) ? "fluid.listViewComponent" : "flui
+           +d.selfTemplateViewComponent";
+      1712                          const templateRecord = {
+      1713                              mergeRecordType: "template",
+      1714                              layer: {
+      1700 -                                $layers: "fluid.viewComponent
+           -",
+      1715 +                                $layers: "fluid.component",
+      1716                                  view: {
+      1717                                      $component: {
+      1718 +                                        $layers: viewLayer,
+      1719                                          container: vnode.elem
+            entSignal,
+      1720                                          parentTemplate
+      1721                                      }
+
+● The old template record only contributed plain fluid.viewComponent, not the
+  self-template variant, which matters since that would've overridden the
+  child's templateTree in C3 order — reverting the non-list case accordingly.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidView.js"…)
+  ⎿  Updated src/framework/core/js/FluidView.js (+4 -4)
+      1706                          delete vnode.children;
+      1707                          vnode.attrs = fluid.filterObjKeys(vno
+            de.attrs, key => !key.startsWith("@"));
+      1708
+      1709 -                        // The template record supplies the c
+           -hild's view, which renders the markup supplied here unless
+      1710 -                        // the child is a component list, who
+           -se view instead renders its members' views in sequence
+      1711 -                        const viewLayer = fluid.isComponentLi
+           -stMember(shadow, idValue) ? "fluid.listViewComponent" : "flui
+           -d.selfTemplateViewComponent";
+      1709 +                        // The template record ensures that t
+           +he child has a view, rendering into the container supplied
+      1710 +                        // here - if the child is a component
+           + list, its view renders its members' views in sequence
+      1711 +                        const viewLayer = fluid.isComponentLi
+           +stMember(shadow, idValue) ? "fluid.listViewComponent" : "flui
+           +d.viewComponent";
+      1712                          const templateRecord = {
+      1713                              mergeRecordType: "template",
+      1714                              layer: {
+     ...
+      2099      };
+      2100
+      2101      // The view of a fluid.componentList, which renders the v
+            iews of the list's members in sequence. This is supplied
+      2102 -    // in place of fluid.selfTemplateViewComponent by fluid.a
+           -ctivateTemplate when a template designates a component list
+      2102 +    // by fluid.activateTemplate in place of fluid.viewCompon
+           +ent when a template designates a component list
+      2103      fluid.def("fluid.listViewComponent", {
+      2104          $layers: "fluid.viewComponent",
+      2105          elideParent: false,
+
+● I'll check the SFC loader next—partial detection and added layers now go into
+  view.$component.$layers, with the MIME tag renamed to fluid.sfcLayer. Before
+  settling on the rule for adding a view layer, I'm checking which SFCs don't
+  write view layers themselves.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've worked out the loader rule: add the view layer when the SFC has no
+  view.$component.$layers and either includes a <template> or writes no $layers
+  at all, so accumulation keeps duplicates from inherited views harmless.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="src/framework/core/js/FluidView.js"…)
+  ⎿      $layers: "fluid.component"
+     });
+     </script>`;
+     … +93 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidView.js (+16 -10)
+      714                  /** @type {ScriptNodeInfo} */
+      715                  const ourSNI = defMapList[ourDef.scriptIndex];
+      716                  const oldLayers = fluid.defFromMap(ourSNI.text
+           , ourSNI.defMaps, layerName, "$layers");
+      717 +                const viewLayersPath = ["view", "$component",
+          +"$layers"];
+      718 +                const oldViewLayers = fluid.defFromMap(ourSNI.
+          +text, ourSNI.defMaps, layerName, viewLayersPath);
+      719
+      718 -                const partial = oldLayers && oldLayers.include
+          -s("fluid.partialViewComponent");
+      720 +                const partial = fluid.makeArray(oldViewLayers)
+          +.includes("fluid.partialViewComponent");
+      721
+      722                  let patchedText = ourSNI.text;
+      723
+     ...
+      747                      fluid.writeParsedTemplate(layerName, docTe
+           mplate);
+      748                  }
+      749
+      748 -                // If no $layers was written in the definition
+          -, add one that will correctly resolve its template.
+      749 -                // In either case, add the tag layer marking t
+          -he layer as derived from an SFC. This must be placed last sinc
+          -e
+      750 -                // any of the existing layers may themselves b
+          -e derived from an SFC - C3 linearization will then demand
+      751 -                // that they precede the tag layer.
+      752 -                // Reparse if the text has already been patche
+          -d since an existing $layers entry may have moved
+      753 -                const layersDef = patchedText === ourSNI.text
+          -? ourDef :
+      750 +                // Reparse if the text has already been patche
+          +d since existing entries may have moved
+      751 +                const reparse = () => patchedText === ourSNI.t
+          +ext ? ourDef :
+      752                      {scriptIndex: ourDef.scriptIndex, ...fluid
+           .parseDefMaps(patchedText, 0)[layerName]};
+      753 +                // If no layers were written for the component
+          +'s view, add one that will correctly resolve its template.
+      754 +                // Any view inherited from the component's oth
+          +er layers will accumulate this layer.
+      755 +                if (!oldViewLayers && (docTemplate || !oldLaye
+          +rs)) {
+      756 +                    patchedText = fluid.patchDefMapPath(patche
+          +dText, reparse(), viewLayersPath, addLayers, "first");
+      757 +                }
+      758 +                // Add the tag layer marking the layer as deri
+          +ved from an SFC. This must be placed last since any of the
+      759 +                // existing layers may themselves be derived f
+          +rom an SFC - C3 linearization will then demand that they
+      760 +                // precede the tag layer.
+      761                  if (!oldLayers) {
+      756 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, layersDef, "$layers", [...addLayers, "fluid.sfcViewComponen
+          -t"], "first");
+      757 -                } else if (!fluid.makeArray(oldLayers).include
+          -s("fluid.sfcViewComponent")) {
+      758 -                    patchedText = fluid.patchDefMap(patchedTex
+          -t, layersDef, "$layers", [...fluid.makeArray(oldLayers), "flui
+          -d.sfcViewComponent"], "first");
+      762 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, reparse(), "$layers", ["fluid.component", "fluid.sfcLayer"]
+          +, "first");
+      763 +                } else if (!fluid.makeArray(oldLayers).include
+          +s("fluid.sfcLayer")) {
+      764 +                    patchedText = fluid.patchDefMap(patchedTex
+          +t, reparse(), "$layers", [...fluid.makeArray(oldLayers), "flui
+          +d.sfcLayer"], "first");
+      765                  }
+      766                  ourSNI.text = patchedText;
+     … 1 more lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidPTF.js (+2 -2)
+      21      /**
+      22       * Determine the MIME type in which the named layer should
+          be transmitted or edited. Live layers, whose names are
+      23       * rendered sites beginning with `{`, are JSON. Layers whos
+          e own definition carries the tag layer
+      24 -     * `fluid.sfcViewComponent` were loaded from a Single File
+         -Component. All other layers are JavaScript.
+      24 +     * `fluid.sfcLayer` were loaded from a Single File Componen
+         +t. All other layers are JavaScript.
+      25       * @param {String} layerName - The name of the layer
+      26       * @return {String} The MIME type for the layer, one of the
+           values in `fluid.layerMimeTypes`
+      27       */
+     ...
+      32          } else {
+      33              const layerDef = fluid.deSignal(fluid.readLayer(lay
+          erName).get().raw);
+      34              if (fluid.isPlainObject(layerDef, true) && !fluid.i
+          sUnavailable(layerDef)
+      35 -                && fluid.makeArray(layerDef.$layers).includes("
+         -fluid.sfcViewComponent")) {
+      35 +                && fluid.makeArray(layerDef.$layers).includes("
+         +fluid.sfcLayer")) {
+      36                  togo = fluid.layerMimeTypes.sfc;
+      37              }
+      38          }
+
+● Updating the PTF test expectations for the new tag name and placement:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="tests/framework-tests/core/js/FluidPTFTests.js"…)
+  ⎿  95:const displayLayers = ["fluid.viewComponentList", "fluid.componentL
+     ist", "fluid.viewComponent", "fluid.view", "fluid.component"];
+     112:        const displayLayer = displayLayers.find(layer => layers.in
+     … +27 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+12 -9)
+      152  </script>`;
+      153      const loaded = await fluid.tests.ptf.loadSFCText("fluid.te
+           sts.ptf.plain", plainSFC);
+      154      assert.ok(loaded, "Plain SFC loaded");
+      155 -    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layer
+          -s, ["fluid.component", "fluid.sfcViewComponent"], "Tag layer a
+          -dded to explicit $layers");
+      155 +    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layer
+          +s, ["fluid.component", "fluid.sfcLayer"], "Tag layer added to
+          +explicit $layers");
+      156      assert.equal(fluid.def("fluid.tests.ptf.plain").value, 2,
+           "Remainder of definition intact");
+      157      assert.equal(fluid.layerMimeType("fluid.tests.ptf.plain"),
+            "text/x-vue", "SFC layer without template");
+      158
+     ...
+      165  </script>`;
+      166      const derivedLoaded = await fluid.tests.ptf.loadSFCText("f
+           luid.tests.ptf.derived", derivedSFC);
+      167      assert.ok(derivedLoaded, "Derived SFC loaded");
+      168 -    assert.deepEqual(fluid.def("fluid.tests.ptf.derived").$lay
+          -ers, ["fluid.tests.ptf.plain", "fluid.sfcViewComponent"],
+      168 +    assert.deepEqual(fluid.def("fluid.tests.ptf.derived").$lay
+          +ers, ["fluid.tests.ptf.plain", "fluid.sfcLayer"],
+      169          "Tag layer follows SFC-derived parent layer");
+      170      const derived = fluid.tests.ptf.derived();
+      171      assert.notOk(fluid.isUnavailable(derived), "Component deri
+           ved from SFC layer instantiates");
+     ...
+      173      assert.equal(derived.extra, 3, "Own member of derived SFC
+           layer");
+      174      derived.destroy();
+      175
+      176 -    // An empty definition with a template requires both $laye
+          -rs and view.templateLayer to be patched in
+      176 +    // An empty definition with a template requires $layers, a
+          +nd its view's $layers and templateLayer, to be patched in
+      177      const emptySFC = `<script>
+      178  fluid.def("fluid.tests.ptf.empty", {});
+      179  </script>
+     ...
+      181      const emptyLoaded = await fluid.tests.ptf.loadSFCText("flu
+           id.tests.ptf.empty", emptySFC);
+      182      assert.ok(emptyLoaded, "SFC with empty definition loaded")
+           ;
+      183      assert.deepEqual(fluid.def("fluid.tests.ptf.empty"), {
+      184 -        $layers: "fluid.sfcLayer",
+      184 +        $layers: ["fluid.component", "fluid.sfcLayer"],
+      185          view: {
+      186              $component: {
+      187 -                $layers: "fluid.sfcTemplateViewComponent",
+      187 +                $layers: ["fluid.sfcTemplateViewComponent"],
+      188                  templateLayer: "fluid.tests.ptf.empty"
+      189              }
+      190          }
+      191 -    }, "Empty definition patched with $layers and view.templat
+          -eLayer");
+      191 +    }, "Empty definition patched with $layers and its view's $
+          +layers and templateLayer");
+      192
+      193      // A definition which already configures its view has its
+           templateLayer patched in alongside its own members
+     … 21 more lines (ctrl+o to expand)
+
+● I found two editor consumers needing updates: filterForSelfEditing needs to
+  read from the view's own layer map instead of the parent's, and substrateTree
+  needs its labels and view hiding logic updated since they still reference the
+  old layer names.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      def patch(p, pairs):…)
+  ⎿  2
+                 }
+                 segs.pop();
+     … +39 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/js/substrateTree.js (+3 -3)
+      92      return ref;
+      93  };
+      94
+      95 -const displayLayers = ["fluid.viewComponentList", "fluid.compon
+         -entList", "fluid.viewComponent", "fluid.view", "fluid.component
+         -"];
+      95 +const displayLayers = ["fluid.listViewComponent", "fluid.compon
+         +entList", "fluid.viewComponent", "fluid.component"];
+      96
+      97  fluid.substrateTree.componentToEntry = function (self, shadow,
+          layer, parent) {
+      98      const selfShadow = self[$m];
+     ...
+      137                  return fluid.NoValue;
+      138              }
+      139          } else {
+      140 -            // A view component "has a" view, whose machinery
+          -is only shown when framework layers are
+      141 -            const keys = Object.keys(shadow.layerMap || {}).fi
+          -lter(key => !(self.userLayersOnly && key === "view" && layers.
+          -includes("fluid.viewComponent")));
+      140 +            // A component may "have a" view, whose machinery
+          +is only shown when framework layers are
+      141 +            const keys = Object.keys(shadow.layerMap || {}).fi
+          +lter(key => !(self.userLayersOnly && key === "view" && fluid.v
+          +iewShadowFor(shadow)));
+      142              keys.sort((a, b) => (a === "$layers" ? -1 : b ===
+           "$layers" ? 1 : 0));
+      143              togo.children = fluid.map(keys, key => self.valueT
+           oEntry(shadow, [key], shadow.that[key], null, parent));
+      144          }
+  ⎿  Updated src/framework/edit/js/editorRoot.js (+3 -2)
+      133  fluid.filterForSelfEditing = function (vTree, component, edito
+           rRoot, layerColours) {
+      134      const shadow = component[$m];
+      135      console.log("Filtering for selfEditing at path ", shadow.p
+           ath);
+      136 -    // The template is configured on the component's view, but
+          - its source is recorded in the component's own layer map
+      137 -    const templateLayer = fluid.hasLayer(component, "fluid.sfc
+          -TemplateViewComponent") ? component.view.templateLayer : shado
+          -w.layerMap.view?.$component?.template?.[$m]?.source;
+      136 +    // The template is configured on the component's view, who
+          +se layer map records the layer in which it was written
+      137 +    const viewShadow = fluid.viewShadowFor(shadow);
+      138 +    const templateLayer = fluid.hasLayer(component.view, "flui
+          +d.sfcTemplateViewComponent") ? component.view.templateLayer :
+          +viewShadow?.layerMap.template?.[$m]?.source;
+      139      if (templateLayer && fluid.isUserLayer(templateLayer)) {
+      140          const layerColour = layerColours[templateLayer];
+      141          const liveColour = layerColours.$live;
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's|simply
+      <code>"fluid.viewComponent"</code> will match all viewComponents below the
+      root.|simply <code>"flui…)
+  ⎿  exit 1
+     22:35:48.623:   ASSERTION FAILED:  1 thingit
+     22:35:48.661:   ASSERTION FAILED:  Could not find targets for any cons
+     … +85 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+2 -2)
+      136       * @param {Component} root - The root component at which t
+           o start the search
+      137       * @param {String} selector - An IoCSS selector, in form o
+           f a string. Note that since selectors supplied to this functio
+           n implicitly
+      138       * match downwards, they do not contain the "head context"
+            followed by whitespace required in the distributeOptions form
+           . E.g.
+      139 -     * simply <code>"fluid.viewComponent"</code> will match al
+          -l viewComponents below the root.
+      139 +     * simply <code>"fluid.viewComponent"</code> will match al
+          +l component views below the root.
+      140       * @param {Boolean} [flat] - <code>true</code> if the sear
+           ch should just be performed at top level of the component tree
+      141       * Note that with <code>flat=false</code> this search will
+            scan every component below the root and may well be very slow
+           .
+      142       * @return {Unavailable|Component[]} An array holding all
+           components matching the selector, or an unavailable value if a
+           ny
+     ...
+      162       * @param {Component} root - The root component at which t
+           o start the search
+      163       * @param {String} selector - An IoCSS selector, in form o
+           f a string. Note that since selectors supplied to this functio
+           n implicitly
+      164       * match downwards, they do not contain the "head context"
+            followed by whitespace required in the distributeOptions form
+           . E.g.
+      165 -     * simply <code>"fluid.viewComponent"</code> will match al
+          -l viewComponents below the root.
+      165 +     * simply <code>"fluid.viewComponent"</code> will match al
+          +l component views below the root.
+      166       * @param {Boolean} [flat] - <code>true</code> if the sear
+           ch should just be performed at top level of the component tree
+      167       * Note that with <code>flat=false</code> this search will
+            scan every component below the root and may well be very slow
+           .
+      168       * @return {Cell<Unavailable|Component[]>} An array holdin
+           g all components matching the selector, or an unavailable valu
+           e if any
+  ⎿  (timeout 10m)
+
+● The plain view tests pass. Everything loaded from an SFC fails, which points
+  at the loader patch. Checking the PTF failure's actual-versus-expected output:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The tag patch applied, but the view's $layers patch did not. Debugging the
+  patch functions directly in node:
+
+  Ran 3 shell commands (ctrl+o to expand)
+● The patch function itself works; its indentation is off, but it was already
+  like that for nested patches. The fault must be in my loader logic or in the
+  path the tests take. Checking the test helper:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Found the bug: patchDefMap writes "$component" as a quoted JSON key on fresh
+  view creation, so when reparsed the second patch fails to match it and inserts
+  a duplicate. I'll check how parseDefMaps reads property names next.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● defMapsFromTree accepts quoted property names, but it records them with their
+  quotes, so "$component" is stored as the key "\"$component\"". Fixing that at
+  the source:
+
+● Update(src/framework/core/js/sfc-parser.js)
+  ⎿  Added 2 lines, removed 1 line
+      121          } else if (state.currentDef && token.name === "Propert
+           y") {
+      122              const propDef = expectTokens(token.children[0], ["
+           PropertyDefinition", "String"]); // Could be unquoted or quote
+           d
+      123              const value = token.children[2]; // Could be Objec
+           tExpression, String, or any other RH
+      124 -            state.segs.push(propDef.text);
+      124 +            // Slice off the quotes of a quoted property name,
+          + e.g. as written by fluid.patchDefMap
+      125 +            state.segs.push(propDef.name === "String" ? propDe
+          +f.text.slice(1, -1) : propDef.text);
+      126              pushedSeg = true;
+      127              fluid.set(state, ["defMap", state.currentDef, ...s
+           tate.segs, $m], {from: value.from + state.offset, to: value.to
+            + state.offset});
+      128          }
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Down to one demo, the todo list with assignees, which is the one that uses
+  partials and UISelect. Looking for the cause in the log:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I need to see what actually rendered, so I'm temporarily adding a diagnostic
+  dump to the test helper; I'll remove it afterwards:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; cp tests…)
+  ⎿  TodoListAssignTests.html
+     TodoListTests.html
+     DBGHTML <section class="hero is-dark"><div class="hero-body"><h1 class
+     … +91 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TodoListTestUtils.js (+12
+     -0)
+      37      const rendered = fluid.tests.todo.qsa(".todo", container).l
+          ength === fluid.tests.todo.initialTodos.length
+      38          && (!ready || ready(container));
+      39      if (!rendered) {
+      40 +        console.log("DBGHTML", container.innerHTML);
+      41 +        const dump = (shadow, depth) => {
+      42 +            const that = shadow.that;
+      43 +            const avail = fluid.deSignal(shadow.availableInstan
+         +ce);
+      44 +            console.log("DBGTREE", " ".repeat(depth * 2) + shad
+         +ow.path, that ? fluid.deSignal(that.$layers) : "", fluid.isUnav
+         +ailable(avail) ? JSON.stringify(avail.causes.map(c => c.message
+         +)) : "");
+      45 +            if (that && that.view && fluid.viewShadowFor(shadow
+         +)) {
+      46 +                const vt = fluid.deSignal(that.view.vTree);
+      47 +                if (fluid.isUnavailable(vt)) { console.log("DBG
+         +TREE", " ".repeat(depth * 2) + " vTree unavailable", JSON.strin
+         +gify(vt.causes.map(c => c.message))); }
+      48 +            }
+      49 +            Object.values(shadow.childComponents || {}).forEach
+         +(c => dump(c, depth + 1));
+      50 +        };
+      51 +        dump(that[fluid.metadataSymbol], 0);
+      52          fluid.fail("Todo app had not rendered once the graph se
+          ttled");
+      53      }
+      54      return {that, container};
+
+● Rendering does happen and all three todos are there. But the UISelect's
+  <select> has no options, so the test's ready predicate probably fails on that.
+  Checking the predicate and UISelect:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've identified the issue: moving UISelect's templateTree into its view record
+  makes it override the self-template's layer default instead of competing with
+  it, causing empty options. I'll fix this by expressing UISelect's view logic
+  as a proper view layer so it competes fairly with
+  fluid.selfTemplateViewComponent in C3 order.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="demo/todo-list-assign/sfc/fluid-UISelect.vue"…)
+  ⎿  <script>
+
+     fluid.def("fluid.UISelect", {
+     … +51 lines (ctrl+o to expand)
+  ⎿  Updated demo/todo-list-assign/sfc/fluid-UISelect.vue (+28 -23)
+      18      },
+      19      view: {
+      20          $component: {
+      21 -            $layers: "fluid.viewComponent",
+      22 -            elideParent: false,
+      23 -            templateTree: {
+      24 -                $compute: {
+      25 -                    func: (selection, optionValues, optionNames
+         -) => ({
+      26 -                        tag: "select",
+      27 -                        attrs: {
+      28 -                            "@onchange": "{self}.updateSelectio
+         -n({0})"
+      29 -                        },
+      30 -                        children: optionValues.map((value, i) =
+         -> ({
+      31 -                            tag: "option",
+      32 -                            attrs: {
+      33 -                                value,
+      34 -                                ...(selection === value && {sel
+         -ected: "selected"})
+      35 -                            },
+      36 -                            children: [{
+      37 -                                text: optionNames[i] === undefi
+         -ned ? value : optionNames[i]
+      38 -                            }]
+      39 -                        }))
+      21 +            $layers: "fluid.UISelectViewComponent"
+      22 +        }
+      23 +    }
+      24 +});
+      25
+      41 -                    }),
+      42 -                    args: ["{$parent}.selection", "{$parent}.op
+         -tionValues", "{$parent}.optionNames"]
+      43 -                }
+      44 -            }
+      26 +// The view of a fluid.UISelect, which renders its options from
+         + its parent's configuration
+      27 +fluid.def("fluid.UISelectViewComponent", {
+      28 +    $layers: "fluid.viewComponent",
+      29 +    elideParent: false,
+      30 +    templateTree: {
+      31 +        $compute: {
+      32 +            func: (selection, optionValues, optionNames) => ({
+      33 +                tag: "select",
+      34 +                attrs: {
+     … 18 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All pass. Restoring the test helper, then running the full suite, lint, and
+  the browser suite:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; cp $S/To…)
+  ⎿  0
+     22:    "scripts": {
+     23-        "clean": "run-p clean:*",
+     … +30 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TodoListTestUtils.js (+0
+     -12)
+      37      const rendered = fluid.tests.todo.qsa(".todo", container).l
+          ength === fluid.tests.todo.initialTodos.length
+      38          && (!ready || ready(container));
+      39      if (!rendered) {
+      40 -        console.log("DBGHTML", container.innerHTML);
+      41 -        const dump = (shadow, depth) => {
+      42 -            const that = shadow.that;
+      43 -            const avail = fluid.deSignal(shadow.availableInstan
+         -ce);
+      44 -            console.log("DBGTREE", " ".repeat(depth * 2) + shad
+         -ow.path, that ? fluid.deSignal(that.$layers) : "", fluid.isUnav
+         -ailable(avail) ? JSON.stringify(avail.causes.map(c => c.message
+         -)) : "");
+      45 -            if (that && that.view && fluid.viewShadowFor(shadow
+         -)) {
+      46 -                const vt = fluid.deSignal(that.view.vTree);
+      47 -                if (fluid.isUnavailable(vt)) { console.log("DBG
+         -TREE", " ".repeat(depth * 2) + " vTree unavailable", JSON.strin
+         -gify(vt.causes.map(c => c.message))); }
+      48 -            }
+      49 -            Object.values(shadow.childComponents || {}).forEach
+         -(c => dump(c, depth + 1));
+      50 -        };
+      51 -        dump(that[fluid.metadataSymbol], 0);
+      40          fluid.fail("Todo app had not rendered once the graph se
+          ttled");
+      41      }
+      42      return {that, container};
+  ⎿  (timeout 10m)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● npm test passes 1035/1035. The only Cannot merge message left comes from (a)'s
+  deliberate negative test, and the globalDismissal warning is gone. Now lint
+  and the browser suite:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Lint passes aside from a pre-existing tsconfig.json comment parse error, but
+  the browser demo's self-editing feature is broken since the Edit button never
+  appears. I'll look for a way to grab the page's console output to debug this.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● No errors at all in the page console, so I'm reading fluid-edit.vue, the
+  component that boots the editor:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found a bug in my rewrite script—it copied intervening lines verbatim when a
+  top-level $layers's view block was far below, leaving nested records
+  untransformed. Now I'll scan every file for any leftover instances of this
+  issue.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've updated the script to queue insertions instead of copying lines, and to
+  skip any $layers already nested directly under view: {$component: {, making it
+  safe to run multiple times.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; python3…)
+  ⎿  --- /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-
+     eb91-466c-bc4e-08633075c54b/scratchpad/pre2/src/framework/edit/sfc/flu
+     id-fullPageEditor.vue   2026-10-17 22:33:05.000000000 +0100
+     … +67 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/sfc/fluid-fullPageEditor.vue (+6 -3)
+      15      editorVisible: false,
+      16      editButton: {
+      17          $component: {
+      18 -            $layers: "fluid.templateViewComponent",
+      18 +            $layers: "fluid.component",
+      19              view: {
+      20                  $component: {
+      21 +                    $layers: "fluid.templateViewComponent",
+      22                      elideParent: true,
+      23                      template: `<button class="fl-editor-edit" @
+          onclick="{fullPageEditor}.editorVisible = true">Edit</button>`,
+      24                      container: "$compute:fluid.insertChildConta
+          iner(last, editButton, {self}.templateTree, {fullPageEditor}.vi
+          ew.container)"
+     ...
+      28      },
+      29      inspectOverlay: {
+      30          $component: {
+      30 -            $layers: "fluid.templateViewComponent",
+      31 +            $layers: "fluid.component",
+      32              view: {
+      33                  $component: {
+      34 +                    $layers: "fluid.templateViewComponent",
+      35                      template: `<div id="fl-inspect-overlay" cla
+          ss="fl-inspect-overlay" @onclick="{editorRoot}.overlayClick()">
+          <div class="fl-inspect-layer"></div></div>`,
+      36                      container: "$compute:fluid.insertChildConta
+          iner(last, inspectOverlay, {self}.templateTree, {fullPageEditor
+          }.view.container)"
+      37                  }
+     ...
+      40      },
+      41      resizeBar: {
+      42          $component: {
+      41 -            $layers: "fluid.templateViewComponent",
+      43 +            $layers: "fluid.component",
+      44              view: {
+      45                  $component: {
+      46 +                    $layers: "fluid.templateViewComponent",
+      47                      elideParent: true,
+      48                      template: `<div class="fl-resizer"></div>`,
+      49                      container: "$compute:fluid.insertChildConta
+          iner(after, resizeBar, {self}.templateTree, {fullPageEditor}.ht
+          ml, {fullPageEditor}.view.container)"
+  ⎿  Updated demo/todo-list-assign/sfc/fluid-UISelect.vue (+6 -1)
+      25
+      26  // The view of a fluid.UISelect, which renders its options from
+           its parent's configuration
+      27  fluid.def("fluid.UISelectViewComponent", {
+      28 -    $layers: "fluid.viewComponent",
+      28 +    $layers: "fluid.component",
+      29 +    view: {
+      30 +        $component: {
+      31 +            $layers: "fluid.viewComponent"
+      32 +        }
+      33 +    },
+      34      elideParent: false,
+      35      templateTree: {
+      36          $compute: {
+  ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+6 -1)
+      204      const viewLoaded = await fluid.tests.ptf.loadSFCText("flui
+           d.tests.ptf.ownView", viewSFC);
+      205      assert.ok(viewLoaded, "SFC with view configuration loaded"
+           );
+      206      assert.deepEqual(fluid.def("fluid.tests.ptf.ownView").view
+           .$component, {
+      207 -        $layers: ["fluid.sfcTemplateViewComponent"],
+      207 +        $layers: "fluid.component",
+      208 +        view: {
+      209 +            $component: {
+      210 +                $layers: "fluid.sfcTemplateViewComponent"
+      211 +            }
+      212 +        },
+      213          elideParent: false,
+      214          templateLayer: "fluid.tests.ptf.ownView"
+      215      }, "Existing view configuration patched with its $layers a
+           nd templateLayer");
+
+● The fullPageEditor fixes are correct, but the other two changes were
+  unnecessary—UISelectViewComponent is legitimately a view layer and the PTF
+  test correctly checks a view's own $layers. I'll revert just those two
+  changes.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; cp $S/pr…)
+  ⎿  1
+     exit 1
+     # Self-editing demo (/mnt/outer-source/gits/fluid-infusion-6/demo/comp
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated demo/todo-list-assign/sfc/fluid-UISelect.vue (+1 -6)
+      25
+      26  // The view of a fluid.UISelect, which renders its options from
+           its parent's configuration
+      27  fluid.def("fluid.UISelectViewComponent", {
+      28 -    $layers: "fluid.component",
+      29 -    view: {
+      30 -        $component: {
+      31 -            $layers: "fluid.viewComponent"
+      32 -        }
+      33 -    },
+      28 +    $layers: "fluid.viewComponent",
+      29      elideParent: false,
+      30      templateTree: {
+      31          $compute: {
+  ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+1 -6)
+      204      const viewLoaded = await fluid.tests.ptf.loadSFCText("flui
+           d.tests.ptf.ownView", viewSFC);
+      205      assert.ok(viewLoaded, "SFC with view configuration loaded"
+           );
+      206      assert.deepEqual(fluid.def("fluid.tests.ptf.ownView").view
+           .$component, {
+      207 -        $layers: "fluid.component",
+      208 -        view: {
+      209 -            $component: {
+      210 -                $layers: "fluid.sfcTemplateViewComponent"
+      211 -            }
+      212 -        },
+      207 +        $layers: ["fluid.sfcTemplateViewComponent"],
+      208          elideParent: false,
+      209          templateLayer: "fluid.tests.ptf.ownView"
+      210      }, "Existing view configuration patched with its $layers a
+           nd templateLayer");
+  ⎿  (timeout 5m 20s)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Step 1 now fails because the substrate rows never mention the post layers.
+  Looking at the screenshot:
+
+  Read 1 file (ctrl+o to expand)
+● The substrate pane is empty, so the substrate tree itself isn't rendering.
+  Reading its definition:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I need to fix substrateTree.js since its definition still uses
+  fluid.templateViewComponent on the principal—first checking whether
+  domListeners binding depends on the layer before making the change.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; grep -rn "domListeners"
+      src/framework --include=*.js --include=*.vue | grep -v "^src/lib" | head;
+      python3 - <<'EOF'…)
+  ⎿  src/framework/edit/js/substrateTree.js:42:    domListeners: {
+     src/framework/edit/js/substrateTree.js:337:    const domListeners = se
+     lf.domListeners;
+     … +47 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/js/substrateTree.js (+2 -1)
+      1  "use strict";
+      2
+      3  fluid.def("fluid.substrateTree", {
+      4 -    $layers: "fluid.templateViewComponent",
+      4 +    $layers: "fluid.component",
+      5      defaultState: "$compute:fluid.substrateTree.defaultState({se
+         lf}.rootEntries)",
+      6      userState: {
+      7          $reactiveRoot: {}
+     ...
+      36      },
+      37      view: {
+      38          $component: {
+      39 +            $layers: "fluid.templateViewComponent",
+      40              template: "$compute:fluid.substrateTree.renderTempl
+          ate({$parent}, {$parent}.rootEntries, {$parent}.idToState)"
+      41          }
+      42      },
+
+● All other definitions now have their view layers nested under view.$component,
+  with FluidEdit.js intentionally left untouched as legacy code. I'll rerun the
+  browser suite and npm test to verify.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Both the browser suite (15 passing, one known issue) and npm test (1035/1035)
+  are back to baseline. Now I'll run final checks: lint, untested demo code, and
+  any stale references outside the built docs.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The fluid.view comment in fullPageEditor needs fixing. The demo/todo-list hits
+  need checking. Lint reports failing JS files, so I need to see whether any of
+  those failures come from my changes:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; sed -i '…)
+  ⎿  81:            // Override this definition from fluid.viewComponent so
+      we don't obliterate the document
+     … +12 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/sfc/fluid-fullPageEditor.vue (+1 -1)
+      78      view: {
+      79          $component: {
+      80              $layers: "fluid.sfcTemplateViewComponent",
+      81 -            // Override this definition from fluid.view so we d
+         -on't obliterate the document
+      81 +            // Override this definition from fluid.viewComponen
+         +t so we don't obliterate the document
+      82              renderView: "$effect:fluid.identity({self}.vTree)"
+      83          }
+      84      },
+
+● The two editorRoot.js errors are on lines this work didn't touch. Checking
+  that, and which files the full lint run flagged:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All lint failures existed before this work and aren't in the changed files.
+  Now checking whether the demo/todo-list plain-JS demo, which still uses
+  fluid.templateViewComponent, runs against the current framework.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've finished (b), and every test suite is back to its baseline. Nothing is
+  committed.
+
+  Test results
+  - npm test: 1035/1035 pass. The globalDismissal "Cannot merge value … at path
+    view" warning is gone.
+  - Browser suite: 15 steps pass, plus the one existing known issue.
+  - Lint: no new errors. The remaining ones were already there (tsconfig.json,
+    editorRoot.js lines 75/141, manual-test files).
+
+  What changed
+  - No view layer on the principal. A component gets a view only by writing
+    view: {$component: {$layers: ...}}. This is now done across the framework,
+    the editor SFCs, the demos and the tests. The variant layers put their
+    members directly on the view; they no longer reach in through
+    view.$component.
+  - Consistent names. fluid.view is merged into fluid.viewComponent, which is
+    now the view's base layer. The variants are fluid.templateViewComponent,
+    fluid.sfcTemplateViewComponent, fluid.selfTemplateViewComponent,
+    fluid.selfTemplateRootViewComponent, fluid.partialViewComponent and
+    fluid.listViewComponent.
+    - I also renamed the SFC tag layer fluid.sfcViewComponent to fluid.sfcLayer,
+      since it stays on the principal and isn't a view. Say if you'd rather
+      keep the old name.
+  - No more list co-occurrence. The fluid.viewComponentList co-occurrence is
+    gone. The @id template record now gives a child fluid.listViewComponent when
+    the parent's merged record for that member has $for, and
+    fluid.viewComponent otherwise. The check is the new
+    fluid.isComponentListMember, which reads the light merge from (a).
+  - SFC loader. Partial detection reads view.$component.$layers. The template
+    layer is added to the view whenever the SFC has a <template> and writes no
+    view layers itself. Principals with no $layers get ["fluid.component",
+    "fluid.sfcLayer"].
+  - Editor. filterForSelfEditing now reads the template's source layer from the
+    view's own layer map. That removes the old lookup through the parent's layer
+    map, which (a) had already broken. substrateTree labels and its hiding of
+    view follow the new names.
+
+  Things worth your review
+  - Record members now beat layer defaults. fluid.UISelect wrote its computed
+    templateTree as a member of its view record. Record members merge above
+    layer defaults, so it overrode fluid.selfTemplateViewComponent in
+    filterCompleted, and the <select> rendered with no options. I moved it into
+    a new view layer, fluid.UISelectViewComponent, so the two compete as layers
+    in C3 order, as before. Where a view's behaviour varies, it should be
+    expressed as layers, not record members, or this can recur.
+  - Parser bug fix in sfc-parser.js. fluid.defMapsFromTree kept the quotes on
+    quoted property names. So once fluid.patchDefMap had written {"$component":
+    ...}, a second patch couldn't find that key and added a duplicate
+    $component.
+
+  Left alone
+  - demo/todo-list/js/todo-list.js still puts fluid.templateViewComponent and a
+    top-level template on its principals. The earlier session skipped it too, so
+    it has been out of step since the first part of #19. It isn't covered by
+    any test; I can migrate it if you want.
+  - docs/ (the built copy) and the legacy FluidEdit.js are unchanged.
+
+  A backup of the files from just before this step is at
+  /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-466c-bc
+  4e-08633075c54b/scratchpad/backup/pre-b.tar.
+
+✻ Worked for 13m 30s · done Sunday 09:21
+
+❯ yes, migrate demo/todo-list too
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      p="demo/todo-list/js/todo-list.js"…)
+  ⎿  /mnt/outer-source/gits/fluid-infusion-6/demo/todo-list/js/todo-list.js
+       97:7  error  'that' is assigned a value but never used  no-unused-va
+     rs
+     … +17 lines (ctrl+o to expand)
+  ⎿  Updated demo/todo-list/js/todo-list.js (+16 -6)
+      16  ];
+      17
+      18  fluid.def("fluid.demos.todoItem", {
+      19 -    $layers: "fluid.templateViewComponent",
+      20 -    template:
+      21 -        `<div>
+      19 +    $layers: "fluid.component",
+      20 +    view: {
+      21 +        $component: {
+      22 +            $layers: "fluid.templateViewComponent",
+      23 +            template:
+      24 +                `<div>
+      25              <span class="todo tag is-large" @class="completed:@
+          {completed},is-info:!@{completed}" @onclick="{todoList}.toggleI
+          tem({self}.itemIndex)">
+      26              @{text}<button class="delete is-small" @onclick.sto
+          p="{todoList}.deleteItem({self}.itemIndex)"></button>
+      27              </span>
+      28           </div>`
+      29 +        }
+      30 +    }
+      31  });
+      32
+      33  fluid.demos.todoKeyUp = function (e, todos) {
+     ...
+      40  };
+      41
+      42  fluid.def("fluid.demos.todoList", {
+      38 -    $layers: "fluid.templateViewComponent",
+      43 +    $layers: "fluid.component",
+      44      todos: {
+      45          $reactiveRoot: todos
+      46      },
+      42 -    template:
+      47 +    view: {
+      48 +        $component: {
+      49 +            $layers: "fluid.templateViewComponent",
+      50 +            template:
+      51          `<div id="main">
+      52          <section class="hero is-dark">
+      53              <div class="hero-body">
+     ...
+      59              <input class="input is-rounded" @onkeyup="fluid.dem
+          os.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="N
+          ew todo">
+      60              <div @id="todoItems" class="section"></div>
+      61          </section>
+     … 7 more lines (ctrl+o to expand)
+
+● The migration is complete, and the single lint error for the unused that
+  variable predates my changes. I'll now load the page in headless Chrome to
+  check whether the legacy FluidEdit.js script still runs.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The demo renders the three todos, but clicking one or adding a new one doesn't
+  work. I'll check whether this is a pre-existing issue by exporting the HEAD
+  tree via git archive to the scratchpad and testing against it, since that
+  leaves git state untouched.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed the click handler issue and FluidEdit.js error already existed at
+  HEAD, so the migration isn't responsible. I'll test whether the outdated
+  script list is the cause by trying a scratch copy with the script set used by
+  the SFC demo's tests.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● With the current script set, both the toggle and the insert work. I'll apply
+  that to the real page. That means dropping the legacy FluidEdit.js include,
+  which only throws now:
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9fc65fd6-eb91-4
+      66c-bc4e-08633075c54b/scratchpad; python3…)
+  ⎿  TODOS [ 'Write some code', 'Eat some food', 'Sleep' ]
+     CLASSES [
+       'todo tag is-large completed',
+     … +9 lines (ctrl+o to expand)
+  ⎿  Updated demo/todo-list/html/todo-list.html (+2 -3)
+       8      <script src="../../../src/framework/core/js/FluidCore.js"><
+          /script>
+       9      <script src="../../../src/framework/core/js/FluidSignals.js
+          "></script>
+      10      <script src="../../../src/framework/core/js/Fluid.js"></scr
+          ipt>
+      11 +    <script src="../../../src/framework/core/js/FluidModules.js
+         +"></script>
+      12      <script src="../../../src/framework/core/js/FluidIL.js"></s
+          cript>
+      13      <script src="../../../src/framework/core/js/FluidView.js"><
+          /script>
+      14 +    <script src="../../../src/framework/core/js/FluidView-brows
+         +er.js"></script>
+      15      <script src="../../../src/framework/core/js/template-parser
+          .js"></script>
+      16
+      15 -    <!-- Just one include makes the app editable -->
+      16 -    <script src="../../../src/framework/edit/js/FluidEdit.js"><
+         -/script>
+      17 -
+      17  </head>
+      18  <body>
+      19  <div id="main">
+  ⎿  (timeout 2m 30s)
+
+● demo/todo-list is migrated, and it works fully again: clicking a todo toggles
+  it and adding one works. Interactivity was already broken at HEAD, before any
+  of the #19 work.
+
+  - todo-list.js: fluid.demos.todoItem and fluid.demos.todoList now have only
+    fluid.component on the principal. Their fluid.templateViewComponent layer
+    and template moved into view: {$component: ...}. Until now this demo still
+    had template at the top level, so it had been out of step since the first
+    part of #19.
+  - todo-list.html: I updated the script list. It was missing FluidModules.js
+    and FluidView-browser.js, which is why clicks and Enter did nothing even at
+    HEAD.
+  - Removed the legacy FluidEdit.js include. It made the page editable, but it
+    now just throws fluid.liveQueryOne is not a function, also at HEAD. Put it
+    back if you want to keep it as a reminder, but it won't make the page
+    editable as things stand.
+
+  I checked the demo in headless Chrome with a scratch puppeteer script, and ran
+  the same check on a git archive copy of HEAD to confirm what was already
+  broken. There is still no automated test for this demo. ESLint reports one
+  existing error in it (that assigned but never used).
+
+  The demo/todo-list/css/* and index.html files show as M in git status, but
+  nothing changed in them except file mode bits from the shared folder, like
+  most of the tree.
+
+✻ Worked for 1m 28s · done Sunday 09:24
+
+※ recap: We're finishing issue #19, moving all view machinery onto each component's view subcomponent; that work and the plain-JS todo-list demo migration are done, and all tests pass. Next, you review the uncommitted changes and commit them. (disable recaps in /config)
+  ⎿  Read src/framework/core/js/sfc-parser.js (252 lines)
+  ⎿  Read ../../../../tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/9f
+     c65fd6-eb91-466c-bc4e-08633075c54b/scratchpad/movelayers.py (82 lines)
+
+● Compacted while idle, before the prompt cache expired · turn off with
+  "idleCompaction": false in settings.json
+
+❯ The substrate view should show "viewComponent" as before for those component
+  who have a view member derived from fluid.viewComponent
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p="src/framework/edit/js/substrateTree.js"…)
+  ⎿  Updated src/framework/edit/js/substrateTree.js (+4 -1)
+      110          const that = shadow.that;
+      111          const layers = fluid.deSignalLight(that.$layers);
+      112
+      113 -        const displayLayer = displayLayers.find(layer => layer
+          -s.includes(layer)).slice("fluid.".length);
+      113 +        // A component which "has a" view is displayed accordi
+          +ng to its view's layers as well as its own
+      114 +        const viewShadow = fluid.viewShadowFor(shadow);
+      115 +        const viewLayers = viewShadow ? fluid.deSignalLight(vi
+          +ewShadow.that.$layers) : [];
+      116 +        const displayLayer = displayLayers.find(layer => layer
+          +s.includes(layer) || viewLayers.includes(layer)).slice("fluid.
+          +".length);
+      117          const filteredLayers = [...layers].filter(layer => sel
+           f.userLayersOnly ? fluid.isUserLayer(layer) : true).reverse()
+      118              .map(layer => `<span class="fl-layer-link" data-fl
+           -layer-name="${layer}">${layer}</span>`).join(", ");
+      119
+
+● Now let me verify in the browser that the substrate pane shows it.
+
+  Searched for 1 pattern, listed 4 directories, ran 1 shell command (ctrl+o to expand)
+
+● I've changed the substrate tree so it also looks at the view's layers. Now I'm
+  checking it in headless Chrome.
+
+  Searched for 3 patterns, read 1 file, ran 2 shell commands (ctrl+o to expand)
+
+● The demos need to be served over HTTP, so I'm starting a static server for the
+  check.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● The check ran but my selector didn't match, so I'm fixing it to look for
+  nested rows.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Components with views now show as viewComponent. I'll run the test suites.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The substrate tree shows viewComponent again for components whose view member
+  is a fluid.viewComponent.
+
+  Cause: The tree picked each row's label only from the principal component's
+  own layers. After the move, those are just fluid.component, so every row
+  showed component.
+
+  Fix: In fluid.substrateTree.componentToEntry
+  (src/framework/edit/js/substrateTree.js), the label is now chosen from the
+  component's own layers plus its view's layers. The order of precedence is
+  unchanged:
+  1. listViewComponent
+  2. componentList
+  3. viewComponent
+  4. component
+
+  I opened the compose-edit demo's editor in headless Chrome and the labels came
+  out as expected:
+  - blogApp and every post, navbar, header and footer row: viewComponent
+  - blogApp.post (the list): listViewComponent
+
+  That list row used to show viewComponentList, the layer's old name, so its
+  label has changed with the rename.
+
+  npm test passes 1035/1035. The browser suite has 15 steps passing and 1
+  failing, and that failure is the existing known issue.
+
+✻ Baked for 6m 47s · done 15:24
+
+※ recap: For #19 we're moving view machinery onto the view subcomponent, and the substrate tree once again labels components that have views as viewComponent. All tests pass, so next you can review the uncommitted changes. (disable recaps in /config)
+
+❯ I see 16 steps passing in the browser suite, what is the known issue?
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● The known issue is step 2 of the compose-edit script
+  (demo/compose-edit/demo-script.json:27): hovering over a substrate row. The
+  step checks that the row gets highlighted (#fl-editor-inspect-overlay covers
+  it) and that the matching footer in the app gets the inspect overlay.
+
+  The script records the reason in its knownIssue entry. The first write of
+  editorRoot.inspectingSite upgrades it into the live layer via
+  fluid.pathToLive. That remerges and reinstantiates the whole editor, which
+  wipes out the row highlight before the check sees it. The runner counts that
+  failure as "known" (a TAP TODO), not as a failure.
+
+  The step depends on timing. I ran the suite 3 more times and it failed every
+  time here, but on your machine it presumably passes, giving 16. When it does,
+  the runner prints "step with known issue now passes - its knownIssue entry may
+  be removed". That means the overlay check landed after the editor had
+  rebuilt, not that the bug is fixed.
+
+  This isn't new with #19. The knownIssue entry is already in the script at
+  HEAD, from the #18 commit.
+
+✻ Cooked for 1m 36s · done 16:08
+
+※ recap: We're moving all view machinery onto the view subcomponent for #19, and the substrate tree again labels components with views as viewComponent, with tests passing. Next: you review the uncommitted changes, since I don't commit. (disable recaps in /config)
+
+❯ Here's the tail of my npm run test:browser run which does not show the
+  "knownIssue entry may be removed" text -     ok - footer at index 1
+  16 steps passed, 0 failed, 0 failed with known issues
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● You're right that it isn't in what you pasted, but it wouldn't be there. The
+  runner prints that message straight after the step itself, which is step 2 of
+  16, so it's well above the tail. The summary line only has the counts.
+
+  With the current files, a run can only report 16 passed and 0 known if step 2
+  passed. Here's why:
+  - The step is marked: demo/compose-edit/demo-script.json is the only browser
+    script listed in package.json, and its step 2 has the knownIssue entry
+    (line 27).
+  - How the runner tallies it
+    (tests/test-core/browser/js/demo-runner.js:236-248): a passing step counts
+    towards "passed", whether it has a knownIssue or not. The "now passes"
+    message is printed only in that branch. A failing step with a knownIssue
+    would have counted as "known" instead.
+
+  To see it in your run:
+
+  npm run test:browser 2>&1 | grep -B3 -A3 "known issue now passes"
+
+  You should see ok 2 - Hover over the footer of the left-hand post in the
+  substrate view # TODO ... followed by the message.
+
+  So the hover step passes on your machine and fails on mine every time (4
+  runs). That points to a timing race: whether the overlay check happens before
+  or after fluid.pathToLive rebuilds the editor. Your run passing doesn't mean
+  the underlying issue is fixed, so I'd leave the knownIssue entry in.
+
+✻ Brewed for 18s · done 16:47
+
+❯ OK - in addition I see two test failures when the ViewTests are run in the
+  browser but not from node. They are the $for and $if rendering tests -
+  investigate this source of non-determinism.
+
+  Searched for 1 pattern, listed 1 directory (ctrl+o to expand)
+
+● Let me run the view tests in headless Chrome to reproduce.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All the failures are attribute order: Chrome gives class before id, the test
+  expects id first. I'll check whether HEAD shows the same in the browser.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The earlier export has no tests directory, so I'll make a full HEAD export.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The same 4 assertions fail at HEAD, so this predates #19. Next I'll look at
+  the tests and at how the renderer sets id and class.
+
+  Searched for 1 pattern, ran 3 shell commands (ctrl+o to expand)
+
+● I see the renderer sets class before id on the element, giving Chrome that
+  insertion order. Now I'll check how linkedom serializes the same attribute
+  sequence.
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Found it: linkedom prepends new attributes while Chrome appends them, so the
+  expected strings in these tests reflect linkedom's order. I'll update the
+  comparison to be order-independent, as a test-only fix.
+
+  Read 1 file (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p="tests/framework-tests/core/js/FluidViewTests.js"…)  ⎿  7:fluid.registerNamespace("fluid.tests");
+     39:fluid.tests.sortedInnerHTML = function (node) {
+     194:fluid.tests.nestedExpect = {
+  ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+26 -4)
+      29  const qs =  (sel, parent) => (parent || document).querySelector
+          (sel);
+      30  const qsa = (sel, parent) => [...(parent || document).querySele
+          ctorAll(sel)];
+      31
+      32 +/**
+      33 + * Serialise the contents of a DOM node with each element's att
+         +ributes in sorted order, so that markup may be compared
+      34 + * independently of the order in which attributes were applied.
+         + The DOM serialises attributes in insertion order, which
+      35 + * is reversed under linkedom.
+      36 + * @param {Node} node - The node whose contents are to be seria
+         +lised
+      37 + * @return {String} The serialised contents, with attributes so
+         +rted by name
+      38 + */
+      39 +fluid.tests.sortedInnerHTML = function (node) {
+      40 +    return [...node.childNodes].map(child => {
+      41 +        let togo;
+      42 +        if (child.nodeType === 1) {
+      43 +            const tag = child.localName;
+      44 +            const attrs = [...child.attributes].map(attr => att
+         +r.name).sort()
+      45 +                .map(name => ` ${name}="${child.getAttribute(na
+         +me)}"`).join("");
+      46 +            togo = `<${tag}${attrs}>${fluid.tests.sortedInnerHT
+         +ML(child)}</${tag}>`;
+      47 +        } else {
+      48 +            togo = child.textContent;
+      49 +        }
+      50 +        return togo;
+      51 +    }).join("");
+      52 +};
+      53
+      54 +
+      55  QUnit.test("Basic static rendering test", function (assert) {
+      56      const container = qs(".container");
+      57      const that = fluid.tests.basicRender({container});
+     ...
+      702
+      703      that.enabled = true;
+      704      fluid.cell.stabilize();
+      683 -    assert.equal(container.innerHTML, `<div id="${assigneeId}"
+          - class="assignee"></div>`, "Conditional render correct");
+      705 +    assert.equal(fluid.tests.sortedInnerHTML(container), `<div
+          + class="assignee" id="${assigneeId}"></div>`, "Conditional ren
+          +der correct");
+      706
+      707      that.enabled = false;
+      708      fluid.cell.stabilize();
+     ...
+      710
+      711      that.enabled = true;
+      712      fluid.cell.stabilize();
+     … 18 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Both pass now. I'll also check the SFC view tests in Chrome for the same
+  problem.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The cause is a difference between DOMs rather than something random: linkedom
+  and Chrome write out a node's attributes in opposite orders. Both failing
+  tests are $if tests: "Conditional rendering" (short-form $if) and "Conditional
+  rendering with long-form $if record". The $for test passes in Chrome. The
+  same 4 assertions also fail on a clean export of HEAD, so this was there
+  before #19.
+
+  Cause
+  - fluid.patchAttrs (src/framework/core/js/FluidView.js) applies a node's
+    template attrs first, then its defaultAttrs. Here the template gives
+    class="assignee", and fluid.assignContainerId adds the default
+    id="fl-id-<path>".
+  - Chrome writes attributes out in the order they were added, giving class then
+    id.
+  - linkedom 0.18.10 puts each newly added attribute at the front of the list
+    instead. Adding title, id, alt comes out as alt id title, so under node you
+    get id then class.
+  - These tests compared container.innerHTML to a literal string with id first,
+    which only matches linkedom's order. Other tests pass in both because their
+    nodes have at most one attribute added this way.
+
+  Fix (test-only, in tests/framework-tests/core/js/FluidViewTests.js)
+  - I added fluid.tests.sortedInnerHTML(node), which writes out a node's
+    contents with each element's attributes sorted by name.
+  - The 4 assertions now use it, with expected strings written in sorted order
+    (class then id).
+  - I couldn't just re-add the attributes in sorted order and read back
+    innerHTML, because linkedom would reverse them again. So the helper builds
+    the string itself.
+
+  Results
+  - FluidViewTests in headless Chrome: 208/208 pass (4 failed before).
+  - Under node: 205/205 pass.
+  - FluidViewSFCTests and FluidPTFTests also pass in Chrome.
+  - The file lints clean.
+
+  If you'd rather fix this in the renderer, I can make it add the default id
+  before the template attributes, so Chrome writes id first. The test would
+  still need an order-independent comparison, because linkedom would reverse
+  that order too.
+
+✻ Worked for 3m 9s · done 16:53
+
+❯ Use the existing assertNode utility rather than sortedInnerHTML
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      import re…)
+  ⎿  7:@@ -16,9 +16,14 @@ QUnit.test("Layer name extraction test", function
+      (assert) {
+     24:@@ -40,10 +45,36 @@ QUnit.test("Basic static rendering test", funct
+     … +17 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+4 -26)
+      29  const qs =  (sel, parent) => (parent || document).querySelector
+          (sel);
+      30  const qsa = (sel, parent) => [...(parent || document).querySele
+          ctorAll(sel)];
+      31
+      32 -/**
+      33 - * Serialise the contents of a DOM node with each element's att
+         -ributes in sorted order, so that markup may be compared
+      34 - * independently of the order in which attributes were applied.
+         - The DOM serialises attributes in insertion order, which
+      35 - * is reversed under linkedom.
+      36 - * @param {Node} node - The node whose contents are to be seria
+         -lised
+      37 - * @return {String} The serialised contents, with attributes so
+         -rted by name
+      38 - */
+      39 -fluid.tests.sortedInnerHTML = function (node) {
+      40 -    return [...node.childNodes].map(child => {
+      41 -        let togo;
+      42 -        if (child.nodeType === 1) {
+      43 -            const tag = child.localName;
+      44 -            const attrs = [...child.attributes].map(attr => att
+         -r.name).sort()
+      45 -                .map(name => ` ${name}="${child.getAttribute(na
+         -me)}"`).join("");
+      46 -            togo = `<${tag}${attrs}>${fluid.tests.sortedInnerHT
+         -ML(child)}</${tag}>`;
+      47 -        } else {
+      48 -            togo = child.textContent;
+      49 -        }
+      50 -        return togo;
+      51 -    }).join("");
+      52 -};
+      32
+      54 -
+      33  QUnit.test("Basic static rendering test", function (assert) {
+      34      const container = qs(".container");
+      35      const that = fluid.tests.basicRender({container});
+     ...
+      680
+      681      that.enabled = true;
+      682      fluid.cell.stabilize();
+      705 -    assert.equal(fluid.tests.sortedInnerHTML(container), `<div
+          - class="assignee" id="${assigneeId}"></div>`, "Conditional ren
+          -der correct");
+      683 +    assert.assertNode(container, {$children: [{$tagName: "div"
+          +, id: assigneeId, class: "assignee", $innerHTML: ""}]}, "Condi
+          +tional render correct");
+      684
+      685      that.enabled = false;
+      686      fluid.cell.stabilize();
+     ...
+      688
+      689      that.enabled = true;
+      690      fluid.cell.stabilize();
+     … 18 more lines (ctrl+o to expand)
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● I removed sortedInnerHTML, and the four attribute-order assertions now use the
+  existing assert.assertNode from tests/test-core/qunit/js/qunit-fluid.js. For
+  example, at tests/framework-tests/core/js/FluidViewTests.js:683:
+
+  assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId,
+  class: "assignee", $innerHTML: ""}]}, "Conditional render correct");
+
+  The other three (lines 691, 734 and 738) follow the same pattern, with
+  $innerHTML set to "0" and "5" for the long-form $if test. Wrapping the
+  expected node in an array makes assertNode also check that the container has
+  exactly one child. That keeps the old exact-match check that there's nothing
+  else in the container.
+
+  One difference from comparing the whole innerHTML: assertNode only checks the
+  attributes you name. A stray extra attribute on that div would no longer fail
+  these four checks.
+
+  FluidViewTests now passes in headless Chrome (224/224) and under node
+  (221/221), and the file lints clean. The totals went up from the last run (208
+  and 205) because each assertNode call counts every property it checks as a
+  separate assertion.
+
+✻ Baked for 45s · done 16:57
+
+❯ Tests are good - now, there is either drift or a fairly long-standing failure
+  in the substrate view, in that when doing "history back" after opening and
+  closing an editor window, only the tab for the editor displays when moving
+  back over the open window state, and not the editor body. Add some more steps
+  to the puppeteer demo-script.json to validate this once fixed, as well as
+  the previous fix for getting "viewComponent" to display in the substrate
+  view.
+
+  Searched for 1 pattern, read 1 file, listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+● I'll reproduce this first with a scratch demo script: open an editor tab,
+  close it, then go back in history.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've reproduced it: after going back, the tab returns and a CodeMirror element
+  exists, but it isn't visible. I'll look at the screenshot.
+
+  Read 1 file (ctrl+o to expand)
+
+● The tab is back but its body isn't shown. Next I'll check how an editor holder
+  decides whether it's visible, and how tabs are opened and closed.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Found the bug: openLayerTabs is reactive and gets restored by history, but
+  selectedLayerTab isn't, so after closing/reopening tabs the selection stays
+  null and the editor body never reappears. I'll fix this by deriving an
+  activeLayerTab that falls back to the last open tab when the current selection
+  isn't valid, and use it for both isActive checks.
+
+● Bash(python3 - <<'EOF'
+      p="src/framework/edit/sfc/fluid-editorRoot.vue"…)
+  ⎿  -            $layers: "fluid.templateViewComponent",
+     +            $layers: "fluid.component",
+     -                    func: (layerName, selectedLayerTab) => layerName
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/edit/sfc/fluid-editorRoot.vue (+11 -0)
+      12      },
+      13      showUserLayersOnly: true,
+      14      selectedLayerTab: null,
+      15 +    // The tab whose editor is shown - the selected tab if it i
+         +s open, otherwise the last open tab. Only openLayerTabs
+      16 +    // is recorded in history, so that navigating history may r
+         +estore tabs without restoring their selection
+      17 +    activeLayerTab: {
+      18 +        $compute: {
+      19 +            func: (openLayerTabs, selectedLayerTab) => {
+      20 +                const isOpen = openLayerTabs.some(layerRec => l
+         +ayerRec.layerName === selectedLayerTab);
+      21 +                return isOpen ? selectedLayerTab : openLayerTab
+         +s[openLayerTabs.length - 1]?.layerName ?? null;
+      22 +            },
+      23 +            args: ["{self}.openLayerTabs", "{self}.selectedLaye
+         +rTab"]
+      24 +        }
+      25 +    },
+      26      inspectingSite: null,
+      27      selfEditing: false,
+      28
+  ⎿  Updated src/framework/edit/sfc/fluid-editor.vue (+2 -2)
+      10      isActive: {
+      11          // TODO: What on earth? Why does this reach upward into
+           the editorRoot?
+      12          $compute: {
+      13 -            func: (layerName, selectedLayerTab) => layerName ==
+         -= selectedLayerTab,
+      14 -            args: ["{self}.layerRec.layerName", "{fluid.editorR
+         -oot}.selectedLayerTab"]
+      13 +            func: (layerName, activeLayerTab) => layerName ===
+         +activeLayerTab,
+      14 +            args: ["{self}.layerRec.layerName", "{fluid.editorR
+         +oot}.activeLayerTab"]
+      15          }
+      16      },
+      17      // Perhaps better implemented on editor subcomponent?
+  ⎿  Updated src/framework/edit/sfc/fluid-editor-editorsPane.vue (+2 -2)
+      11              colour: "{self}.layerRec.colour",
+      12              isActive: {
+      13                  $compute: {
+      14 -                    func: (layerName, selectedLayerTab) => laye
+         -rName === selectedLayerTab,
+      15 -                    args: ["{self}.layerName", "{fluid.editorRo
+         -ot}.selectedLayerTab"]
+      14 +                    func: (layerName, activeLayerTab) => layerN
+         +ame === activeLayerTab,
+      15 +                    args: ["{self}.layerName", "{fluid.editorRo
+         +ot}.activeLayerTab"]
+      16                  }
+      17              },
+      18              view: {
+  ⎿  (timeout 3m)
+
+● That's my own change. The repro passes now. Next I'll check what the demo
+  agent's locators support before writing the new steps.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● I'll insert the new steps into demo/compose-edit/demo-script.json: substrate
+  label checks in step 1, and history back/forward steps after the
+  divergencePost tab is closed.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All the new steps pass. Step 2's failure output is new, though: its bounds are
+  off by 1px (669 vs 670), not displaced as the knownIssue text describes. I'll
+  check the tolerance logic.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● I fixed the history problem and added the new steps to
+  demo/compose-edit/demo-script.json. All the new steps pass.
+
+  Cause: this is a long-standing failure, not drift. It's identical at HEAD.
+  - History records live changes only for $reactiveRoot members. In
+    fluid.editorRoot that's openLayerTabs, but not selectedLayerTab.
+  - Closing the last tab sets selectedLayerTab to null. Going back restores
+    openLayerTabs, so the tab returns, but the selection stays null.
+  - An editor body is shown only when it is the selected tab (.fl-editor is
+    display: none otherwise), so its CodeMirror was in the DOM but hidden.
+
+  Fix:
+  - src/framework/edit/sfc/fluid-editorRoot.vue has a new computed
+    activeLayerTab. It is the selected tab if that tab is open, otherwise the
+    last open tab, otherwise null.
+  - In fluid-editor.vue and fluid-editor-editorsPane.vue, isActive now compares
+    against activeLayerTab, so the editor body and the active-tab underline
+    follow whatever history restores.
+  - I didn't make selectedLayerTab a $reactiveRoot. That would add a second
+    history record for every tab open or close, so each one would take two back
+    steps to undo.
+
+  New steps in the demo script:
+  - Step 1, the substrate labels:
+    - the left-hand post's footer row reads viewComponent
+    - the post list row reads listViewComponent
+  - Steps 16–19, history navigation: these run after the divergencePost tab is
+    closed.
+    - Back: the tab reappears with its CodeMirror body visible and containing
+      "2016 paper".
+    - Back again: no tabs are open.
+    - Forward: the tab and its visible body return.
+    - Forward again: no tabs are open.
+  - After that, the existing step that closes the editor panel runs unchanged.
+
+  Before the fix, the same checks failed on the editor body being invisible.
+
+  Results:
+  - Browser suite: 19 steps pass, 0 fail, and 1 fails with a known issue
+    (step 2).
+  - npm test: 1051/1051 pass.
+  - Lint: the only error is the existing tsconfig.json parse error.
+  - I didn't update demo-script.md. It was already only a partial narrative of
+    the script.
+
+  Step 2 and your 16-vs-15 result: this time I looked at why step 2 fails here.
+  The highlight is not displaced by the editor rebuilding, as the knownIssue
+  text says. It sits 1–2px below the row (top 670 vs 669 after rounding), just
+  past the 1px tolerance in demo-agent.js. That's almost certainly why it passes
+  on your machine: font metrics there likely keep the offset within 1px. So the
+  knownIssue text may be out of date. I've left it alone since you didn't ask
+  me to look into it.
+
+✻ Cogitated for 6m 14s · done 17:14
+
+❯ increase the covers tolerance to 2px so step 2 passes
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(sed -i '41s/defaults to 1$/defaults to 2/; 324s/expectation.tolerance ??
+      1;/expectation.tolerance ?? 2;/' tests/test-core/browser/js/demo-agent.js
+      && sed -n '41…)
+  ⎿   * @property {Number} [tolerance] - The tolerance in pixels for `cover
+     s` - defaults to 2
+                 const tolerance = expectation.tolerance ?? 2;
+     … +16 lines (ctrl+o to expand)
+  ⎿  Updated tests/test-core/browser/js/demo-agent.js (+2 -2)
+      38   * @property {Boolean} [visible] - Whether the first matching e
+          lement should be visible - a missing element is not
+      39   * @property {String} [distinctStyle] - A CSS property whose co
+          mputed value should differ amongst all matching elements
+      40   * @property {Locator} [covers] - Locator for an element whose
+          bounds the first matching element should coincide with
+      41 - * @property {Number} [tolerance] - The tolerance in pixels for
+         - `covers` - defaults to 1
+      41 + * @property {Number} [tolerance] - The tolerance in pixels for
+         + `covers` - defaults to 2
+      42   * @property {Object} [matchesStyle] - Holding a CSS `property`
+           and a `target` locator - the computed value of the
+      43   * property for the first matching element should equal its val
+          ue for the element matched by `target`
+      44   */
+     ...
+      321          if (first) {
+      322              const rect = first.getBoundingClientRect();
+      323              const coveredRect = fluidDemoAgent.locate(expectat
+           ion.covers).getBoundingClientRect();
+      324 -            const tolerance = expectation.tolerance ?? 1;
+      324 +            const tolerance = expectation.tolerance ?? 2;
+      325              const sides = ["left", "top", "width", "height"];
+      326              const mismatched = sides.filter(side => Math.abs(r
+           ect[side] - coveredRect[side]) > tolerance);
+      327              if (mismatched.length > 0) {
+  ⎿  (timeout 10m)
+
+● Step 2 now passes. I raised the default covers tolerance from 1px to 2px in
+  tests/test-core/browser/js/demo-agent.js (line 324), and updated its JSDoc to
+  match (line 41). The change applies to every covers check, not just step 2.
+
+  I ran the browser suite three times, and each run passed all 20 steps.
+
+  Each run also printed "step with known issue now passes - its knownIssue entry
+  may be removed". Should I remove step 2's knownIssue entry from
+  demo-script.json? Its text blames the editor being rebuilt, but here the
+  actual failure was the highlight sitting 1–2px below the row. If the entry
+  stays, the step can never count as a real failure.
+
+✻ Crunched for 1m 18s · done 17:33
+
+❯ yes, remove the knownIssue entry
+
+  Ran 1 shell command (ctrl+o to expand)
+● I removed step 2's knownIssue entry from demo/compose-edit/demo-script.json.
+  The browser suite now passes all 20 steps, with nothing marked as a known
+  issue, so step 2 will count as a real failure if it breaks again.
+
+  That entry was the only knownIssue in the script. The runner still supports
+  them, so you can add one back later if needed.
+
+✻ Crunched for 26s · done 17:35
+
+❯ write a commit message for this
+
+● Here's a commit message covering the whole working-tree change. It follows
+  your one-line … Resolves fluid-project/infusion-6#N style, with a body listing
+  the parts:
+
+  All view machinery is now hosted by a "view" subcomponent, with all view
+  layers moved off the principal into view.$component.$layers - Resolves
+  fluid-project/infusion-6#19
+
+  - fluid.viewComponent is now the view's own base layer, absorbing fluid.view;
+  view layers renamed consistently:
+    fluid.selfTemplate -> fluid.selfTemplateViewComponent,
+  fluid.selfTemplateRoot -> fluid.selfTemplateRootViewComponent,
+    fluid.viewComponentList -> fluid.listViewComponent (now a layer rather than
+  a co-occurrence), and the SFC tag layer
+    fluid.sfcViewComponent -> fluid.sfcLayer, which remains on the principal
+  - @id template records, the SFC loader, globalDismissal, the editor and all
+  demos and tests are migrated to view records
+  - SFC parser strips quotes from quoted property names so that patched
+  "$component" keys merge correctly
+  - UISelect's template moved into a fluid.UISelectViewComponent layer, since
+  record members outrank layer defaults
+  - demo/todo-list migrated and its includes repaired (FluidModules.js,
+  FluidView-browser.js); legacy FluidEdit.js
+    include removed
+  - Substrate view labels a component by its view's layers too, so components
+  with views show as viewComponent again
+  - Editor tabs: added editorRoot.activeLayerTab, falling back to the last open
+  tab, so that navigating history back over
+    an opened tab shows its editor body and not just its tab
+  - Conditional rendering tests use assertNode, since linkedom and Chrome
+  serialise attributes in opposite orders
+  - Demo script checks substrate labels and history back/forward over an editor
+  tab; covers tolerance raised to 2px and
+    the knownIssue on the substrate hover step removed
+
+  Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+✻ Crunched for 10s · done 17:38

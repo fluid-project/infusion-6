@@ -714,8 +714,10 @@ const fluidViewScope = function (fluid) {
                 /** @type {ScriptNodeInfo} */
                 const ourSNI = defMapList[ourDef.scriptIndex];
                 const oldLayers = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, "$layers");
+                const viewLayersPath = ["view", "$component", "$layers"];
+                const oldViewLayers = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, viewLayersPath);
 
-                const partial = oldLayers && oldLayers.includes("fluid.partialViewComponent");
+                const partial = fluid.makeArray(oldViewLayers).includes("fluid.partialViewComponent");
 
                 let patchedText = ourSNI.text;
 
@@ -727,34 +729,39 @@ const fluidViewScope = function (fluid) {
                 // If a <template> block is present, store it in the template registry and add a definition to resolve it
                 if (docTemplate) {
                     addLayers = ["fluid.sfcTemplateViewComponent"];
+                    // Template configuration is written onto the component's view
                     if (partial) {
-                        const relativeContainer = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, "relativeContainer");
+                        const relativeContainer = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, ["view", "$component", "relativeContainer"]);
                         if (!relativeContainer) {
-                            reject(`Error in SFC for ${layerName}: Didn't find relativeContainer property for partial component`);
+                            reject(`Error in SFC for ${layerName}: Didn't find view.$component.relativeContainer property for partial component`);
                         }
                         const ptl = {
                             [layerName]: {
                                 relativeContainer
                             }
                         };
-                        patchedText = fluid.patchDefMap(patchedText, ourDef, "partialTemplateLayers", ptl, "last");
+                        patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "partialTemplateLayers"], ptl, "last");
                     } else {
-                        patchedText = fluid.patchDefMap(patchedText, ourDef, "templateLayer", layerName, "last");
+                        patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "templateLayer"], layerName, "last");
                     }
                     fluid.writeParsedTemplate(layerName, docTemplate);
                 }
 
-                // If no $layers was written in the definition, add one that will correctly resolve its template.
-                // In either case, add the tag layer marking the layer as derived from an SFC. This must be placed last since
-                // any of the existing layers may themselves be derived from an SFC - C3 linearization will then demand
-                // that they precede the tag layer.
-                // Reparse if the text has already been patched since an existing $layers entry may have moved
-                const layersDef = patchedText === ourSNI.text ? ourDef :
+                // Reparse if the text has already been patched since existing entries may have moved
+                const reparse = () => patchedText === ourSNI.text ? ourDef :
                     {scriptIndex: ourDef.scriptIndex, ...fluid.parseDefMaps(patchedText, 0)[layerName]};
+                // If no layers were written for the component's view, add one that will correctly resolve its template.
+                // Any view inherited from the component's other layers will accumulate this layer.
+                if (!oldViewLayers && (docTemplate || !oldLayers)) {
+                    patchedText = fluid.patchDefMapPath(patchedText, reparse(), viewLayersPath, addLayers, "first");
+                }
+                // Add the tag layer marking the layer as derived from an SFC. This must be placed last since any of the
+                // existing layers may themselves be derived from an SFC - C3 linearization will then demand that they
+                // precede the tag layer.
                 if (!oldLayers) {
-                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", [...addLayers, "fluid.sfcViewComponent"], "first");
-                } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcViewComponent")) {
-                    patchedText = fluid.patchDefMap(patchedText, layersDef, "$layers", [...fluid.makeArray(oldLayers), "fluid.sfcViewComponent"], "first");
+                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.component", "fluid.sfcLayer"], "first");
+                } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcLayer")) {
+                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", [...fluid.makeArray(oldLayers), "fluid.sfcLayer"], "first");
                 }
                 ourSNI.text = patchedText;
 
@@ -1170,7 +1177,15 @@ const fluidViewScope = function (fluid) {
         el.flDomId = el.flDomId || domId++;
     };
 
-    fluid.bindContainer = function (templateEffects, vnode, self) {
+    /**
+     * Bind the root VNode of a component's rendered tree to its container, registering the container against the
+     * component in `fluid.viewContainerRegistry` and exposing it as the `renderedContainer` member of its view.
+     * @param {Effect[]} templateEffects - An array of effects to contribute any allocated effects to
+     * @param {VNode} vnode - The root VNode of the component's rendered tree
+     * @param {ComponentComputer} self - The component whose view is rendered
+     * @param {ComponentComputer} view - The view subcomponent of `self`
+     */
+    fluid.bindContainer = function (templateEffects, vnode, self, view) {
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
             const togo = fluid.cell.effect(function (element) {
                 fluid.noteViewContainerRegistry(element, self[$m]);
@@ -1180,7 +1195,7 @@ const fluidViewScope = function (fluid) {
             return togo;
         });
         templateEffects.push(bindEffect);
-        const renderedContainer = self[$m].that.renderedContainer;
+        const renderedContainer = view[$m].that.renderedContainer;
         renderedContainer.computed(x => x, [vnode.elementSignal]);
     };
 
@@ -1593,6 +1608,18 @@ const fluidViewScope = function (fluid) {
         return vnode;
     };
 
+    /**
+     * Determine whether a member of a component is configured to hold a component list, i.e. holds a subcomponent
+     * record with a `$for` member, as determined by the light merge of its contributions
+     * @param {Shadow} shadow - The shadow of the component holding the member
+     * @param {String} memberName - The name of the member
+     * @return {Boolean} `true` if the member is configured to hold a component list
+     */
+    fluid.isComponentListMember = function (shadow, memberName) {
+        const record = shadow.flatMerged.get()[memberName]?.$component;
+        return record ? fluid.expandComponentContributions(record).forRecord !== undefined : false;
+    };
+
     fluid.shadowsToRoot = function (shadow) {
         const togo = [];
         while (shadow) {
@@ -1613,12 +1640,15 @@ const fluidViewScope = function (fluid) {
         // by this route. In future components can start to evaluate (at least $computeds can) before layer is defined.
         const shadows = fluid.shadowsToRoot(shadow).reverse();
         const container = fluid.find(shadows, oneShadow => {
-            if (oneShadow.that) {
-                return oneShadow.that.container;
+            const viewShadow = oneShadow.that && fluid.hasLayer(oneShadow.that, "fluid.viewComponent") ? oneShadow : fluid.viewShadowFor(oneShadow);
+            if (viewShadow) {
+                return viewShadow.that.container;
             } else {
-                const layers = oneShadow.mergeRecords.map(mergeRecord => mergeRecord.layer).reverse();
+                // Before a component's view exists, its container may be found in the configuration of its view,
+                // and before a view is instantiated, in its own configuration
+                const layers = (oneShadow.mergeRecords || []).map(mergeRecord => mergeRecord.layer).reverse();
                 return fluid.find(layers, layer => {
-                    const container = layer.container;
+                    const container = layer.view?.$component?.container ?? layer.container;
                     return fluid.isSignal(container) || fluid.isDOMNode(container) ? container : undefined;
                 });
             }
@@ -1629,12 +1659,18 @@ const fluidViewScope = function (fluid) {
     /**
      * Process a vTree to parse text and attribute templates, creating effects to bind to markup during the later renderView stage.
      *
+     * Template references, e.g. to `{self}`, are resolved in the context of the view's parent, since a template has no
+     * reason to refer to the view machinery which renders it.
+     *
      * @param {VNode} vtemplate - The vTree representing the template which will be parsed
      * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
+     * @param {ComponentComputer} view - The view subcomponent of `self` which will render the template, and which holds
+     * its configuration and the effects binding it to markup
      * @return {VNode} The processed vTree with rendered text and attributes.
      */
-    fluid.activateTemplate = function (vtemplate, self) {
+    fluid.activateTemplate = function (vtemplate, self, view) {
         const shadow = self[$m];
+        const viewShadow = view[$m];
         // Awful hack to get around surplus notification problem for now
         const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReference("{fluid.editorRoot}.selfEditing", shadow));
         const selfEditing = fluid.deSignal(selfEditingRef);
@@ -1642,7 +1678,7 @@ const fluidViewScope = function (fluid) {
         // Add dependency on turnover since will affect partial template contingent, etc.
         shadow.flatMerged.get();
 
-        const templateEffects = shadow.frameworkEffects.templateEffects = shadow.frameworkEffects.templateEffects || [];
+        const templateEffects = viewShadow.frameworkEffects.templateEffects = viewShadow.frameworkEffects.templateEffects || [];
         /**
          * Recursively processes a VNode by rendering any template strings found in its text or attributes
          * @param {VNode} vnode - The VNode to be processed.
@@ -1676,12 +1712,20 @@ const fluidViewScope = function (fluid) {
                         delete vnode.children;
                         vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
 
+                        // The template record ensures that the child has a view, rendering into the container supplied
+                        // here - if the child is a component list, its view renders its members' views in sequence
+                        const viewLayer = fluid.isComponentListMember(shadow, idValue) ? "fluid.listViewComponent" : "fluid.viewComponent";
                         const templateRecord = {
                             mergeRecordType: "template",
                             layer: {
-                                $layers: "fluid.viewComponent",
-                                container: vnode.elementSignal,
-                                parentTemplate
+                                $layers: "fluid.component",
+                                view: {
+                                    $component: {
+                                        $layers: viewLayer,
+                                        container: vnode.elementSignal,
+                                        parentTemplate
+                                    }
+                                }
                             }
                         };
 
@@ -1743,11 +1787,11 @@ const fluidViewScope = function (fluid) {
         }
 
         const tree = fluid.copy(vtemplate);
-        const useTree = fluid.effVTree(tree, self.elideParent);
+        const useTree = fluid.effVTree(tree, view.elideParent);
         let compositedTree = assignParents(useTree);
 
-        if (fluid.hasLayer(self, "fluid.partialViewComponent")) {
-            fluid.each(self.partialTemplateLayers, (rec, layerName) => {
+        if (fluid.hasLayer(view, "fluid.partialViewComponent")) {
+            fluid.each(view.partialTemplateLayers, (rec, layerName) => {
                 compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
             });
         }
@@ -1758,7 +1802,7 @@ const fluidViewScope = function (fluid) {
         const filteredTree = !fluid.isUnavailable(selfEditing) && selfEditing ? selfEditingRef.get().site.shadow.that.filterForSelfEditing(activatedTree, self) : activatedTree;
 
         fluid.assignContainerId(filteredTree, shadow);
-        fluid.bindContainer(templateEffects, filteredTree, self);
+        fluid.bindContainer(templateEffects, filteredTree, self, view);
         return filteredTree;
 
     };
@@ -1889,7 +1933,7 @@ const fluidViewScope = function (fluid) {
      * This function updates the container's contents to match the provided virtual tree.
      * If `elideParent` is true, the `vTree`'s children are grafted as children of the current container.
      *
-     * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
+     * @param {ComponentComputer} self - The view component which is rendering
      * @param {HTMLElement} container - The target DOM element where the virtual tree should be rendered.
      * @param {VNode} vTree - The virtual node representing the desired DOM structure.
      */
@@ -1899,26 +1943,73 @@ const fluidViewScope = function (fluid) {
         fluid.patchChildren(vTree, container, true);
     };
 
+    /**
+     * Disable any further rendering by a component's view, e.g. because its markup has been taken over by a widget
+     * @param {ComponentComputer} self - The component whose rendering is to be disabled
+     */
     fluid.disableRendering = function (self) {
-        self.vTree = fluid.unavailable({cause: "Rendering is disabled", variety: "config"});
+        self.view.vTree = fluid.unavailable({cause: "Rendering is disabled", variety: "config"});
     };
 
+    // The view of a component, held as its subcomponent "view", which holds all of its view configuration, e.g. its
+    // container and template, as well as all the machinery which renders it. A component acquires a view by writing a
+    // record at view.$component holding this layer or one derived from it - the component itself bears no view layer.
+    // The view renders its template into its container. References within the template are resolved in the context of
+    // its parent, by fluid.activateTemplate
     fluid.def("fluid.viewComponent", {
         $layers: "fluid.component",
         elideParent: true,
         container: "$compute:fluid.unavailable(Container not specified)",
+        templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
         // Mashed in live by bindContainer called at the end of activateTemplate
         renderedContainer: {
             $reactiveRoot: fluid.unavailable({cause: "Component not rendered", variety: "config"})
         },
-        templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
-        vTree: "$compute:fluid.activateTemplate({self}.templateTree, {self})",
+        vTree: "$compute:fluid.activateTemplate({self}.templateTree, {$parent}, {self})",
         renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree)",
         $variety: "framework"
     });
 
+    /**
+     * Forward any `container` supplied as an argument to a free component's creator function to the component's view,
+     * as a courtesy to its callers
+     * @param {Object} argLayer - The user arguments
+     * @return {Object} The upgraded user arguments
+     */
+    fluid.upgradeFreeComponentArgs = function (argLayer) {
+        let togo;
+        if (argLayer.container === undefined) {
+            togo = argLayer;
+        } else {
+            const {container, ...rest} = argLayer;
+            togo = {...rest, view: {...rest.view, $component: {...rest.view?.$component, container}}};
+        }
+        return togo;
+    };
+
+    /**
+     * Retrieve the shadow of the view subcomponent of a component which has one
+     * @param {Shadow} shadow - The shadow of a component
+     * @return {Shadow|undefined} The shadow of the component's view, or `undefined` if it has none
+     */
+    fluid.viewShadowFor = function (shadow) {
+        const viewShadow = shadow.childComponents?.view;
+        return viewShadow?.that && fluid.hasLayer(viewShadow.that, "fluid.viewComponent") ? viewShadow : undefined;
+    };
+
+    /**
+     * Retrieve the DOM element onto which a component's view is currently rendered
+     * @param {Shadow} shadow - The shadow of a component
+     * @return {Element|Unavailable|undefined} The rendered container, or an unavailable value if the component's view
+     * is not rendered, or `undefined` if it has no view
+     */
+    fluid.renderedContainerFor = function (shadow) {
+        const viewShadow = fluid.viewShadowFor(shadow);
+        return viewShadow && fluid.deSignal(viewShadow.that.renderedContainer);
+    };
+
     // A self-templating component that uses the existing DOM document contents as its template
-    fluid.def("fluid.selfTemplateRoot", {
+    fluid.def("fluid.selfTemplateRootViewComponent", {
         $layers: "fluid.viewComponent",
         templateContainer: fluid.unavailable({cause: "No template container is configured", variety: "config"}),
         container: "{self}.templateContainer",
@@ -1935,11 +2026,11 @@ const fluidViewScope = function (fluid) {
         return fluid.domToVDom(container);
     };
 
-    // TODO: fold selfTemplateRoot and selfTemplate together - requires advanced feature of reacting to whether
+    // TODO: fold selfTemplateRootViewComponent and selfTemplateViewComponent together - requires advanced feature of reacting to whether
     // container was sourced as a direct user argument or from the templateRecord pushPotentia from a parent component
     // - we'd probably prefer this to be done by being able to expose the provenance of a value as a reactive quantity
     // A self-templating component that uses markup supplied by its parent
-    fluid.def("fluid.selfTemplate", {
+    fluid.def("fluid.selfTemplateViewComponent", {
         $layers: "fluid.viewComponent",
         templateTree: "{self}.parentTemplate",
         elideParent: false,
@@ -1954,7 +2045,7 @@ const fluidViewScope = function (fluid) {
 
     // Tag layer applied by fluid.sfcToInjRecs to every layer which was loaded from a Single File Component, allowing
     // its MIME type to be determined by fluid.layerMimeType
-    fluid.def("fluid.sfcViewComponent", {
+    fluid.def("fluid.sfcLayer", {
         $variety: "framework"
     });
 
@@ -1964,7 +2055,10 @@ const fluidViewScope = function (fluid) {
         $variety: "framework"
     });
 
+    // A view which composites the partial templates of its parent's layers onto the template supplied by another of
+    // its layers, at the relative containers they configure
     fluid.def("fluid.partialViewComponent", {
+        $layers: "fluid.viewComponent",
         relativeContainer: fluid.unavailable({cause: "Relative container not configured", variety: "config"}),
         $variety: "framework"
     });
@@ -2003,26 +2097,29 @@ const fluidViewScope = function (fluid) {
                 }
             }
         } else if (fluid.isErrorUnavailable(shadow.that)) {
-            const container = shadow.mergeRecords.reduce((acc, record) => record.container || acc, null);
+            const container = shadow.mergeRecords.reduce((acc, record) => record.layer?.view?.$component?.container || acc, null);
             if (container) {
                 fluid.renderError(container, shadow.that);
             }
         }
     };
 
-    fluid.registerCoOccurrence("fluid.viewComponentList", {
-        inputLayers: ["fluid.viewComponent", "fluid.componentList"],
-        outputLayers: ["fluid.viewComponentList"]
-    });
-
-    fluid.def("fluid.viewComponentList", {
+    // The view of a fluid.componentList, which renders the views of the list's members in sequence. This is supplied
+    // by fluid.activateTemplate in place of fluid.viewComponent when a template designates a component list
+    fluid.def("fluid.listViewComponent", {
         $layers: "fluid.viewComponent",
         elideParent: false,
-        // Note that this is activateTemplate in a regular viewComponent
-        vTree: "$compute:fluid.listViewTree({self}, {self}.list)",
+        // Note that this is activateTemplate in a regular view
+        vTree: "$compute:fluid.listViewTree({$parent}, {$parent}.list)",
         $variety: "framework"
     });
 
+    /**
+     * Compute the vTree for a list of view components by concatenating the vTrees rendered by their views
+     * @param {ComponentComputer} self - The component list
+     * @param {Signal<ComponentComputer[]>} list - The list of view components
+     * @return {Signal<VNode>} A signal for a VNode holding the list members' vTrees as its children
+     */
     fluid.listViewTree = function (self, list) {
         return fluid.cell(undefined, {name: "fluid.listViewTree"}).computed(componentList => {
             const unwrappedList = componentList.map(e => fluid.deSignal(e[fluid.unavailableSymbol]));
@@ -2034,7 +2131,7 @@ const fluidViewScope = function (fluid) {
                 const {
                     designalArgs: childTrees,
                     unavailable: treesUnavailable
-                } = fluid.processSignalArgs(componentList.map(component => component.vTree));
+                } = fluid.processSignalArgs(componentList.map(component => component.view.vTree));
                 return treesUnavailable || {
                     tag: "template",
                     children: childTrees,
@@ -2068,7 +2165,11 @@ const fluidViewScope = function (fluid) {
                     const [firstLayer, ...restLayers] = layers;
                     const instance = fluid.initFreeComponent(firstLayer, {
                         $layers: restLayers,
-                        container: element
+                        view: {
+                            $component: {
+                                container: element
+                            }
+                        }
                     });
                     // Put this in early in case instantiation fails - TODO standardise access to shadow
                     fluid.viewContainerRegistry.set(element, instance[$t].shadow);

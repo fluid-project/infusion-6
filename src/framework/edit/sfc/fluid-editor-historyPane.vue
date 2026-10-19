@@ -15,23 +15,33 @@ fluid.layerFromHistoryRec = {
 };
 
 fluid.def("fluid.editor.historyList", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     records: {
         $compute: {
             func: "fluid.editor.historyList.fromStore",
             args: [fluid.layerHistory, fluid.layerHistoryIndex, "{editorRoot}.showUserLayersOnly", "{colourManager}.layerColours"]
         }
     },
-    template: `<div @id="history" class="fl-history-pane"></div>`,
-    history: {
+    view: {
         $component: {
             $layers: "fluid.templateViewComponent",
+            template: `<div @id="history" class="fl-history-pane"></div>`
+        }
+    },
+    history: {
+        $component: {
+            $layers: "fluid.component",
             layerName: "{self}.historyRec.layerName",
-            template: `
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `
 <div class="fl-history-rec" @class="current:@{historyRec.current}" style="background-color: @{historyRec.colour}" title="@{layerName}">
     <div class="fl-history-layer">@{layerName}</div>
     <div class="fl-history-type">@{historyRec.type}</div>
-</div>`,
+</div>`
+                }
+            },
             $for: {
                 source: "{historyList}.records",
                 valueAs: "historyRec"

@@ -136,7 +136,7 @@ const $fluidILScope = function (fluid) {
      * @param {Component} root - The root component at which to start the search
      * @param {String} selector - An IoCSS selector, in form of a string. Note that since selectors supplied to this function implicitly
      * match downwards, they do not contain the "head context" followed by whitespace required in the distributeOptions form. E.g.
-     * simply <code>"fluid.viewComponent"</code> will match all viewComponents below the root.
+     * simply <code>"fluid.viewComponent"</code> will match all component views below the root.
      * @param {Boolean} [flat] - <code>true</code> if the search should just be performed at top level of the component tree
      * Note that with <code>flat=false</code> this search will scan every component below the root and may well be very slow.
      * @return {Unavailable|Component[]} An array holding all components matching the selector, or an unavailable value if any
@@ -162,7 +162,7 @@ const $fluidILScope = function (fluid) {
      * @param {Component} root - The root component at which to start the search
      * @param {String} selector - An IoCSS selector, in form of a string. Note that since selectors supplied to this function implicitly
      * match downwards, they do not contain the "head context" followed by whitespace required in the distributeOptions form. E.g.
-     * simply <code>"fluid.viewComponent"</code> will match all viewComponents below the root.
+     * simply <code>"fluid.viewComponent"</code> will match all component views below the root.
      * @param {Boolean} [flat] - <code>true</code> if the search should just be performed at top level of the component tree
      * Note that with <code>flat=false</code> this search will scan every component below the root and may well be very slow.
      * @return {Cell<Unavailable|Component[]>} An array holding all components matching the selector, or an unavailable value if any
@@ -381,6 +381,7 @@ const $fluidILScope = function (fluid) {
      * @property {Object<String, ScopeRecord>} ownScope - Cached layer scopes for the component.
      * @property {Object<String, ScopeRecord>} childrenScope - Cached layer scopes for the component.
      * @property {Object} [injectedPaths] - A record of paths where this component has been injected, keyed by path.
+     * @property {String[]} [listKeys] - For a component list, the keys of the list elements most recently allocated
      *
      * @property {fluid.instantiator} instantiator - The instantiator which allocated this component/shadow
      * @property {Object} frameworkEffects - A possibly deep structure of effects allocated by the framework which
@@ -393,6 +394,8 @@ const $fluidILScope = function (fluid) {
      * @property {Boolean} [resolveRoot] - Whether this shadow's scope names will resolve globally
      *
      * @property {Cell<Object>} flatMerged - The result of a deep recursive merge of all layer records for the component
+     * @property {Object} [lastMerge] - The inputs and products of the most recent merge, used by `fluid.flatMergedComputer`
+     * to avoid remerging when its inputs are unchanged
      * @property {Cell<Object>} computer - Signal for the component reference ("that")
      * @property {Cell<Unavailable|Component>} availableInstance - Signal tracking whether the component's instance should be publically
      * available, through having a complete set of available layers, etc.
@@ -745,6 +748,7 @@ const $fluidILScope = function (fluid) {
      *
      * @param {String} context - The context name to resolve. Special values:
      *   - `"self"` resolves to the current component
+     *   - `"$parent"` resolves to the parent of the current component
      *   - `"/"` resolves to the root component.
      *   - `"/path.to.component"` resolves to the component at that global path
      *   - Other values resolve to named scopes in the target component's scope chain.
@@ -766,6 +770,8 @@ const $fluidILScope = function (fluid) {
             return fluid.global;
         } else if (context === "$oldValue") {
             return fluid.OldValue;
+        } else if (context === "$parent") {
+            return shadow.parentShadow ? shadow.parentShadow.availableInstance : fluid.contextUnavailable(context, shadow);
         } else if (fluid.isGlobalAddress(context)) {
             const target = fluid.resolveGlobalAddress(context, shadow);
             return target ? target.computer : fluid.contextUnavailable(context, shadow);
@@ -1471,21 +1477,66 @@ const $fluidILScope = function (fluid) {
      * a `subcomponent` layer record and invoking `fluid.pushPotentia`. This supports instantiating
      * nested subcomponents from within a parent component's definition.
      *
+     * Each of the supplied records becomes a `subcomponent` merge record of its own, of successively greater priority,
+     * so that the subcomponent's layers accumulate across them - see `fluid.componentRecords`.
+     *
      * @param {Shadow} shadow - The shadow record representing the parent component into which the subcomponent is being added.
      * @param {String} memberName - The member name of the subcomponent within the parent component.
-     * @param {Object} expanded - The expanded component definition for the subcomponent, expected to contain a `$layers` field.
+     * @param {ExpandedContribution[]} contributions - The expanded records for the subcomponent, weakest first, each
+     * expected to contain a `$layers` field.
      * @param {Object|null} [variables] - Iteration variables to be placed in the subcomponent's variables layer
-     * @param {String} [source] - The layer name in which this subcomponent definition appeared
      * @return {ComponentComputer} Computer for the pushed subcomponent
      */
-    fluid.pushSubcomponentPotentia = function (shadow, memberName, expanded, variables, source) {
-        const subLayerRecord = {
+    fluid.pushSubcomponentPotentia = function (shadow, memberName, contributions, variables) {
+        const count = contributions.length;
+        const subLayerRecords = contributions.map(({expanded, mergeRecordName}, i) => ({
             mergeRecordType: "subcomponent",
-            mergeRecordName: `${source}`,
+            mergeRecordName: `${mergeRecordName}`,
+            // The strongest contribution, the last, has the base priority for its type and the others are weaker
+            priority: fluid.mergeRecordTypes.subcomponent + (count - 1 - i),
             layer: expanded
-        };
+        }));
+        const layerNames = [...new Set(contributions.flatMap(({expanded}) => expanded.$layers))];
         // TODO: detect injected reference and take direct path to instantiator
-        return fluid.pushPotentia(shadow, memberName, [subLayerRecord], expanded.$layers, variables).computer;
+        return fluid.pushPotentia(shadow, memberName, subLayerRecords, layerNames, variables).computer;
+    };
+
+    /**
+     * @typedef {Object} ExpandedContribution
+     * @property {Object} expanded - A subcomponent record with its `$layers` member expanded into an array
+     * @property {String} [mergeRecordName] - The name of the merge record holding the layer in which it was written
+     */
+
+    /**
+     * Expand the contributions to a subcomponent record, which may be a single record or several collected into a
+     * `fluid.componentRecords`, and perform a "light merge" of those members which must be resolved before the
+     * subcomponent is pushed, i.e. `$for` and `$if`, each taken from the strongest contribution which holds it.
+     * @param {Object|fluid.componentRecords} record - The subcomponent record
+     * @param {String} [sourceLayer] - The layer in which a single record was written
+     * @return {Object} A structure holding `contributions`, an array of `ExpandedContribution`, and the light merged
+     * `forRecord` and `ifRecord`
+     */
+    fluid.expandComponentContributions = function (record, sourceLayer) {
+        const raw = record instanceof fluid.componentRecords ? record.contributions : [{record, mergeRecordName: sourceLayer}];
+        const contributions = raw.map(({record, mergeRecordName}) => ({expanded: fluid.readerExpandLayer(record), mergeRecordName}));
+        const lightMerge = key => contributions.reduce((acc, {expanded}) => expanded[key] === undefined ? acc : expanded[key], undefined);
+        return {contributions, forRecord: lightMerge("$for"), ifRecord: lightMerge("$if")};
+    };
+
+    /**
+     * Determine whether two signal records are equivalent, so that a signal product allocated for one may be reused for
+     * the other. Records collected into a `fluid.componentRecords` are freshly allocated on every merge, and so are
+     * equivalent if their contributions are identical.
+     * @param {any} oldRecord - The record from which a signal product was previously allocated
+     * @param {any} newRecord - The record currently mounted at the same site
+     * @return {Boolean} `true` if the records are equivalent
+     */
+    fluid.isSameSignalRecord = function (oldRecord, newRecord) {
+        const sameContributions = () => oldRecord.contributions.length === newRecord.contributions.length &&
+            oldRecord.contributions.every((contribution, i) => contribution.record === newRecord.contributions[i].record &&
+                contribution.mergeRecordName === newRecord.contributions[i].mergeRecordName);
+        return oldRecord === newRecord || oldRecord instanceof fluid.componentRecords &&
+            newRecord instanceof fluid.componentRecords && sameContributions();
     };
 
     /**
@@ -1522,11 +1573,8 @@ const $fluidILScope = function (fluid) {
      * @return {ComponentComputer} A reactive signal representing the component instance.
      */
     fluid.expandComponentRecord = function (record, shadow, segs, key) {
-        const expanded = fluid.readerExpandLayer(record);
         const sourceLayer = fluid.get(shadow.layerMap, [...segs, $m, "source"]);
-
-        const forRecord = expanded.$for;
-        const ifRecord = expanded.$if;
+        const {contributions, forRecord, ifRecord} = fluid.expandComponentContributions(record, sourceLayer);
         if (forRecord) {
             const sourceSignal = fluid.fetchContextReference(forRecord.source, shadow);
             let listShadow;
@@ -1551,7 +1599,7 @@ const $fluidILScope = function (fluid) {
                         if (forRecord.keyAs !== undefined) {
                             variables[forRecord.keyAs] = subKey;
                         }
-                        return fluid.pushSubcomponentPotentia(listShadow, subKey, expanded, variables, sourceLayer);
+                        return fluid.pushSubcomponentPotentia(listShadow, subKey, contributions, variables);
                     };
 
                     let togo;
@@ -1566,9 +1614,11 @@ const $fluidILScope = function (fluid) {
                     }
 
                     // Destroy components which no longer have matching entries
-                    const goneKeys = Object.keys(listShadow.childComponents).filter(k => !allKeys.includes(k));
-                    const goneShadows = goneKeys.map(k => listShadow.childComponents[k]);
+                    // Consult only the keys of elements last pushed, since the list may have other children, e.g. its view
+                    const goneKeys = (listShadow.listKeys || []).filter(k => !allKeys.includes(k));
+                    const goneShadows = goneKeys.map(k => listShadow.childComponents[k]).filter(shadow => shadow);
                     goneShadows.forEach(shadow => shadow.potentia.set(fluid.emptyPotentia));
+                    listShadow.listKeys = allKeys;
 
                     return togo.map(computer => fluid.proxyMat(computer, computer.shadow, []));
                 }, [sourceSignal], {mapArg: fluid.deSignal});
@@ -1578,7 +1628,7 @@ const $fluidILScope = function (fluid) {
                 $layers: ["fluid.componentList"],
                 list: componentList
             };
-            const listComputer = fluid.pushSubcomponentPotentia(shadow, key, listLayer);
+            const listComputer = fluid.pushSubcomponentPotentia(shadow, key, [{expanded: listLayer, mergeRecordName: sourceLayer}]);
             // This gets read from the componentList computed scope above
             listShadow = listComputer.shadow;
             const effectKey = "listComponent-" + segs.join(".");
@@ -1597,7 +1647,7 @@ const $fluidILScope = function (fluid) {
             shadow.frameworkEffects[effectKey] = fluid.cell.effect( () => {
                 const value = fluid.deSignal(sourceSignal);
                 if (value && !fluid.isUnavailable(value)) {
-                    computer = fluid.pushSubcomponentPotentia(shadow, key, expanded, null, sourceLayer);
+                    computer = fluid.pushSubcomponentPotentia(shadow, key, contributions, null);
                     togo.set(computer);
                 } else {
                     if (computer) {
@@ -1609,7 +1659,7 @@ const $fluidILScope = function (fluid) {
             }, [], {name: `Conditional component allocating effect for ${effectKey}`});
             return togo;
         } else {
-            return fluid.pushSubcomponentPotentia(shadow, key, expanded, null, sourceLayer);
+            return fluid.pushSubcomponentPotentia(shadow, key, contributions, null);
         }
     };
 
@@ -1738,7 +1788,8 @@ const $fluidILScope = function (fluid) {
         if (oldRec) {
             rec.proxy = oldRec.proxy;
         }
-        if (oldRec && oldRec.signalRecord === record) {
+        if (oldRec && fluid.isSameSignalRecord(oldRec.signalRecord, record)) {
+            rec.signalRecord = oldRec.signalRecord;
             return rec.signalProduct = oldRec.signalProduct;
         } else if (!handlerRecord.isEffect) {
             const product = rec.signalProduct = handlerRecord.handler(record, shadow, segs, fluid.peek(segs));
@@ -1898,8 +1949,12 @@ const $fluidILScope = function (fluid) {
     fluid.flatMergedComputer = function (shadow) {
         return fluid.cell(undefined, {name: `flatMergedComputer for path ${shadow.path}`}).computed(function flatMergedComputer() {
             const unavailableLayerMap = Object.create(null);
+            // Our potentia may be pushed to us by our parent's instantiation, as a write rather than through an edge -
+            // bring our parent up to date first so that the write precedes, rather than invalidates, our evaluation
+            shadow.parentShadow?.computer?.get();
 
-            const {layerNames, mergeRecords} = shadow.potentia.get();
+            const potentia = shadow.potentia.get();
+            const {layerNames, mergeRecords} = potentia;
             const dynamicMergeRecord = shadow.dynamicMergeRecord.get();
             const allMergeRecords = [...mergeRecords, dynamicMergeRecord];
             shadow.mergeRecords = allMergeRecords; // Put this in early so we can resolve container if there is an error
@@ -1925,6 +1980,18 @@ const $fluidILScope = function (fluid) {
             // Copy in any layers the resolver marked unavailable, either through circularity or defs being unavailable
             fluid.each(hierarchyResolver.unavailableLayers, (value, layerName) => unavailableLayerMap[layerName] = value);
 
+            // Our merge is a pure function of these inputs - if they are unchanged, e.g. because we have been reevaluated
+            // only through our parent turning over, our previous merge is returned so that we do not turn over ourselves.
+            // Note that the resolution above must still run on every evaluation since its reads of the layer registry
+            // are our dependencies on the definitions of our layers
+            const mergeInputs = [potentia, dynamicMergeRecord, ...resolved.mergeRecords.map(mergeRecord =>
+                mergeRecord.mergeRecordType === "defParents" ? mergeRecord.layer.$layers.join(",") : mergeRecord.layer)];
+            const previous = shadow.lastMerge;
+            if (previous && fluid.arrayEqual(previous.mergeInputs, mergeInputs)) {
+                shadow.mergeRecords = previous.layers;
+                fluid.updateUnavailableLayers(shadow, previous.unavailableLayerMap);
+                return previous.flatMerged;
+            }
 
             const layers = resolved.mergeRecords.concat(mergeRecords).concat({
                 mergeRecordType: "variables",
@@ -1945,6 +2012,7 @@ const $fluidILScope = function (fluid) {
                 unavailableLayerMap["fluid.noLayers"] = fluid.unavailable({message: "Component has no layers", site: {shadow, segs: []}}, "config");
             }
             fluid.updateUnavailableLayers(shadow, unavailableLayerMap);
+            shadow.lastMerge = {mergeInputs, layers, unavailableLayerMap, flatMerged};
             return flatMerged;
         });
     };
@@ -2116,7 +2184,10 @@ const $fluidILScope = function (fluid) {
         fluid.forEachDeep(shadow.oldShadowMap, (oldRecord, segs) => {
             const newRecord = fluid.get(shadow.shadowMap, segs)?.[$m];
             // Note it may have no record because it records a proxy - do we actually want this in the map?
-            if (oldRecord.signalProduct?.dispose && (!newRecord || newRecord.signalRecord !== oldRecord.signalRecord)) {
+            // A product may be carried over even though its record has changed - e.g. a subcomponent whose record is
+            // merged afresh from several layers will have been pushed its new potentia, and must not be disposed
+            const carriedOver = newRecord?.signalProduct === oldRecord.signalProduct;
+            if (oldRecord.signalProduct?.dispose && (!newRecord || newRecord.signalRecord !== oldRecord.signalRecord) && !carriedOver) {
                 // fluid.log(`Disposing effect at path ${segs.join(".")} for component at path ${shadow.path}`);
                 oldRecord.signalProduct?.dispose(); // dispose old effect/bindable/component that is not configured after adaptation
             }
@@ -2405,6 +2476,14 @@ const $fluidILScope = function (fluid) {
         return target ? fluid.deSignal(target) : maybeProxy;
     };
 
+    /**
+     * Upgrade the user arguments supplied to a free component's creator function before they are applied as its user
+     * layer. This is overridden in FluidView.js to forward a `container` argument to the component's view.
+     * @param {Object} argLayer - The user arguments
+     * @return {Object} The upgraded user arguments
+     */
+    fluid.upgradeFreeComponentArgs = argLayer => argLayer;
+
     fluid.initFreeComponent = function (componentName, ...initArgs) {
         const instantiator = fluid.globalInstantiator;
         // TODO: Perhaps one day we will support a directive which allows the user to select a current component
@@ -2414,7 +2493,7 @@ const $fluidILScope = function (fluid) {
         const instanceName = fluid.computeGlobalMemberName(componentName, id);
 
         // Currently just a single initial argument is supported - perhaps one day we might revive "argMaps" looked up by componentName
-        const argLayer = initArgs[0] || {};
+        const argLayer = fluid.upgradeFreeComponentArgs(initArgs[0] || {});
         const ourLayerNames = [componentName].concat(fluid.makeArray(argLayer.$layers));
 
         const userLayerRecord = {

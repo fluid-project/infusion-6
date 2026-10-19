@@ -22,16 +22,26 @@ fluid.def("fluid.demos.imageGenerator", {
     buttonLabel: "$compute:fluid.demos.imageGenerator.buttonLabel({self}.isGenerating)",
     errorMessage: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $if: "{imageGenerator}.error",
-            template: `<p class="imagegen-error">@{{imageGenerator}.error}</p>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<p class="imagegen-error">@{{imageGenerator}.error}</p>`
+                }
+            }
         }
     },
     loadingMessage: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $if: "{imageGenerator}.isGenerating",
-            template: `<p class="imagegen-loading">Creating your image... This may take a moment.</p>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<p class="imagegen-loading">Creating your image... This may take a moment.</p>`
+                }
+            }
         }
     },
     keyDown: {

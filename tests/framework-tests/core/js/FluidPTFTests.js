@@ -152,7 +152,7 @@ fluid.def("fluid.tests.ptf.plain", {
 </script>`;
     const loaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.plain", plainSFC);
     assert.ok(loaded, "Plain SFC loaded");
-    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layers, ["fluid.component", "fluid.sfcViewComponent"], "Tag layer added to explicit $layers");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layers, ["fluid.component", "fluid.sfcLayer"], "Tag layer added to explicit $layers");
     assert.equal(fluid.def("fluid.tests.ptf.plain").value, 2, "Remainder of definition intact");
     assert.equal(fluid.layerMimeType("fluid.tests.ptf.plain"), "text/x-vue", "SFC layer without template");
 
@@ -165,7 +165,7 @@ fluid.def("fluid.tests.ptf.derived", {
 </script>`;
     const derivedLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.derived", derivedSFC);
     assert.ok(derivedLoaded, "Derived SFC loaded");
-    assert.deepEqual(fluid.def("fluid.tests.ptf.derived").$layers, ["fluid.tests.ptf.plain", "fluid.sfcViewComponent"],
+    assert.deepEqual(fluid.def("fluid.tests.ptf.derived").$layers, ["fluid.tests.ptf.plain", "fluid.sfcLayer"],
         "Tag layer follows SFC-derived parent layer");
     const derived = fluid.tests.ptf.derived();
     assert.notOk(fluid.isUnavailable(derived), "Component derived from SFC layer instantiates");
@@ -173,7 +173,7 @@ fluid.def("fluid.tests.ptf.derived", {
     assert.equal(derived.extra, 3, "Own member of derived SFC layer");
     derived.destroy();
 
-    // An empty definition with a template requires both $layers and templateLayer to be patched in
+    // An empty definition with a template requires $layers, and its view's $layers and templateLayer, to be patched in
     const emptySFC = `<script>
 fluid.def("fluid.tests.ptf.empty", {});
 </script>
@@ -181,14 +181,40 @@ fluid.def("fluid.tests.ptf.empty", {});
     const emptyLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.empty", emptySFC);
     assert.ok(emptyLoaded, "SFC with empty definition loaded");
     assert.deepEqual(fluid.def("fluid.tests.ptf.empty"), {
-        $layers: ["fluid.sfcTemplateViewComponent", "fluid.sfcViewComponent"],
-        templateLayer: "fluid.tests.ptf.empty"
-    }, "Empty definition patched with $layers and templateLayer");
+        $layers: ["fluid.component", "fluid.sfcLayer"],
+        view: {
+            $component: {
+                $layers: ["fluid.sfcTemplateViewComponent"],
+                templateLayer: "fluid.tests.ptf.empty"
+            }
+        }
+    }, "Empty definition patched with $layers and its view's $layers and templateLayer");
+
+    // A definition which already configures its view has its templateLayer patched in alongside its own members
+    const viewSFC = `<script>
+fluid.def("fluid.tests.ptf.ownView", {
+    view: {
+        $component: {
+            elideParent: false
+        }
+    }
+});
+</script>
+<template><div class="ptf-own-view">Own view</div></template>`;
+    const viewLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.ownView", viewSFC);
+    assert.ok(viewLoaded, "SFC with view configuration loaded");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.ownView").view.$component, {
+        $layers: ["fluid.sfcTemplateViewComponent"],
+        elideParent: false,
+        templateLayer: "fluid.tests.ptf.ownView"
+    }, "Existing view configuration patched with its $layers and templateLayer");
 
     const counterLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.counter", fluid.tests.ptf.counterSFC);
     assert.ok(counterLoaded, "Counter SFC loaded");
-    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$layers, ["fluid.sfcTemplateViewComponent", "fluid.sfcViewComponent"],
-        "Tag layer added alongside template layer");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$layers, ["fluid.component", "fluid.sfcLayer"],
+        "Tag layer added to component");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").view.$component.$layers, ["fluid.sfcTemplateViewComponent"],
+        "Template layer added to component's view");
     assert.equal(fluid.layerMimeType("fluid.tests.ptf.counter"), "text/x-vue", "SFC layer with template");
 });
 

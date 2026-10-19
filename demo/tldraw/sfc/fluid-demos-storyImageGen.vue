@@ -9,9 +9,14 @@ fluid.def("fluid.demos.storyImageGen", {
     buttonLabel: "$compute:fluid.demos.storyImageGen.buttonLabel({self}.isGenerating)",
     error: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $if: "{storyImageGen}.imageError",
-            template: `<div class="story-imagegen-error">⚠️ @{{storyImageGen}.imageError}</div>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="story-imagegen-error">⚠️ @{{storyImageGen}.imageError}</div>`
+                }
+            }
         }
     },
     keyDown: {

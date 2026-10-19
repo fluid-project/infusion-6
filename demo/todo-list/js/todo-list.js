@@ -16,13 +16,18 @@ const todos = [
 ];
 
 fluid.def("fluid.demos.todoItem", {
-    $layers: "fluid.templateViewComponent",
-    template:
-        `<div>
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template:
+                `<div>
             <span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({self}.itemIndex)">
             @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({self}.itemIndex)"></button>
             </span>
          </div>`
+        }
+    }
 });
 
 fluid.demos.todoKeyUp = function (e, todos) {
@@ -35,11 +40,14 @@ fluid.demos.todoKeyUp = function (e, todos) {
 };
 
 fluid.def("fluid.demos.todoList", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     todos: {
         $reactiveRoot: todos
     },
-    template:
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template:
         `<div id="main">
         <section class="hero is-dark">
             <div class="hero-body">
@@ -51,7 +59,9 @@ fluid.def("fluid.demos.todoList", {
             <input class="input is-rounded" @onkeyup="fluid.demos.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
             <div @id="todoItems" class="section"></div>
         </section>
-    </div>`,
+    </div>`
+        }
+    },
     todoItems: {
         $component: {
             $layers: "fluid.demos.todoItem",

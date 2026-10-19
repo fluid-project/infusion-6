@@ -156,13 +156,18 @@ const $fluidViewBrowserScope = function (fluid) {
     fluid.globalDismissalSignal = fluid.cell(0, {name: "Global dismissal signal"});
 
     fluid.def("fluid.globalDismissal", {
-        $layers: ["fluid.resolveRoot", "fluid.viewComponent"],
-        container: document,
+        $layers: "fluid.resolveRoot",
+        view: {
+            $component: {
+                $layers: "fluid.viewComponent",
+                container: document
+            }
+        },
         clicked: 0,
         register: {
             $effect: {
                 func: (self) => {
-                    self.container.addEventListener("click", (e) => {
+                    self.view.container.addEventListener("click", (e) => {
                         const noDismiss = e.target.closest(".fl-no-dismiss");
                         if (!noDismiss) {
                             ++fluid.globalDismissalSignal.value;

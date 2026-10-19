@@ -21,7 +21,7 @@ const fluidPTFScope = function (fluid) {
     /**
      * Determine the MIME type in which the named layer should be transmitted or edited. Live layers, whose names are
      * rendered sites beginning with `{`, are JSON. Layers whose own definition carries the tag layer
-     * `fluid.sfcViewComponent` were loaded from a Single File Component. All other layers are JavaScript.
+     * `fluid.sfcLayer` were loaded from a Single File Component. All other layers are JavaScript.
      * @param {String} layerName - The name of the layer
      * @return {String} The MIME type for the layer, one of the values in `fluid.layerMimeTypes`
      */
@@ -32,7 +32,7 @@ const fluidPTFScope = function (fluid) {
         } else {
             const layerDef = fluid.deSignal(fluid.readLayer(layerName).get().raw);
             if (fluid.isPlainObject(layerDef, true) && !fluid.isUnavailable(layerDef)
-                && fluid.makeArray(layerDef.$layers).includes("fluid.sfcViewComponent")) {
+                && fluid.makeArray(layerDef.$layers).includes("fluid.sfcLayer")) {
                 togo = fluid.layerMimeTypes.sfc;
             }
         }
@@ -157,7 +157,8 @@ const fluidPTFScope = function (fluid) {
     /**
      * Reduce a value to the parts of it which can be faithfully transmitted as JSON. Primitives, plain objects and
      * arrays are retained, whereas any other values such as functions or DOM nodes, which are typically supplied by the
-     * host environment (for example a component's `container`), are discarded.
+     * host environment (for example the `container` of a component's view), are discarded, as are any objects all of
+     * whose members are discarded.
      * @param {any} value - The value to be reduced
      * @return {any} The JSON-amenable parts of the value, or `undefined` if none of it is amenable
      */
@@ -166,13 +167,16 @@ const fluidPTFScope = function (fluid) {
         if (Array.isArray(value)) {
             togo = value.map(element => fluid.ptf.toJSONAmenable(element) ?? null);
         } else if (fluid.isPlainObject(value, true)) {
-            togo = {};
+            const amenable = {};
             fluid.each(value, (member, key) => {
-                const amenable = fluid.ptf.toJSONAmenable(member);
-                if (amenable !== undefined) {
-                    togo[key] = amenable;
+                const amenableMember = fluid.ptf.toJSONAmenable(member);
+                if (amenableMember !== undefined) {
+                    amenable[key] = amenableMember;
                 }
             });
+            // An object all of whose members were discarded, e.g. a view holding just a container, is itself discarded
+            const allDiscarded = Object.keys(value).length > 0 && Object.keys(amenable).length === 0;
+            togo = allDiscarded ? undefined : amenable;
         } else if (value === null || ["string", "number", "boolean"].includes(typeof(value))) {
             togo = value;
         }

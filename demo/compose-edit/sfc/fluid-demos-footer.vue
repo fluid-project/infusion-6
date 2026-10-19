@@ -1,6 +1,10 @@
 <script>
 fluid.def("fluid.demos.footer", {
-    elideParent: false
+    view: {
+        $component: {
+            elideParent: false
+        }
+    }
 });
 </script>
 <template>

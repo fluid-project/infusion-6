@@ -10,8 +10,8 @@ fluid.def("fluid.editor", {
     isActive: {
         // TODO: What on earth? Why does this reach upward into the editorRoot?
         $compute: {
-            func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
-            args: ["{self}.layerRec.layerName", "{fluid.editorRoot}.selectedLayerTab"]
+            func: (layerName, activeLayerTab) => layerName === activeLayerTab,
+            args: ["{self}.layerRec.layerName", "{fluid.editorRoot}.activeLayerTab"]
         }
     },
     // Perhaps better implemented on editor subcomponent?
