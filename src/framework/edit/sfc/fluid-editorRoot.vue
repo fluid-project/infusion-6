@@ -170,7 +170,6 @@ fluid.def("fluid.editorRoot", {
                 args: ["{self}", "{global}.MutationObserver"]
             },
             unbind: (observer) => {
-                debugger;
                 observer.disconnect();
             }
         }

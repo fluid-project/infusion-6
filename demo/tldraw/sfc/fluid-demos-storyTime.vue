@@ -1,14 +1,12 @@
 <script>
-// DRAFT port of a-scratch/my-story-time.js - untested, an aid to thought
+// Port of a-scratch/react-originals/my-story-time.js
 
 fluid.def("fluid.demos.storyTime", {
-    // Read by the "New shape" panel to size a freshly created shape
+    $layers: "fluid.topLevelWidget",
     preferredSize: {
         w: 720,
         h: 640
     },
-    // Supplied by InfusionHost - the id of the tldraw shape hosting this component
-    shapeId: null,
     state: {
         $reactiveRoot: {
             text: "",
@@ -41,15 +39,6 @@ fluid.def("fluid.demos.storyTime", {
         $component: {
             $layers: "fluid.demos.storyImageGen",
             $if: "{storyTime}.allShort"
-        }
-    },
-    // No two-way binding, so each input routes its value into state via a method
-    updateText: {
-        $method: {
-            func: (state, e) => {
-                state.text = e.target.value;
-            },
-            args: ["{self}.state", "{0}:event"]
         }
     }
 });
@@ -158,8 +147,9 @@ fluid.demos.storyTime.segment = function (text, analysis) {
 
         <div class="story-editor">
             <div class="story-highlight" @id="segmentList"></div>
+            <!-- The bound value is written back to state.text as the user types -->
             <textarea class="story-textarea" placeholder="Start writing your story here... 🌟"
-                      @oninput="{self}.updateText({0})"></textarea>
+                      value="@{state.text}"></textarea>
         </div>
 
         <div class="story-stats">

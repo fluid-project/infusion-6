@@ -181,10 +181,14 @@ QUnit.test("Effects resolution II - no notification on unrelated update", functi
 
 // Crucial but somewhat arguable test - a $computed whose arg is bare {self} should not be notified on updates which
 // change the overall component contents. Future behaviour will probably restore tracking for members dereferenced.
+// Readers of members, whether computed or plain, should not be notified by turnover which leaves those members
+// unchanged - fluid-project/infusion-6#21
 
 const globalHolder = {
     computedCount: 0,
-    effectCount: 0
+    effectCount: 0,
+    effectRuns: 0,
+    plainEffectRuns: 0
 };
 
 fluid.def("fluid.tests.selfUpdate", {
@@ -204,7 +208,15 @@ fluid.def("fluid.tests.selfUpdate", {
             func: (selfComputed) => {
                 console.log("Effect received ", selfComputed);
                 globalHolder.effectCount = selfComputed;
+                ++globalHolder.effectRuns;
             }
+        }
+    },
+    plain: {name: "unchanged"},
+    plainEffect: {
+        $effect: {
+            args: "{self}.plain",
+            func: () => ++globalHolder.plainEffectRuns
         }
     }
 });
@@ -212,13 +224,17 @@ fluid.def("fluid.tests.selfUpdate", {
 QUnit.test("Computed arg sensitivity", function (assert) {
     const that = fluid.tests.selfUpdate();
     fluid.cell.stabilize();
+    const instanceId = that.instanceId;
     that.updated = 1;
     fluid.cell.stabilize();
+    assert.notEqual(that.instanceId, instanceId, "Component turned over through the write to its live layer");
     assert.equal(globalHolder.effectCount, 1, "Just one update to effect");
     assert.equal(globalHolder.computedCount, 1, "Just one update to computed");
     that.otherUpdated = 1;
     fluid.cell.stabilize();
     assert.equal(globalHolder.computedCount, 1, "Computed for {self} does not update");
+    assert.equal(globalHolder.effectRuns, 1, "Effect reading computed member not rerun by turnover");
+    assert.equal(globalHolder.plainEffectRuns, 1, "Effect reading plain member not rerun by turnover");
 });
 
 /** FLUID-4914 derived grade resolution tests **/
@@ -1411,4 +1427,289 @@ QUnit.test("Injection of an ancestor component - fluid-project/infusion-6#20", f
     fluid.cell.stabilize();
     assert.ok(fluid.isDestroyedShadow(shadow2), "Grandparent is destroyed whilst injected into its grandchild");
     assert.ok(fluid.isDestroyedShadow(filterShadow2), "Grandchild injecting it is destroyed with it");
+});
+
+// $bindable streaming a signal - fluid-project/infusion-6#21
+
+fluid.tests.bindableSource = fluid.cell(1, {name: "fluid.tests.bindableSource"});
+fluid.tests.bindableLog = [];
+
+fluid.def("fluid.tests.bindableStream", {
+    $layers: "fluid.component",
+    bound: {
+        $bindable: {
+            bind: {
+                func: () => {
+                    fluid.tests.bindableLog.push("bind");
+                    return fluid.tests.bindableSource;
+                }
+            },
+            unbind: {
+                func: boundValue => fluid.tests.bindableLog.push("unbind " + fluid.isSignal(boundValue)),
+                args: ["{boundValue}"]
+            }
+        }
+    },
+    doubled: "$compute:fluid.tests.double({self}.bound)"
+});
+
+fluid.tests.double = value => value * 2;
+
+QUnit.test("$bindable binding a signal streams its updates to readers - fluid-project/infusion-6#21", function (assert) {
+    fluid.tests.bindableLog.length = 0;
+    const that = fluid.tests.bindableStream();
+    fluid.cell.stabilize();
+    assert.equal(that.bound, 1, "Reader of the bindable sees through the bound signal to its value");
+    assert.equal(that.doubled, 2, "Computation over the bindable sees the bound signal's value");
+    fluid.tests.bindableSource.set(2);
+    fluid.cell.stabilize();
+    assert.equal(that.bound, 2, "Update to the bound signal is seen by reader");
+    assert.equal(that.doubled, 4, "Update to the bound signal reaches computation over the bindable");
+    assert.deepEqual(fluid.tests.bindableLog, ["bind"], "Bound signal's updates do not cause rebinding");
+    that.destroy();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.bindableLog, ["bind", "unbind true"], "Bound signal itself is supplied to unbind on destruction");
+});
+
+// Avatars - fluid-project/infusion-6#21
+
+fluid.def("fluid.tests.avatar.marker", {
+    $layers: "fluid.component",
+    preferredSize: null,
+    $variety: "framework"
+});
+
+fluid.def("fluid.tests.avatar.base", {
+    $layers: "fluid.tests.avatar.marker",
+    fromBase: "base",
+    // Only resolvable where the layer is genuinely deployed
+    hostValue: "{fluid.tests.avatar.missingHost}.value"
+});
+
+fluid.def("fluid.tests.avatar.derived", {
+    $layers: "fluid.tests.avatar.base",
+    preferredSize: {w: 100, h: 50}
+});
+
+fluid.def("fluid.tests.avatar.linked", {
+    fromLinkage: true
+});
+
+fluid.def("fluid.tests.avatar.linker", {
+    $layers: "fluid.component",
+    linkage: {
+        $linkage: {
+            inputLayers: ["fluid.tests.avatar.marker"],
+            outputLayers: ["fluid.tests.avatar.linked"]
+        }
+    }
+});
+
+QUnit.test("Avatars accumulate the material a layer brings to a component - fluid-project/infusion-6#21", function (assert) {
+    const avatar = fluid.avatar("fluid.tests.avatar.derived");
+    fluid.cell.stabilize();
+    const shadow = avatar[fluid.proxySymbol].shadow;
+    assert.equal(shadow.parentShadow, fluid.avatarsShadow(), "Avatar is held in the avatars area");
+    assert.equal(fluid.avatarsShadow().parentShadow, fluid.globalInstantiator.rootShadow, "Avatars area is at the root of the component tree");
+    assert.equal(fluid.avatar("fluid.tests.avatar.derived")[fluid.proxySymbol].shadow, shadow, "Avatar is allocated once per layer");
+    assert.equal(fluid.def("fluid.tests.avatar.derived").fromBase, undefined, "Shallow inspection of the definition misses inherited material");
+
+    const merged = fluid.avatarMerged("fluid.tests.avatar.derived");
+    assert.ok(merged.$layers.includes("fluid.tests.avatar.marker"), "Avatar accumulates the layers of its parents");
+    assert.equal(merged.fromBase, "base", "Avatar accumulates the members of its parents");
+    assert.deepEqual({...merged.preferredSize}, {w: 100, h: 50}, "Avatar's own member overrides its parent's placeholder");
+    assert.ok(fluid.isUnavailable(avatar.hostValue), "Member depending on a missing prerequisite is unavailable");
+    assert.equal(avatar.fromBase, "base", "Avatar is otherwise a regular component");
+
+    const linker = fluid.tests.avatar.linker();
+    fluid.cell.stabilize();
+    const linkedMerged = fluid.avatarMerged("fluid.tests.avatar.derived");
+    assert.ok(linkedMerged.$layers.includes("fluid.tests.avatar.linked"), "Avatar accumulates layers broadcast by linkage");
+    assert.equal(linkedMerged.fromLinkage, true, "Avatar accumulates the members of layers broadcast by linkage");
+    linker.destroy();
+    fluid.cell.stabilize();
+    assert.notOk(fluid.avatarMerged("fluid.tests.avatar.derived").$layers.includes("fluid.tests.avatar.linked"),
+        "Layer broadcast by linkage is withdrawn when the linkage is destroyed");
+
+    const oldDef = fluid.def("fluid.tests.avatar.base");
+    fluid.def("fluid.tests.avatar.base", {...oldDef, fromBase: "updated"});
+    fluid.cell.stabilize();
+    assert.equal(fluid.avatarMerged("fluid.tests.avatar.derived").fromBase, "updated", "Avatar tracks redefinition of its parent layers");
+    fluid.def("fluid.tests.avatar.base", oldDef);
+});
+
+fluid.tests.avatar.log = [];
+
+fluid.def("fluid.tests.avatar.computedSize", {
+    $layers: "fluid.tests.avatar.marker",
+    width: 30,
+    preferredSize: "$compute:fluid.tests.avatar.size({self}.width)",
+    // Only resolvable where the layer is genuinely deployed
+    hostValue: "{fluid.tests.avatar.missingHost}.value",
+    effect: "$effect:fluid.tests.avatar.logEffect({self}.width)",
+    linkage: {
+        $linkage: {
+            inputLayers: ["fluid.tests.avatar.marker"],
+            outputLayers: ["fluid.tests.avatar.linked"]
+        }
+    },
+    bound: {
+        $bindable: {
+            bind: "fluid.tests.avatar.logBind({self}.width)"
+        }
+    }
+});
+
+fluid.tests.avatar.size = width => ({w: width, h: width * 2});
+fluid.tests.avatar.logEffect = () => fluid.tests.avatar.log.push("effect");
+fluid.tests.avatar.logBind = () => fluid.tests.avatar.log.push("bind");
+
+fluid.def("fluid.tests.avatar.rootSingleton", {
+    $layers: "fluid.resolveRoot",
+    value: "live"
+});
+
+fluid.def("fluid.tests.avatar.rootReader", {
+    $layers: "fluid.component",
+    read: "{rootSingleton}.value"
+});
+
+QUnit.test("Avatars are inert, expose computed members and are destroyed with their layer - fluid-project/infusion-6#21", function (assert) {
+    fluid.tests.avatar.log.length = 0;
+    const avatar = fluid.avatar("fluid.tests.avatar.computedSize");
+    fluid.cell.stabilize();
+    const shadow = avatar[fluid.proxySymbol].shadow;
+    assert.ok(shadow.inert, "Avatar is inert");
+    assert.ok(fluid.isUnavailable(avatar.hostValue), "Member depending on a missing prerequisite is unavailable");
+    assert.deepEqual({...avatar.preferredSize}, {w: 30, h: 60}, "Computed member is readable from the avatar");
+    assert.equal(fluid.avatarMerged("fluid.tests.avatar.computedSize").preferredSize, "$compute:fluid.tests.avatar.size({self}.width)",
+        "Merged structure holds the raw record");
+
+    const missingAvatar = fluid.avatar("fluid.tests.avatar.missingLayer");
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(missingAvatar), "Avatar of an undefined layer is unavailable");
+    assert.undefined(fluid.unavailableComponentMap.get()[missingAvatar[fluid.proxySymbol].shadow.path],
+        "Unavailable avatar is not tracked as holding up the system");
+    assert.ok(fluid.isUnavailable(avatar.bound), "Bindable is not bound when read");
+    assert.deepEqual(fluid.tests.avatar.log, [], "Avatar allocates no effects and binds nothing");
+    assert.notOk(fluid.avatarMerged("fluid.tests.avatar.derived").$layers.includes("fluid.tests.avatar.linked"),
+        "Linkage held by an avatar is not registered");
+    let visited = 0;
+    fluid.visitComponentChildren(fluid.globalInstantiator.rootShadow, oneShadow => {
+        visited += oneShadow.path.startsWith("avatars") ? 1 : 0;
+    }, {visited: {}});
+    assert.equal(visited, 0, "Avatars are not visited by traversals from the root");
+
+    // An avatar allocated first would otherwise claim the name at root, since the first component registered there wins
+    fluid.avatar("fluid.tests.avatar.rootSingleton");
+    fluid.cell.stabilize();
+    const live = fluid.tests.avatar.rootSingleton({value: "fromLive"});
+    const reader = fluid.tests.avatar.rootReader();
+    fluid.cell.stabilize();
+    assert.equal(reader.read, "fromLive", "Avatar of a resolveRoot layer does not claim its name at root");
+
+    fluid.deleteLayer("fluid.tests.avatar.computedSize");
+    fluid.cell.stabilize();
+    assert.ok(fluid.isDestroyedShadow(shadow), "Avatar destroyed when its layer is deleted");
+    assert.undefined(fluid.avatarsShadow().childComponents["fluid.tests.avatar.computedSize"], "Avatar removed from the avatars area");
+    reader.destroy();
+    live.destroy();
+});
+
+fluid.tests.rebindLog = [];
+
+fluid.tests.bindTarget = function (self, target) {
+    fluid.tests.rebindLog.push("bind " + target.name);
+    return {boundTo: target.name, instanceId: self.instanceId};
+};
+
+fluid.def("fluid.tests.rebindable", {
+    $layers: "fluid.component",
+    target: {name: "first"},
+    other: 0,
+    bound: {
+        $bindable: {
+            bind: "fluid.tests.bindTarget({self}, {self}.target)",
+            // A bare function is accepted as an unbinder
+            unbind: bound => fluid.tests.rebindLog.push("unbind " + bound.boundTo)
+        }
+    }
+});
+
+QUnit.test("$bindable rebinds on genuine change of its arguments only - fluid-project/infusion-6#21", function (assert) {
+    fluid.tests.rebindLog.length = 0;
+    const that = fluid.tests.rebindable();
+    fluid.cell.stabilize();
+    assert.equal(that.bound.boundTo, "first", "Value bound");
+    const instanceId = that.instanceId;
+    that.other = 1;
+    fluid.cell.stabilize();
+    assert.notEqual(that.instanceId, instanceId, "Component has turned over through a write to its live layer");
+    assert.deepEqual(fluid.tests.rebindLog, ["bind first"], "Turnover of a component supplied as an argument does not rebind");
+    that.target = {name: "second"};
+    fluid.cell.stabilize();
+    assert.equal(that.bound.boundTo, "second", "Value rebound on genuine change of argument");
+    assert.deepEqual(fluid.tests.rebindLog, ["bind first", "unbind first", "bind second"], "Old value unbound before new value bound");
+    that.destroy();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.rebindLog, ["bind first", "unbind first", "bind second", "unbind second"], "Value unbound on destruction");
+});
+
+fluid.def("fluid.tests.onceOnlyBindable", {
+    $layers: "fluid.tests.rebindable",
+    bound: {
+        $bindable: {
+            onceOnly: true
+        }
+    }
+});
+
+QUnit.test("$bindable marked onceOnly is bound exactly once during its lifetime - fluid-project/infusion-6#21", function (assert) {
+    fluid.tests.rebindLog.length = 0;
+    const that = fluid.tests.onceOnlyBindable();
+    fluid.cell.stabilize();
+    assert.equal(that.bound.boundTo, "first", "Value bound");
+    const productAt = () => that[fluid.metadataSymbol].shadowMap.bound[fluid.metadataSymbol].signalProduct;
+    const product = productAt();
+    // The first write raises target into the live layer, remerging the component - the bindable's record, merged from
+    // two layers, is then a fresh object merged from the same material, and its signal product must be carried over
+    that.target = {name: "second"};
+    fluid.cell.stabilize();
+    assert.equal(productAt(), product, "Signal product of a record merged from several layers is carried over a remerge");
+    that.target = fluid.unavailable("Transiently unavailable", "pending");
+    fluid.cell.stabilize();
+    that.target = {name: "third"};
+    fluid.cell.stabilize();
+    assert.equal(that.bound.boundTo, "first", "Value bound once only survives change and transient unavailability of its arguments");
+    assert.deepEqual(fluid.tests.rebindLog, ["bind first"], "Never rebound");
+    that.destroy();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.rebindLog, ["bind first", "unbind first"], "Unbound once on destruction");
+});
+
+fluid.def("fluid.tests.availability.waiting", {
+    $layers: ["fluid.component", "fluid.tests.availability.lateLayer"]
+});
+
+QUnit.test("Unavailable components are tracked until available or destroyed - fluid-project/infusion-6#21", function (assert) {
+    const that = fluid.tests.availability.waiting();
+    const path = that[fluid.proxySymbol].shadow.path;
+    fluid.cell.stabilize();
+    assert.ok(fluid.unavailableComponentMap.get()[path], "Component awaiting a layer is tracked as unavailable");
+    const unavailable = fluid.unavailableComponents.get();
+    assert.ok(fluid.isUnavailable(unavailable), "System reports some components unavailable");
+    assert.equal(unavailable.variety, "pending", "Unavailability is pending rather than an error");
+    fluid.def("fluid.tests.availability.lateLayer", {value: 1});
+    fluid.cell.stabilize();
+    assert.undefined(fluid.unavailableComponentMap.get()[path], "Component no longer tracked once its layer arrives");
+
+    const other = fluid.tests.availability.waiting({$layers: "fluid.tests.availability.neverLayer"});
+    const otherPath = other[fluid.proxySymbol].shadow.path;
+    fluid.cell.stabilize();
+    assert.ok(fluid.unavailableComponentMap.get()[otherPath], "Second component awaiting a layer is tracked");
+    // An unavailable component's proxy exposes no members, including its destroy method
+    fluid.destroyComponent(other);
+    fluid.cell.stabilize();
+    assert.undefined(fluid.unavailableComponentMap.get()[otherPath], "Destroyed component is no longer tracked");
+    that.destroy();
 });

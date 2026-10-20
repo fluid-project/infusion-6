@@ -1,0 +1,28 @@
+No single limitation forces a hack in the main design. The broadcast linkage, the bindable bridge and the avatar introspection each read about as cleanly as I'd hope. What keeps it from being substantially better is mostly fresh limitations met in this work, plus item 5 being only half fixed.
+
+The existing list
+
+- 5 ($bindable) is only half resolved, and it's the one that matters most. Updates now stream through a bound signal and unbind works. But a $bindable still never rebinds when its arguments change: it logs "Ignoring attempt to rebind". So hostBounds would go stale if a view's shapeId changed, or if tldrawHost were recreated with a new editor. Today neither happens, because each widget is built once per shape. A cleaner design would key the binding on its arguments: unbind the old value and bind again when they change.
+- 9 (conditionals only at component level) got worse after #19. closestNoteFinder's distance line is now a subcomponent holding a view subcomponent holding a template, just to show one line. That's design rather than a defect, but the nesting is now heavy enough that a short form deserves thought.
+- 13 ($for reconciles by index) is still unmeasured. The notes bridge has a related coarseness: it produces a whole new array whenever any note changes. So every note finder recomputes on any note edit, even if that note is far from all of them. Finer grain needs per-item collections, which is the same machinery 13 needs.
+- 7, 11 and 12 had no effect here. Holding the editor as a live object in tldrawHost read naturally.
+
+Fresh limitations found in this work and not fixed
+
+1. Avatars are only safe by luck. Without an "inert" marker, an avatar relies on missing prerequisites to stay quiet, and two cases don't depend on any:
+    - A $linkage, or an $effect with no unavailable arguments, at a widget's top level would run in its avatar too. A linkage there would register globally.
+    - An avatar of a fluid.resolveRoot layer would put itself into root scope and could displace the real component.
+
+   Also, avatars count towards fluid.unavailableComponents, so using them server-side would block hydration from ever reporting that the page is ready. None of the current widgets trigger any of this. If inert is out, some standard opt-out is still needed, perhaps a layer the avatars area applies that the effect scheduler respects.
+2. Avatars are never destroyed. One stays alive per layer ever inspected. The member name is the layer name with dots swapped for dashes, which could in principle collide.
+3. Avatar introspection only sees raw configuration. I read the merged layers (flatMerged), not proxy[$u]. Reading through the proxy gives an unavailable value whenever any layer is unavailable, so it's useless for the "inspect even when instantiation fails" purpose. As a result, a preferredSize written as a $compute would be seen as the raw record, not its value.
+4. The SFC registry isn't reactive. The dropdown still re-reads it on pointer-enter. On first render a layer that's still loading is silently left out (that's the race I fixed). A reactive registry listing, combined with avatars, would make the list live.
+5. Linkages are global. The tldrawHost linkage applies to every top-level widget on the page: avatars, widgets outside the canvas, and widgets under a second editor if there were one. A linkage scoped to part of the component tree would be cleaner. Registering one also invalidates every component bearing the input layer.
+6. Shape lifecycle is still driven imperatively from React. InfusionHost builds and destroys components in useEffect. The clean form would be a $for over the store query of Infusion shape ids, but React owns the DOM containers. There's no way for Infusion to receive a container from a host renderer reactively, so component-per-shape can't be written declaratively.
+7. PTF reconstruction merges the root potentia shallowly ({...rootPotentia, ...options.potentia}). The host-supplied view record replaces any transmitted view.$component wholesale. That's harmless now that shapeId lives there and is meant to be replaced, but any user view configuration in a transmitted widget would be lost.
+8. A component with no document waits indefinitely for an SFC. After my fix it waits for another component to load the SFC into a document, which is better than crashing, but it can wait forever. There's no notion of a default document.
+9. Functions are captured when a $compute is expanded. Replacing a global function, as I tried when instrumenting the probe, doesn't reach existing computes. This matters for live editing of a layer's plain-JS helper functions.
+10. One anomaly I didn't explain. In the probe, an effect over fluid.getForComponent(shadow, "hostBounds") never fired, although $computes reading {self}.hostBounds updated correctly. That's either a misuse on my part or a gap in how a site reference ($sitedRef) carries notifications through a reference into a subcomponent's bound cell. It's worth a small node test before relying on effects over such sites.
+11. Absent host data has two meanings. hostBounds defaults to null in fluid.topLevelWidgetView, so widgets must handle null, while tldrawHost members are unavailable outside tldraw. As a result closestNoteFinder's "Not placed on a canvas" branch can't actually appear, because {tldrawHost}.notes is unavailable first. Choosing one convention for this would tidy things up.
+
+If I were to pick the next work: rebinding of $bindable on argument change (5), an opt-out for avatars (1), and scoped linkages (5 in the fresh list) would remove the main fragilities. A reactive layer registry (4) would then make the dropdown fully declarative.

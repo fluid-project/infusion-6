@@ -1,16 +1,16 @@
 <script>
-// DRAFT port of a-scratch/closest-node-finder.js - untested, an aid to thought
+// Port of a-scratch/react-originals/closest-node-finder.js
 
 fluid.def("fluid.demos.closestNoteFinder", {
+    $layers: "fluid.topLevelWidget",
     preferredSize: {
         w: 260,
         h: 200
     },
-    // Supplied by InfusionHost
-    shapeId: null,
-    // Where React subscribed with editor.store.listen in a useEffect, the subscription lives once, in tldrawHost, as a
-    // $bindable bridging the tldraw store into a cell - this component just computes over it
-    closest: "$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.shapes, {self}.shapeId)",
+    // Where React subscribed with editor.store.listen to every document change, two fine-grained bridges are read -
+    // our own bounds, as received by fluid.topLevelWidget from our tldraw view, which update only when our own shape
+    // moves, and the notes, held once in tldrawHost, which update only when a note changes
+    closest: "$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.notes, {self}.hostBounds)",
     noteText: "{self}.closest.text",
     distance: "{self}.closest.distance",
     distanceLine: {
@@ -32,40 +32,30 @@ fluid.def("fluid.demos.closestNoteFinder", {
 });
 
 /**
- * Extract the plain text from a tldraw note's rich text, held as nested paragraph/text blocks
- * @param {Object} note - The note shape
- * @return {String} The concatenated text of the note
- */
-fluid.demos.closestNoteFinder.extractText = function (note) {
-    const blocks = note.props?.richText?.content || [];
-    return blocks.flatMap(block => block.content || []).map(inline => inline.text || "").join("");
-};
-
-/**
  * @typedef {Object} ClosestNoteRec
  * @property {String} text - The text of the closest note, or a message if there is none
  * @property {Number|null} distance - The rounded distance to the closest note, or `null` if there is none
  */
 
 /**
- * Find the sticky note closest to the widget's own shape
- * @param {Object[]} shapes - All shapes on the current page
- * @param {String} shapeId - The id of the widget's own shape
+ * Find the sticky note closest to the widget, measuring, as the original did, between top left corners
+ * @param {NoteRec[]} notes - The notes on the current page, as bridged by fluid.tldraw.bindNotes
+ * @param {ShapeBounds|null} bounds - The bounds of the widget as hosted, or `null` if it is not hosted on a canvas
  * @return {ClosestNoteRec} Description of the closest note
  */
-fluid.demos.closestNoteFinder.findClosest = function (shapes, shapeId) {
-    const self = shapes.find(shape => shape.id === shapeId);
-    const notes = shapes.filter(shape => shape.type === "note" && shape.id !== shapeId);
+fluid.demos.closestNoteFinder.findClosest = function (notes, bounds) {
     let togo;
-    if (self && notes.length > 0) {
-        const withDistance = notes.map(note => ({note, distance: Math.hypot(note.x - self.x, note.y - self.y)}));
+    if (bounds && notes.length > 0) {
+        const withDistance = notes.map(note => ({note, distance: Math.hypot(note.x - bounds.x, note.y - bounds.y)}));
         const closest = withDistance.reduce((a, b) => b.distance < a.distance ? b : a);
         togo = {
-            text: fluid.demos.closestNoteFinder.extractText(closest.note) || "Empty note",
+            text: closest.note.text || "Empty note",
             distance: Math.round(closest.distance)
         };
-    } else {
+    } else if (bounds) {
         togo = {text: "No sticky notes found", distance: null};
+    } else {
+        togo = {text: "Not placed on a canvas", distance: null};
     }
     return togo;
 };

@@ -856,6 +856,11 @@ const fluidViewScope = function (fluid) {
     /** @type {Object<String, SFCRecord>} */
     fluid.sfcStore = Object.create(null);
 
+    // fluid.sfcStore also holds placeholder records for layers which have merely been asked about via fluid.readSFC -
+    // this lists just those for which a load has begun, and may be read reactively to discover newly registered SFCs
+    /** @type {Cell<String[]>} The names of all layers for which an SFC load has begun, in the order loads began */
+    fluid.sfcLayerNames = fluid.cell([], {name: "Names of loading SFC layers"});
+
     /** @type {Object<String, Signal<VNode>>} */
     fluid.templateStore = Object.create(null);
 
@@ -963,6 +968,7 @@ const fluidViewScope = function (fluid) {
             rec.loadCompletion = fluid.cell(fluid.unavailable(`SFC for ${layerName} is loading`, "pending"),
                 {name: `load completion for SFC for layer ${layerName}`});
             rec.url = url;
+            fluid.sfcLayerNames.set([...fluid.sfcLayerNames._value, layerName]);
             // TODO: Currently starts fetch immediately but in future will be initiated by fluid.ensureImportsLoaded
             rec.fetchSignal = fluid.fetchText(url);
             rec.textSignal.computed(x => x, [rec.fetchSignal]);
@@ -1033,9 +1039,15 @@ const fluidViewScope = function (fluid) {
      * @return {Signal<true>} A signal which resolves when imports are done
      */
     fluid.ensureImportsLoaded = function (shadow, layerName) {
-        const dokkument = fluid.findDocument(shadow);
+        const dokkument = fluid.findDocument(shadow) ?? fluid.defaultDocument;
         const importRec = fluid.importMap[layerName];
-        if (importRec) {
+        if (importRec && dokkument === undefined) {
+            // A component with no document, e.g. an avatar or a free component with no container on the server, cannot
+            // inject the layer's SFC - its layer remains unavailable until the SFC is injected into a document for
+            // another component
+            return fluid.cell(fluid.unavailable(`No document into which imports for ${layerName} can be injected`, "pending"),
+                {name: `Imports awaited for ${layerName}`});
+        } else if (importRec) {
             // TODO: We could use the return value of this to stick in the layer store, so that we could report whether
             // a layer was pending and what it was waiting for - we could use fluid.writeLayer for this, and fix it
             // so that it didn't update history for unvailable transitions
@@ -2111,6 +2123,31 @@ const fluidViewScope = function (fluid) {
         elideParent: false,
         // Note that this is activateTemplate in a regular view
         vTree: "$compute:fluid.listViewTree({$parent}, {$parent}.list)",
+        $variety: "framework"
+    });
+
+    // Marks a layer as suitable to be instantiated as a top-level widget, e.g. by a host such as a canvas offering a
+    // menu of widgets - nothing in a layer's own definition otherwise betrays this. Holds placeholders for material a
+    // widget may optionally advertise to its host, and receives from its view whatever the host reports of it.
+    fluid.def("fluid.topLevelWidget", {
+        $layers: "fluid.component",
+        // The size, as {w, h}, at which the widget would like to be hosted - null if it has no preference
+        preferredSize: null,
+        // The bounds, as {x, y, w, h}, at which the widget is currently hosted, as reported by its view
+        hostBounds: "{self}.view.hostBounds",
+        view: {
+            $component: {
+                $layers: "fluid.topLevelWidgetView"
+            }
+        },
+        $variety: "framework"
+    });
+
+    // Applied to the view of every top-level widget, this is the attachment point for any machinery supplied by a host,
+    // typically broadcast onto it by a $linkage with this layer as its input
+    fluid.def("fluid.topLevelWidgetView", {
+        // The bounds of the widget as hosted - null if its host does not report any
+        hostBounds: null,
         $variety: "framework"
     });
 

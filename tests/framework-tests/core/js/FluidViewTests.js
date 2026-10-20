@@ -992,3 +992,60 @@ QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (asser
     assert.undefined(fluid.viewShadowFor(view2Shadow), "Second component no longer has a view subcomponent");
     that.destroy();
 });
+
+// Top-level widgets, receiving host machinery broadcast onto their views - fluid-project/infusion-6#21
+
+fluid.def("fluid.tests.widget", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 200, h: 100},
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "<div>Widget</div>"
+        }
+    }
+});
+
+fluid.def("fluid.tests.hostView", {
+    $layers: "fluid.topLevelWidgetView",
+    hostId: null,
+    hostBounds: "$compute:fluid.tests.hostBounds({self}.hostId)"
+});
+
+fluid.tests.hostBounds = hostId => ({x: hostId * 10, y: 0, w: 1, h: 1});
+
+fluid.def("fluid.tests.widgetHost", {
+    $layers: "fluid.component",
+    hostLinkage: {
+        $linkage: {
+            inputLayers: ["fluid.topLevelWidgetView"],
+            outputLayers: ["fluid.tests.hostView"]
+        }
+    }
+});
+
+QUnit.test("Host machinery is broadcast onto the views of top-level widgets - fluid-project/infusion-6#21", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.widget({container, view: {$component: {hostId: 3}}});
+    fluid.cell.stabilize();
+    assert.assertNode(container, {$tagName: "div", $nodeValue: "Widget"}, "Widget rendered");
+    assert.ok(fluid.hasLayer(that.view, "fluid.topLevelWidgetView"), "Widget's view bears the top-level widget view layer");
+    assert.equal(that.hostBounds, null, "Widget receives placeholder bounds when unhosted");
+
+    const host = fluid.tests.widgetHost();
+    fluid.cell.stabilize();
+    assert.ok(fluid.hasLayer(that.view, "fluid.tests.hostView"), "Host's view layer is broadcast onto the widget's view");
+    assert.notOk(fluid.hasLayer(that, "fluid.tests.hostView"), "Host's view layer is not applied to the widget itself");
+    assert.deepEqual({...that.hostBounds}, {x: 30, y: 0, w: 1, h: 1}, "Widget receives bounds reported by its host's view");
+    assert.assertNode(container, {$tagName: "div", $nodeValue: "Widget"}, "Widget still rendered");
+
+    const merged = fluid.avatarMerged("fluid.tests.widget");
+    assert.ok(merged.$layers.includes("fluid.topLevelWidget"), "Widget's avatar reveals it to be a top-level widget");
+    assert.deepEqual({...merged.preferredSize}, {w: 200, h: 100}, "Widget's avatar reveals its preferred size");
+
+    host.destroy();
+    fluid.cell.stabilize();
+    assert.notOk(fluid.hasLayer(that.view, "fluid.tests.hostView"), "Host's view layer is withdrawn with the host");
+    assert.equal(that.hostBounds, null, "Widget's bounds revert to the placeholder");
+    that.destroy();
+});

@@ -74,11 +74,8 @@ const snapshotForUndo = function (editor, shapes) {
  * @param {Editor} editor - The tldraw editor
  * @param {String} text - The text of the PTF document
  * @param {VecLike} [point] - The page point at which to paste, if any
- * @param {Object} shapeDefaults - Defaults for a freshly created Infusion shape
- * @param {Number} shapeDefaults.w - The default width of a fresh shape
- * @param {Number} shapeDefaults.h - The default height of a fresh shape
  */
-export const pastePTF = function (editor, text, point, shapeDefaults) {
+export const pastePTF = function (editor, text, point) {
     const parts = fluid.ptf.decode(text);
     const contentPart = parts.find(part => part.kind === "tldraw");
     if (contentPart) {
@@ -99,9 +96,8 @@ export const pastePTF = function (editor, text, point, shapeDefaults) {
             const ptfToken = "ptf-" + crypto.randomUUID();
             pendingParts.set(ptfToken, parts);
             const center = point || editor.getViewportPageBounds().center;
-            const preferredSize = fluid.def(layerName)?.preferredSize;
-            const w = preferredSize?.w || shapeDefaults.w;
-            const h = preferredSize?.h || shapeDefaults.h;
+            // Sized as for a fresh widget - see tldraw-driver.js
+            const {w, h} = fluid.tldraw.shapeSizeFor(layerName);
             editor.markHistoryStoppingPoint("paste");
             editor.createShape({
                 type: "infusion",
@@ -118,10 +114,9 @@ export const pastePTF = function (editor, text, point, shapeDefaults) {
 
 /**
  * Construct tldraw editor options which install PTF as the clipboard format for Infusion shapes.
- * @param {Object} shapeDefaults - Defaults for a freshly created Infusion shape, as for `pastePTF`
  * @return {Object} Options to be supplied as the `options` prop of the `Tldraw` component
  */
-export const makeClipboardOptions = function (shapeDefaults) {
+export const makeClipboardOptions = function () {
     return {
         /**
          * Write a PTF document to the clipboard in place of tldraw's own format if any Infusion shapes are being
@@ -165,7 +160,7 @@ export const makeClipboardOptions = function (shapeDefaults) {
             if (source === "native-event") {
                 const text = clipboardData?.getData("text/plain");
                 if (fluid.ptf.isPTF(text)) {
-                    pastePTF(editor, text, point, shapeDefaults);
+                    pastePTF(editor, text, point);
                     togo = false;
                 }
             } else {
@@ -173,7 +168,7 @@ export const makeClipboardOptions = function (shapeDefaults) {
                 if (item && item.types.includes("text/plain") && !item.types.includes("text/html")) {
                     item.getType("text/plain").then(blob => blob.text()).then(text => {
                         if (fluid.ptf.isPTF(text)) {
-                            pastePTF(editor, text, point, shapeDefaults);
+                            pastePTF(editor, text, point);
                         } else {
                             editor.markHistoryStoppingPoint("paste");
                             editor.putExternalContent({type: "text", text, point});

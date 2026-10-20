@@ -6,6 +6,10 @@ const $fluidViewBrowserScope = function (fluid) {
 
     fluid.environment = "browser";
 
+    // The document into which SFCs are injected for a component which has no container from which to find one, e.g.
+    // an avatar - in the browser there is just the one. Left undefined on the server, which may host several.
+    fluid.defaultDocument = document;
+
     // Currently disused
     /**
      * Parses an HTML string into a DOM element.

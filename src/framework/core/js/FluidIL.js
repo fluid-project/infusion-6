@@ -119,7 +119,10 @@ const $fluidILScope = function (fluid) {
             if (options.visited[childShadow.that.$id]) {
                 continue;
             }
-            segs.push(name);
+            // Inert components, e.g. avatars, are not visited by traversals which begin outside them
+            if (childShadow.inert && !shadow.inert) {
+                continue;
+            }            segs.push(name);
             // recall that this is here because we may run into a component that has been cross-injected which might otherwise cause cyclicity
             options.visited[childShadow.that.$id] = true;
 
@@ -338,7 +341,8 @@ const $fluidILScope = function (fluid) {
                 if (applyToParent) {
                     fluid.applyToScope(shadow.parentShadow.childrenScope, context, rec.value, rec.priority);
                 }
-                if (shadow.resolveRoot) {
+                // An inert component, e.g. the avatar of a fluid.resolveRoot layer, must not displace live ones at root
+                if (shadow.resolveRoot && !shadow.inert) {
                     fluid.applyToScope(rootComponent[$m].childrenScope, context, rec.value, rec.priority);
                     rootComponent[$m].ownScopeTick.set(rootComponent[$m].ownScopeTick._value + 1);
                     // TODO: Remember to delete these again when clearing
@@ -451,6 +455,15 @@ const $fluidILScope = function (fluid) {
      * @property {Cell<String[]>} dynamicLayerNames - Dynamic layer names supplied as direct arguments to the component
      * @property {Cell<Object<String, Unavailable>>} unavailableLayerMap - Map of layers which are currently unavailable
      * @property {Boolean} [resolveRoot] - Whether this shadow's scope names will resolve globally
+     * @property {Boolean} [inert] - Whether this component is inert - that is, it is instantiated only to be inspected,
+     * as is a layer's avatar (see `fluid.avatar`) or any component within one. An inert component merges its layers,
+     * expands its members, constructs its subcomponents and evaluates any `$compute` member which is read, exactly as
+     * any other component, but has no effect on the rest of the system:
+     *  - it allocates no `$effect` or `$linkage`, binds no `$bindable` and renders nothing
+     *  - it is not placed into root scope even if it bears `fluid.resolveRoot`
+     *  - it is not tracked by `fluid.unavailableComponents`, so may be unavailable without holding up the system
+     *  - it is not visited by component traversals, e.g. `fluid.queryILSelector`, which begin outside it
+     * Inertness is inherited from a component's parent at construction.
      *
      * @property {Cell<Object>} flatMerged - The result of a deep recursive merge of all layer records for the component
      * @property {Object} [lastMerge] - The inputs and products of the most recent merge, used by `fluid.flatMergedComputer`
@@ -552,7 +565,11 @@ const $fluidILScope = function (fluid) {
                 shadow.childComponents = {};
                 shadow.frameworkEffects = {};
                 shadow.frameworkEffects.scopeEffect = fluid.cacheLayerScopes(parentShadow, shadow);
-                shadow.frameworkEffects.availabilityTracker = fluid.trackComponentAvailability(shadow);
+                // An inert component is expected to be unavailable, e.g. an avatar lacking its prerequisites, and must not
+                // hold up the system
+                if (!shadow.inert) {
+                    shadow.frameworkEffects.availabilityTracker = fluid.trackComponentAvailability(shadow);
+                }
             } else {
                 shadow.injectedPaths = shadow.injectedPaths || {}; // a hash since we will modify whilst iterating
                 shadow.injectedPaths[path] = true;
@@ -1368,10 +1385,24 @@ const $fluidILScope = function (fluid) {
     fluid.expandComputeRecord = function (record, shadow, segs) {
         const {func, resolvedArgs} = fluid.resolveFuncRecord(record, shadow, [...segs, "$compute"]);
         const dispatchCompute = fluid.makeFuncDispatcher(func);
-        const togo = fluid.cell(undefined, {name: `$compute at path ${segs} of component at path ${shadow.path}`}).
-            computed(dispatchCompute, resolvedArgs, {mapArg: fluid.flattenSignals});
+        const name = `$compute at path ${segs} of component at path ${shadow.path}`;
+        const togo = fluid.cell(undefined, {name}).computed(dispatchCompute, fluid.flattenedArgCells(resolvedArgs, name));
         togo.$variety = "$compute";
         return togo;
+    };
+
+    /**
+     * Flatten each of a set of resolved arguments within a computed cell of its own. Flattening an argument may traverse
+     * the instance of a component, e.g. to reach a member of it, and so its reader would otherwise be notified on every
+     * turnover of that component even when the argument's flattened value is unchanged. Held in its own cell, an
+     * unchanged value is cut off by the usual equality check.
+     * @param {any[]} resolvedArgs - The resolved arguments, as returned from `fluid.resolveFuncRecord`
+     * @param {String} name - A name for the cells, for debugging
+     * @return {Cell[]} A computed cell for each argument, holding its flattened value
+     */
+    fluid.flattenedArgCells = function (resolvedArgs, name) {
+        return resolvedArgs.map((arg, i) => fluid.cell(undefined, {name: `flattened argument ${i} of ${name}`})
+            .computed(() => fluid.flattenSignals(arg)));
     };
 
     fluid.expandCompactSubelement = function (subel) {
@@ -1379,61 +1410,105 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
-     * Expands a bindable function record, with properties bind and optionally unbind, into a value that will be eagerly
+     * Upgrade the `bind` or `unbind` member of a `$bindable` record, which may be a bare function, a compact string or
+     * a function record, to a function record
+     * @param {Function|String|FuncRecord} [subel] - The member to be upgraded
+     * @return {FuncRecord|undefined} The upgraded member
+     */
+    fluid.expandBindableSubelement = function (subel) {
+        return typeof(subel) === "function" ? {func: subel} : fluid.expandCompactSubelement(subel);
+    };
+
+    /**
+     * Expands a bindable function record, with properties `bind` and optionally `unbind`, into a value that will be eagerly
      * computed as soon as the arguments to bind become available. If an unbind record is supplied, it will be invoked
-     * with the computed value either if any argument becomes unavailable or when this entire record is disposed.
+     * with the bound value whenever that value is released - when any argument becomes unavailable, when the record is
+     * rebound, or when this entire record is disposed, e.g. through destruction of its component.
      *
-     * @param {FuncRecord} record - The record describing the bindable function. Must include either `func` or `funcName`, and optionally `args`.
+     * By default the value is rebound, by unbinding and binding again, whenever the binder's arguments change - as for
+     * `$compute` and `$effect`, this is whenever any of them is notified with a fresh value. Note that turnover of a
+     * component supplied as an argument is not such a notification. A binder may stream updates for the whole lifetime
+     * of its binding by returning a signal, which readers of the bindable will see through.
+     *
+     * If the record bears `onceOnly: true`, the value is bound exactly once during the available lifetime of the record,
+     * that is, until it is disposed, regardless of any apparent change in its arguments, including any transient
+     * unavailability of them. This is suitable for a heavyweight widget which cannot respond to changes in its arguments
+     * without being reinstantiated, and which would lose its state if it were.
+     *
+     * @param {Object} record - The record describing the bindable, holding `bind`, and optionally `unbind` and `onceOnly`
+     * @param {Function|String|FuncRecord} record.bind - The binder, which receives the resolved arguments and returns
+     * the value to be bound
+     * @param {Function|String|FuncRecord} [record.unbind] - Any unbinder, which receives the bound value, or its own
+     * arguments, in which a bare `{boundValue}` receives the bound value exactly as returned from the binder
+     * @param {Boolean} [record.onceOnly] - If `true`, the value is never rebound during the lifetime of the record
      * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
      * @param {String[]} segs - The path where this record appears in its component
-     * @return {fluid.cell<any>} A computed signal representing the result of invoking the resolved function with the resolved arguments.
+     * @return {fluid.cell<any>} A computed signal holding the bound value, or an unavailable value if none is bound.
      *     Includes a `$variety` property set to `"$bindable"`.
      */
     fluid.expandBindableRecord = function (record, shadow, segs) {
         const bindSegs = [...segs, "$bindable", "bind"];
-        const expBind = fluid.expandCompactSubelement(record.bind);
+        const expBind = fluid.expandBindableSubelement(record.bind);
         const {func, resolvedArgs} = fluid.resolveFuncRecord(expBind, shadow, bindSegs);
         const funcResolver = fluid.makeMethodFuncResolver(shadow, segs, func);
 
         const unbindSegs = [...segs, "$bindable", "unbind"];
-        const expUnbind = fluid.expandCompactSubelement(record.unbind);
-        const {func: unbindFuncSignal, resolvedArgs: unbindResolvedArgs} = expUnbind ? fluid.resolveFuncRecord(expUnbind, shadow, unbindSegs) : {};
+        const expUnbind = fluid.expandBindableSubelement(record.unbind);
+        // The unbinder's arguments are only resolved when it is invoked, since they may refer to the bound value
+        const unbindFunc = expUnbind ? fluid.resolveFuncReference(expUnbind, shadow, unbindSegs) : null;
 
-        const unbindArgsResolver = context => context === "boundValue" ? togo.get() : fluid.NoValue;
+        const unbindArgsResolver = context => context === "boundValue" ? togo._value : fluid.NoValue;
 
         let selfObserveEffect;
+        // Whether a value is currently bound
+        let isBound = false;
 
+        /**
+         * Invoke any unbinder supplied by the user for the currently bound value. A bare `{boundValue}` argument
+         * receives the value exactly as returned from the binder, e.g. a signal which it bound, rather than designalised
+         */
         const unbind = function () {
-            const unbindArgs = unbindResolvedArgs ? fluid.resolveArgMaterial(unbindResolvedArgs, shadow, [...unbindSegs, "args"], unbindArgsResolver) : [togo.get()];
-            // invoke any unbinder supplied by the user
-            if (unbindFuncSignal && !fluid.isUnavailable(unbindFuncSignal.get())) {
-                unbindFuncSignal.set(unbindArgs);
+            const boundValue = togo._value;
+            if (unbindFunc && isBound && !fluid.isUnavailable(boundValue)) {
+                const unbindArgs = expUnbind.args === undefined ? [boundValue] : fluid.makeArray(expUnbind.args).map((arg, i) =>
+                    arg === "{boundValue}" ? boundValue :
+                        fluid.flattenSignals(fluid.resolveArgMaterial(arg, shadow, [...unbindSegs, "args", i], unbindArgsResolver)));
+                fluid.makeFuncDispatcher(unbindFunc).apply(null, unbindArgs);
             }
+            isBound = false;
         };
 
-        const dispatcher = (func, designalArgs, unavailable, oldValue) => {
-            const resolvedArgs = designalArgs.map(arg => fluid.flattenSignals(arg));
-            // Ignore the upstream unavailable which is insufficiently flattened
-            unavailable = fluid.mergeUnavailables(resolvedArgs);
-            if (unavailable) {
-                if (!fluid.isUnavailable(oldValue)) {
-                    unbind();
-                }
-                return unavailable;
+        const bind = function (args) {
+            // The binder's dependencies are its arguments - anything it reads in the course of binding, e.g. through a
+            // component supplied as an argument, must not cause it to be rebound
+            const bound = fluid.cell.untracked(() => funcResolver().apply(null, args));
+            // A binder which reports its value as unavailable has bound nothing
+            isBound = !fluid.isUnavailable(bound);
+            return bound;
+        };
+
+        const dispatcher = (func, args, unavailable, oldValue) => {
+            let togo;
+            if (shadow.inert) {
+                // A bindable is evaluated lazily when read - an inert component, e.g. an avatar, must still never bind
+                togo = fluid.unavailable({message: `Bindable of inert component at ${shadow.path} is not bound`, variety: "config"});
+            } else if (isBound && record.onceOnly) {
+                fluid.log("Retaining value bound once only at ", shadow.path, bindSegs);
+                togo = oldValue;
+            } else if (unavailable) {
+                unbind();
+                togo = unavailable;
             } else {
-                if (fluid.isUnavailable(oldValue)) { // It's a transition from unavailable to available
-                    return funcResolver().apply(null, resolvedArgs);
-                } else {
-                    // Conceivably we might want to unbind and rebind the thing, but only once we are on top of excess notifications
-                    fluid.log("Ignoring attempt to rebind bindable value at ", shadow.path, bindSegs);
-                    return oldValue;
-                }
+                unbind();
+                togo = bind(args);
             }
+            return togo;
         };
 
         // TODO: Inconsistency, note that this should presumably be marked as isFree in order to get notified of transition back to unavailable,
         // but no doubt anything that supplies a dispatcher should
-        const togo = fluid.cell(undefined, {name: `bindable for record at path ${segs} of ${shadow.path}`}).computed(func, resolvedArgs, {dispatcher});
+        const name = `bindable for record at path ${segs} of ${shadow.path}`;
+        const togo = fluid.cell(undefined, {name}).computed(func, fluid.flattenedArgCells(resolvedArgs, name), {dispatcher});
         togo.$variety = "$bindable";
         togo.dispose = () => {
             unbind();
@@ -1462,11 +1537,11 @@ const $fluidILScope = function (fluid) {
     fluid.expandEffectRecord = function (record, shadow, segs) {
         const {func, resolvedArgs} = fluid.resolveFuncRecord(record, shadow, [...segs, "$effect"]);
         const dispatchEffect = fluid.makeFuncDispatcher(func);
-        const togo = fluid.cell.effect(dispatchEffect, resolvedArgs, {
-            mapArg: fluid.flattenSignals,
+        const name = `$effect at path ${segs} of component at path ${shadow.path}`;
+        const togo = fluid.cell.effect(dispatchEffect, fluid.flattenedArgCells(resolvedArgs, name), {
             includeSource: record.includeSource,
             excludeSource: record.excludeSource,
-            name: `$effect at path ${segs} of component at path ${shadow.path}`});
+            name});
         togo.$variety = "$effect";
         fluid.log("Allocated effect " + togo.cellId + " at path " + segs.join(".") + " at component " + shadow.path);
         return togo;
@@ -1734,8 +1809,9 @@ const $fluidILScope = function (fluid) {
 
     /**
      * Determine whether two signal records are equivalent, so that a signal product allocated for one may be reused for
-     * the other. Records collected into a `fluid.componentRecords` are freshly allocated on every merge, and so are
-     * equivalent if their contributions are identical.
+     * the other. Records collected into a `fluid.componentRecords`, and records merged from several layers by
+     * `fluid.mergeLayers`, are freshly allocated on every merge, and so are equivalent if their contributions are
+     * identical.
      * @param {any} oldRecord - The record from which a signal product was previously allocated
      * @param {any} newRecord - The record currently mounted at the same site
      * @return {Boolean} `true` if the records are equivalent
@@ -1744,8 +1820,10 @@ const $fluidILScope = function (fluid) {
         const sameContributions = () => oldRecord.contributions.length === newRecord.contributions.length &&
             oldRecord.contributions.every((contribution, i) => contribution.record === newRecord.contributions[i].record &&
                 contribution.mergeRecordName === newRecord.contributions[i].mergeRecordName);
+        const oldMerged = oldRecord?.[$m]?.contributions, newMerged = newRecord?.[$m]?.contributions;
         return oldRecord === newRecord || oldRecord instanceof fluid.componentRecords &&
-            newRecord instanceof fluid.componentRecords && sameContributions();
+            newRecord instanceof fluid.componentRecords && sameContributions() ||
+            oldMerged !== undefined && newMerged !== undefined && fluid.arrayEqual(oldMerged, newMerged);
     };
 
     /**
@@ -2101,9 +2179,13 @@ const $fluidILScope = function (fluid) {
             const uncompact = fluid.expandCompactElement(value);
             const expanded = fluid.expandElement(shadow, uncompact || value, segs);
             if (fluid.isPlainObject(expanded, true) && !fluid.isUnexpandablePath(segs)) {
-                const expandedInner = {}; // TODO: Make these lazy and only construct a fresh object if there is an expansion
+                const expandedInner = {};
                 fluid.expandLayer(expandedInner, value, shadow, segs);
-                target[key] = expandedInner;
+                // Only hold a fresh object if something within was expanded - otherwise the merged material is held
+                // directly, so that a member which is unchanged across turnover of its component keeps its identity
+                // and does not notify its readers
+                const anyExpanded = Object.keys(value).some(innerKey => expandedInner[innerKey] !== value[innerKey]);
+                target[key] = anyExpanded ? expandedInner : value;
             } else {
                 target[key] = expanded;
                 if (fluid.isSignal(expanded)) {
@@ -2248,6 +2330,8 @@ const $fluidILScope = function (fluid) {
         const shadow = Object.create(fluid.shadow.prototype);
 
         shadow.path = fluid.composeSegment(parentShadow.path, memberName);
+        // A component within an inert one, e.g. a subcomponent of an avatar, is itself inert - see Shadow.inert
+        shadow.inert = !!parentShadow.inert;
         shadow.potentia = fluid.cell(potentia, {name: `potentia for path ${shadow.path}`});
         shadow.variablesLayer = variables || Object.create(null);
         shadow.liveLayer = Object.create(null);
@@ -2360,10 +2444,13 @@ const $fluidILScope = function (fluid) {
             });
         }
 
-        fluid.possiblyRenderError(shadow); // Callout to FluidView.js
+        // An inert component allocates no effects, binds nothing and renders nothing - see Shadow.inert
+        if (!shadow.inert) {
+            fluid.possiblyRenderError(shadow); // Callout to FluidView.js
+        }
 
         // Only proceed to allocate any effects if the component has no unavailable layers
-        if (Object.keys(shadow.unavailableLayerMap._value).length === 0) {
+        if (Object.keys(shadow.unavailableLayerMap._value).length === 0 && !shadow.inert) {
 
             const expandEffect = (newRecord, segs) => {
                 newRecord.signalProduct = newRecord.handlerRecord.handler(newRecord.signalRecord, shadow, segs);
@@ -2470,11 +2557,20 @@ const $fluidILScope = function (fluid) {
 
     fluid.unavailableComponentMap = fluid.cell(Object.create(null), {name: "Fluid global unavailable component map"});
 
-    fluid.unavailableComponents = fluid.cell(null, {name: "Fluid global unavailable components"}).computed(unavailableComponentMap => {
+    // Allocated with an undefined value so that it is evaluated when first read, rather than its initial value being
+    // trusted until the map first changes
+    fluid.unavailableComponents = fluid.cell(undefined, {name: "Fluid global unavailable components"}).computed(unavailableComponentMap => {
         const keys = Object.keys(unavailableComponentMap);
-        return keys.length === 0 ? true : fluid.unavailable("Some components are unavailable");
+        // Pending rather than an error - a component is typically unavailable whilst its layers are loading
+        return keys.length === 0 ? true : fluid.unavailable({message: "Some components are unavailable", paths: keys}, "pending");
     }, [fluid.unavailableComponentMap]);
 
+    /**
+     * Track whether a component is available in `fluid.unavailableComponentMap`, keyed by its path, so that
+     * `fluid.unavailableComponents` reports whether any component in the system is unavailable
+     * @param {Shadow} shadow - The shadow of the component to be tracked
+     * @return {Effect} An effect maintaining the component's entry, which removes it when disposed
+     */
     fluid.trackComponentAvailability = function (shadow) {
         const updateAvailability = function (instance) {
             const currentMap = fluid.unavailableComponentMap._value;
@@ -2493,7 +2589,8 @@ const $fluidILScope = function (fluid) {
             fluid.unavailableComponentMap.set(newMap);
         };
         return fluid.cell.effect(() => {
-            updateAvailability(shadow.availableInstance);
+            // Read the value of availableInstance - a simple component, e.g. the root, has none and is always available
+            updateAvailability(shadow.availableInstance ? shadow.availableInstance.get() : true);
         }, [], {
             onDispose: () => {
                 // Remove it from tracking since it wholeheartedly does not exist rather than existing and being unavailable
@@ -2588,7 +2685,9 @@ const $fluidILScope = function (fluid) {
     fluid.proxyMat = function (inTarget, shadow, segs) {
         // If we're at the component root, expose an instance which may be unavailable if it has unavailable constituents
         const target = segs.length === 0 ? shadow.availableInstance : inTarget;
-        const rec = fluid.getRecInsist(shadow.shadowMap, [...segs, $m]);
+        // The root proxy dereferences the component's current instance on every access, and so is held by the shadow
+        // rather than by the shadowMap of any one instance - it keeps its identity across turnover
+        const rec = segs.length === 0 ? shadow.rootProxyRec ||= {} : fluid.getRecInsist(shadow.shadowMap, [...segs, $m]);
         const existing = rec.proxy;
         if (existing) {
             return existing;
@@ -2730,6 +2829,87 @@ const $fluidILScope = function (fluid) {
 
         const proxy = fluid.proxyMat(computer, computer.shadow, []);
         return proxy;
+    };
+
+    // AVATARS
+
+    /**
+     * Allocate the area at the root of the component tree which holds the avatars of layers. This is inert, and hence
+     * so is every component constructed within it - see Shadow.inert
+     * @param {fluid.instantiator} instantiator - The instantiator whose component tree is to hold the area
+     * @return {fluid.component} The component forming the area
+     */
+    fluid.allocateAvatarsComponent = function (instantiator) {
+        const avatars = instantiator.allocateSimpleComponent(instantiator.rootShadow, "avatars", {$layers: ["fluid.component"]});
+        avatars[$m].inert = true;
+        return avatars;
+    };
+
+    /**
+     * Retrieve the shadow of the area at the root of the component tree which holds the avatars of layers, allocating
+     * it if required
+     * @param {fluid.instantiator} [instantiator] - The instantiator whose avatars are required - defaults to the global one
+     * @return {Shadow} The shadow of the avatars area
+     */
+    fluid.avatarsShadow = function (instantiator = fluid.globalInstantiator) {
+        instantiator.avatarsComponent ||= fluid.allocateAvatarsComponent(instantiator);
+        return instantiator.avatarsComponent[$m];
+    };
+
+    /**
+     * Retrieve the avatar of a layer, allocating it if required. This is an "early instantiation" of a component bearing
+     * just that layer, held in the avatars area at the root of the component tree. An avatar is inert (see
+     * Shadow.inert) - it has no effect on the rest of the system, but otherwise merges, expands and constructs itself
+     * as any other component. Its instantiation will often be incomplete through missing prerequisites, e.g. references
+     * to components which are only found where the layer is genuinely deployed, which render just the members depending
+     * on them unavailable - all others, including computed ones, may be read through the returned proxy as for any
+     * component. If any of its layers is unavailable, e.g. whilst it is loading, the avatar is unavailable as a whole,
+     * but its merged layer structure remains inspectable via `fluid.avatarMerged`. What an avatar accumulates includes
+     * all that the layer brings to a component, including material arriving
+     * through its parent layers or broadcast onto it by linkage, which a shallow inspection of its definition by
+     * `fluid.def` would miss. An avatar persists once allocated, tracking any redefinition of its layers, until its
+     * own layer is deleted.
+     * @param {String} layerName - The name of the layer whose avatar is required
+     * @return {Proxy<fluid.component>} A proxy for the avatar component
+     */
+    fluid.avatar = function (layerName) {
+        const avatarsShadow = fluid.avatarsShadow();
+        const memberName = fluid.avatarMemberName(layerName);
+        const shadow = avatarsShadow.childComponents[memberName] ||
+            fluid.computeInstance({layerNames: [layerName], mergeRecords: []}, avatarsShadow, memberName).shadow;
+        return fluid.proxyMat(shadow.computer, shadow, []);
+    };
+
+    /**
+     * Compute the member name at which a layer's avatar is held in the avatars area. Since this is a path segment it
+     * is escaped as required when composed into the avatar's path.
+     * @param {String} layerName - The name of the layer
+     * @return {String} The avatar's member name
+     */
+    fluid.avatarMemberName = layerName => layerName;
+
+    /**
+     * Retrieve the merged layer structure of a layer's avatar, as described for `fluid.avatar`. This is available
+     * whether or not the avatar's instantiation succeeded, and when read within a reactive context will update as
+     * the layer or any of those it accumulates are redefined. Its members are raw configuration - e.g. a member
+     * defined by a `$compute` record holds the record rather than its value, which is read through the avatar itself.
+     * @param {String} layerName - The name of the layer whose merged structure is required
+     * @return {Object} The avatar's merged layer structure, holding at `$layers` the full resolved list of its layers
+     */
+    fluid.avatarMerged = function (layerName) {
+        return fluid.avatar(layerName)[$t].shadow.flatMerged.get();
+    };
+
+    /**
+     * Destroy the avatar of a layer, if it has one - this is done when the layer is deleted
+     * @param {String} layerName - The name of the layer whose avatar is to be destroyed
+     */
+    fluid.destroyAvatar = function (layerName) {
+        const avatarsComponent = fluid.globalInstantiator.avatarsComponent;
+        const shadow = avatarsComponent?.[$m].childComponents[fluid.avatarMemberName(layerName)];
+        if (shadow) {
+            fluid.destroyComponent(fluid.proxyMat(shadow.computer, shadow, []));
+        }
     };
 
     /** Destroys a component held at the specified path. The parent path must represent a component, although the component itself may be nonexistent

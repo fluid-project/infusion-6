@@ -1,5 +1,5 @@
 <script>
-// DRAFT - one run of text within the story's highlight layer, created by $for over {storyTime}.segments
+// One run of text within the story's highlight layer, created by $for over {storyTime}.segments
 fluid.def("fluid.demos.storySegment", {
     // Variable injected by $for
     segment: null

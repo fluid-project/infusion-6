@@ -1929,8 +1929,11 @@ const $fluidScope = function (fluid) {
         }
     };
 
+    // Stub that will be overridden in FluidIL.js, where avatars are implemented
+    fluid.destroyAvatar = () => {};
+
     /**
-     * Removes a layer from the `fluid.layerStore` immutably.
+     * Removes a layer from the `fluid.layerStore` immutably, destroying any avatar which was instantiated from it.
      * This function creates a new object excluding the specified layer and updates the signal.
      *
      * @param {String} layerName - The name of the layer to delete.
@@ -1940,6 +1943,7 @@ const $fluidScope = function (fluid) {
         const newStore = {...currentStore};
         delete newStore[layerName];
         fluid.layerStore.set(newStore);
+        fluid.destroyAvatar(layerName);
         fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
     };
 
@@ -2118,6 +2122,9 @@ const $fluidScope = function (fluid) {
             } else if (count > 1 && fluid.isPlainObject(last, true)) {
                 newTarget = fluid.makeLayer(key, target);
                 const newLayers = layers.map(layer => layer?.[key]);
+                // Record the material merged here, so that a fresh merge of the same material may be recognised as
+                // equivalent - see fluid.isSameSignalRecord
+                newTarget[$m].contributions = newLayers;
                 segs.push(key);
                 fluid.mergeLayers(newTarget, segs, layerMap, newLayers, mergeRecords);
                 segs.pop();

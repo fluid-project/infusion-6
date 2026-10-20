@@ -62,7 +62,9 @@ fluid.substrateTree.rootEntries = function (self) {
     const selfShadow = self[$m];
     selfShadow.renderPass = {};
     const rootShadow = fluid.globalInstantiator.rootShadow;
-    const children = Object.values(rootShadow.childComponents);
+    // Inert components, e.g. the avatars area holding early instantiations of layers for inspection, are not part of
+    // the substrate
+    const children = Object.values(rootShadow.childComponents).filter(shadow => !shadow.inert);
     const useChildren = self.userLayersOnly ? children.filter(fluid.shadowHasUserLayer) : children;
     return fluid.map(useChildren, shadow => self.valueToEntry(shadow, [shadow.path], shadow.that, fluid.peek(shadow.that.$layers) ));
 };

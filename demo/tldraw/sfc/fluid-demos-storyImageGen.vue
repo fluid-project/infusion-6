@@ -1,5 +1,5 @@
 <script>
-// DRAFT - the illustration panel, which exists only while {storyTime}.allShort is true
+// The illustration panel of the story time widget, which exists only while {storyTime}.allShort is true
 
 fluid.def("fluid.demos.storyImageGen", {
     // Sited references into the parent's reactive state, so that writes through them reach it
@@ -32,7 +32,7 @@ fluid.def("fluid.demos.storyImageGen", {
     generate: {
         $method: {
             func: "fluid.demos.storyImageGen.generate",
-            args: ["{storyTime}.state", "{tldrawHost}.editor", "{storyTime}.shapeId"]
+            args: ["{storyTime}.state", "{tldrawHost}.editor", "{storyTime}.hostBounds"]
         }
     }
 });
@@ -43,10 +43,10 @@ fluid.demos.storyImageGen.buttonLabel = isGenerating => isGenerating ? "Generati
  * Generate an illustration from the current prompt and place it on the canvas to the right of the widget.
  * @param {Object} state - The storyTime component's reactive state
  * @param {Editor} editor - The tldraw editor, resolved from the root-scoped tldrawHost component
- * @param {String} shapeId - The id of the shape hosting the storyTime widget
+ * @param {ShapeBounds|null} bounds - The bounds of the storyTime widget as hosted, as received from its tldraw view
  * @return {Promise} A promise which resolves when generation has finished, successfully or not
  */
-fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
+fluid.demos.storyImageGen.generate = async function (state, editor, bounds) {
     const prompt = state.imagePrompt.trim();
     // The button is disabled while generating, but Enter in the input still arrives here
     if (prompt && !state.isGenerating) {
@@ -54,10 +54,9 @@ fluid.demos.storyImageGen.generate = async function (state, editor, shapeId) {
         state.imageError = "";
         try {
             const assetId = await fluid.demos.agents.generateImageAsset(prompt, {width: 1024, height: 1024});
-            const widgetShape = editor.getShape(shapeId);
-            const pos = widgetShape ? {
-                x: widgetShape.x + (widgetShape.props.w || 700) + 50,
-                y: widgetShape.y
+            const pos = bounds ? {
+                x: bounds.x + bounds.w + 50,
+                y: bounds.y
             } : editor.getViewportPageBounds().center;
             const {validatedShapes, errors} = fluid.demos.agents.convertAndValidateShapes([{
                 type: "image",
