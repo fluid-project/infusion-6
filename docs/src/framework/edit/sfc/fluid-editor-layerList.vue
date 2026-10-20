@@ -6,13 +6,22 @@ fluid.def("fluid.editor.layerList", {
             args: [fluid.layerStore, "{editorRoot}.showUserLayersOnly", "{colourManager}"]
         }
     },
-    template: `<div @id="layers" class="fl-layerlist"></div>`,
+    view: {
+        $component: {
+            template: `<div @id="layers" class="fl-layerlist"></div>`
+        }
+    },
     layers: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             layerName: "{self}.layerRec.layerName",
-            template: `<div class="fl-layerlist-layer fl-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)"
-                style="background-color: @{layerRec.colour}" title="@{layerName}">@{layerName}</div>`,
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="fl-layerlist-layer fl-for-layer" @ondblclick="{fluid.editorRoot}.openLayerTab({self}.layerName)"
+                style="background-color: @{layerRec.colour}" title="@{layerName}">@{layerName}</div>`
+                }
+            },
             $for: {
                 source: "{layerList}.layerList",
                 valueAs: "layerRec"

@@ -6,12 +6,11 @@ fluid.def("fluid.editor", {
             text: "{fluid.editor}.text"
         }
     },
-    inWrite: false, // Currently disused
     isActive: {
         // TODO: What on earth? Why does this reach upward into the editorRoot?
         $compute: {
-            func: (layerName, selectedLayerTab) => layerName === selectedLayerTab,
-            args: ["{self}.layerRec.layerName", "{fluid.editorRoot}.selectedLayerTab"]
+            func: (layerName, activeLayerTab) => layerName === activeLayerTab,
+            args: ["{self}.layerRec.layerName", "{fluid.editorRoot}.activeLayerTab"]
         }
     },
     // Perhaps better implemented on editor subcomponent?
@@ -41,13 +40,12 @@ fluid.def("fluid.editor.sfc", {
     $variety: "frameworkAux",
     writeText: {
         $method: {
-            func: (self, text, layerRec) => {
+            func: (text, layerRec) => {
                 console.log("sfc.writeText called with text ", text.substring(0, 100));
-                self.inWrite = true;
-                layerRec.sfcDef.set(text);
-                self.inWrite = false;
+                // Look up the text signal afresh since reading layerRec.sfcDef through the proxy designalises it
+                fluid.readSFC(layerRec.layerName).textSignal.set(text);
             },
-            args: ["{self}", "{0}:text", "{fluid.editor}.layerRec"]
+            args: ["{0}:text", "{fluid.editor}.layerRec"]
         }
     },
 
@@ -86,18 +84,16 @@ fluid.def("fluid.editor.json", {
     },
     writeText: {
         $method: {
-            func: (self, text, layerRec) => {
+            func: (text, layerRec) => {
                 try {
                     const parsed = JSON.parse(text);
                     // TODO: & syntax in arguments
-                    self.inWrite = true;
                     layerRec.layerDef.write(parsed);
-                    self.inWrite = false;
                 } catch (e) {
                     console.log("JSON parse failure ", e);
                 }
             },
-            args: ["{self}", "{0}:text", "{fluid.editor}.layerRec"]
+            args: ["{0}:text", "{fluid.editor}.layerRec"]
         }
     },
     text: "{self}.readText",

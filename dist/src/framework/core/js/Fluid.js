@@ -1697,6 +1697,8 @@ const $fluidScope = function (fluid) {
      * @property {Object} [newValue] - The updated value of the layer
      * @property {Object} [oldStore] - The value of the layer store before the update
      * @property {Object} [newStore] - The value of the layer store after the update
+     * @property {String} [oldText] - For an edit to an SFC which did not rewrite its layer, the SFC's previous text
+     * @property {String} [newText] - For an edit to an SFC which did not rewrite its layer, the SFC's updated text
      */
 
     /**
@@ -1849,7 +1851,6 @@ const $fluidScope = function (fluid) {
                     rec.effect.dispose();
                     fluid.gatedLayers.delete(layerName);
                     fluid.writeLayer(layerName, rec.layer);
-                    fluid.cell.deferredStabilize();
                 }
             }, [pending], {name: `Release of layer ${layerName} gated on ${pending.name}`});
             fluid.gatedLayers.set(layerName, rec);
@@ -1928,8 +1929,11 @@ const $fluidScope = function (fluid) {
         }
     };
 
+    // Stub that will be overridden in FluidIL.js, where avatars are implemented
+    fluid.destroyAvatar = () => {};
+
     /**
-     * Removes a layer from the `fluid.layerStore` immutably.
+     * Removes a layer from the `fluid.layerStore` immutably, destroying any avatar which was instantiated from it.
      * This function creates a new object excluding the specified layer and updates the signal.
      *
      * @param {String} layerName - The name of the layer to delete.
@@ -1939,15 +1943,36 @@ const $fluidScope = function (fluid) {
         const newStore = {...currentStore};
         delete newStore[layerName];
         fluid.layerStore.set(newStore);
+        fluid.destroyAvatar(layerName);
         fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
+    };
+
+    /**
+     * Render a layer definition as a `fluid.def` call in JavaScript source text. Note that any global functions
+     * referenced by name from the definition are not included.
+     * @param {String} layerName - The name of the layer
+     * @param {LayerDef|Signal<LayerDef>} layerDef - The layer's definition
+     * @return {String} JavaScript source text which will register the layer definition when evaluated
+     */
+    fluid.layerToJavaScript = function (layerName, layerDef) {
+        return `fluid.def(${JSON.stringify(layerName)}, ${fluid.ptf.valueToJavaScript(fluid.deSignal(layerDef))});\n`;
     };
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
     // Do we actually need this in this role?
     // TODO: Called from expandComponentRecord and storeLayer, and now computeInstance does its own expansion - can axe?
+    // Expansions are cached per layer object, which is treated as immutable, so that an unchanged layer always expands to
+    // the same object - this allows fluid.flatMergedComputer to detect that its inputs are unchanged
+    fluid.readerExpansionCache = new WeakMap();
+
     fluid.readerExpandLayer = function (layer) {
         // TODO: Create links between old and new data so that we can route errors back
-        return {...layer, $layers: fluid.makeArray(layer.$layers)};
+        let togo = fluid.readerExpansionCache.get(layer);
+        if (!togo) {
+            togo = {...layer, $layers: fluid.makeArray(layer.$layers)};
+            fluid.readerExpansionCache.set(layer, togo);
+        }
+        return togo;
     };
 
     /**
@@ -1997,6 +2022,69 @@ const $fluidScope = function (fluid) {
      */
 
     /**
+     * The contributions of several layers to the record of a subcomponent at the same path. As with the
+     * `fluid.deferringMergePolicy` applied to `components` in Infusion 4 to resolve FLUID-5614, these are not merged with
+     * one another, which would cause a `$layers` entry from one layer to override that of another, but retained in
+     * priority order so that each may be supplied to the subcomponent as a merge record of its own. Its layers then
+     * accumulate, and its members are merged by priority, within the subcomponent's own hierarchy resolution.
+     * @param {ComponentContribution[]} contributions - The contributions, weakest first
+     */
+    fluid.componentRecords = function (contributions) {
+        this.contributions = contributions;
+    };
+
+    /**
+     * @typedef {Object} ComponentContribution
+     * @property {Object} record - The contents of a `$component` record as written in a layer
+     * @property {String} mergeRecordName - The name of the merge record holding the layer in which it was written
+     */
+
+    /**
+     * Determine whether a layer value holds a subcomponent record, i.e. is an object with a `$component` member
+     * @param {any} value - The value to be tested
+     * @return {Boolean} `true` if the value holds a subcomponent record
+     */
+    fluid.isComponentRecordHolder = function (value) {
+        return fluid.isPlainObject(value, true) && "$component" in value;
+    };
+
+    /**
+     * Collect the contributions of a set of layers to a subcomponent record at a path into a `fluid.componentRecords`
+     * rather than merging them. A layer may instead hold an IL reference at the path - whether this designates a
+     * component, which will then be injected there, can only be known once it is resolved (see
+     * `fluid.expandReferenceRecord`) and so, as for any other value, it simply overrides all weaker contributions. Any
+     * other value at that path which is not a subcomponent record is an error.
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {String} key - The key at which the subcomponent record is held
+     * @param {String[]} segs - The path of the layers' parent within the root being merged
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @return {Object|String} A value holding the collected contributions as its `$component` member, or an IL reference
+     * if this is the strongest value at the path
+     */
+    fluid.collectComponentRecords = function (layers, key, segs, mergeRecords) {
+        const contributions = [];
+        let reference;
+        layers.forEach((layer, i) => {
+            if (fluid.isPlainObject(layer) && key in layer) {
+                const value = layer[key];
+                if (fluid.isComponentRecordHolder(value) && fluid.isPlainObject(value.$component, true)) {
+                    contributions.push({record: value.$component, mergeRecordName: mergeRecords[i].mergeRecordName});
+                    reference = undefined;
+                } else if (fluid.isILReference(value)) {
+                    contributions.length = 0;
+                    reference = value;
+                } else if (value !== undefined) {
+                    const from = mergeRecords[i].mergeRecordName ?? mergeRecords[i].mergeRecordType;
+                    fluid.fail(`Cannot merge value ${JSON.stringify(value)} at path ${[...segs, key].join(".")} from ` +
+                        `${from} with a subcomponent record - this should be written as {$component: ...}, ` +
+                        `or as a reference to an existing component, e.g. "{context}.path"`);
+                }
+            }
+        });
+        return reference === undefined ? {$component: new fluid.componentRecords(contributions)} : reference;
+    };
+
+    /**
      * Recursively merge multiple layers into a target object, maintaining a mapping of values to their originating layers.
      *
      * @param {Object} target - The target object where merged results will be stored.
@@ -2029,9 +2117,14 @@ const $fluidScope = function (fluid) {
                     lastIndex = i;
                 }
             }
-            if (count > 1 && fluid.isPlainObject(last, true)) {
+            if (layers.some(layer => fluid.isPlainObject(layer) && fluid.isComponentRecordHolder(layer[key]))) {
+                newTarget = fluid.collectComponentRecords(layers, key, segs, mergeRecords);
+            } else if (count > 1 && fluid.isPlainObject(last, true)) {
                 newTarget = fluid.makeLayer(key, target);
                 const newLayers = layers.map(layer => layer?.[key]);
+                // Record the material merged here, so that a fresh merge of the same material may be recognised as
+                // equivalent - see fluid.isSameSignalRecord
+                newTarget[$m].contributions = newLayers;
                 segs.push(key);
                 fluid.mergeLayers(newTarget, segs, layerMap, newLayers, mergeRecords);
                 segs.pop();
@@ -2341,13 +2434,19 @@ const $fluidScope = function (fluid) {
                 // Guard the cache for recursive encounters to same layer along different routes by writing in a value first
                 this.flatDefs[layerName] = "in progress";
 
-                const layer = fluid.readLayer(layerName, true).get();
-                const unavailableLayer = fluid.layerRecToUnavailable(layer);
+                let layer = fluid.readLayer(layerName, true).get();
+                let unavailableLayer = fluid.layerRecToUnavailable(layer);
                 if (unavailableLayer !== null) {
                     this.layerFetcher(layerName);
-                    // Read it again since presumably it is now pending if successfully fetched
-                    const pendingUnavailableLayer = fluid.layerRecToUnavailable(fluid.readLayer(layerName, true).get());
-                    this.unavailableLayers[layerName] = pendingUnavailableLayer;
+                    // Read it again - it is presumably now pending if successfully fetched, but fetching may instead have
+                    // released a definition which was gated on a load that had already completed
+                    // Apparently this epicycle could be removed once we reform fit tracking and not cause a get() to end a fit synchronously -
+                    // see transcript for issue #17
+                    layer = fluid.readLayer(layerName, true).get();
+                    unavailableLayer = fluid.layerRecToUnavailable(layer);
+                }
+                if (unavailableLayer !== null) {
+                    this.unavailableLayers[layerName] = unavailableLayer;
                     layerDef = {$layers: []};
                 } else {
                     const readerExpanded = fluid.readerExpandLayer(fluid.deSignal(layer.raw));
@@ -2483,7 +2582,6 @@ const $fluidScope = function (fluid) {
         fluid.writeLayer(layerName, layer);
         // TODO: Generalised mechanism for side-effects for layer registration
         fluid.makeComponentCreator(layerName);
-        fluid.cell.deferredStabilize();
     };
 
     /**
@@ -2854,7 +2952,7 @@ const $fluidScope = function (fluid) {
      */
     fluid.siteToPromise = function (component, path) {
         const pathSignal = fluid.getForComponent(component[$m], path);
-        return fluid.cell.signalToPromise(pathSignal);
+        return fluid.cell.waitFor(pathSignal);
     };
 
 };

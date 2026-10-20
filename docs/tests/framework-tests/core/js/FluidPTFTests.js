@@ -13,43 +13,6 @@ QUnit.config.reorder = false;
 const qs = (sel, parent) => (parent || document).querySelector(sel);
 
 /**
- * Poll until a predicate holds, stabilising the signal graph between polls.
- * @param {Function} predicate - A function returning `true` once the awaited condition holds.
- * @param {Number} [timeout=5000] - The maximum time in milliseconds to wait.
- * @return {Promise<Boolean>} Resolves to `true` once the predicate holds, or `false` on timeout.
- */
-fluid.tests.ptf.waitFor = function (predicate, timeout = 5000) {
-    const start = Date.now();
-    return new Promise(resolve => {
-        const poll = () => {
-            fluid.cell.stabilize();
-            if (predicate()) {
-                resolve(true);
-            } else if (Date.now() - start > timeout) {
-                resolve(false);
-            } else {
-                setTimeout(poll, 10);
-            }
-        };
-        poll();
-    });
-};
-
-/**
- * Await the result of a promise, stabilising the signal graph while it is pending.
- * @param {Promise} promise - The promise to be awaited
- * @return {Promise} A promise for the same result
- */
-fluid.tests.ptf.settle = function (promise) {
-    let settled = false;
-    const togo = promise.finally(() => {
-        settled = true;
-    });
-    fluid.tests.ptf.waitFor(() => settled);
-    return togo;
-};
-
-/**
  * Load an SFC from text and await the definition of its layer.
  * @param {String} layerName - The name of the layer defined by the SFC
  * @param {String} text - The text of the SFC
@@ -58,7 +21,7 @@ fluid.tests.ptf.settle = function (promise) {
 fluid.tests.ptf.loadSFCText = function (layerName, text) {
     fluid.loadSFCText(layerName, text);
     const injDone = fluid.subscribeDocToInjections(layerName, document);
-    return fluid.tests.ptf.waitFor(() => injDone.get() === true && !fluid.isUnavailable(fluid.def(layerName)));
+    return fluid.cell.waitFor(injDone).then(() => fluid.cell.settle()).then(() => !fluid.isUnavailable(fluid.def(layerName)));
 };
 
 fluid.tests.ptf.counterSFC = `<script>
@@ -189,11 +152,28 @@ fluid.def("fluid.tests.ptf.plain", {
 </script>`;
     const loaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.plain", plainSFC);
     assert.ok(loaded, "Plain SFC loaded");
-    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layers, ["fluid.sfcViewComponent", "fluid.component"], "Tag layer added to explicit $layers");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.plain").$layers, ["fluid.component", "fluid.sfcLayer"], "Tag layer added to explicit $layers");
     assert.equal(fluid.def("fluid.tests.ptf.plain").value, 2, "Remainder of definition intact");
     assert.equal(fluid.layerMimeType("fluid.tests.ptf.plain"), "text/x-vue", "SFC layer without template");
 
-    // An empty definition with a template requires both $layers and templateLayer to be patched in
+    // An SFC whose layer derives from another SFC's layer - the tag layer must follow it to give a consistent C3 linearization
+    const derivedSFC = `<script>
+fluid.def("fluid.tests.ptf.derived", {
+    $layers: "fluid.tests.ptf.plain",
+    extra: 3
+});
+</script>`;
+    const derivedLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.derived", derivedSFC);
+    assert.ok(derivedLoaded, "Derived SFC loaded");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.derived").$layers, ["fluid.tests.ptf.plain", "fluid.sfcLayer"],
+        "Tag layer follows SFC-derived parent layer");
+    const derived = fluid.tests.ptf.derived();
+    assert.notOk(fluid.isUnavailable(derived), "Component derived from SFC layer instantiates");
+    assert.equal(derived.value, 2, "Member inherited from SFC parent layer");
+    assert.equal(derived.extra, 3, "Own member of derived SFC layer");
+    derived.destroy();
+
+    // An empty definition with a template requires $layers, and its view's $layers and templateLayer, to be patched in
     const emptySFC = `<script>
 fluid.def("fluid.tests.ptf.empty", {});
 </script>
@@ -201,14 +181,40 @@ fluid.def("fluid.tests.ptf.empty", {});
     const emptyLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.empty", emptySFC);
     assert.ok(emptyLoaded, "SFC with empty definition loaded");
     assert.deepEqual(fluid.def("fluid.tests.ptf.empty"), {
-        $layers: ["fluid.sfcViewComponent", "fluid.sfcTemplateViewComponent"],
-        templateLayer: "fluid.tests.ptf.empty"
-    }, "Empty definition patched with $layers and templateLayer");
+        $layers: ["fluid.component", "fluid.sfcLayer"],
+        view: {
+            $component: {
+                $layers: ["fluid.sfcTemplateViewComponent"],
+                templateLayer: "fluid.tests.ptf.empty"
+            }
+        }
+    }, "Empty definition patched with $layers and its view's $layers and templateLayer");
+
+    // A definition which already configures its view has its templateLayer patched in alongside its own members
+    const viewSFC = `<script>
+fluid.def("fluid.tests.ptf.ownView", {
+    view: {
+        $component: {
+            elideParent: false
+        }
+    }
+});
+</script>
+<template><div class="ptf-own-view">Own view</div></template>`;
+    const viewLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.ownView", viewSFC);
+    assert.ok(viewLoaded, "SFC with view configuration loaded");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.ownView").view.$component, {
+        $layers: ["fluid.sfcTemplateViewComponent"],
+        elideParent: false,
+        templateLayer: "fluid.tests.ptf.ownView"
+    }, "Existing view configuration patched with its $layers and templateLayer");
 
     const counterLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.counter", fluid.tests.ptf.counterSFC);
     assert.ok(counterLoaded, "Counter SFC loaded");
-    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$layers, ["fluid.sfcViewComponent", "fluid.sfcTemplateViewComponent"],
-        "Tag layer added alongside template layer");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").$layers, ["fluid.component", "fluid.sfcLayer"],
+        "Tag layer added to component");
+    assert.deepEqual(fluid.def("fluid.tests.ptf.counter").view.$component.$layers, ["fluid.sfcTemplateViewComponent"],
+        "Template layer added to component's view");
     assert.equal(fluid.layerMimeType("fluid.tests.ptf.counter"), "text/x-vue", "SFC layer with template");
 });
 
@@ -233,7 +239,7 @@ QUnit.test("SFC component transmitted and reconstructed", async function (assert
     // Rename the layer throughout the document so that reconstruction must register it afresh
     const text = fluid.ptf.componentToPTF(that).replaceAll("fluid.tests.ptf.counter", "fluid.tests.ptf.counterCopy");
     const target = qs(".target-container");
-    const {that: copy, unresolved} = await fluid.tests.ptf.settle(fluid.ptf.instantiate(text, {potentia: {container: target}}));
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text, {potentia: {container: target}});
     assert.deepEqual(unresolved, [], "All parts applied");
     assert.equal(fluid.layerMimeType("fluid.tests.ptf.counterCopy"), "text/x-vue", "Transmitted layer registered as SFC");
     assert.equal(copy.text, "User text", "User potentia reconstructed");
@@ -282,11 +288,108 @@ QUnit.test("JavaScript component with subcomponent transmitted and reconstructed
     ], "Expected parts assembled for parent and subcomponent");
 
     const text = fluid.ptf.componentToPTF(that).replaceAll("fluid.tests.ptf.js", "fluid.tests.ptf.copied");
-    const {that: copy, unresolved} = await fluid.tests.ptf.settle(fluid.ptf.instantiate(text));
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text);
     assert.deepEqual(unresolved, [], "All parts applied");
     assert.deepEqual(copy.extra, {deep: [1, 2]}, "User potentia reconstructed");
     assert.equal(copy.child.value, 5, "Subcomponent live state reconstructed");
     assert.equal(copy.child.doubled, 10, "Transmitted function in JavaScript layer operates");
     that.destroy();
     copy.destroy();
+});
+
+QUnit.test("Component injecting its grandparent transmitted and reconstructed - fluid-project/infusion-6#20", async function (assert) {
+    fluid.def("fluid.tests.ptf.loader", {
+        $layers: "fluid.component",
+        value: "loader",
+        panel: {
+            $component: {
+                $layers: "fluid.component",
+                filter: {
+                    $component: {
+                        $layers: "fluid.component",
+                        filterRoot: "{loader}",
+                        loaderValue: "{filterRoot}.value"
+                    }
+                }
+            }
+        }
+    });
+    const that = fluid.tests.ptf.loader();
+    fluid.cell.stabilize();
+    assert.ok(that.panel.filter.filterRoot === that, "Grandparent injected into source component");
+
+    const parts = fluid.ptf.componentToParts(that);
+    assert.deepEqual(parts.map(part => [part.kind, part.filename]), [
+        ["layer", "fluid.tests.ptf.loader"],
+        ["potentia", "/"]
+    ], "Injected grandparent is not traversed again when assembling parts");
+
+    // Destroy the source and erase its definition so that reconstruction must register it afresh from the document
+    const text = fluid.ptf.componentToPTF(that);
+    that.destroy();
+    fluid.deleteLayer("fluid.tests.ptf.loader");
+    assert.ok(fluid.isUnavailable(fluid.readLayer("fluid.tests.ptf.loader").get()), "Definition erased from the registry");
+
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text);
+    assert.deepEqual(unresolved, [], "All parts applied");
+    assert.notOk(fluid.isUnavailable(fluid.readLayer("fluid.tests.ptf.loader").get()), "Transmitted definition registered");
+    assert.ok(copy.panel.filter.filterRoot === copy, "Grandparent injected into reconstructed component");
+    assert.equal(copy.panel.filter.loaderValue, "loader", "Injected grandparent resolves by its injected name");
+    copy.destroy();
+});
+
+QUnit.test("Parts applied in place to an existing component, and construction deferring availability", async function (assert) {
+    fluid.def("fluid.tests.ptf.inPlaceChild", {
+        $layers: "fluid.component",
+        value: 1
+    });
+    fluid.def("fluid.tests.ptf.inPlace", {
+        $layers: "fluid.component",
+        count: 0,
+        text: "Original",
+        child: {
+            $component: {
+                $layers: "fluid.tests.ptf.inPlaceChild"
+            }
+        }
+    });
+    const that = fluid.tests.ptf.inPlace();
+    fluid.cell.stabilize();
+    const parts = fluid.ptf.decode(fluid.ptf.encode([
+        {kind: "potentia", contentType: "application/json", filename: "/", body: JSON.stringify({$layers: ["fluid.tests.ptf.other"]})},
+        {kind: "potentia", contentType: "application/json", filename: "/extra", body: JSON.stringify({$layers: ["fluid.tests.ptf.inPlaceChild"], value: 7})},
+        {kind: "live", contentType: "application/json", filename: "/", body: JSON.stringify({count: 3})},
+        {kind: "live", contentType: "application/json", filename: "/child", body: JSON.stringify({value: 5})},
+        {kind: "live", contentType: "application/json", filename: "/missing", body: JSON.stringify({value: 9})}
+    ]));
+    assert.ok(fluid.ptf.isRootPotentiaPart(parts[0]), "Potentia for / recognised as root potentia");
+    assert.notOk(fluid.ptf.isRootPotentiaPart(parts[1]), "Potentia for subcomponent not recognised as root potentia");
+    const unresolved = await fluid.ptf.applyParts(that, parts);
+    assert.deepEqual(unresolved, ["/missing"], "Part for absent subcomponent reported as unresolved");
+    assert.equal(that.count, 3, "Live part applied to existing component");
+    assert.equal(that.text, "Original", "Unmentioned state of existing component retained");
+    assert.equal(that.child.value, 5, "Live part applied to existing subcomponent");
+    const extraShadow = fluid.ptf.resolveShadow(fluid.ptf.componentToShadow(that), ["extra"]);
+    assert.equal(extraShadow.that.value, 7, "Fresh subcomponent created from potentia part");
+    assert.deepEqual(fluid.deSignal(that.$layers), fluid.deSignal(fluid.tests.ptf.inPlace().$layers), "Root potentia ignored");
+
+    // A component whose layer is not yet defined is returned by constructParts, unavailable
+    const pendingParts = [
+        {kind: "potentia", contentType: "application/json", filename: "/", body: JSON.stringify({$layers: ["fluid.tests.ptf.later"]})},
+        {kind: "live", contentType: "application/json", filename: "/", body: JSON.stringify({count: 4})}
+    ];
+    const pending = fluid.ptf.constructParts(pendingParts);
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(fluid.ptf.componentToShadow(pending).availableInstance.get()), "Component of undefined layer constructed unavailable");
+    const applied = fluid.ptf.applyParts(pending, pendingParts);
+    fluid.def("fluid.tests.ptf.later", {
+        $layers: "fluid.component",
+        count: 0
+    });
+    assert.deepEqual(await applied, [], "Parts applied once layer defined");
+    assert.equal(pending.count, 4, "Live part applied to component once available");
+
+    assert.throws(() => fluid.ptf.constructParts([pendingParts[1]]), "Construction without root potentia throws");
+    that.destroy();
+    pending.destroy();
 });

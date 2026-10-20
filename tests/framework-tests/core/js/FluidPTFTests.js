@@ -337,3 +337,59 @@ QUnit.test("Component injecting its grandparent transmitted and reconstructed - 
     assert.equal(copy.panel.filter.loaderValue, "loader", "Injected grandparent resolves by its injected name");
     copy.destroy();
 });
+
+QUnit.test("Parts applied in place to an existing component, and construction deferring availability", async function (assert) {
+    fluid.def("fluid.tests.ptf.inPlaceChild", {
+        $layers: "fluid.component",
+        value: 1
+    });
+    fluid.def("fluid.tests.ptf.inPlace", {
+        $layers: "fluid.component",
+        count: 0,
+        text: "Original",
+        child: {
+            $component: {
+                $layers: "fluid.tests.ptf.inPlaceChild"
+            }
+        }
+    });
+    const that = fluid.tests.ptf.inPlace();
+    fluid.cell.stabilize();
+    const parts = fluid.ptf.decode(fluid.ptf.encode([
+        {kind: "potentia", contentType: "application/json", filename: "/", body: JSON.stringify({$layers: ["fluid.tests.ptf.other"]})},
+        {kind: "potentia", contentType: "application/json", filename: "/extra", body: JSON.stringify({$layers: ["fluid.tests.ptf.inPlaceChild"], value: 7})},
+        {kind: "live", contentType: "application/json", filename: "/", body: JSON.stringify({count: 3})},
+        {kind: "live", contentType: "application/json", filename: "/child", body: JSON.stringify({value: 5})},
+        {kind: "live", contentType: "application/json", filename: "/missing", body: JSON.stringify({value: 9})}
+    ]));
+    assert.ok(fluid.ptf.isRootPotentiaPart(parts[0]), "Potentia for / recognised as root potentia");
+    assert.notOk(fluid.ptf.isRootPotentiaPart(parts[1]), "Potentia for subcomponent not recognised as root potentia");
+    const unresolved = await fluid.ptf.applyParts(that, parts);
+    assert.deepEqual(unresolved, ["/missing"], "Part for absent subcomponent reported as unresolved");
+    assert.equal(that.count, 3, "Live part applied to existing component");
+    assert.equal(that.text, "Original", "Unmentioned state of existing component retained");
+    assert.equal(that.child.value, 5, "Live part applied to existing subcomponent");
+    const extraShadow = fluid.ptf.resolveShadow(fluid.ptf.componentToShadow(that), ["extra"]);
+    assert.equal(extraShadow.that.value, 7, "Fresh subcomponent created from potentia part");
+    assert.deepEqual(fluid.deSignal(that.$layers), fluid.deSignal(fluid.tests.ptf.inPlace().$layers), "Root potentia ignored");
+
+    // A component whose layer is not yet defined is returned by constructParts, unavailable
+    const pendingParts = [
+        {kind: "potentia", contentType: "application/json", filename: "/", body: JSON.stringify({$layers: ["fluid.tests.ptf.later"]})},
+        {kind: "live", contentType: "application/json", filename: "/", body: JSON.stringify({count: 4})}
+    ];
+    const pending = fluid.ptf.constructParts(pendingParts);
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(fluid.ptf.componentToShadow(pending).availableInstance.get()), "Component of undefined layer constructed unavailable");
+    const applied = fluid.ptf.applyParts(pending, pendingParts);
+    fluid.def("fluid.tests.ptf.later", {
+        $layers: "fluid.component",
+        count: 0
+    });
+    assert.deepEqual(await applied, [], "Parts applied once layer defined");
+    assert.equal(pending.count, 4, "Live part applied to component once available");
+
+    assert.throws(() => fluid.ptf.constructParts([pendingParts[1]]), "Construction without root potentia throws");
+    that.destroy();
+    pending.destroy();
+});

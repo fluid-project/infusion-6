@@ -145,3 +145,21 @@ QUnit.assert.assertNode = function (node, expected, message, segs = []) {
         }
     }
 };
+
+/**
+ * Global guard, applied after every test, that the reactive graph has been left quiescent - no effects queued and no
+ * fits other than static ones left open. This catches a synchronous test which only passed because deferred
+ * auto-stabilization happened to tidy up behind it, as well as fits leaked by a test. An assertion is only made on
+ * failure, so that tests declaring an expected assertion count are unaffected.
+ */
+QUnit.hooks.afterEach(function (assert) {
+    if (fluid.cell?.isQuiescent && !fluid.cell.isQuiescent()) {
+        const openFits = fluid.cell.CurrentFits.filter(fit => !fit.staticFit).map(fit => fit.fitId);
+        assert.pushResult({
+            result: false,
+            actual: {openFits, queuedEffects: fluid.cell.EffectQueue.map(effect => effect.name)},
+            expected: {openFits: [], queuedEffects: []},
+            message: "Reactive graph should be quiescent at end of test"
+        });
+    }
+});

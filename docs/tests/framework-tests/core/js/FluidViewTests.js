@@ -16,9 +16,14 @@ QUnit.test("Layer name extraction test", function (assert) {
 });
 
 fluid.def("fluid.tests.basicRender", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     text: "Initial value",
-    template: "<div>@{text}</div>"
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "<div>@{text}</div>"
+        }
+    }
 });
 
 const qs =  (sel, parent) => (parent || document).querySelector(sel);
@@ -40,10 +45,36 @@ QUnit.test("Basic static rendering test", function (assert) {
 });
 
 
+QUnit.test("Rendering machinery is hosted by a view subcomponent - fluid-project/infusion-6#19", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.basicRender({container});
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+
+    assert.notOk(that.$layers.some(layerName => layerName !== "fluid.component" && layerName !== "fluid.tests.basicRender"),
+        "Principal component has no view layers");
+    assert.ok(fluid.hasLayer(that.view, "fluid.viewComponent"), "Principal component has a view subcomponent");
+    ["container", "template", "templateTree", "elideParent", "vTree", "renderView", "renderedContainer"].forEach(member => {
+        assert.equal(that[member], undefined, `View member ${member} is not a member of the principal component`);
+    });
+    assert.equal(that.view.template, "<div>@{text}</div>", "Template is configured on the view");
+    assert.equal(that.view.vTree.children[0].text.get(), "Initial value", "Rendered tree is a member of the view, with references resolved against the principal");
+    assert.equal(that.view.container, container, "Container supplied to the free creator function is forwarded to the view");
+    assert.equal(that.view.renderedContainer, container, "View exposes its rendered container");
+    assert.equal(fluid.renderedContainerFor(shadow), container, "Rendered container is retrievable from principal's shadow");
+    assert.equal(fluid.shadowForElement(container), shadow, "Container is registered against the principal component");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.nestedNodeRender", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     text: "Initial value",
-    template: `<div><div class="inner">@{text}</div></div>`
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><div class="inner">@{text}</div></div>`
+        }
+    }
 });
 
 
@@ -75,9 +106,14 @@ QUnit.test("Basic dynamic rendering test", function (assert) {
 // Dynamic attribute test, attribute value drawn from signal
 
 fluid.def("fluid.tests.dynamicAttribute", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     text: "Initial value",
-    template: `<div><input value="@{text}"/></div>`
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><input value="@{text}"/></div>`
+        }
+    }
 });
 
 QUnit.test("Dynamic attribute test", function (assert) {
@@ -108,8 +144,13 @@ QUnit.test("Dynamic attribute test", function (assert) {
 // Nested render test, one component within another
 
 fluid.def("fluid.tests.nestedOuter", {
-    $layers: "fluid.templateViewComponent",
-    template: `<div class="outer"><div class="outerInner" @id="inner"></div>`,
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="outer"><div class="outerInner" @id="inner"></div>`
+        }
+    },
     inner: {
         $component: {
             $layers: "fluid.tests.nestedInner"
@@ -118,9 +159,14 @@ fluid.def("fluid.tests.nestedOuter", {
 });
 
 fluid.def("fluid.tests.nestedInner", {
-    $layers: "fluid.templateViewComponent",
-    elideParent: false,
-    template: `<div class="inner">Text from inner</div>`
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            elideParent: false,
+            template: `<div class="inner">Text from inner</div>`
+        }
+    }
 });
 
 fluid.tests.nestedExpect = {
@@ -174,9 +220,14 @@ QUnit.test("Nested render test - adapt inner", function (assert) {
 
     // Update the inner layer definition to include a new template
     const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.nestedInner", {
-        $layers: "fluid.templateViewComponent",
-        elideParent: false,
-        template: `<div class="inner">New brush</div>`
+        $layers: "fluid.component",
+        view: {
+            $component: {
+                $layers: "fluid.templateViewComponent",
+                elideParent: false,
+                template: `<div class="inner">New brush</div>`
+            }
+        }
     });
     fluid.cell.stabilize();
 
@@ -203,8 +254,13 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
     const nodes1 = fluid.tests.getNodeParents(container, ".inner");
 
     const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.nestedOuter", {
-        $layers: "fluid.templateViewComponent",
-        template: `<div class="outer"><div class="newHandle" @id="inner"></div>`
+        $layers: "fluid.component",
+        view: {
+            $component: {
+                $layers: "fluid.templateViewComponent",
+                template: `<div class="outer"><div class="newHandle" @id="inner"></div>`
+            }
+        }
     });
 
     fluid.cell.stabilize();
@@ -222,9 +278,14 @@ QUnit.test("Nested render test - adapt outer", function (assert) {
 });
 
 fluid.def("fluid.tests.bindClick", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     value: 0,
-    template: `<div><button @onclick="{self}.increment()"/></div>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><button @onclick="{self}.increment()"/></div>`
+        }
+    },
     increment: {
         $method: {
             args: "{self}",
@@ -247,10 +308,15 @@ QUnit.test("Basic click test", function (assert) {
 });
 
 fluid.def("fluid.tests.multiClass", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     a: true,
     b: true,
-    template: `<div><span class="base" @class="one:@{a},two:@{b},three:!@{a}">Text</span></div>`
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><span class="base" @class="one:@{a},two:@{b},three:!@{a}">Text</span></div>`
+        }
+    }
 });
 
 fluid.tests.checkMultiClass = function (assert, container, expected, message) {
@@ -297,11 +363,16 @@ fluid.tests.todos = [
 ];
 
 fluid.def("fluid.tests.todoItem", {
-    $layers: "fluid.templateViewComponent",
-    template:
-        `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({self}.itemIndex)">
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template:
+            `<span class="todo tag is-large" @class="completed:@{completed},is-info:!@{completed}" @onclick="{todoList}.toggleItem({self}.itemIndex)">
             @{text}<button class="delete is-small" @onclick.stop="{todoList}.deleteItem({self}.itemIndex)"></button>
         </span>`
+        }
+    }
 });
 
 fluid.tests.todoKeyUp = function (e, todos) {
@@ -314,12 +385,15 @@ fluid.tests.todoKeyUp = function (e, todos) {
 };
 
 fluid.def("fluid.tests.todoList", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     todos: {
         $reactiveRoot: fluid.tests.todos
     },
-    template:
-    `<div id="main">
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template:
+        `<div id="main">
         <section class="hero is-dark">
             <h1 class="title">Todo List</h1>
             <h2 class="subtitle">Get in charge of your life</h2>
@@ -328,7 +402,9 @@ fluid.def("fluid.tests.todoList", {
             <input class="input is-rounded" @onkeyup="fluid.tests.todoKeyUp({0}, {todoList}.todos)" type="text" placeholder="New todo">
             <div @id="todoItems" class="section"></div>
         </section>
-    </div>`,
+    </div>`
+        }
+    },
     todoItems: {
         $component: {
             $layers: "fluid.tests.todoItem",
@@ -497,19 +573,29 @@ QUnit.test("Event triggering and user reactivity test - insert array element", f
 });
 
 fluid.def("fluid.tests.fullPageEditor", {
-    $layers: "fluid.viewComponent",
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.viewComponent"
+        }
+    },
     editButton: {
         $component: {
-            $layers: "fluid.templateViewComponent",
-            template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
-            container: "$compute:fluid.insertChildContainer(before, editButton, {self}.templateTree, {fullPageEditor}.renderedContainer)"
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<button style="position: fixed; top: 1em; right: 1em;">Edit</button>`,
+                    container: "$compute:fluid.insertChildContainer(before, editButton, {self}.templateTree, {fullPageEditor}.view.renderedContainer)"
+                }
+            }
         }
     }
 });
 
 QUnit.test("Reference up through rendering effect", function (assert) {
     const container = qs(".container");
-    fluid.tests.fullPageEditor({container, $layers: "fluid.selfTemplateRoot"});
+    fluid.tests.fullPageEditor({container, view: {$component: {$layers: "fluid.selfTemplateRootViewComponent"}}});
     fluid.cell.stabilize();
 
     const button = qs("button", container);
@@ -517,20 +603,35 @@ QUnit.test("Reference up through rendering effect", function (assert) {
 });
 
 fluid.def("fluid.tests.dynamicChild", {
-    $layers: "fluid.templateViewComponent",
-    template: `<div class="dynamic">Dynamic template</div>`
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="dynamic">Dynamic template</div>`
+        }
+    }
 });
 
 fluid.def("fluid.tests.dynamicLayerName", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     dynamicLayerName: "fluid.tests.dynamicChild",
-    template: `<div @id="child"></div>`,
-    elideParent: false,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div @id="child"></div>`,
+            elideParent: false
+        }
+    },
     child: {
         $component: {
-            $layers: ["fluid.templateViewComponent", "{self}.dynamicLayerName"],
+            $layers: ["fluid.component", "{self}.dynamicLayerName"],
             dynamicLayerName: "{dynamicLayerName}.dynamicLayerName",
-            template: `<div>Static template</div>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div>Static template</div>`
+                }
+            }
         }
     }
 });
@@ -544,15 +645,25 @@ QUnit.test("Rendering content from dynamic layer", function (assert) {
 });
 
 fluid.def("fluid.tests.assigneeIf", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     enabled: false,
-    template: `<div @id="assignee"></div>`,
-    elideParent: false,
-    assignee: {
+    view: {
         $component: {
             $layers: "fluid.templateViewComponent",
+            template: `<div @id="assignee"></div>`,
+            elideParent: false
+        }
+    },
+    assignee: {
+        $component: {
+            $layers: "fluid.component",
             $if: "{assigneeIf}.enabled",
-            template: `<div class="assignee"></div>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="assignee"></div>`
+                }
+            }
         }
     }
 });
@@ -564,10 +675,12 @@ QUnit.test("Conditional rendering", function (assert) {
     fluid.cell.stabilize();
     // Unfortunately we can't prevent allocation of the "outer container", even if there is no component
     assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+    // The conditional component's container acquires a default id derived from its path whilst it is rendered
+    const assigneeId = `fl-id-${that[fluid.metadataSymbol].path}.assignee`;
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct");
+    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: ""}]}, "Conditional render correct");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -575,7 +688,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="assignee"></div>`, "Conditional render correct 2");
+    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: ""}]}, "Conditional render correct 2");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -583,18 +696,28 @@ QUnit.test("Conditional rendering", function (assert) {
 });
 
 fluid.def("fluid.tests.longFormIf", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     distance: null,
-    template: `<div @id="distanceLine"></div>`,
-    elideParent: false,
-    distanceLine: {
+    view: {
         $component: {
             $layers: "fluid.templateViewComponent",
+            template: `<div @id="distanceLine"></div>`,
+            elideParent: false
+        }
+    },
+    distanceLine: {
+        $component: {
+            $layers: "fluid.component",
             $if: {
                 func: x => x !== null,
                 args: "{longFormIf}.distance"
             },
-            template: `<div class="distance">@{{longFormIf}.distance}</div>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="distance">@{{longFormIf}.distance}</div>`
+                }
+            }
         }
     }
 });
@@ -604,22 +727,74 @@ QUnit.test("Conditional rendering with long-form $if record - fluid-project/infu
     const that = fluid.tests.longFormIf({container});
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
+    const distanceId = `fl-id-${that[fluid.metadataSymbol].path}.distanceLine`;
 
     that.distance = 0;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="distance">0</div>`, "Falsy value accepted by condition renders");
+    assert.assertNode(container, {$children: [{$tagName: "div", id: distanceId, class: "distance", $innerHTML: "0"}]}, "Falsy value accepted by condition renders");
 
     that.distance = 5;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, `<div class="distance">5</div>`, "Updated value renders");
+    assert.assertNode(container, {$children: [{$tagName: "div", id: distanceId, class: "distance", $innerHTML: "5"}]}, "Updated value renders");
 
     that.distance = null;
     fluid.cell.stabilize();
     assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
 });
 
+fluid.def("fluid.tests.containerIds", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="outer"><div @id="plain"></div><div @id="identified"></div></div>`
+        }
+    },
+    plain: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="plain">Plain</div>`
+                }
+            }
+        }
+    },
+    identified: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div id="own-id" class="identified">Own</div>`
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Rendered containers acquire default ids derived from component paths", function (assert) {
+    const container = qs(".container");
+    const presetId = container.id;
+    const that = fluid.tests.containerIds({container});
+    fluid.cell.stabilize();
+    assert.ok(presetId, "Fixture container has an id of its own");
+    assert.equal(container.id, presetId, "Existing id of container is preserved");
+    assert.equal(qs(".plain", container).id, `fl-id-${that[fluid.metadataSymbol].path}.plain`, "Child container acquires id from component path");
+    assert.equal(qs(".identified", container).id, "own-id", "Id specified in template takes precedence");
+    that.destroy();
+
+    container.removeAttribute("id");
+    const that2 = fluid.tests.containerIds({container});
+    fluid.cell.stabilize();
+    assert.equal(container.id, `fl-id-${that2[fluid.metadataSymbol].path}`, "Root container without id acquires id from component path");
+    that2.destroy();
+    container.id = presetId;
+});
+
 fluid.def("fluid.tests.attrBinding", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     busy: false,
     text: "Initial",
     shout: "$compute:fluid.tests.attrBinding.shout({self}.text)",
@@ -631,7 +806,10 @@ fluid.def("fluid.tests.attrBinding", {
             prompt: "Initial prompt"
         }
     },
-    template: `<div>
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div>
         <input class="prompt" value="@{state.prompt}"/>
         <button disabled="@{busy}" aria-pressed="@{busy}" title="Busy: @{busy}">Go</button>
         <input class="text" value="@{text}"/>
@@ -640,6 +818,8 @@ fluid.def("fluid.tests.attrBinding", {
         <textarea value="@{notes}"></textarea>
         <select value="@{choice}"><option value="a">A</option><option value="b">B</option></select>
     </div>`
+        }
+    }
 });
 
 fluid.tests.attrBinding.shout = text => text.toUpperCase();
@@ -725,4 +905,147 @@ QUnit.test("Binding attributes and live state properties - fluid-project/infusio
     fluid.cell.stabilize();
     assert.deepEqual(options.map(option => option.hasAttribute("selected")), [true, false], "Select value updated");
     assert.equal(qs("select", container).value, "a", "Select value property agrees");
+});
+
+// Cross-injection of views - fluid-project/infusion-6#20
+
+fluid.def("fluid.tests.crossInject.first", {
+    $layers: "fluid.component",
+    text: "First",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="first">@{text}</div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.crossInject.second", {
+    $layers: "fluid.component",
+    text: "Second",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="second">@{text}</div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.crossInjectView", {
+    $layers: "fluid.component",
+    view1: {
+        $component: {
+            $layers: "fluid.tests.crossInject.first"
+        }
+    },
+    view2: {
+        $component: {
+            $layers: "fluid.tests.crossInject.second",
+            // cross-link to view1's view, sharing its view and defeating our own rendering
+            view: "{view1}.view"
+        }
+    },
+    // Produce what from the outside appears to be a regular view component built out of view1's view
+    view: "{view1}.view" // Note that "proleptic scoping" works - {view1} resolves before view1 is created
+});
+
+QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.crossInjectView({
+        view1: {
+            $component: {
+                view: {
+                    $component: {container}
+                }
+            }
+        }
+    });
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const viewShadow = that.view1.view[fluid.metadataSymbol];
+    const view2Shadow = that.view2[fluid.metadataSymbol];
+
+    assert.assertNode(container, {$tagName: "div", "class": "first", $nodeValue: "First"}, "First component's view rendered into its container");
+    assert.equal(qsa(".second", container).length, 0, "Second component's own template is not rendered");
+
+    assert.equal(that.view, that.view1.view, "Outer component's view is the first component's view");
+    assert.ok(fluid.hasLayer(that.view, "fluid.viewComponent"), "Outer component's view is a view component");
+    assert.equal(fluid.viewShadowFor(shadow), viewShadow, "Outer component's view is found as its view subcomponent");
+    assert.equal(fluid.renderedContainerFor(shadow), container, "Outer component exposes the first component's rendered container");
+
+    assert.equal(that.view2.view, that.view1.view, "Second component's view is the first component's view");
+    assert.equal(fluid.viewShadowFor(view2Shadow), viewShadow, "Second component's view is found as its view subcomponent");
+    const view2ViewPath = fluid.composeSegment(view2Shadow.path, "view");
+    assert.equal(fluid.globalInstantiator.pathToComponent[view2ViewPath], viewShadow, "Second component's view path holds the injected view");
+    assert.notOk(Object.values(fluid.globalInstantiator.pathToComponent).some(oneShadow => oneShadow.path === view2ViewPath),
+        "No view was created for the second component");
+
+    that.view1.text = "Updated";
+    fluid.cell.stabilize();
+    assert.assertNode(container, {$tagName: "div", "class": "first", $nodeValue: "Updated"}, "Shared view rerenders on update");
+
+    that.view1.destroy();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(that.view), "Outer component's view is unavailable once the first component is destroyed");
+    assert.ok(fluid.isUnavailable(that.view2.view), "Second component's view is unavailable once the first component is destroyed");
+    assert.undefined(fluid.viewShadowFor(shadow), "Outer component no longer has a view subcomponent");
+    assert.undefined(fluid.viewShadowFor(view2Shadow), "Second component no longer has a view subcomponent");
+    that.destroy();
+});
+
+// Top-level widgets, receiving host machinery broadcast onto their views - fluid-project/infusion-6#21
+
+fluid.def("fluid.tests.widget", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 200, h: 100},
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "<div>Widget</div>"
+        }
+    }
+});
+
+fluid.def("fluid.tests.hostView", {
+    $layers: "fluid.topLevelWidgetView",
+    hostId: null,
+    hostBounds: "$compute:fluid.tests.hostBounds({self}.hostId)"
+});
+
+fluid.tests.hostBounds = hostId => ({x: hostId * 10, y: 0, w: 1, h: 1});
+
+fluid.def("fluid.tests.widgetHost", {
+    $layers: "fluid.component",
+    hostLinkage: {
+        $linkage: {
+            inputLayers: ["fluid.topLevelWidgetView"],
+            outputLayers: ["fluid.tests.hostView"]
+        }
+    }
+});
+
+QUnit.test("Host machinery is broadcast onto the views of top-level widgets - fluid-project/infusion-6#21", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.widget({container, view: {$component: {hostId: 3}}});
+    fluid.cell.stabilize();
+    assert.assertNode(container, {$tagName: "div", $nodeValue: "Widget"}, "Widget rendered");
+    assert.ok(fluid.hasLayer(that.view, "fluid.topLevelWidgetView"), "Widget's view bears the top-level widget view layer");
+    assert.equal(that.hostBounds, null, "Widget receives placeholder bounds when unhosted");
+
+    const host = fluid.tests.widgetHost();
+    fluid.cell.stabilize();
+    assert.ok(fluid.hasLayer(that.view, "fluid.tests.hostView"), "Host's view layer is broadcast onto the widget's view");
+    assert.notOk(fluid.hasLayer(that, "fluid.tests.hostView"), "Host's view layer is not applied to the widget itself");
+    assert.deepEqual({...that.hostBounds}, {x: 30, y: 0, w: 1, h: 1}, "Widget receives bounds reported by its host's view");
+    assert.assertNode(container, {$tagName: "div", $nodeValue: "Widget"}, "Widget still rendered");
+
+    const merged = fluid.avatarMerged("fluid.tests.widget");
+    assert.ok(merged.$layers.includes("fluid.topLevelWidget"), "Widget's avatar reveals it to be a top-level widget");
+    assert.deepEqual({...merged.preferredSize}, {w: 200, h: 100}, "Widget's avatar reveals its preferred size");
+
+    host.destroy();
+    fluid.cell.stabilize();
+    assert.notOk(fluid.hasLayer(that.view, "fluid.tests.hostView"), "Host's view layer is withdrawn with the host");
+    assert.equal(that.hostBounds, null, "Widget's bounds revert to the placeholder");
+    that.destroy();
 });

@@ -1,7 +1,7 @@
 <script>
 
 fluid.def("fluid.UISelect", {
-    $layers: "fluid.viewComponent",
+    $layers: "fluid.component",
     optionValues: {
         $reactiveRoot: []
     },
@@ -16,6 +16,16 @@ fluid.def("fluid.UISelect", {
             args: ["{self}", "{0}:event"]
         }
     },
+    view: {
+        $component: {
+            $layers: "fluid.UISelectViewComponent"
+        }
+    }
+});
+
+// The view of a fluid.UISelect, which renders its options from its parent's configuration
+fluid.def("fluid.UISelectViewComponent", {
+    $layers: "fluid.viewComponent",
     elideParent: false,
     templateTree: {
         $compute: {
@@ -36,7 +46,7 @@ fluid.def("fluid.UISelect", {
                 }))
 
             }),
-            args: ["{self}.selection", "{self}.optionValues", "{self}.optionNames"]
+            args: ["{$parent}.selection", "{$parent}.optionValues", "{$parent}.optionNames"]
         }
     }
 });

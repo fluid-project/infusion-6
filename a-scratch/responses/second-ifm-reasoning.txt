@@ -1,0 +1,46 @@
+The user wants a simple component with three buttons (red, green, blue) that set the colour of a box. I'll create a fresh layer and a fresh component on the canvas.
+
+Let me design it:
+
+```js
+fluid.def("fluid.demos.ai.colourBox", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 260, h: 110},
+    state: {
+        $reactiveRoot: {
+            colour: "white"
+        }
+    },
+    setColour: {
+        $method: {
+            func: (state, colour) => {
+                state.colour = colour;
+            },
+            args: ["{self}.state", "{0}:colour"]
+        }
+    }
+});
+```
+
+Template: a div with three buttons, each onclick calls setColour(red) etc., and a box whose background colour is bound.
+
+```html
+<template>
+    <div class="ai-colourbox">
+        <div class="ai-colourbox-box" style="background-color: @{state.colour}"></div>
+        <div class="ai-colourbox-buttons">
+            <button @onclick="{self}.setColour(red)">Red</button>
+            <button @onclick="{self}.setColour(green)">Green</button>
+            <button @onclick="{self}.setColour(blue)">Blue</button>
+        </div>
+    </div>
+</template>
+```
+
+Style: box height, buttons flex.
+
+Then a component part with potentia `{"$layers": ["fluid.demos.ai.colourBox"]}` and a shape position. The user has no selection, so place it somewhere sensible, e.g. x 500, y 300. Maybe x 480, y 300 to avoid the existing helloWorld at (200,200,260,80) — the hello world shape spans x 200-460, y 200-280. Place new at x 500, y 200.
+
+Note literal args without quotes: `setColour(red)` passes string "red". Good.
+
+I'll write the PTF document.

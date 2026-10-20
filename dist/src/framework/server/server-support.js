@@ -5,7 +5,8 @@ const fs = require("fs");
 
 const linkedom = require("linkedom"),
     vm = require("vm"),
-    he = require("he");
+    he = require("he"),
+    {fileURLToPath} = require("url");
 
 const fluid = global.fluid;
 
@@ -92,8 +93,49 @@ fluid.applyServerScriptInjection = function ({dokkument, injRec, material}, exis
     return togo;
 };
 
+/**
+ * Server version of the `prepare` method of `fluid.scriptInjectionStyles.link` from FluidView.js. A browser's fetch
+ * resolves a relative URL against the document, whereas node's has nothing to resolve it against, so the script is
+ * fetched from its absolute URL. Its source URL is left relative to the document, as in the browser.
+ * @param {InjectionRecord} injRec - The injection record, whose `url` is relative to its module
+ * @param {Document} dokkument - The document into which the script is injected
+ * @return {Promise<Object>} A promise for the injection's material, with members `text` and `sourceUrl`
+ */
+fluid.prepareServerScriptLink = function (injRec, dokkument) {
+    const resolved = fluid.module.resolveRelativePath(dokkument.location, injRec.url);
+    return fluid.fetchInjectionText(new URL(resolved, dokkument.location).href).then(text => ({text, sourceUrl: resolved}));
+};
+
 fluid.scriptInjectionStyles.literal.apply = fluid.applyServerScriptInjection;
+fluid.scriptInjectionStyles.link.prepare = fluid.prepareServerScriptLink;
 fluid.scriptInjectionStyles.link.apply = fluid.applyServerScriptInjection;
+
+/**
+ * Server version of the `apply` method of `fluid.cssInjectionStyles.link` from FluidView.js. The same link node is
+ * written into the document as in the browser, but since linkedom neither fetches stylesheets nor fires "load" or
+ * "error" on link elements, the stylesheet is considered loaded if its file exists. Remote stylesheets are assumed to
+ * load.
+ * @param {DocInjectionRecord} docInjRec - The injection payload
+ * @param {Element|null} existing - Any existing node with the injection's id
+ * @return {Boolean|Unavailable} `true` if the stylesheet exists, otherwise an unavailable value describing the failure
+ */
+fluid.applyServerLinkInjection = function ({dokkument, injRec}, existing) {
+    const resolved = fluid.module.resolveRelativePath(dokkument.location, injRec.url);
+    if (existing?.localName === "link") {
+        existing.href = resolved;
+    } else {
+        const fresh = dokkument.createElement("link");
+        fresh.rel = "stylesheet";
+        fresh.href = resolved;
+        fresh.id = injRec.nodeId;
+        fluid.swapInjectedNode(dokkument, existing, fresh);
+    }
+    const url = new URL(resolved, dokkument.location);
+    const exists = url.protocol === "file:" ? fs.existsSync(fileURLToPath(url)) : true;
+    return exists ? true : fluid.unavailable({message: `Failure loading stylesheet at ${resolved}`});
+};
+
+fluid.cssInjectionStyles.link.apply = fluid.applyServerLinkInjection;
 
 fluid.activateDocument = function (dokkument) {
     const scriptQuery = fluid.liveQuerySelectorAll("script", dokkument, dokkument);

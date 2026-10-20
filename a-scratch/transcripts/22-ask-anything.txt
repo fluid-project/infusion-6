@@ -1,0 +1,3951 @@
+ ▐▛███▛█   Claude Code v2.1.304
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
+
+
+❯ Address issue https://github.com/fluid-project/infusion-6/issues/22
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● I'm reading the issue attachments (Stund widget HTML, chat component, ponder
+  docs) and then the repo's tldraw demo to plan the port.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Now the PTF module and the ponder docs.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● Still in reconnaissance: now looking at the cross-injection tests (for the AI
+  "strategy hints") and how shapes/instances are tracked, before I start writing
+  code.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Web Search("api.ifm.ai v1 chat completions K2 model name")
+  ⎿  Did 1 search in 6s
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed the proxy answers CORS for POST only (so no /models listing; I'll
+  stop probing to avoid fail2ban). Now checking the test harness and puppeteer
+  demo tests, then I'll start writing.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● I've settled the design and am now writing code, starting with a small
+  refactor in FluidPTF.js so PTF parts can be applied to an existing component
+  in place.
+
+● Update(src/framework/core/js/FluidPTF.js)
+  ⎿  Added 69 lines, removed 37 lines
+      514       */
+      515
+      516      /**
+      517 -     * Reconstruct a component from the parts of a PTF documen
+          -t. Any layers which are not already defined are registered, un
+          -less
+      518 -     * `options.overrideLayers` is set in which case all trans
+          -mitted layers are registered. The component is
+      519 -     * constructed as a free component from the root potentia,
+          - and once it becomes available, any further potentia and
+      520 -     * live layer contents are applied to it and its subcompon
+          -ents.
+      517 +     * Register the layer definitions held in the layer parts
+          +of a PTF document. Any layers which are not already
+      518 +     * defined are registered, unless `overrideLayers` is set
+          +in which case all transmitted layers are registered.
+      519 +     * @param {PTFPart[]} parts - The decoded parts of the PTF
+          + document - any which are not layer parts are ignored
+      520 +     * @param {Boolean} [overrideLayers] - If `true`, transmit
+          +ted layers override any existing definitions
+      521 +     */
+      522 +    fluid.ptf.registerLayerParts = function (parts, overrideLa
+          +yers) {
+      523 +        parts.filter(part => part.kind === "layer").forEach(pa
+          +rt => {
+      524 +            const existing = fluid.readLayer(part.filename).ge
+          +t();
+      525 +            if (overrideLayers || fluid.isUnavailable(existing
+          +) || fluid.isUnavailable(fluid.deSignal(existing.raw))) {
+      526 +                fluid.ptf.registerLayerPart(part);
+      527 +            }
+      528 +        });
+      529 +    };
+      530 +
+      531 +    /**
+      532 +     * Determine whether a part of a PTF document holds the po
+          +tentia of its root component.
+      533 +     * @param {PTFPart} part - The part to be tested
+      534 +     * @return {Boolean} `true` if the part is a potentia part
+          + for the path `/`
+      535 +     */
+      536 +    fluid.ptf.isRootPotentiaPart = function (part) {
+      537 +        return part.kind === "potentia" && fluid.ptf.filenameT
+          +oSegs(part.filename).length === 0;
+      538 +    };
+      539 +
+      540 +    /**
+      541 +     * Apply the potentia of subcomponents and the live layer
+          +contents held in the parts of a PTF document to an
+      542 +     * existing component and its subcomponents. Any potentia
+          +for the root component itself is ignored, since this
+      543 +     * determines how the component is created rather than any
+          +thing which can be applied to it.
+      544 +     * @param {fluid.component} that - The component to which
+          +the parts are to be applied
+      545 +     * @param {PTFPart[]} parts - The decoded parts of the PTF
+          + document - any which are not potentia or live parts are ignor
+          +ed
+      546 +     * @return {Promise<String[]>} A promise for the filenames
+          + of any parts which could not be applied since no
+      547 +     * component was found at their path, resolving once all p
+          +arts have been applied
+      548 +     */
+      549 +    fluid.ptf.applyParts = async function (that, parts) {
+      550 +        const rootShadow = fluid.ptf.componentToShadow(that);
+      551 +        await fluid.ptf.awaitAvailable(rootShadow);
+      552 +        const unresolved = [];
+      553 +        parts.filter(part => part.kind === "potentia" && !flui
+          +d.ptf.isRootPotentiaPart(part)).forEach(part => {
+      554 +            const segs = fluid.ptf.filenameToSegs(part.filenam
+          +e);
+      555 +            const parentShadow = fluid.ptf.resolveShadow(rootS
+          +hadow, segs.slice(0, -1));
+      556 +            if (parentShadow) {
+      557 +                const layer = JSON.parse(part.body);
+      558 +                fluid.pushPotentia(parentShadow, fluid.peek(se
+          +gs), [{mergeRecordType: "user", layer}], fluid.makeArray(layer
+          +.$layers));
+      559 +            } else {
+      560 +                unresolved.push(part.filename);
+      561 +            }
+      562 +        });
+      563 +        fluid.cell.stabilize();
+      564 +        for (const part of parts.filter(part => part.kind ===
+          +"live")) {
+      565 +            const shadow = fluid.ptf.resolveShadow(rootShadow,
+          + fluid.ptf.filenameToSegs(part.filename));
+      566 +            if (shadow) {
+      567 +                await fluid.ptf.awaitAvailable(shadow);
+      568 +                fluid.each(JSON.parse(part.body), (value, path
+          +) => {
+      569 +                    fluid.setForComponent(shadow.that, path, v
+          +alue);
+      570 +                });
+      571 +            } else {
+      572 +                unresolved.push(part.filename);
+      573 +            }
+      574 +        }
+      575 +        fluid.cell.stabilize();
+      576 +        return unresolved;
+      577 +    };
+      578 +
+      579 +    /**
+      580 +     * Reconstruct a component from the parts of a PTF documen
+          +t. Its layers are registered as by
+      581 +     * `fluid.ptf.registerLayerParts`. The component is constr
+          +ucted as a free component from the root potentia, and
+      582 +     * once it becomes available, any further potentia and liv
+          +e layer contents are applied to it and its subcomponents.
+      583       * @param {PTFPart[]} parts - The decoded parts of the PTF
+            document
+      584       * @param {Object} [options] - Options governing reconstru
+           ction
+      585       * @param {Boolean} [options.overrideLayers] - If `true`,
+           transmitted layers override any existing definitions
+     ...
+      589       */
+      590      fluid.ptf.instantiateParts = async function (parts, option
+           s = {}) {
+      591          let togo;
+      530 -        parts.filter(part => part.kind === "layer").forEach(pa
+          -rt => {
+      531 -            const existing = fluid.readLayer(part.filename).ge
+          -t();
+      532 -            if (options.overrideLayers || fluid.isUnavailable(
+          -existing) || fluid.isUnavailable(fluid.deSignal(existing.raw))
+          -) {
+      533 -                fluid.ptf.registerLayerPart(part);
+      534 -            }
+      535 -        });
+      536 -        const rootPart = parts.find(part => part.kind === "pot
+          -entia" && fluid.ptf.filenameToSegs(part.filename).length === 0
+          -);
+      592 +        fluid.ptf.registerLayerParts(parts, options.overrideLa
+          +yers);
+      593 +        const rootPart = parts.find(fluid.ptf.isRootPotentiaPa
+          +rt);
+      594          if (!rootPart) {
+      595              togo = Promise.reject(fluid.unavailable("PTF docum
+           ent has no potentia for its root component", "error"));
+      596          } else {
+      597              const rootPotentia = JSON.parse(rootPart.body);
+      598              const [componentName, ...layerNames] = fluid.makeA
+           rray(rootPotentia.$layers);
+      599              const that = fluid.initFreeComponent(componentName
+           , {...rootPotentia, ...options.potentia, $layers: layerNames})
+           ;
+      543 -            const rootShadow = fluid.ptf.componentToShadow(tha
+          -t);
+      544 -            await fluid.ptf.awaitAvailable(rootShadow);
+      545 -            const unresolved = [];
+      546 -            parts.filter(part => part !== rootPart && part.kin
+          -d === "potentia").forEach(part => {
+      547 -                const segs = fluid.ptf.filenameToSegs(part.fil
+          -ename);
+      548 -                const parentShadow = fluid.ptf.resolveShadow(r
+          -ootShadow, segs.slice(0, -1));
+      549 -                if (parentShadow) {
+      550 -                    const layer = JSON.parse(part.body);
+      551 -                    fluid.pushPotentia(parentShadow, fluid.pee
+          -k(segs), [{mergeRecordType: "user", layer}], fluid.makeArray(l
+          -ayer.$layers));
+      552 -                } else {
+      553 -                    unresolved.push(part.filename);
+      554 -                }
+      555 -            });
+      556 -            fluid.cell.stabilize();
+      557 -            for (const part of parts.filter(part => part.kind
+          -=== "live")) {
+      558 -                const shadow = fluid.ptf.resolveShadow(rootSha
+          -dow, fluid.ptf.filenameToSegs(part.filename));
+      559 -                if (shadow) {
+      560 -                    await fluid.ptf.awaitAvailable(shadow);
+      561 -                    fluid.each(JSON.parse(part.body), (value,
+          -path) => {
+      562 -                        fluid.setForComponent(shadow.that, pat
+          -h, value);
+      563 -                    });
+      564 -                } else {
+      565 -                    unresolved.push(part.filename);
+      566 -                }
+      567 -            }
+      568 -            fluid.cell.stabilize();
+      600 +            const unresolved = await fluid.ptf.applyParts(that
+          +, parts);
+      601              togo = {that, unresolved};
+      602          }
+      603          return togo;
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed
+      's#../js/FluidPTFTests.js#../js/ScratchTests.js#'
+      tests/framework-tests/core/html/FluidPTFTests.html > tests/fra…)
+  ⎿  Created tests/framework-tests/core/html/ScratchTests.html (+36 -0)
+       1 +<!DOCTYPE html>
+       2 +<html lang="en">
+       3 +    <head>
+       4 +        <meta http-equiv="Content-Type" content="text/html; cha
+         +rset=utf-8" />
+       5 +        <title>FluidPTF.js Tests</title>
+       6 +
+       7 +        <link rel="stylesheet" media="screen" href="../../../li
+         +b/qunit/css/qunit.css" />
+       8 +
+       9 +        <script src="../../../../src/lib/lezer/lezer-javascript
+         +-browser.js" fluid-hydrated="%infusion-6"></script>
+      10 +
+      11 +        <script src="../../../../src/framework/core/js/FluidCor
+         +e.js"></script>
+      12 +        <script src="../../../../src/framework/core/js/FluidSig
+         +nals.js"></script>
+      13 +        <script src="../../../../src/framework/core/js/Fluid.js
+         +"></script>
+      14 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>
+      15 +        <script src="../../../../src/framework/core/js/template
+         +-parser.js"></script>
+      16 +        <script src="../../../../src/framework/core/js/sfc-pars
+         +er.js"></script>
+      17 +        <script src="../../../../src/framework/core/js/FluidMod
+         +ules.js"></script>
+      18 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w.js"></script>
+      19 +        <script src="../../../../src/framework/core/js/FluidPTF
+         +.js"></script>
+      20 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w-browser.js"></script>
+      21 +
+      22 +        <script src="../../../lib/qunit/js/qunit.js"></script>
+      23 +        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         +"></script>
+      24 +
+      25 +        <script src="../js/ScratchTests.js"></script>
+      26 +    </head>
+      27 +    <body>
+      28 +    <div id="qunit"></div>
+      29 +    <!-- Test HTML -->
+      30 +    <div id="qunit-fixture">
+      31 +        <div class="container" id="main-container"></div>
+      32 +        <div class="target-container" id="target-container"></d
+         +iv>
+      33 +    </div>
+      34 +
+      35 +    </body>
+      36 +</html>
+  ⎿  Created tests/framework-tests/core/js/ScratchTests.js (+22 -0)
+       1 +"use strict";
+       2 +const qs = sel => document.querySelector(sel);
+       3 +fluid.def("x.first", {$layers: "fluid.topLevelWidget", count: 2
+         +,
+       4 +  view: {$component: {$layers: "fluid.templateViewComponent", t
+         +emplate: `<div class="first">C @{count}</div>`}}});
+       5 +fluid.def("x.second", {$layers: "fluid.component", count: 0, do
+         +ubled: "$compute:x.double({self}.count)"});
+       6 +x.double = a => a * 2;
+       7 +fluid.def("x.umbrella", {$layers: "fluid.topLevelWidget",
+       8 +  first: {$component: {$layers: "x.first"}},
+       9 +  second: {$component: {$layers: "x.second", count: "{first}.co
+         +unt"}},
+      10 +  view: "{first}.view"});
+      11 +fluid.def("x.hostView", {$layers: "fluid.topLevelWidgetView", s
+         +hapeId: null, hostBounds: "$compute:x.hb({self}.shapeId)"});
+      12 +x.hb = id => ({id});
+      13 +fluid.def("x.host", {$layers: "fluid.component", l: {$linkage:
+         +{inputLayers: ["fluid.topLevelWidgetView"], outputLayers: ["x.h
+         +ostView"]}}});
+      14 +QUnit.test("umbrella", function (assert) {
+      15 +    const host = x.host();
+      16 +    const container = qs(".container");
+      17 +    const that = x.umbrella({container, view: {$component: {sha
+         +peId: "s1"}}});
+      18 +    fluid.cell.stabilize();
+      19 +    console.log("XXX html", container.outerHTML, "doubled", tha
+         +t.second.doubled, "hb", JSON.stringify(that.hostBounds), "first
+         +hb", JSON.stringify(that.first.hostBounds));
+      20 +    console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      21 +    assert.ok(true);
+      22 +});
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      f=tests/framework-tests/core/js/ScratchTests.js; sed -i
+      's#JSON.stringify(that.hostBounds)#fluid.isUnavailable(that.…)
+  ⎿  QUnit.load is deprecated and will be removed in QUnit 3.0. https://qun
+     itjs.com/api/QUnit/load/
+     18:02:01.205:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     … +17 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      16      const container = qs(".container");
+      17      const that = x.umbrella({container, view: {$component: {sha
+          peId: "s1"}}});
+      18      fluid.cell.stabilize();
+      19 -    console.log("XXX html", container.outerHTML, "doubled", tha
+         -t.second.doubled, "hb", JSON.stringify(that.hostBounds), "first
+         -hb", JSON.stringify(that.first.hostBounds));
+      19 +    console.log("XXX html", container.outerHTML, "doubled", tha
+         +t.second.doubled, "hb", fluid.isUnavailable(that.hostBounds) ?
+         +fluid.unavailableToCauses(that.hostBounds).map(c => c.message)
+         +: JSON.stringify(that.hostBounds), "firsthb", fluid.isUnavailab
+         +le(that.first.hostBounds) ? "U" : JSON.stringify(that.first.hos
+         +tBounds));
+      20      console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      21      assert.ok(true);
+      22  });
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      f=tests/framework-tests/core/js/ScratchTests.js; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/tests/…)
+  ⎿  QUnit.load is deprecated and will be removed in QUnit 3.0. https://qun
+     itjs.com/api/QUnit/load/
+     18:02:10.937:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+2 -1)
+      16      const container = qs(".container");
+      17      const that = x.umbrella({container, view: {$component: {sha
+          peId: "s1"}}});
+      18      fluid.cell.stabilize();
+      19 -    console.log("XXX html", container.outerHTML, "doubled", tha
+         -t.second.doubled, "hb", fluid.isUnavailable(that.hostBounds) ?
+         -fluid.unavailableToCauses(that.hostBounds).map(c => c.message)
+         -: JSON.stringify(that.hostBounds), "firsthb", fluid.isUnavailab
+         -le(that.first.hostBounds) ? "U" : JSON.stringify(that.first.hos
+         -tBounds));
+      19 +    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + Str
+         +ing(v.message || (v.causes && v.causes.map(c => c.message).join
+         +(";"))) : JSON.stringify(v);
+      20 +    console.log("XXX html", container.outerHTML, "doubled", tha
+         +t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+         +that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+         +);
+      21      console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      22      assert.ok(true);
+      23  });
+
+● Experimenting in a scratch test to verify how an "umbrella" component
+  composing two widgets behaves under the tldraw host, so the AI hints I write
+  are accurate.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      f=tests/framework-tests/core/js/ScratchTests.js; sed -i 's#const desc =
+      .*#const desc = v => fluid.isUnavailable(v)…)
+  ⎿  QUnit.load is deprecated and will be removed in QUnit 3.0. https://qun
+     itjs.com/api/QUnit/load/
+     18:02:18.645:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     … +19 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      16      const container = qs(".container");
+      17      const that = x.umbrella({container, view: {$component: {sha
+          peId: "s1"}}});
+      18      fluid.cell.stabilize();
+      19 -    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + Str
+         -ing(v.message || (v.causes && v.causes.map(c => c.message).join
+         -(";"))) : JSON.stringify(v);
+      19 +    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+         +id.unavailableToCauses(fluid.deproxyUnavailable(v)).map(c => c.
+         +message).join(";") : JSON.stringify(v);
+      20      console.log("XXX html", container.outerHTML, "doubled", tha
+          t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+          that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+          );
+      21      console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      22      assert.ok(true);
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; grep -n
+      'fluid.formatUnavailable = ' -A20 src/framework/core/js/*.js;
+      f=tests/framework-tests/core/js/ScratchTests.j…)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      16      const container = qs(".container");
+      17      const that = x.umbrella({container, view: {$component: {sha
+          peId: "s1"}}});
+      18      fluid.cell.stabilize();
+      19 -    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+         -id.unavailableToCauses(fluid.deproxyUnavailable(v)).map(c => c.
+         -message).join(";") : JSON.stringify(v);
+      19 +    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+         +id.formatUnavailable(fluid.unProxy(v)) : JSON.stringify(v);
+      20      console.log("XXX html", container.outerHTML, "doubled", tha
+          t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+          that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+          );
+      21      console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      22      assert.ok(true);
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      f=tests/framework-tests/core/js/ScratchTests.js; sed -i 's#const desc =
+      .*#const desc = v => fluid.isUnavailable(v)…)
+  ⎿  XXX html <div class="container" id="main-container"></div> doubled 4 h
+     b UNAVAIL Component at path umbrella-14.view has no member hostBounds
+     firsthb {"id":null} viewU true
+     … +49 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      16      const container = qs(".container");
+      17      const that = x.umbrella({container, view: {$component: {sha
+          peId: "s1"}}});
+      18      fluid.cell.stabilize();
+      19 -    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+         -id.formatUnavailable(fluid.unProxy(v)) : JSON.stringify(v);
+      19 +    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+         +id.unavailableToCauses(fluid.unProxy(v)).map(c => c.message).jo
+         +in(";") : JSON.stringify(v);
+      20      console.log("XXX html", container.outerHTML, "doubled", tha
+          t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+          that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+          );
+      21      console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      22      assert.ok(true);
+
+● Found a real bug: umbrellas with cross-injected views break in tldraw because
+  the host overwrites the umbrella's own view instead of following the view
+  reference. I'm now testing a fix that routes host potentia through the
+  injected reference correctly.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      f=tests/framework-tests/core/js/ScratchTests.js; sed -i 's#const that =
+      x.umbrella({container, view: {$component: {s…)
+  ⎿  XXX avatar view "{first}.view" string
+     XXX html <div class="first" id="main-container">C 2</div> doubled 4 hb
+      {"id":"s1"} firsthb {"id":"s1"} viewU false
+     XXX ptf MIME-Version: 1.0
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      14  QUnit.test("umbrella", function (assert) {
+      15      const host = x.host();
+      16      const container = qs(".container");
+      17 -    const that = x.umbrella({container, view: {$component: {sha
+         -peId: "s1"}}});
+      17 +    console.log("XXX avatar view", JSON.stringify(fluid.unProxy
+         +(fluid.avatarMerged("x.umbrella")).view), typeof fluid.avatarMe
+         +rged("x.umbrella").view); const that = x.umbrella({first: {$com
+         +ponent: {view: {$component: {container, shapeId: "s1"}}}}});
+      18      fluid.cell.stabilize();
+      19      const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+          id.unavailableToCauses(fluid.unProxy(v)).map(c => c.message).jo
+          in(";") : JSON.stringify(v);
+      20      console.log("XXX html", container.outerHTML, "doubled", tha
+          t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+          that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+          );
+
+● Routing host potentia into the injected view's owner works (renders, and
+  hostBounds arrives). Now checking how pages declaratively instantiate
+  components, then writing the protocol module.
+
+  Ran 3 shell commands (ctrl+o to expand)
+● Now writing the pure protocol module (prompt assembly, response parsing,
+  change planning, diagnostics) as a classic script so it can be unit-tested
+  under node.
+
+● Write(demo/tldraw/js/ai-protocol.js)
+  ⎿  Wrote 652 lines to demo/tldraw/js/ai-protocol.js
+      1 "use strict";
+      2
+        th an AI about the workspace - assembling its prompt
+      4 // from documentation and a PTF dump of the workspace, and interp
+        reting its response either as text for the user or
+         tldraw, so that it can be tested without it - the
+      6 // parts of the conversation which act on the canvas are in tldra
+        w-ai.js.
+      8
+      9 fluid.registerNamespace("fluid.tldraw.ai");
+     … +853 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(demo/tldraw/js/ai-protocol.js)
+  ⎿  Added 4 lines, removed 3 lines
+      621      const reportable = value => fluid.isErrorUnavailable(value
+           ) || (includePending && fluid.isUnavailable(value));
+      622      const report = function (shadow, unavailable, what) {
+      623          fluid.unavailableToCauses(fluid.unProxy(unavailable)).
+           forEach(cause => {
+      624 -            const site = cause.site && !Array.isArray(cause.si
+          -te) && cause.site.shadow ? ` at ${fluid.renderSite(cause.site)
+          -}` : "";
+      625 -            const layer = cause.site && !Array.isArray(cause.s
+          -ite) && fluid.layerForSite(cause.site);
+      624 +            const site = cause.site && !Array.isArray(cause.si
+          +te) && cause.site.shadow ? cause.site : null;
+      625 +            const siteText = site ? ` at ${fluid.renderSite(si
+          +te)}` : "";
+      626 +            const layer = site && fluid.layerForSite(site);
+      627              problems.push(`${what} at path ${shadow.path}${cau
+           se.variety === "pending" ? " is still pending" : " failed"}: `
+      627 -                + `${cause.message}${site}${layer ? " in layer
+          - " + layer : ""}`);
+      628 +                + `${cause.message}${siteText}${layer ? " in l
+          +ayer " + layer : ""}`);
+      629          });
+      630      };
+      631      const visit = function (shadow) {
+
+● Adding a synchronous fluid.ptf.constructParts so the tldraw host can adopt
+  (and later diagnose or destroy) a reconstructed component before it becomes
+  available.
+
+● Update(src/framework/core/js/FluidPTF.js)
+  ⎿  Added 19 lines, removed 8 lines
+      588       * @return {Promise<PTFInstantiation>} A promise resolving
+            once the component and its transmitted state are available
+      589       */
+      590      fluid.ptf.instantiateParts = async function (parts, option
+           s = {}) {
+      591 -        let togo;
+      591 +        const that = fluid.ptf.constructParts(parts, options);
+      592 +        const unresolved = await fluid.ptf.applyParts(that, pa
+          +rts);
+      593 +        return {that, unresolved};
+      594 +    };
+      595 +
+      596 +    /**
+      597 +     * Construct the root component of a PTF document without
+          +waiting for it to become available, or applying any of
+      598 +     * the document's further potentia or live parts, which ma
+          +y then be applied by `fluid.ptf.applyParts`. Its layers
+      599 +     * are registered as by `fluid.ptf.registerLayerParts`. Th
+          +is allows a host to take responsibility for the component,
+      600 +     * e.g. for destroying it, whilst it is still unavailable.
+      601 +     * @param {PTFPart[]} parts - The decoded parts of the PTF
+          + document
+      602 +     * @param {Object} [options] - Options governing reconstru
+          +ction, as for `fluid.ptf.instantiateParts`
+      603 +     * @return {fluid.component} The freshly constructed compo
+          +nent, which may not yet be available
+      604 +     */
+      605 +    fluid.ptf.constructParts = function (parts, options = {})
+          +{
+      606          fluid.ptf.registerLayerParts(parts, options.overrideLa
+           yers);
+      607          const rootPart = parts.find(fluid.ptf.isRootPotentiaPa
+           rt);
+      594 -        if (!rootPart) {
+      595 -            togo = Promise.reject(fluid.unavailable("PTF docum
+          -ent has no potentia for its root component", "error"));
+      596 -        } else {
+      608 +        if (rootPart) {
+      609              const rootPotentia = JSON.parse(rootPart.body);
+      610              const [componentName, ...layerNames] = fluid.makeA
+           rray(rootPotentia.$layers);
+      599 -            const that = fluid.initFreeComponent(componentName
+          -, {...rootPotentia, ...options.potentia, $layers: layerNames})
+          -;
+      600 -            const unresolved = await fluid.ptf.applyParts(that
+          -, parts);
+      601 -            togo = {that, unresolved};
+      611 +            return fluid.initFreeComponent(componentName, {...
+          +rootPotentia, ...options.potentia, $layers: layerNames});
+      612 +        } else {
+      613 +            throw fluid.unavailable("PTF document has no poten
+          +tia for its root component", "error");
+      614          }
+      603 -        return togo;
+      615      };
+      616
+      617      /**
+
+● Update(src/framework/core/js/FluidPTF.js)
+  ⎿  Added 3 lines, removed 1 line
+      605      fluid.ptf.constructParts = function (parts, options = {})
+           {
+      606          fluid.ptf.registerLayerParts(parts, options.overrideLa
+           yers);
+      607          const rootPart = parts.find(fluid.ptf.isRootPotentiaPa
+           rt);
+      608 +        let togo;
+      609          if (rootPart) {
+      610              const rootPotentia = JSON.parse(rootPart.body);
+      611              const [componentName, ...layerNames] = fluid.makeA
+           rray(rootPotentia.$layers);
+      611 -            return fluid.initFreeComponent(componentName, {...
+          -rootPotentia, ...options.potentia, $layers: layerNames});
+      612 +            togo = fluid.initFreeComponent(componentName, {...
+          +rootPotentia, ...options.potentia, $layers: layerNames});
+      613          } else {
+      614              throw fluid.unavailable("PTF document has no poten
+           tia for its root component", "error");
+      615          }
+      616 +        return togo;
+      617      };
+      618
+      619      /**
+
+● Now the clipboard module: exposing pending-part registration, instantiation
+  notification, and the undo snapshot for reuse by the AI applier.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-clipboard
+      .js"…)
+  ⎿  34:    const ptfToken = "ptf-" + crypto.randomUUID();
+     134:                const ptfToken = "ptf-" + crypto.randomUUID();
+     144:            const ptfToken = "ptf-" + crypto.randomUUID();
+  ⎿  Updated demo/tldraw/js/tldraw-clipboard.js (+53 -5)
+      24      return ptfToken ? pendingParts.get(ptfToken) : undefined;
+      25  };
+      26
+      27 +/**
+      28 + * Register PTF parts from which an Infusion shape is to be con
+         +structed, under a fresh token which should be written
+      29 + * into the shape's `meta.ptfToken`.
+      30 + * @param {PTFPart[]} parts - The parts from which the shape's
+         +component is to be constructed
+      31 + * @return {String} The fresh token
+      32 + */
+      33 +export const registerPendingParts = function (parts) {
+      34 +    const ptfToken = "ptf-" + crypto.randomUUID();
+      35 +    pendingParts.set(ptfToken, parts);
+      36 +    return ptfToken;
+      37 +};
+      38 +
+      39 +/**
+      40 + * Resolvers of promises awaiting the reconstruction of a shape
+         +'s component from the parts registered under a token,
+      41 + * keyed by that token
+      42 + * @type {Map<String, Function[]>}
+      43 + */
+      44 +const instantiationWaiters = new Map();
+      45 +
+      46 +/**
+      47 + * @typedef {Object} InstantiationReport
+      48 + * @property {fluid.component} [that] - The reconstructed compo
+         +nent, if it could be constructed
+      49 + * @property {String[]} [unresolved] - The filenames of any par
+         +ts which could not be applied to it
+      50 + * @property {Error|Unavailable} [error] - Why reconstruction f
+         +ailed, if it did
+      51 + */
+      52 +
+      53 +/**
+      54 + * Await the next reconstruction of a shape's component from th
+         +e parts registered under a token
+      55 + * @param {String} ptfToken - The token
+      56 + * @return {Promise<InstantiationReport>} A promise for the out
+         +come of reconstruction, which never rejects
+      57 + */
+      58 +export const awaitInstantiation = function (ptfToken) {
+      59 +    return new Promise(resolve => {
+      60 +        instantiationWaiters.set(ptfToken, [...(instantiationWa
+         +iters.get(ptfToken) || []), resolve]);
+      61 +    });
+      62 +};
+      63 +
+     … 35 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-clipboard
+      .js"…)
+  ⎿  34:    const ptfToken = "ptf-" + crypto.randomUUID();
+  ⎿  Updated demo/tldraw/js/tldraw-clipboard.js (+3 -5)
+      131          parts.filter(part => part.kind === "component" && part
+           .parts).forEach(part => {
+      132              const shape = content.shapes.find(oneShape => oneS
+           hape.id === part.filename);
+      133              if (shape) {
+      134 -                const ptfToken = "ptf-" + crypto.randomUUID();
+      135 -                pendingParts.set(ptfToken, part.parts);
+      134 +                const ptfToken = registerPendingParts(part.par
+          +ts);
+      135                  shape.meta = {...shape.meta, ptfToken};
+      136              }
+      137          });
+      138          editor.putExternalContent({type: "tldraw", content, po
+           int});
+      139      } else {
+      141 -        const rootPart = parts.find(part => part.kind === "pot
+          -entia" && fluid.ptf.filenameToSegs(part.filename).length === 0
+          -);
+      140 +        const rootPart = parts.find(fluid.ptf.isRootPotentiaPa
+          +rt);
+      141          const layerName = rootPart && fluid.makeArray(JSON.par
+           se(rootPart.body).$layers)[0];
+      142          if (layerName) {
+      144 -            const ptfToken = "ptf-" + crypto.randomUUID();
+      145 -            pendingParts.set(ptfToken, parts);
+      143 +            const ptfToken = registerPendingParts(parts);
+      144              const center = point || editor.getViewportPageBoun
+           ds().center;
+      145              // Sized as for a fresh widget - see tldraw-driver
+           .js
+      146              const {w, h} = fluid.tldraw.shapeSizeFor(layerName
+           );
+
+● Checking what an avatar exposes for a $component member, to write the
+  view-routing helper.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      f=tests/framework-tests/core/js/ScratchTests.js; sed -i
+      's#console.log("XXX avatar view".*const that#const am = flui…)
+  ⎿  XXX avatar first object [ '$component' ] {"$component":{"contributions
+     ":[{"record":{"$layers":"x.first"},"mergeRecordName":"x.umbrella"}]}}
+     XXX html <div class="first" id="main-container">C 2</div> doubled 4 hb
+     … +36 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      14  QUnit.test("umbrella", function (assert) {
+      15      const host = x.host();
+      16      const container = qs(".container");
+      17 -    console.log("XXX avatar view", JSON.stringify(fluid.unProxy
+         -(fluid.avatarMerged("x.umbrella")).view), typeof fluid.avatarMe
+         -rged("x.umbrella").view); const that = x.umbrella({first: {$com
+         -ponent: {view: {$component: {container, shapeId: "s1"}}}}});
+      17 +    const am = fluid.unProxy(fluid.avatarMerged("x.umbrella"));
+         + console.log("XXX avatar first", typeof am.first, Object.keys(a
+         +m.first || {}), JSON.stringify(am.first)); const that = x.umbre
+         +lla({first: {$component: {view: {$component: {container, shapeI
+         +d: "s1"}}}}});
+      18      fluid.cell.stabilize();
+      19      const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+          id.unavailableToCauses(fluid.unProxy(v)).map(c => c.message).jo
+          in(";") : JSON.stringify(v);
+      20      console.log("XXX html", container.outerHTML, "doubled", tha
+          t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+          that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+          );
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-driver.js
+      "…)
+  ⎿  176:const awaitLayer = function (layerName) {
+     186:            }, [layerSignal], {name: `awaitLayer for ${layerName}`
+     , isFree: true});
+     272:            awaitLayer(layerName).then(() => {
+  ⎿  Updated demo/tldraw/js/tldraw-driver.js (+61 -23)
+      1  import React from "react";
+      2  import {createRoot} from "react-dom/client";
+      3  import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeI
+         d, useEditor, react} from "tldraw";
+      4 -import {infusionInstances, lookupPendingParts, makeClipboardOpti
+        -ons} from "./tldraw-clipboard.js";
+      4 +import {infusionInstances, lookupPendingParts, notifyInstantiati
+        +on, makeClipboardOptions} from "./tldraw-clipboard.js";
+      5 +import {makeAIBridge} from "./tldraw-ai.js";
+      6
+      7  const h = React.createElement;
+      8
+     ...
+      191      });
+      192  };
+      193
+      194 +// Matches a reference by which a component's view is cross-in
+          +jected from one of its subcomponents, e.g. "{first}.view"
+      195 +// or "{self}.first.view", capturing the subcomponent's member
+          + name
+      196 +const injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.(
+          +[\w$]+)\.view$/];
+      197 +
+      198  /**
+      199 + * Construct the potentia through which a host supplies a widg
+          +et with its container and the id of its shape. These are
+      200 + * ordinarily directed at the widget's own view. However, a wi
+          +dget whose view is cross-injected from one of its
+      201 + * subcomponents, e.g. by `view: "{first}.view"` as described
+          +in fluid-project/infusion-6#20, has no view of its own,
+      202 + * and potentia directed at its view would override the inject
+          +ion. In this case, they are directed at the view of that
+      203 + * subcomponent instead, following any further such injection
+          +made by the subcomponent's own layer.
+      204 + * @param {String} layerName - The name of the widget's layer,
+          + which must already be registered
+      205 + * @param {Element} container - The container into which the w
+          +idget is to render
+      206 + * @param {String} shapeId - The id of the tldraw shape hostin
+          +g the widget
+      207 + * @return {Object} The potentia to be supplied to the widget'
+          +s creator function
+      208 + */
+      209 +fluid.tldraw.hostPotentiaFor = function (layerName, container,
+          + shapeId) {
+      210 +    const merged = fluid.avatarMerged(layerName);
+      211 +    const viewRef = fluid.isUnavailable(merged) ? null : merge
+          +d.view;
+      212 +    const match = typeof(viewRef) === "string" && injectedView
+          +REs.map(re => re.exec(viewRef)).find(oneMatch => oneMatch);
+      213 +    const memberName = match && match[1];
+      214 +    const contributions = memberName && merged[memberName]?.$c
+          +omponent?.contributions;
+      215 +    let togo;
+      216 +    if (contributions) {
+      217 +        const memberLayers = contributions.flatMap(contributio
+          +n => fluid.makeArray(contribution.record.$layers));
+      218 +        const memberLayer = fluid.peek(memberLayers);
+      219 +        const memberPotentia = memberLayer && !fluid.isUnavail
+          +able(fluid.readLayer(memberLayer).get()) ?
+      220 +            fluid.tldraw.hostPotentiaFor(memberLayer, containe
+          +r, shapeId) : {container, view: {$component: {shapeId}}};
+      221 +        togo = {[memberName]: {$component: memberPotentia}};
+     … 91 more lines (ctrl+o to expand)
+
+● Making the PTF path wait for the root layer (an SFC sent by the AI parses
+  asynchronously) before routing potentia and constructing.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-driver.js
+      "…)
+  ⎿   * ordinarily directed at the widget's own view. However, a widget who
+     se view is cross-injected from one of its
+      * subcomponents, e.g. by `view: "{first}.view"` as described in fluid
+     … +23 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/js/tldraw-driver.js (+25 -18)
+      249          const container = containerRef.current;
+      250          const parts = lookupPendingParts(ptfToken);
+      251          if (parts) {
+      252 -            // The component is adopted as soon as it is const
+          -ructed, before it is available, so that it can be
+      253 -            // diagnosed whilst it is incomplete and is destro
+          -yed if the shape unmounts in the meantime
+      254 -            try {
+      255 -                fluid.ptf.registerLayerParts(parts);
+      256 -                adopt(fluid.ptf.constructParts(parts, {potenti
+          -a: fluid.tldraw.hostPotentiaFor(layerName, container, shapeId)
+          -}), "Reconstructed");
+      257 -                const constructed = that;
+      258 -                fluid.ptf.applyParts(constructed, parts).then(
+          -unresolved => {
+      259 -                    if (unresolved.length > 0) {
+      260 -                        console.warn(`Could not apply PTF part
+          -s ${unresolved.join(", ")} for shape ${shapeId}`);
+      252 +            // Layers are registered first, since the host pot
+          +entia can only be determined once the widget's own layer,
+      253 +            // which may be an SFC which is parsed asynchronou
+          +sly, is available
+      254 +            fluid.ptf.registerLayerParts(parts);
+      255 +            awaitLayer(layerName).then(() => {
+      256 +                if (!unmounted) {
+      257 +                    // The component is adopted as soon as it
+          +is constructed, before it is available, so that it can be
+      258 +                    // diagnosed whilst it is incomplete and i
+          +s destroyed if the shape unmounts in the meantime
+      259 +                    try {
+      260 +                        const potentia = fluid.tldraw.hostPote
+          +ntiaFor(layerName, container, shapeId);
+      261 +                        adopt(fluid.ptf.constructParts(parts,
+          +{potentia}), "Reconstructed");
+      262 +                        const constructed = that;
+      263 +                        fluid.ptf.applyParts(constructed, part
+          +s).then(unresolved => {
+      264 +                            if (unresolved.length > 0) {
+      265 +                                console.warn(`Could not apply
+          +PTF parts ${unresolved.join(", ")} for shape ${shapeId}`);
+      266 +                            }
+      267 +                            notifyInstantiation(ptfToken, {tha
+          +t: constructed, unresolved});
+      268 +                        }, error => {
+      269 +                            console.error(`Failed to apply PTF
+          + parts for shape ${shapeId}: `, error);
+      270 +                            notifyInstantiation(ptfToken, {tha
+          +t: constructed, error});
+      271 +                        });
+      272 +                    } catch (error) {
+      273 +                        console.error(`Failed to reconstruct I
+          +nfusion component for shape ${shapeId} from PTF: `, error);
+      274 +                        notifyInstantiation(ptfToken, {error})
+          +;
+      275                      }
+      262 -                    notifyInstantiation(ptfToken, {that: const
+          -ructed, unresolved});
+      263 -                }, error => {
+      264 -                    console.error(`Failed to apply PTF parts f
+          -or shape ${shapeId}: `, error);
+      265 -                    notifyInstantiation(ptfToken, {that: const
+          -ructed, error});
+     … 10 more lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-driver.js
+      "…)
+  ⎿  "use strict";
+
+     // Machinery for hosting Infusion widgets in tldraw shapes which does
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/js/tldraw-driver.js (+0 -34)
+      191      });
+      192  };
+      193
+      194 -// Matches a reference by which a component's view is cross-in
+          -jected from one of its subcomponents, e.g. "{first}.view"
+      195 -// or "{self}.first.view", capturing the subcomponent's member
+          - name
+      196 -const injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.(
+          -[\w$]+)\.view$/];
+      197 -
+      194  /**
+      199 - * Construct the potentia through which a host supplies a widg
+          -et with its container and the id of its shape. These are
+      200 - * ordinarily directed at the widget's own view. However, a wi
+          -dget whose view is cross-injected from one of its
+      201 - * subcomponents, e.g. by `view: "{first}.view"` as described
+          -in fluid-project/infusion-6#20, has no view of its own,
+      202 - * and potentia directed at its view would override the inject
+          -ion. In this case, they are directed at the view of that
+      203 - * subcomponent instead, following any further such injection
+          -made by the subcomponent's own layer.
+      204 - * @param {String} layerName - The name of the widget's layer,
+          - which must already be registered
+      205 - * @param {Element} container - The container into which the w
+          -idget is to render
+      206 - * @param {String} shapeId - The id of the tldraw shape hostin
+          -g the widget
+      207 - * @return {Object} The potentia to be supplied to the widget'
+          -s creator function
+      208 - */
+      209 -fluid.tldraw.hostPotentiaFor = function (layerName, container,
+          - shapeId) {
+      210 -    const merged = fluid.avatarMerged(layerName);
+      211 -    const viewRef = fluid.isUnavailable(merged) ? null : merge
+          -d.view;
+      212 -    const match = typeof(viewRef) === "string" && injectedView
+          -REs.map(re => re.exec(viewRef)).find(oneMatch => oneMatch);
+      213 -    const memberName = match && match[1];
+      214 -    const contributions = memberName && merged[memberName]?.$c
+          -omponent?.contributions;
+      215 -    let togo;
+      216 -    if (contributions) {
+      217 -        const memberLayers = contributions.flatMap(contributio
+          -n => fluid.makeArray(contribution.record.$layers));
+      218 -        const memberLayer = fluid.peek(memberLayers);
+      219 -        const memberPotentia = memberLayer && !fluid.isUnavail
+          -able(fluid.readLayer(memberLayer).get()) ?
+      220 -            fluid.tldraw.hostPotentiaFor(memberLayer, containe
+          -r, shapeId) : {container, view: {$component: {shapeId}}};
+      221 -        togo = {[memberName]: {$component: memberPotentia}};
+      222 -    } else {
+      223 -        togo = {container, view: {$component: {shapeId}}};
+      224 -    }
+      225 -    return togo;
+      226 -};
+      227 -
+      228 -/**
+      195   * A React component hosting an Infusion component. The Infusi
+           on component is constructed once React has mounted the
+      196   * container, and destroyed when React unmounts it. A shape wh
+           ich was pasted from a PTF document is reconstructed from
+     … 1 more lines (ctrl+o to expand)
+  ⎿  Created demo/tldraw/js/tldraw-hosting.js (+40 -0)
+       1 +"use strict";
+       2 +
+       3 +// Machinery for hosting Infusion widgets in tldraw shapes whic
+         +h does not depend on tldraw itself, held in a plain
+       4 +// script so that it can be tested without it
+       5 +
+       6 +fluid.registerNamespace("fluid.tldraw");
+       7 +
+       8 +// Matches a reference by which a component's view is cross-inj
+         +ected from one of its subcomponents, e.g. "{first}.view"
+       9 +// or "{self}.first.view", capturing the subcomponent's member
+         +name
+      10 +const injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.([
+         +\w$]+)\.view$/];
+      11 +
+      12 +/**
+      13 + * Construct the potentia through which a host supplies a widge
+         +t with its container and the id of its shape. These are
+      14 + * ordinarily directed at the widget's own view. However, a wid
+         +get whose view is cross-injected from one of its
+      15 + * subcomponents, e.g. by `view: "{first}.view"` as described i
+         +n fluid-project/infusion-6#20, has no view of its own,
+      16 + * and potentia directed at its view would override the injecti
+         +on. In this case, they are directed at the view of that
+      17 + * subcomponent instead, following any further such injection m
+         +ade by the subcomponent's own layer.
+      18 + * @param {String} layerName - The name of the widget's layer,
+         +which must already be registered
+      19 + * @param {Element} container - The container into which the wi
+         +dget is to render
+      20 + * @param {String} shapeId - The id of the tldraw shape hosting
+         + the widget
+      21 + * @return {Object} The potentia to be supplied to the widget's
+         + creator function
+      22 + */
+      23 +fluid.tldraw.hostPotentiaFor = function (layerName, container,
+         +shapeId) {
+      24 +    const merged = fluid.avatarMerged(layerName);
+      25 +    const viewRef = fluid.isUnavailable(merged) ? null : merged
+         +.view;
+      26 +    const match = typeof(viewRef) === "string" && injectedViewR
+         +Es.map(re => re.exec(viewRef)).find(oneMatch => oneMatch);
+      27 +    const memberName = match && match[1];
+      28 +    const contributions = memberName && merged[memberName]?.$co
+         +mponent?.contributions;
+      29 +    let togo;
+      30 +    if (contributions) {
+      31 +        const memberLayers = contributions.flatMap(contribution
+         + => fluid.makeArray(contribution.record.$layers));
+      32 +        const memberLayer = fluid.peek(memberLayers);
+      33 +        const memberPotentia = memberLayer && fluid.layerRecToU
+         +navailable(fluid.readLayer(memberLayer).get()) === null ?
+      34 +            fluid.tldraw.hostPotentiaFor(memberLayer, container
+         +, shapeId) : {container, view: {$component: {shapeId}}};
+      35 +        togo = {[memberName]: {$component: memberPotentia}};
+      36 +    } else {
+      37 +        togo = {container, view: {$component: {shapeId}}};
+      38 +    }
+      39 +    return togo;
+      40 +};
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's/^const
+      injectedViewREs = /fluid.tldraw.injectedViewREs = /;
+      s/injectedViewREs.map/fluid.tldraw.injectedVie…)
+  ⎿  10:fluid.tldraw.injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\
+     .([\w$]+)\.view$/];
+     26:    const match = typeof(viewRef) === "string" && fluid.tldraw.inje
+     ctedViewREs.map(re => re.exec(viewRef)).find(oneMatch => oneMatch);
+  ⎿  Updated demo/tldraw/js/tldraw-hosting.js (+2 -2)
+       7
+       8  // Matches a reference by which a component's view is cross-inj
+          ected from one of its subcomponents, e.g. "{first}.view"
+       9  // or "{self}.first.view", capturing the subcomponent's member
+          name
+      10 -const injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.([
+         -\w$]+)\.view$/];
+      10 +fluid.tldraw.injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{sel
+         +f\}\.([\w$]+)\.view$/];
+      11
+      12  /**
+      13   * Construct the potentia through which a host supplies a widge
+          t with its container and the id of its shape. These are
+     ...
+      23  fluid.tldraw.hostPotentiaFor = function (layerName, container,
+          shapeId) {
+      24      const merged = fluid.avatarMerged(layerName);
+      25      const viewRef = fluid.isUnavailable(merged) ? null : merged
+          .view;
+      26 -    const match = typeof(viewRef) === "string" && injectedViewR
+         -Es.map(re => re.exec(viewRef)).find(oneMatch => oneMatch);
+      26 +    const match = typeof(viewRef) === "string" && fluid.tldraw.
+         +injectedViewREs.map(re => re.exec(viewRef)).find(oneMatch => on
+         +eMatch);
+      27      const memberName = match && match[1];
+      28      const contributions = memberName && merged[memberName]?.$co
+          mponent?.contributions;
+      29      let togo;
+
+● Now the ES module bridging the protocol to the live canvas (gatherWorkspace /
+  applyPlan), then the conversation cycle and panel.
+
+● Write(demo/tldraw/js/tldraw-ai.js)
+  ⎿  Wrote 215 lines to demo/tldraw/js/tldraw-ai.js
+       1 // The part of the "Ask me anything" AI passthrough which acts o
+       2 // the AI's prompt, and applying the changes planned from a PTF
+         document it sends back. The protocol itself, which does
+       3 // not touch tldraw, is in ai-protocol.js.
+       5
+       6 import {createShapeId} from "tldraw";
+         ion, snapshotForUndo} from "./tldraw-clipboard.js";
+       8
+       9 // How long to wait for a fresh or replaced widget to be constru
+      10 const instantiationTimeout = 8000;
+     … +277 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-ai.js"…)
+  ⎿  Updated demo/tldraw/js/tldraw-ai.js (+25 -5)
+      119      };
+      120
+      121      /**
+      122 +     * Diagnose every widget in the workspace, other than thos
+          +e listed
+      123 +     * @param {Set<String>} [exclude] - The shape ids of any w
+          +idgets which are not to be diagnosed
+      124 +     * @return {String[]} Descriptions of any problems found
+      125 +     */
+      126 +    const diagnoseAll = function (exclude = new Set()) {
+      127 +        const problems = [];
+      128 +        infusionInstances.forEach((that, shapeId) => {
+      129 +            if (!exclude.has(shapeId)) {
+      130 +                fluid.tldraw.ai.diagnose(that).forEach(problem
+          + => problems.push(`The widget ${shapeId}: ${problem}`));
+      131 +            }
+      132 +        });
+      133 +        return problems;
+      134 +    };
+      135 +
+      136 +    /**
+      137       * Apply changes planned from a PTF document sent by the A
+           I to the workspace. The changes are preceded by a history
+      138       * stopping point so that they can be undone together, as
+           far as tldraw's history extends - redefinitions of layers
+      139       * and changes applied to a widget in place are not undone
+           .
+     ...
+      146          const problems = [];
+      147          const instantiations = [];
+      148          const createdIds = [];
+      149 +        const constructedIds = new Set();
+      150 +        // Problems which predate the changes are not reported
+          +, since the AI is not responsible for them
+      151 +        const existingProblems = new Set(diagnoseAll());
+      152          editor.markHistoryStoppingPoint("ai-change");
+      153          plan.layers.forEach(part => {
+      154              try {
+     ...
+      165          }
+      166          for (const change of plan.updates) {
+      167              const shape = editor.getShape(change.key);
+      150 -            const props = fluid.filterKeys(change.shape, ["w",
+          - "h"]);
+      151 -            editor.updateShape({id: shape.id, type: shape.type
+          -, ...fluid.filterKeys(change.shape, ["x", "y"]), props});
+      168 +            if (Object.keys(change.shape).length > 0) {
+      169 +                const props = fluid.filterKeys(change.shape, [
+          +"w", "h"]);
+      170 +                editor.updateShape({id: shape.id, type: shape.
+          +type, ...fluid.filterKeys(change.shape, ["x", "y"]), props});
+      171 +            }
+      172              if (change.rebuild) {
+     … 26 more lines (ctrl+o to expand)
+
+● Adding the conversation cycle (with repair rounds) and error description to
+  the protocol module.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >>
+      demo/tldraw/js/ai-protocol.js <<'EOF'…)
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+83 -0)
+      651      visit(fluid.ptf.componentToShadow(component));
+      652      return problems;
+      653  };
+      654 +
+      655 +/**
+      656 + * Describe an error, which may be an unavailable value, as te
+          +xt
+      657 + * @param {Error|Unavailable|any} error - The error
+      658 + * @return {String} A description of the error
+      659 + */
+      660 +fluid.tldraw.ai.describeError = function (error) {
+      661 +    let togo;
+      662 +    if (fluid.isUnavailable(error)) {
+      663 +        togo = fluid.unavailableToCauses(fluid.unProxy(error))
+          +.map(cause => cause.message).join("; ");
+      664 +    } else if (error instanceof Error) {
+      665 +        togo = error.message;
+      666 +    } else {
+      667 +        togo = String(error);
+      668 +    }
+      669 +    return togo;
+      670 +};
+      671 +
+      672 +/**
+      673 + * @typedef {Object} ChatEntry
+      674 + * @property {String} kind - "assistant" for text addressed to
+          + the user by the AI, "change" for a change it made to the
+      675 + * workspace, "problem" for problems it was asked to correct,
+          +or "error" for a failure which ended the exchange
+      676 + * @property {String} text - The text of the entry
+      677 + * @property {String} [detail] - Further material, e.g. the PT
+          +F document from which a change was made
+      678 + */
+      679 +
+      680 +/**
+      681 + * Carry out one exchange with the AI on the user's direction.
+          + If the AI responds with text, it is reported to the
+      682 + * user. If it responds with a PTF document, the document is a
+          +pplied to the workspace, and any problems in decoding
+      683 + * or applying it are reported back to the AI for it to correc
+          +t, up to `fluid.tldraw.ai.maxRepairs` times. The system
+      684 + * prompt is assembled afresh for each request, so that it ref
+          +lects any changes already made.
+      685 + * @param {Object} options - The exchange's options
+      686 + * @param {String} options.direction - The user's direction
+      687 + * @param {ChatMessage[]} options.history - Earlier messages o
+          +f the conversation
+      688 + * @param {AIBridge} options.bridge - The bridge to the worksp
+          +ace, as constructed by `makeAIBridge` in tldraw-ai.js
+      689 + * @param {Function} options.call - Accepts a {ChatMessage[]}
+          +and returns a {Promise<String>} for the AI's response
+      690 + * @param {Function} options.report - Accepts a {ChatEntry} to
+          + be shown to the user
+     … 46 more lines (ctrl+o to expand)
+
+● Now the panel SFCs.
+
+● Write(demo/tldraw/sfc/fluid-demos-askAnythingEntry.vue)  ⎿  Wrote 90 lines to demo/tldraw/sfc/fluid-demos-askAnythingEntry.vue
+       1 <script>
+       2 // One entry in the conversation of the "Ask me anything" panel,
+          created by $for over {askAnything}.state.entries
+       4     // Variable injected by $for, a ChatEntry as described in ai
+         -protocol.js with a member `noDetail`
+       5     entry: null
+       6 });
+       8
+       9 <template>
+      10     <div class="ask-anything-entry ask-anything-@{entry.kind}">
+     … +83 lines (ctrl+o to expand)
+
+● Write(demo/tldraw/sfc/fluid-demos-askAnything.vue)
+  ⎿  Wrote 375 lines to demo/tldraw/sfc/fluid-demos-askAnything.vue
+       1 <script>
+       2 // The "Ask me anything" panel, through which the user may conve
+       3 // widgets in the workspace - ported from the AI chat sidebar of
+          the Aarhus "Stund" prototype.
+       4 // The protocol is in js/ai-protocol.js and the machinery acting
+       5 // See https://github.com/fluid-project/infusion-6/issues/22
+       6
+       7 fluid.def("fluid.demos.askAnything", {
+       9     state: {
+      10         $reactiveRoot: {
+     … +419 lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/sfc/fluid-demos-ask
+      Anything.vue"…)
+  ⎿  <script>
+     // The "Ask me anything" panel, through which the user may converse wi
+     th an AI which can reflect on and alter the
+     … +57 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnything.vue (+116 -4)
+       4  // The protocol is in js/ai-protocol.js and the machinery actin
+          g on the canvas in js/tldraw-ai.js.
+       5  // See https://github.com/fluid-project/infusion-6/issues/22
+       6
+       7 +fluid.registerNamespace("fluid.demos.askAnything");
+       8 +
+       9  fluid.def("fluid.demos.askAnything", {
+      10      $layers: "fluid.component",
+      11      state: {
+     ...
+      13              entries: [],
+      14              direction: "",
+      15              password: "",
+      14 -            token: "$compute:fluid.demos.askAnything.readStored
+         -(token)",
+      15 -            model: "$compute:fluid.demos.askAnything.readStored
+         -(model)",
+      16 +            // Remembered from an earlier visit, if any
+      17 +            token: fluid.demos.askAnything.readStored("token"),
+      18 +            model: fluid.demos.askAnything.readStored("model"),
+      19              busy: false,
+      20              loginError: ""
+      21          }
+      22      },
+      23      busy: "{self}.state.busy",
+      21 -    hasToken: "$compute:fluid.demos.askAnything.isPresent({self
+         -}.state.token)",
+      24 +    hasToken: "$compute:// The conversation's history, as sent
+         +to the AI - this is kept out of the reactive state since it is
+         +never rendered
+      25 +fluid.demos.askAnything.history = [];
+      26 +
+      27 +fluid.demos.askAnything.isPresent({self}.state.token)",
+      28      needsPassword: "$compute:fluid.demos.askAnything.isAbsent({
+          self}.state.token)",
+      29      cannotSend: "$compute:fluid.demos.askAnything.cannotSend({s
+          elf}.state.direction, {self}.busy)",
+      30      sendLabel: "$compute:fluid.demos.askAnything.sendLabel({sel
+          f}.busy)",
+     ...
+       37              }
+       38          }
+       39      },
+       40 +    loginForm: {
+       41 +        $component: {
+       42 +            $layers: "fluid.component",
+       43 +            $if: "{askAnything}.needsPassword",
+       44 +            view: {
+       45 +                $component: {
+       46 +                    $layers: "fluid.templateViewComponent",
+       47 +                    template: `<div class="ask-anything-login"
+          +>
+     … 117 more lines (ctrl+o to expand)
+
+● My scripted edit misfired; fixing the file by hand.
+
+  Read 1 file (ctrl+o to expand)
+
+● Rewriting the panel file cleanly.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6;
+      S=/tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/cd16ed85-0bd6-4
+      27f-9fbf-ae5f3e28cdde/scratchpad; cat > $S…)
+  ⎿  10:fluid.demos.askAnything.storageKeys = {
+     20:fluid.demos.askAnything.readStored = function (key) {
+     35:fluid.demos.askAnything.writeStored = function (key, value) {
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnything.vue (+39 -148)
+       6
+       7  fluid.registerNamespace("fluid.demos.askAnything");
+       8
+       9 +// Keys under which the panel's settings are remembered in this
+         + browser
+      10 +fluid.demos.askAnything.storageKeys = {
+      11 +    token: "fluid.demos.askAnything.token",
+      12 +    model: "fluid.demos.askAnything.model"
+      13 +};
+      14 +
+      15 +/**
+      16 + * Read one of the panel's settings as remembered in this brows
+         +er
+      17 + * @param {String} key - The setting's key in `fluid.demos.askA
+         +nything.storageKeys`
+      18 + * @return {String} The remembered value, or a default if there
+         + is none - the default model, or an empty token
+      19 + */
+      20 +fluid.demos.askAnything.readStored = function (key) {
+      21 +    let stored = null;
+      22 +    try {
+      23 +        stored = window.localStorage.getItem(fluid.demos.askAny
+         +thing.storageKeys[key]);
+      24 +    } catch (e) {
+      25 +        console.log("Browser storage is unavailable - settings
+         +will not be remembered");
+      26 +    }
+      27 +    return stored || (key === "model" ? fluid.tldraw.ai.default
+         +Model : "");
+      28 +};
+      29 +
+      30 +/**
+      31 + * Remember one of the panel's settings in this browser, or for
+         +get it
+      32 + * @param {String} key - The setting's key in `fluid.demos.askA
+         +nything.storageKeys`
+      33 + * @param {String} value - The value to be remembered, or an em
+         +pty string to forget it
+      34 + */
+      35 +fluid.demos.askAnything.writeStored = function (key, value) {
+      36 +    try {
+      37 +        if (value) {
+      38 +            window.localStorage.setItem(fluid.demos.askAnything
+         +.storageKeys[key], value);
+      39 +        } else {
+      40 +            window.localStorage.removeItem(fluid.demos.askAnyth
+         +ing.storageKeys[key]);
+      41 +        }
+      42 +    } catch (e) {
+      43 +        console.log("Browser storage is unavailable - settings
+         +will not be remembered");
+      44 +    }
+      45 +};
+     … 165 more lines (ctrl+o to expand)
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Existing namespace members survive fluid.def, good. Wiring up index.html now
+  (scripts, SFC imports, panel layout).
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/index.html"…)
+  ⎿  Updated demo/tldraw/index.html (+16 -1)
+      28      <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyImageGe
+          n.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+      29      <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerat
+          or.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+      30      <fluid-import src="%tldrawDemo/sfc/fluid-demos-closestNoteF
+          inder.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+      31 +    <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnything.
+         +vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+      32 +    <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnythingE
+         +ntry.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+      33
+      34      <!-- Stubs for the "#Agents" widget helpers used by the sto
+          ry time widget -->
+      35      <script src="js/agents-stubs.js"></script>
+      36 +    <!-- Hosting machinery, and the protocol of the "Ask me any
+         +thing" AI panel, which do not depend on tldraw -->
+      37 +    <script src="js/tldraw-hosting.js"></script>
+      38 +    <script src="js/ai-protocol.js"></script>
+      39
+      40      <link rel="preconnect" href="https://fonts.googleapis.com">
+      41      <link rel="preconnect" href="https://fonts.gstatic.com" cro
+          ssorigin>
+     ...
+      56          :root {
+      57              /* tldraw's UI inherits its font, and refers to thi
+          s variable in some places */
+      58              --font-body: "Inter", system-ui, -apple-system, "Se
+          goe UI", sans-serif;
+      59 +            --ai-panel-width: 360px;
+      60          }
+      61          html, body {
+      62              margin: 0;
+     ...
+       85          }
+       86          #tldraw-root {
+       87              position: fixed;
+       82 -            inset: 0;
+       88 +            inset: 0 var(--ai-panel-width) 0 0;
+       89          }
+       90 +        #ai-root {
+       91 +            position: fixed;
+       92 +            top: 0;
+       93 +            right: 0;
+       94 +            bottom: 0;
+       95 +            width: var(--ai-panel-width);
+       96 +        }
+       97      </style>
+       98  </head>
+       99  <body>
+      100  <!-- tldraw mounts here; its Infusion shapes construct and des
+           troy their component explicitly from React lifecycle hooks -->
+      101  <div id="tldraw-root"></div>
+      102 +<!-- The "Ask me anything" panel, through which an AI may refl
+          +ect on and alter the workspace -->
+     … 4 more lines (ctrl+o to expand)
+
+● Now the tests. Removing the scratch experiment first, then checking how
+  SFC-based demo tests wait for loading.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; rm
+      tests/framework-tests/core/html/ScratchTests.html
+      tests/framework-tests/core/js/ScratchTests.js; head -60 tests/f…)
+  ⎿  /* global QUnit */
+
+     "use strict";
+     … +157 lines (ctrl+o to expand)
+  ⎿  Deleted tests/framework-tests/core/html/ScratchTests.html (+0 -36)
+       1 -<!DOCTYPE html>
+       2 -<html lang="en">
+       3 -    <head>
+       4 -        <meta http-equiv="Content-Type" content="text/html; cha
+         -rset=utf-8" />
+       5 -        <title>FluidPTF.js Tests</title>
+       6 -
+       7 -        <link rel="stylesheet" media="screen" href="../../../li
+         -b/qunit/css/qunit.css" />
+       8 -
+       9 -        <script src="../../../../src/lib/lezer/lezer-javascript
+         --browser.js" fluid-hydrated="%infusion-6"></script>
+      10 -
+      11 -        <script src="../../../../src/framework/core/js/FluidCor
+         -e.js"></script>
+      12 -        <script src="../../../../src/framework/core/js/FluidSig
+         -nals.js"></script>
+      13 -        <script src="../../../../src/framework/core/js/Fluid.js
+         -"></script>
+      14 -        <script src="../../../../src/framework/core/js/FluidIL.
+         -js"></script>
+      15 -        <script src="../../../../src/framework/core/js/template
+         --parser.js"></script>
+      16 -        <script src="../../../../src/framework/core/js/sfc-pars
+         -er.js"></script>
+      17 -        <script src="../../../../src/framework/core/js/FluidMod
+         -ules.js"></script>
+      18 -        <script src="../../../../src/framework/core/js/FluidVie
+         -w.js"></script>
+      19 -        <script src="../../../../src/framework/core/js/FluidPTF
+         -.js"></script>
+      20 -        <script src="../../../../src/framework/core/js/FluidVie
+         -w-browser.js"></script>
+      21 -
+      22 -        <script src="../../../lib/qunit/js/qunit.js"></script>
+      23 -        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         -"></script>
+      24 -
+      25 -        <script src="../js/ScratchTests.js"></script>
+      26 -    </head>
+      27 -    <body>
+      28 -    <div id="qunit"></div>
+      29 -    <!-- Test HTML -->
+      30 -    <div id="qunit-fixture">
+      31 -        <div class="container" id="main-container"></div>
+      32 -        <div class="target-container" id="target-container"></d
+         -iv>
+      33 -    </div>
+      34 -
+      35 -    </body>
+      36 -</html>
+  ⎿  Deleted tests/framework-tests/core/js/ScratchTests.js (+0 -23)
+       1 -"use strict";
+       2 -const qs = sel => document.querySelector(sel);
+       3 -fluid.def("x.first", {$layers: "fluid.topLevelWidget", count: 2
+         -,
+       4 -  view: {$component: {$layers: "fluid.templateViewComponent", t
+         -emplate: `<div class="first">C @{count}</div>`}}});
+       5 -fluid.def("x.second", {$layers: "fluid.component", count: 0, do
+         -ubled: "$compute:x.double({self}.count)"});
+       6 -x.double = a => a * 2;
+       7 -fluid.def("x.umbrella", {$layers: "fluid.topLevelWidget",
+       8 -  first: {$component: {$layers: "x.first"}},
+       9 -  second: {$component: {$layers: "x.second", count: "{first}.co
+         -unt"}},
+      10 -  view: "{first}.view"});
+      11 -fluid.def("x.hostView", {$layers: "fluid.topLevelWidgetView", s
+         -hapeId: null, hostBounds: "$compute:x.hb({self}.shapeId)"});
+      12 -x.hb = id => ({id});
+      13 -fluid.def("x.host", {$layers: "fluid.component", l: {$linkage:
+         -{inputLayers: ["fluid.topLevelWidgetView"], outputLayers: ["x.h
+         -ostView"]}}});
+      14 -QUnit.test("umbrella", function (assert) {
+      15 -    const host = x.host();
+      16 -    const container = qs(".container");
+      17 -    const am = fluid.unProxy(fluid.avatarMerged("x.umbrella"));
+         - console.log("XXX avatar first", typeof am.first, Object.keys(a
+         -m.first || {}), JSON.stringify(am.first)); const that = x.umbre
+         -lla({first: {$component: {view: {$component: {container, shapeI
+         -d: "s1"}}}}});
+      18 -    fluid.cell.stabilize();
+      19 -    const desc = v => fluid.isUnavailable(v) ? "UNAVAIL " + flu
+         -id.unavailableToCauses(fluid.unProxy(v)).map(c => c.message).jo
+         -in(";") : JSON.stringify(v);
+      20 -    console.log("XXX html", container.outerHTML, "doubled", tha
+         -t.second.doubled, "hb", desc(that.hostBounds), "firsthb", desc(
+         -that.first.hostBounds), "viewU", fluid.isUnavailable(that.view)
+         -);
+      21 -    console.log("XXX ptf", fluid.ptf.componentToPTF(that));
+      22 -    assert.ok(true);
+      23 -});
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Appending a PTF test for in-place application and deferred construction.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >>
+      tests/framework-tests/core/js/FluidPTFTests.js <<'EOF'…)
+  ⎿  18:12:53.802:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/core/html/FluidPTFTests.html
+     18:12:54.399:   fq:  FAIL: Module "Fluid PTF Tests" Test name "Parts a
+     … +11 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+55 -0)
+      337      assert.equal(copy.panel.filter.loaderValue, "loader", "Inj
+           ected grandparent resolves by its injected name");
+      338      copy.destroy();
+      339  });
+      340 +
+      341 +QUnit.test("Parts applied in place to an existing component, a
+          +nd construction deferring availability", async function (asser
+          +t) {
+      342 +    fluid.def("fluid.tests.ptf.inPlaceChild", {
+      343 +        $layers: "fluid.component",
+      344 +        value: 1
+      345 +    });
+      346 +    fluid.def("fluid.tests.ptf.inPlace", {
+      347 +        $layers: "fluid.component",
+      348 +        count: 0,
+      349 +        text: "Original",
+      350 +        child: {
+      351 +            $component: {
+      352 +                $layers: "fluid.tests.ptf.inPlaceChild"
+      353 +            }
+      354 +        }
+      355 +    });
+      356 +    const that = fluid.tests.ptf.inPlace();
+      357 +    fluid.cell.stabilize();
+      358 +    const parts = fluid.ptf.decode(fluid.ptf.encode([
+      359 +        {kind: "potentia", contentType: "application/json", fi
+          +lename: "/", body: JSON.stringify({$layers: ["fluid.tests.ptf.
+          +other"]})},
+      360 +        {kind: "potentia", contentType: "application/json", fi
+          +lename: "/extra", body: JSON.stringify({$layers: ["fluid.tests
+          +.ptf.inPlaceChild"], value: 7})},
+      361 +        {kind: "live", contentType: "application/json", filena
+          +me: "/", body: JSON.stringify({count: 3})},
+      362 +        {kind: "live", contentType: "application/json", filena
+          +me: "/child", body: JSON.stringify({value: 5})},
+      363 +        {kind: "live", contentType: "application/json", filena
+          +me: "/missing", body: JSON.stringify({value: 9})}
+      364 +    ]));
+      365 +    assert.ok(fluid.ptf.isRootPotentiaPart(parts[0]), "Potenti
+          +a for / recognised as root potentia");
+      366 +    assert.notOk(fluid.ptf.isRootPotentiaPart(parts[1]), "Pote
+          +ntia for subcomponent not recognised as root potentia");
+      367 +    const unresolved = await fluid.ptf.applyParts(that, parts)
+          +;
+      368 +    assert.deepEqual(unresolved, ["/missing"], "Part for absen
+          +t subcomponent reported as unresolved");
+      369 +    assert.equal(that.count, 3, "Live part applied to existing
+          + component");
+      370 +    assert.equal(that.text, "Original", "Unmentioned state of
+          +existing component retained");
+      371 +    assert.equal(that.child.value, 5, "Live part applied to ex
+          +isting subcomponent");
+      372 +    assert.equal(that.extra.value, 7, "Fresh subcomponent crea
+          +ted from potentia part");
+      373 +    assert.deepEqual(fluid.deSignal(that.$layers), fluid.deSig
+          +nal(fluid.tests.ptf.inPlace().$layers), "Root potentia ignored
+          +");
+      374 +
+      375 +    // A component whose layer is not yet defined is returned
+          +by constructParts, unavailable
+      376 +    const pendingParts = [
+     … 18 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● pushPotentia creates a shadow-only subcomponent not exposed as a proxy member
+  (existing semantics); adjusting the test to check via the shadow.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core/js/F
+      luidPTFTests.js"…)
+  ⎿  18:13:12.109:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/core/html/FluidPTFTests.html
+     18:13:12.931:   fq:  ***************
+     18:13:12.931:   fq:  ***************
+  ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+2 -1)
+      369      assert.equal(that.count, 3, "Live part applied to existing
+            component");
+      370      assert.equal(that.text, "Original", "Unmentioned state of
+           existing component retained");
+      371      assert.equal(that.child.value, 5, "Live part applied to ex
+           isting subcomponent");
+      372 -    assert.equal(that.extra.value, 7, "Fresh subcomponent crea
+          -ted from potentia part");
+      372 +    const extraShadow = fluid.ptf.resolveShadow(fluid.ptf.comp
+          +onentToShadow(that), ["extra"]);
+      373 +    assert.equal(extraShadow.that.value, 7, "Fresh subcomponen
+          +t created from potentia part");
+      374      assert.deepEqual(fluid.deSignal(that.$layers), fluid.deSig
+           nal(fluid.tests.ptf.inPlace().$layers), "Root potentia ignored
+           ");
+      375
+      376      // A component whose layer is not yet defined is returned
+           by constructParts, unavailable
+
+● PTF tests pass. Writing the demo-level tests for the protocol, hosting and
+  panel.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >
+      tests/framework-tests/from-demos/html/TldrawAITests.html <<'EOF'
+      <!DOCTYPE html>…)
+  ⎿  19:        <script src="../../../test-core/qunit/js/qunit-fluid.js"></
+     script>
+     18:QUnit.assert.expectFluidError = function (message, toInvoke, errorT
+     … +13 lines (ctrl+o to expand)
+  ⎿  Created tests/framework-tests/from-demos/html/TldrawAITests.html (+50
+     -0)
+       1 +<!DOCTYPE html>
+       2 +<html lang="en">
+       3 +    <head>
+       4 +        <meta http-equiv="Content-Type" content="text/html; cha
+         +rset=utf-8" />
+       5 +        <title>tldraw "Ask me anything" Demo Tests</title>
+       6 +
+       7 +        <link rel="stylesheet" media="screen" href="../../../li
+         +b/qunit/css/qunit.css" />
+       8 +
+       9 +        <fluid-module id="infusion-6" src="../../../../"></flui
+         +d-module>
+      10 +
+      11 +        <script src="../../../../src/lib/lezer/lezer-javascript
+         +-browser.js"></script>
+      12 +
+      13 +        <script src="../../../../src/framework/core/js/FluidCor
+         +e.js"></script>
+      14 +        <script src="../../../../src/framework/core/js/FluidSig
+         +nals.js"></script>
+      15 +        <script src="../../../../src/framework/core/js/Fluid.js
+         +"></script>
+      16 +        <script src="../../../../src/framework/core/js/FluidMod
+         +ules.js"></script>
+      17 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>
+      18 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w.js"></script>
+      19 +        <script src="../../../../src/framework/core/js/FluidPTF
+         +.js"></script>
+      20 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w-browser.js"></script>
+      21 +        <script src="../../../../src/framework/core/js/template
+         +-parser.js"></script>
+      22 +        <script src="../../../../src/framework/core/js/sfc-pars
+         +er.js"></script>
+      23 +
+      24 +        <!-- The actual SFC files and scripts of the demo at de
+         +mo/tldraw which do not depend on tldraw -->
+      25 +        <fluid-module id="tldrawDemo" src="../../../../demo/tld
+         +raw/"></fluid-module>
+      26 +
+      27 +        <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.
+         +vue"></fluid-import>
+      28 +        <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWor
+         +ld.vue"></fluid-import>
+      29 +        <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnyth
+         +ing.vue"></fluid-import>
+      30 +        <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnyth
+         +ingEntry.vue"></fluid-import>
+      31 +
+      32 +        <script src="../../../../demo/tldraw/js/tldraw-hosting.
+         +js"></script>
+      33 +        <script src="../../../../demo/tldraw/js/ai-protocol.js"
+         +></script>
+      34 +
+      35 +        <script src="../../../lib/qunit/js/qunit.js"></script>
+      36 +        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         +"></script>
+      37 +
+      38 +        <script src="../js/TodoListTestUtils.js"></script>
+      39 +        <script src="../js/TldrawAITests.js"></script>
+      40 +    </head>
+     … 10 more lines (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i
+      '/TodoListTestUtils.js/d'
+      tests/framework-tests/from-demos/html/TldrawAITests.html; cat
+      demo/tldraw/sfc/fluid…)
+  ⎿  <script>
+     fluid.def("fluid.demos.helloWorld", {
+         $layers: "fluid.topLevelWidget"
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/html/TldrawAITests.html (+0
+     -1)
+      35          <script src="../../../lib/qunit/js/qunit.js"></script>
+      36          <script src="../../../test-core/qunit/js/qunit-fluid.js
+          "></script>
+      37
+      38 -        <script src="../js/TodoListTestUtils.js"></script>
+      38          <script src="../js/TldrawAITests.js"></script>
+      39      </head>
+      40      <body>
+
+● Write(tests/framework-tests/from-demos/js/TldrawAITests.js)
+  ⎿  Wrote 399 lines to
+     tests/framework-tests/from-demos/js/TldrawAITests.js
+      1 /* global QUnit */
+      2
+      3 "use strict";
+      4
+      5 fluid.registerNamespace("fluid.tests.tldrawAI");
+      6
+      7 QUnit.module("tldraw \"Ask me anything\" Demo Tests");
+      8
+      9 QUnit.config.reorder = false;
+     … +537 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Several failures to chase; debugging each in turn.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >
+      /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/cd16ed85-0bd6-427
+      f-9fbf-ae5f3e28cdde/scratchpad/dbg.j…)
+  ⎿  XXX problems [
+       "The JavaScript layer \"fluid.demos.ai.bad\" at the top level has a
+     syntax error: Unexpected end of input",
+     … +78 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+4 -0)
+      161          "\"shape:gone\" does not name a shape",
+      162          "unrecognised kind \"mystery\""
+      163      ];
+      164 +    console.log("XXX problems", JSON.stringify(plan.problems,
+          +null, 2));
+      165      assert.equal(plan.problems.length, expectedProblems.length
+           , "One problem reported for each rejected part");
+      166      expectedProblems.forEach((fragment, i) => assert.ok(plan.p
+           roblems[i].includes(fragment), "Problem reported: " + fragment
+           ));
+      167  });
+     ...
+      300      const host = fluid.tests.tldrawAI.host();
+      301      const that = fluid.tests.tldrawAI.umbrella(potentia);
+      302      fluid.cell.stabilize();
+      303 +    console.log("XXX umbrella", container.outerHTML, fluid.tld
+          +raw.ai.diagnose(that, true));
+      304      assert.equal(qs(".counter span", container).textContent, "
+           Clicked 0 times", "Umbrella rendered through the counter's vie
+           w");
+      305      that.counter.increment();
+      306      fluid.cell.stabilize();
+     ...
+      331      fluid.cell.stabilize();
+      332      const errors = fluid.tldraw.ai.diagnose(that);
+      333      const withPending = fluid.tldraw.ai.diagnose(that, true);
+      334 +    console.log("XXX diag", errors, withPending);
+      335      assert.ok(withPending.length > errors.length, "Pending sub
+           component reported only on request");
+      336      assert.ok(withPending.some(problem => problem.includes("is
+            still pending")), "Pending subcomponent described");
+      337      assert.equal(fluid.tldraw.ai.describeError(fluid.unavailab
+           le("Gone wrong")), "Gone wrong", "Unavailable described");
+     ...
+      359
+      360          that.state.token = "abc123";
+      361          fluid.cell.stabilize();
+      362 +        console.log("XXX panel", that.state.token, that.hasTok
+          +en, that.needsPassword, container.outerHTML);
+      363          assert.notOk(qs(".ask-anything-password", container),
+           "Password no longer requested once token is held");
+      364          const textarea = qs(".ask-anything-direction", contain
+           er);
+      365          assert.ok(textarea, "Composer shown once token is held
+           ");
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The $if toggle-off works in existing tests starting from false; my panel
+  starts true. Checking whether a conditional initially rendered can be removed
+  (possible framework bug).
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed
+      's#../js/FluidPTFTests.js#../js/ScratchTests.js#'
+      tests/framework-tests/core/html/FluidPTFTests.html > tests/fra…)  ⎿  XXX 1 <div><div id="fl-id-ifs-13.a" class="a">A</div><div></div></div>
+     XXX 2 <div><div>A</div><div id="fl-id-ifs-13.b" class="b">B</div></div
+     >
+     … +2 lines (ctrl+o to expand)
+  ⎿  Created tests/framework-tests/core/html/ScratchTests.html (+36 -0)
+       1 +<!DOCTYPE html>
+       2 +<html lang="en">
+       3 +    <head>
+       4 +        <meta http-equiv="Content-Type" content="text/html; cha
+         +rset=utf-8" />
+       5 +        <title>FluidPTF.js Tests</title>
+       6 +
+       7 +        <link rel="stylesheet" media="screen" href="../../../li
+         +b/qunit/css/qunit.css" />
+       8 +
+       9 +        <script src="../../../../src/lib/lezer/lezer-javascript
+         +-browser.js" fluid-hydrated="%infusion-6"></script>
+      10 +
+      11 +        <script src="../../../../src/framework/core/js/FluidCor
+         +e.js"></script>
+      12 +        <script src="../../../../src/framework/core/js/FluidSig
+         +nals.js"></script>
+      13 +        <script src="../../../../src/framework/core/js/Fluid.js
+         +"></script>
+      14 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>
+      15 +        <script src="../../../../src/framework/core/js/template
+         +-parser.js"></script>
+      16 +        <script src="../../../../src/framework/core/js/sfc-pars
+         +er.js"></script>
+      17 +        <script src="../../../../src/framework/core/js/FluidMod
+         +ules.js"></script>
+      18 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w.js"></script>
+      19 +        <script src="../../../../src/framework/core/js/FluidPTF
+         +.js"></script>
+      20 +        <script src="../../../../src/framework/core/js/FluidVie
+         +w-browser.js"></script>
+      21 +
+      22 +        <script src="../../../lib/qunit/js/qunit.js"></script>
+      23 +        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         +"></script>
+      24 +
+      25 +        <script src="../js/ScratchTests.js"></script>
+      26 +    </head>
+      27 +    <body>
+      28 +    <div id="qunit"></div>
+      29 +    <!-- Test HTML -->
+      30 +    <div id="qunit-fixture">
+      31 +        <div class="container" id="main-container"></div>
+      32 +        <div class="target-container" id="target-container"></d
+         +iv>
+      33 +    </div>
+      34 +
+      35 +    </body>
+      36 +</html>
+  ⎿  Created tests/framework-tests/core/js/ScratchTests.js (+26 -0)
+       1 +"use strict";
+       2 +const qs = sel => document.querySelector(sel);
+       3 +fluid.def("x.ifs", {
+       4 +    $layers: "fluid.component",
+       5 +    enabled: true,
+       6 +    view: {$component: {$layers: "fluid.templateViewComponent",
+         + template: `<div><div @id="a"></div><div @id="b"></div></div>`,
+         + elideParent: false}},
+       7 +    a: {$component: {$layers: "fluid.component", $if: "{ifs}.en
+         +abled",
+       8 +        view: {$component: {$layers: "fluid.templateViewCompone
+         +nt", template: `<div class="a">A</div>`}}}},
+       9 +    notEnabled: "$compute:x.not({self}.enabled)",
+      10 +    b: {$component: {$layers: "fluid.component", $if: "{ifs}.no
+         +tEnabled",
+      11 +        view: {$component: {$layers: "fluid.templateViewCompone
+         +nt", template: `<div class="b">B</div>`}}}}
+      12 +});
+      13 +x.not = a => !a;
+      14 +QUnit.test("if", function (assert) {
+      15 +    const container = qs(".container");
+      16 +    const that = x.ifs({container});
+      17 +    fluid.cell.stabilize();
+      18 +    console.log("XXX 1", container.innerHTML);
+      19 +    that.enabled = false;
+      20 +    fluid.cell.stabilize();
+      21 +    console.log("XXX 2", container.innerHTML);
+      22 +    that.enabled = true;
+      23 +    fluid.cell.stabilize();
+      24 +    console.log("XXX 3", container.innerHTML);
+      25 +    assert.ok(true);
+      26 +});
+
+● I've confirmed a framework bug: when a $if subcomponent disappears, its
+  attributes get stripped but its rendered children remain (the existing test
+  missed this since it only used an empty template). Now I'll dig into the view
+  code.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core/js/S
+      cratchTests.js"…)
+  ⎿  XXX 1 <div><div id="fl-id-ifs-13.a" class="a">A</div><div></div></div>
+     XXX 2 <div><div>A</div><div id="fl-id-ifs-13.b" class="b">B</div></div
+     >
+     … +3 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+3 -0)
+      19      that.enabled = false;
+      20      fluid.cell.stabilize();
+      21      console.log("XXX 2", container.innerHTML);
+      22 +    const sh = that[fluid.metadataSymbol].childComponents.a;
+      23 +    const av = sh.availableInstance.get();
+      24 +    console.log("XXX avail", fluid.isUnavailable(av), av && JSO
+         +N.stringify(fluid.unavailableToCauses(fluid.unProxy(av)).map(c
+         +=> [c.message, c.variety])), av && fluid.unProxy(av).variety);
+      25      that.enabled = true;
+      26      fluid.cell.stabilize();
+      27      console.log("XXX 3", container.innerHTML);
+
+● When $if is false, the child falls back to a template-only component that
+  should render the parent's (empty) placeholder markup, but its render
+  apparently doesn't patch. Digging further.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/core/js/S
+      cratchTests.js"…)
+  ⎿  renderView beginning for ifs-13.view with vTree 1 container  1
+     renderView beginning for ifs-13.a.view with vTree 5 container  2
+     XXX 1 <div><div id="fl-id-ifs-13.a" class="a">A</div><div></div></div>
+     … +8 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+2 -0)
+      21      console.log("XXX 2", container.innerHTML);
+      22      const sh = that[fluid.metadataSymbol].childComponents.a;
+      23      const av = sh.availableInstance.get();
+      24 +    const v = sh.that.view;
+      25 +    console.log("XXX view", v && fluid.deSignal(v.$layers), v &
+         +& JSON.stringify(fluid.deSignal(v.vTree), (k, val) => k === "sh
+         +adow" || k==="elementSignal" || k==="parentNode" ? undefined :
+         +val), v && fluid.deSignal(v.container)?.outerHTML);
+      26      console.log("XXX avail", fluid.isUnavailable(av), av && JSO
+          N.stringify(fluid.unavailableToCauses(fluid.unProxy(av)).map(c
+          => [c.message, c.variety])), av && fluid.unProxy(av).variety);
+      27      that.enabled = true;
+      28      fluid.cell.stabilize();
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● I found that the $if issue stems from the framework itself—emptyPotentia drops
+  the template record when the condition is false, leaving stale DOM behind—so
+  I'll report it rather than fix it, and use @class for toggling visibility in
+  the panel instead. Next I'll debug the umbrella render with the SFC counter.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/from-demo
+      s/js/TldrawAITests.js"…)
+  ⎿  XXX umbrella <div class="container"></div> [] false false true [
+       'fluid.component',
+       'fluid.viewComponent',
+       'fluid.templateViewComponent',
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+1 -1)
+      300      const host = fluid.tests.tldrawAI.host();
+      301      const that = fluid.tests.tldrawAI.umbrella(potentia);
+      302      fluid.cell.stabilize();
+      303 -    console.log("XXX umbrella", container.outerHTML, fluid.tld
+          -raw.ai.diagnose(that, true));
+      303 +    console.log("XXX umbrella", container.outerHTML, fluid.tld
+          +raw.ai.diagnose(that, true), fluid.isUnavailable(that.view), f
+          +luid.isUnavailable(that.counter.view), that.counter.view === t
+          +hat.view, fluid.deSignal(that.counter.view.$layers), fluid.deS
+          +ignal(that.counter.view.container));
+      304      assert.equal(qs(".counter span", container).textContent, "
+           Clicked 0 times", "Umbrella rendered through the counter's vie
+           w");
+      305      that.counter.increment();
+      306      fluid.cell.stabilize();
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found the bug: container forwarding only works for a free component's own
+  arguments, so nested routing needs container placed under view.$component
+  instead. I'll fix that and update diagnose to report any non-pending
+  unavailability, including an unrenderable view container.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-hosting.j
+      s"…)
+  ⎿  Updated demo/tldraw/js/tldraw-hosting.js (+4 -2)
+      30      if (contributions) {
+      31          const memberLayers = contributions.flatMap(contribution
+           => fluid.makeArray(contribution.record.$layers));
+      32          const memberLayer = fluid.peek(memberLayers);
+      33 +        // A container is only forwarded to the view when suppl
+         +ied to a free component, so for a subcomponent it is
+      34 +        // supplied to its view directly
+      35          const memberPotentia = memberLayer && fluid.layerRecToU
+          navailable(fluid.readLayer(memberLayer).get()) === null ?
+      34 -            fluid.tldraw.hostPotentiaFor(memberLayer, container
+         -, shapeId) : {container, view: {$component: {shapeId}}};
+      36 +            fluid.tldraw.hostPotentiaFor(memberLayer, container
+         +, shapeId) : {view: {$component: {container, shapeId}}};
+      37          togo = {[memberName]: {$component: memberPotentia}};
+      38      } else {
+      37 -        togo = {container, view: {$component: {shapeId}}};
+      39 +        togo = {view: {$component: {container, shapeId}}};
+      40      }
+      41      return togo;
+      42  };
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+8 -5)
+      609  };
+      610
+      611  /**
+      612 - * Describe any error found within a component and its subcomp
+          -onents - for example a reference which does not
+      613 - * resolve, or a template which cannot be rendered. If `includ
+          -ePending` is set, components which are still waiting
+      614 - * on I/O, e.g. for a layer which is still loading or is never
+          - defined, are reported too.
+      612 + * Describe any problem found within a component and its subco
+          +mponents - for example a layer which is not defined, a
+      613 + * reference which does not resolve, or a template which canno
+          +t be rendered. Unless `includePending` is set, components
+      614 + * which are still waiting on I/O, e.g. for a layer which is s
+          +till loading, are not reported.
+      615   * @param {fluid.component} component - The component to be di
+           agnosed
+      616   * @param {Boolean} [includePending] - If `true`, pending comp
+           onents are reported as well as failed ones
+      617   * @return {String[]} Descriptions of each problem found
+      618   */
+      619  fluid.tldraw.ai.diagnose = function (component, includePending
+           ) {
+      620      const problems = [];
+      621 -    const reportable = value => fluid.isErrorUnavailable(value
+          -) || (includePending && fluid.isUnavailable(value));
+      621 +    const reportable = value => fluid.isUnavailable(value) &&
+          +(includePending || fluid.unProxy(value).variety !== "pending")
+          +;
+      622      const report = function (shadow, unavailable, what) {
+      623          fluid.unavailableToCauses(fluid.unProxy(unavailable)).
+           forEach(cause => {
+      624              const site = cause.site && !Array.isArray(cause.si
+           te) && cause.site.shadow ? cause.site : null;
+     ...
+      635          } else if (!fluid.isUnavailable(instance)) {
+      636              const that = shadow.that;
+      637              if (fluid.deSignal(that.$layers).includes("fluid.v
+           iewComponent")) {
+      638 +                const container = fluid.deSignal(that.containe
+          +r);
+      639                  const vTree = fluid.deSignal(that.vTree);
+      639 -                if (reportable(vTree)) {
+      640 +                if (reportable(container)) {
+      641 +                    report(shadow, container, "Container of vi
+          +ew");
+      642 +                } else if (reportable(vTree)) {
+      643                      report(shadow, vTree, "Rendering of view")
+           ;
+      644                  }
+      645              }
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+28 -8)
+      157          "\"new-2\" does not name an existing widget",
+      158          "\"shape:note1\" names a native tldraw shape",
+      159          "within the component part \"new-3\" is not valid JSON
+           ",
+      160 +        "\"new-3\" does not name an existing widget",
+      161          "\"new-4\" is not a nested multipart/mixed document",
+      162          "\"shape:gone\" does not name a shape",
+      163          "unrecognised kind \"mystery\""
+      164      ];
+      164 -    console.log("XXX problems", JSON.stringify(plan.problems,
+          -null, 2));
+      165      assert.equal(plan.problems.length, expectedProblems.length
+           , "One problem reported for each rejected part");
+      166      expectedProblems.forEach((fragment, i) => assert.ok(plan.p
+           roblems[i].includes(fragment), "Problem reported: " + fragment
+           ));
+      167  });
+     ...
+      292      await fluid.tests.tldrawAI.loadImports();
+      293      const container = qs(".container");
+      294      assert.deepEqual(fluid.tldraw.hostPotentiaFor("fluid.demos
+           .counter", container, "shape:a"),
+      295 -        {container, view: {$component: {shapeId: "shape:a"}}},
+          - "Host potentia directed at a widget's own view");
+      295 +        {view: {$component: {container, shapeId: "shape:a"}}},
+          + "Host potentia directed at a widget's own view");
+      296      const potentia = fluid.tldraw.hostPotentiaFor("fluid.tests
+           .tldrawAI.umbrella", container, "shape:abc");
+      297 -    assert.deepEqual(potentia, {counter: {$component: {contain
+          -er, view: {$component: {shapeId: "shape:abc"}}}}},
+      297 +    assert.deepEqual(potentia, {counter: {$component: {view: {
+          +$component: {container, shapeId: "shape:abc"}}}}},
+      298          "Host potentia directed at the view of the subcomponen
+           t whose view is injected");
+      299
+      300      const host = fluid.tests.tldrawAI.host();
+      301      const that = fluid.tests.tldrawAI.umbrella(potentia);
+      302      fluid.cell.stabilize();
+      303 -    console.log("XXX umbrella", container.outerHTML, fluid.tld
+          -raw.ai.diagnose(that, true), fluid.isUnavailable(that.view), f
+          -luid.isUnavailable(that.counter.view), that.counter.view === t
+          -hat.view, fluid.deSignal(that.counter.view.$layers), fluid.deS
+          -ignal(that.counter.view.container));
+      303      assert.equal(qs(".counter span", container).textContent, "
+           Clicked 0 times", "Umbrella rendered through the counter's vie
+           w");
+      304      that.counter.increment();
+      305      fluid.cell.stabilize();
+     ...
+      330      fluid.cell.stabilize();
+      331      const errors = fluid.tldraw.ai.diagnose(that);
+      332      const withPending = fluid.tldraw.ai.diagnose(that, true);
+      334 -    console.log("XXX diag", errors, withPending);
+      335 -    assert.ok(withPending.length > errors.length, "Pending sub
+          -component reported only on request");
+      336 -    assert.ok(withPending.some(problem => problem.includes("is
+          - still pending")), "Pending subcomponent described");
+      333 +    assert.equal(errors.length, 1, "One problem diagnosed");
+      334 +    assert.ok(errors[0].includes(".child failed: Layer fluid.t
+          +ests.tldrawAI.neverDefined is not defined"), "Undefined layer
+          +of subcomponent described");
+      335 +    assert.deepEqual(withPending, errors, "No further pending
+          +problems");
+      336 +
+      337 +    // A subcomponent rendering without a container
+     … 30 more lines (ctrl+o to expand)
+
+● Now reworking the panel to toggle visibility via @class rather than $if.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/sfc/fluid-demos-ask
+      Anything.vue"…)
+  ⎿  18:18:15.649:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/from-demos/html/TldrawAITests.ht
+     ml
+     … +24 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnything.vue (+21 -47)
+       72              }
+       73          }
+       74      },
+       75 -    loginForm: {
+       76 -        $component: {
+       77 -            $layers: "fluid.component",
+       78 -            $if: "{askAnything}.needsPassword",
+       79 -            view: {
+       80 -                $component: {
+       81 -                    $layers: "fluid.templateViewComponent",
+       82 -                    template: `<div class="ask-anything-login"
+          ->
+       83 -                        <div class="ask-anything-login-prompt"
+          ->Enter the password for the AI service:</div>
+       84 -                        <div class="ask-anything-row">
+       85 -                            <input type="password" class="ask-
+          -anything-password" value="@{{askAnything}.state.password}"
+       86 -                                   disabled="@{{askAnything}.b
+          -usy}" @onkeydown="{askAnything}.passwordKeyDown({0})">
+       87 -                            <button class="ask-anything-button
+          -" disabled="@{{askAnything}.busy}"
+       88 -                                    @onclick="{askAnything}.lo
+          -gin()">Log In</button>
+       89 -                        </div>
+       90 -                        <div class="ask-anything-login-error">
+          -@{{askAnything}.state.loginError}</div>
+       91 -                    </div>`
+       92 -                }
+       93 -            }
+       94 -        }
+       95 -    },
+       96 -    composer: {
+       97 -        $component: {
+       98 -            $layers: "fluid.component",
+       99 -            $if: "{askAnything}.hasToken",
+      100 -            view: {
+      101 -                $component: {
+      102 -                    $layers: "fluid.templateViewComponent",
+      103 -                    template: `<div class="ask-anything-compos
+          -er">
+      104 -                        <textarea class="ask-anything-directio
+          -n" placeholder="Ask anything ..."
+      105 -                                  value="@{{askAnything}.state
+          -.direction}" @onkeydown="{askAnything}.directionKeyDown({0})">
+          -</textarea>
+      106 -                        <div class="ask-anything-row">
+      107 -                            <label class="ask-anything-model">
+          -Model
+      108 -                                <input type="text" value="@{{a
+          -skAnything}.state.model}" disabled="@{{askAnything}.busy}">
+      109 -                            </label>
+      110 -                            <button class="ask-anything-link"
+          -disabled="@{{askAnything}.busy}"
+      111 -                                    @onclick="{askAnything}.lo
+          -gout()">Log Out</button>
+     … 40 more lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+8 -6)
+      375      try {
+      376          const that = fluid.demos.askAnything({container});
+      377          fluid.cell.stabilize();
+      378 -        assert.ok(qs(".ask-anything-password", container), "Pa
+          -ssword requested when no token is held");
+      379 -        assert.notOk(qs(".ask-anything-direction", container),
+          - "No composer shown without token");
+      378 +        const isHidden = selector => qs(selector, container).c
+          +lassList.contains("ask-anything-hidden");
+      379 +        assert.notOk(isHidden(".ask-anything-login"), "Passwor
+          +d requested when no token is held");
+      380 +        assert.ok(isHidden(".ask-anything-composer"), "No comp
+          +oser shown without token");
+      381
+      382          that.state.token = "abc123";
+      383          fluid.cell.stabilize();
+      383 -        assert.notOk(qs(".ask-anything-password", container),
+          -"Password no longer requested once token is held");
+      384 -        const textarea = qs(".ask-anything-direction", contain
+          -er);
+      385 -        assert.ok(textarea, "Composer shown once token is held
+          -");
+      384 +        assert.ok(isHidden(".ask-anything-login"), "Password n
+          +o longer requested once token is held");
+      385 +        assert.notOk(isHidden(".ask-anything-composer"), "Comp
+          +oser shown once token is held");
+      386          assert.ok(qs(".ask-anything-composer .ask-anything-but
+           ton", container).hasAttribute("disabled"), "Send disabled with
+           out direction");
+      387
+      388          that.state.direction = "What is on the canvas?";
+     ...
+      411          await that.send();
+      412          fluid.cell.stabilize();
+      413          assert.equal(that.state.token, "", "Token forgotten on
+            rejection");
+      414 -        assert.ok(qs(".ask-anything-password", container), "Pa
+          -ssword requested again");
+      414 +        assert.notOk(isHidden(".ask-anything-login"), "Passwor
+          +d requested again");
+      415 +        assert.equal(qs(".ask-anything-login-error", container
+          +).textContent, "The password was not accepted - please enter i
+          +t again.",
+      416 +            "Rejection explained");
+      417          assert.ok(fluid.peek(qsa(".ask-anything-entry", contai
+           ner)).classList.contains("ask-anything-error"), "Rejection rep
+           orted");
+      418          that.destroy();
+      419      } finally {
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/tests/framework-tests/from-demo
+      s/js/TldrawAITests.js"…)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+1 -0)
+      392          assert.equal(calls.length, 1, "Endpoint called once");
+      393          assert.equal(calls[0].token, "abc123", "Token presente
+           d to endpoint");
+      394          assert.equal(calls[0].model, fluid.tldraw.ai.defaultMo
+           del, "Default model requested");
+      395 +        console.log("XXX entries", JSON.stringify(that.state.e
+          +ntries), fluid.isUnavailable(that.entryList), qs(".ask-anythin
+          +g-entries", container).outerHTML);
+      396          const rendered = qsa(".ask-anything-entry", container)
+           ;
+      397          assert.deepEqual(rendered.map(entry => qs(".ask-anythi
+           ng-entry-text", entry).textContent),
+      398              ["What is on the canvas?", "There is nothing here
+           yet"], "User's direction and AI's reply rendered");
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's#console.log("XXX
+      entries", JSON.stringify(that.state.entries)#console.log("XXX entries",
+      JSON.stringify(fl…)
+  ⎿  XXX entries [] false <div class="ask-anything-entries"></div>
+     18:18:44.739:   fq:  FAIL: Module "tldraw "Ask me anything" Demo Tests
+     " Test name "Ask me anything panel converses through the bridge" - Mes
+     … +4 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+1 -1)
+      392          assert.equal(calls.length, 1, "Endpoint called once");
+      393          assert.equal(calls[0].token, "abc123", "Token presente
+           d to endpoint");
+      394          assert.equal(calls[0].model, fluid.tldraw.ai.defaultMo
+           del, "Default model requested");
+      395 -        console.log("XXX entries", JSON.stringify(that.state.e
+          -ntries), fluid.isUnavailable(that.entryList), qs(".ask-anythin
+          -g-entries", container).outerHTML);
+      395 +        console.log("XXX entries", JSON.stringify(fluid.unwrap
+          +Proxy(that.state.entries)), fluid.isUnavailable(that.entryList
+          +), qs(".ask-anything-entries", container).outerHTML);
+      396          const rendered = qsa(".ask-anything-entry", container)
+           ;
+      397          assert.deepEqual(rendered.map(entry => qs(".ask-anythi
+           ng-entry-text", entry).textContent),
+      398              ["What is on the canvas?", "There is nothing here
+           yet"], "User's direction and AI's reply rendered");
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >
+      tests/framework-tests/core/js/ScratchTests.js <<'EOF'
+      "use strict";…)
+  ⎿  XXX 1 0 0
+     XXX 2 0 0
+     XXX 3 0 0
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+12 -25)
+       1  "use strict";
+       2 -const qs = sel => document.querySelector(sel);
+       3 -fluid.def("x.ifs", {
+       4 -    $layers: "fluid.component",
+       5 -    enabled: true,
+       6 -    view: {$component: {$layers: "fluid.templateViewComponent",
+         - template: `<div><div @id="a"></div><div @id="b"></div></div>`,
+         - elideParent: false}},
+       7 -    a: {$component: {$layers: "fluid.component", $if: "{ifs}.en
+         -abled",
+       8 -        view: {$component: {$layers: "fluid.templateViewCompone
+         -nt", template: `<div class="a">A</div>`}}}},
+       9 -    notEnabled: "$compute:x.not({self}.enabled)",
+      10 -    b: {$component: {$layers: "fluid.component", $if: "{ifs}.no
+         -tEnabled",
+      11 -        view: {$component: {$layers: "fluid.templateViewCompone
+         -nt", template: `<div class="b">B</div>`}}}}
+      12 -});
+      13 -x.not = a => !a;
+      14 -QUnit.test("if", function (assert) {
+      15 -    const container = qs(".container");
+      16 -    const that = x.ifs({container});
+       2 +fluid.def("x.rr", {$layers: "fluid.component", state: {$reactiv
+         +eRoot: {entries: [], n: 0}}, len: "$compute:x.len({self}.state.
+         +entries)",
+       3 +  add: {$method: {func: (state) => state.entries.push({a: 1}),
+         +args: ["{self}.state"]}}});
+       4 +x.len = e => e.length;
+       5 +QUnit.test("rr", function (assert) {
+       6 +    const that = x.rr();
+       7      fluid.cell.stabilize();
+      18 -    console.log("XXX 1", container.innerHTML);
+      19 -    that.enabled = false;
+       8 +    that.state.entries.push({a: 1});
+       9      fluid.cell.stabilize();
+      21 -    console.log("XXX 2", container.innerHTML);
+      22 -    const sh = that[fluid.metadataSymbol].childComponents.a;
+      23 -    const av = sh.availableInstance.get();
+      24 -    const v = sh.that.view;
+      25 -    console.log("XXX view", v && fluid.deSignal(v.$layers), v &
+         -& JSON.stringify(fluid.deSignal(v.vTree), (k, val) => k === "sh
+         -adow" || k==="elementSignal" || k==="parentNode" ? undefined :
+         -val), v && fluid.deSignal(v.container)?.outerHTML);
+      26 -    console.log("XXX avail", fluid.isUnavailable(av), av && JSO
+         -N.stringify(fluid.unavailableToCauses(fluid.unProxy(av)).map(c
+         -=> [c.message, c.variety])), av && fluid.unProxy(av).variety);
+      27 -    that.enabled = true;
+      10 +    console.log("XXX 1", that.state.entries.length, that.len);
+      11 +    that.add();
+      12      fluid.cell.stabilize();
+      29 -    console.log("XXX 3", container.innerHTML);
+      13 +    console.log("XXX 2", that.state.entries.length, that.len);
+      14 +    const st = that.state;
+      15 +    st.entries.push({a: 2});
+     … 3 more lines (ctrl+o to expand)
+
+● Another framework gap: push onto an array nested inside a $reactiveRoot object
+  is silently lost (a top-level $reactiveRoot: [] works, as in the todo demo).
+  Checking whether reassignment works.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; sed -i 's#
+      st.entries.push({a: 2});#    st.entries = [...st.entries, {a: 2}];
+      fluid.cell.stabilize(); st.entries[…)
+  ⎿  XXX 1 0 0
+     XXX 2 0 0
+     18:19:05.124:   fq:  FAIL: Test name "rr" - Message: Died on test #1:
+     … +5 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+1 -1)
+      12      fluid.cell.stabilize();
+      13      console.log("XXX 2", that.state.entries.length, that.len);
+      14      const st = that.state;
+      15 -    st.entries.push({a: 2});
+      15 +    st.entries = [...st.entries, {a: 2}]; fluid.cell.stabilize(
+         +); st.entries[0].a = 5; fluid.cell.stabilize(); console.log("XX
+         +X 4", JSON.stringify(fluid.unwrapProxy(st.entries)));
+      16      console.log("XXX 3", that.state.entries.length, that.len);
+      17      assert.ok(true);
+      18  });
+
+● Reassignment fails too (existing.set is not a function). I'll use a top-level
+  entries: {$reactiveRoot: []} like the todo demo, and report this as a separate
+  framework bug.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; cat >
+      tests/framework-tests/core/js/ScratchTests.js <<'EOF'
+      "use strict";…)
+  ⎿  XXX 2 2 2
+  ⎿  Updated tests/framework-tests/core/js/ScratchTests.js (+4 -8)
+       1  "use strict";
+       2 -fluid.def("x.rr", {$layers: "fluid.component", state: {$reactiv
+         -eRoot: {entries: [], n: 0}}, len: "$compute:x.len({self}.state.
+         -entries)",
+       3 -  add: {$method: {func: (state) => state.entries.push({a: 1}),
+         -args: ["{self}.state"]}}});
+       2 +fluid.def("x.rr", {$layers: "fluid.component", entries: {$react
+         +iveRoot: []}, len: "$compute:x.len({self}.entries)",
+       3 +  add: {$method: {func: (entries) => entries.push({a: 1, b: ""}
+         +), args: ["{self}.entries"]}}});
+       4  x.len = e => e.length;
+       5  QUnit.test("rr", function (assert) {
+       6      const that = x.rr();
+       7      fluid.cell.stabilize();
+       8 -    that.state.entries.push({a: 1});
+       8 +    that.add();
+       9      fluid.cell.stabilize();
+      10 -    console.log("XXX 1", that.state.entries.length, that.len);
+      10      that.add();
+      11      fluid.cell.stabilize();
+      13 -    console.log("XXX 2", that.state.entries.length, that.len);
+      14 -    const st = that.state;
+      15 -    st.entries = [...st.entries, {a: 2}]; fluid.cell.stabilize(
+         -); st.entries[0].a = 5; fluid.cell.stabilize(); console.log("XX
+         -X 4", JSON.stringify(fluid.unwrapProxy(st.entries)));
+      16 -    console.log("XXX 3", that.state.entries.length, that.len);
+      12 +    console.log("XXX 2", that.entries.length, that.len);
+      13      assert.ok(true);
+      14  });
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; rm
+      tests/framework-tests/core/html/ScratchTests.html
+      tests/framework-tests/core/js/ScratchTests.js; python3 - <<'EOF…)
+  ⎿  18:19:34.567:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/from-demos/html/TldrawAITests.ht
+     ml
+     … +16 lines (ctrl+o to expand)
+  ⎿  Deleted tests/framework-tests/core/html/ScratchTests.html (+0 -36)
+       1 -<!DOCTYPE html>
+       2 -<html lang="en">
+       3 -    <head>
+       4 -        <meta http-equiv="Content-Type" content="text/html; cha
+         -rset=utf-8" />
+       5 -        <title>FluidPTF.js Tests</title>
+       6 -
+       7 -        <link rel="stylesheet" media="screen" href="../../../li
+         -b/qunit/css/qunit.css" />
+       8 -
+       9 -        <script src="../../../../src/lib/lezer/lezer-javascript
+         --browser.js" fluid-hydrated="%infusion-6"></script>
+      10 -
+      11 -        <script src="../../../../src/framework/core/js/FluidCor
+         -e.js"></script>
+      12 -        <script src="../../../../src/framework/core/js/FluidSig
+         -nals.js"></script>
+      13 -        <script src="../../../../src/framework/core/js/Fluid.js
+         -"></script>
+      14 -        <script src="../../../../src/framework/core/js/FluidIL.
+         -js"></script>
+      15 -        <script src="../../../../src/framework/core/js/template
+         --parser.js"></script>
+      16 -        <script src="../../../../src/framework/core/js/sfc-pars
+         -er.js"></script>
+      17 -        <script src="../../../../src/framework/core/js/FluidMod
+         -ules.js"></script>
+      18 -        <script src="../../../../src/framework/core/js/FluidVie
+         -w.js"></script>
+      19 -        <script src="../../../../src/framework/core/js/FluidPTF
+         -.js"></script>
+      20 -        <script src="../../../../src/framework/core/js/FluidVie
+         -w-browser.js"></script>
+      21 -
+      22 -        <script src="../../../lib/qunit/js/qunit.js"></script>
+      23 -        <script src="../../../test-core/qunit/js/qunit-fluid.js
+         -"></script>
+      24 -
+      25 -        <script src="../js/ScratchTests.js"></script>
+      26 -    </head>
+      27 -    <body>
+      28 -    <div id="qunit"></div>
+      29 -    <!-- Test HTML -->
+      30 -    <div id="qunit-fixture">
+      31 -        <div class="container" id="main-container"></div>
+      32 -        <div class="target-container" id="target-container"></d
+         -iv>
+      33 -    </div>
+      34 -
+      35 -    </body>
+      36 -</html>
+  ⎿  Deleted tests/framework-tests/core/js/ScratchTests.js (+0 -14)
+       1 -"use strict";
+       2 -fluid.def("x.rr", {$layers: "fluid.component", entries: {$react
+         -iveRoot: []}, len: "$compute:x.len({self}.entries)",
+       3 -  add: {$method: {func: (entries) => entries.push({a: 1, b: ""}
+         -), args: ["{self}.entries"]}}});
+       4 -x.len = e => e.length;
+       5 -QUnit.test("rr", function (assert) {
+       6 -    const that = x.rr();
+       7 -    fluid.cell.stabilize();
+       8 -    that.add();
+       9 -    fluid.cell.stabilize();
+      10 -    that.add();
+      11 -    fluid.cell.stabilize();
+      12 -    console.log("XXX 2", that.entries.length, that.len);
+      13 -    assert.ok(true);
+      14 -});
+  ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnything.vue (+15 -10)
+      46
+      47  fluid.def("fluid.demos.askAnything", {
+      48      $layers: "fluid.component",
+      49 +    // Held separately from the rest of the state since entries
+         + cannot yet be pushed onto an array nested within a
+      50 +    // $reactiveRoot
+      51 +    entries: {
+      52 +        $reactiveRoot: []
+      53 +    },
+      54      state: {
+      55          $reactiveRoot: {
+      51 -            entries: [],
+      56              direction: "",
+      57              password: "",
+      58              // Remembered from an earlier visit, if any
+     ...
+      71          $component: {
+      72              $layers: "fluid.demos.askAnythingEntry",
+      73              $for: {
+      70 -                source: "{askAnything}.state.entries",
+      74 +                source: "{askAnything}.entries",
+      75                  valueAs: "entry"
+      76              }
+      77          }
+     ...
+      113      send: {
+      114          $method: {
+      115              func: "fluid.demos.askAnything.send",
+      112 -            args: ["{self}.state"]
+      116 +            args: ["{self}.state", "{self}.entries"]
+      117          }
+      118      }
+      119  });
+     ...
+      164
+      165  /**
+      166   * Append an entry to the panel's conversation, and scroll it
+           into view
+      163 - * @param {Object} state - The panel's reactive state
+      167 + * @param {Object[]} entries - The panel's reactive conversati
+          +on entries
+      168   * @param {ChatEntry} entry - The entry to be appended
+      169   */
+      166 -fluid.demos.askAnything.addEntry = function (state, entry) {
+      167 -    state.entries.push({detail: "", ...entry, noDetail: !entry
+          -.detail});
+      170 +fluid.demos.askAnything.addEntry = function (entries, entry) {
+     … 36 more lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+7 -2)
+      78      assert.deepEqual(nested.map(part => [part.kind, part.filena
+          me]), [["shape", "shape"], ["potentia", "/"], ["live", "/"]],
+      79          "Component part holds shape, potentia and live parts");
+      80      assert.deepEqual(JSON.parse(nested[0].body), {layerName: "f
+          luid.demos.counter", x: 400, y: 50, w: 260, h: 80}, "Shape part
+           records hosting");
+      81 -    assert.deepEqual(JSON.parse(nested[2].body), {"state.count"
+         -: 5}, "Live part records widget's state");
+      81 +    assert.deepEqual(JSON.parse(nested[2].body), {state: {count
+         +: 5}}, "Live part records widget's state");
+      82      assert.deepEqual(JSON.parse(parts[3].body), [{id: "shape:no
+          te1", type: "note", x: 10, y: 21, w: 200, h: 200, text: "Buy mi
+          lk"}],
+      83          "Canvas part lists native shapes with rounded bounds");
+      84
+     ...
+       98      const messages = fluid.tldraw.ai.buildMessages(prompt, [{r
+           ole: "user", content: "Earlier"}, {role: "assistant", content:
+            "Reply"}], "Do it");
+       99      assert.deepEqual(messages.map(message => message.role), ["
+           system", "user", "assistant", "user"], "Messages assembled wit
+           h history");
+      100      assert.ok(messages[3].content.endsWith("\n\nDo it"), "Dire
+           ction is the final message, following its announcement");
+      101 +
+      102 +    // A live part setting a single path within a widget's sta
+          +te, as the AI is advised to send, applies in place
+      103 +    const unresolved = await fluid.ptf.applyParts(first, [flui
+          +d.tests.tldrawAI.jsonPart("live", "/", {"state.count": 9})]);
+      104 +    assert.deepEqual(unresolved, [], "Live part applied");
+      105 +    assert.equal(first.count, 9, "Path within widget's state w
+          +ritten");
+      106 +    assert.equal(qs(".counter span", qs(".container")).textCon
+          +tent, "Clicked 9 times", "Widget rerendered");
+      107      first.destroy();
+      108      second.destroy();
+      109  });
+     ...
+      398          assert.equal(calls.length, 1, "Endpoint called once");
+      399          assert.equal(calls[0].token, "abc123", "Token presente
+           d to endpoint");
+      400          assert.equal(calls[0].model, fluid.tldraw.ai.defaultMo
+           del, "Default model requested");
+      395 -        console.log("XXX entries", JSON.stringify(fluid.unwrap
+          -Proxy(that.state.entries)), fluid.isUnavailable(that.entryList
+          -), qs(".ask-anything-entries", container).outerHTML);
+      401          const rendered = qsa(".ask-anything-entry", container)
+           ;
+      402          assert.deepEqual(rendered.map(entry => qs(".ask-anythi
+           ng-entry-text", entry).textContent),
+      403              ["What is on the canvas?", "There is nothing here
+           yet"], "User's direction and AI's reply rendered");
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● class isn't interpolated, but @class takes comma-separated pairs with !
+  negation. Updating the entry SFC.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/sfc/fluid-demos-ask
+      AnythingEntry.vue"…)
+  ⎿  18:19:58.536:   fq:  Running HTML test driver /mnt/outer-source/gits/f
+     luid-infusion-6/tests/framework-tests/from-demos/html/TldrawAITests.ht
+     ml
+     … +2 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnythingEntry.vue (+16 -5)
+       1  <script>
+       2 -// One entry in the conversation of the "Ask me anything" panel
+         -, created by $for over {askAnything}.state.entries
+       2 +// One entry in the conversation of the "Ask me anything" panel
+         +, created by $for over {askAnything}.entries
+       3  fluid.def("fluid.demos.askAnythingEntry", {
+       4 -    // Variable injected by $for, a ChatEntry as described in a
+         -i-protocol.js with a member `noDetail`
+       5 -    entry: null
+       4 +    // Variable injected by $for, a ChatEntry as described in a
+         +i-protocol.js
+       5 +    entry: null,
+       6 +    kinds: "$compute:fluid.demos.askAnythingEntry.kinds({self}.
+         +entry.kind)"
+       7  });
+       8 +
+       9 +fluid.demos.askAnythingEntry.allKinds = ["user", "assistant", "
+         +change", "problem", "error"];
+      10 +
+      11 +/**
+      12 + * Expand the kind of an entry into a flag for each kind, from
+         +which the entry's classes are chosen
+      13 + * @param {String} kind - The entry's kind
+      14 + * @return {Object<String, Boolean>} `true` at the entry's kind
+         +, and `false` at every other
+      15 + */
+      16 +fluid.demos.askAnythingEntry.kinds = kind => Object.fromEntries
+         +(fluid.demos.askAnythingEntry.allKinds.map(oneKind => [oneKind,
+         + oneKind === kind]));
+      17  </script>
+      18
+      19  <template>
+      10 -    <div class="ask-anything-entry ask-anything-@{entry.kind}">
+      20 +    <div class="ask-anything-entry" @class="ask-anything-user:@
+         +{kinds.user}, ask-anything-assistant:@{kinds.assistant},
+      21 +            ask-anything-change:@{kinds.change}, ask-anything-p
+         +roblem:@{kinds.problem}, ask-anything-error:@{kinds.error}">
+      22          <div class="ask-anything-entry-text">@{entry.text}</div
+          >
+      12 -        <details class="ask-anything-entry-detail" @class="ask-
+         -anything-hidden:@{entry.noDetail}">
+      23 +        <details class="ask-anything-entry-detail" @class="ask-
+         +anything-hidden:!@{entry.detail}">
+      24              <summary>Details</summary>
+      25              <pre>@{entry.detail}</pre>
+      26          </details>
+  ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnything.vue (+1 -1)
+      168   * @param {ChatEntry} entry - The entry to be appended
+      169   */
+      170  fluid.demos.askAnything.addEntry = function (entries, entry) {
+      171 -    entries.push({detail: "", ...entry, noDetail: !entry.detai
+          -l});
+      171 +    entries.push({detail: "", ...entry});
+      172      // Scroll once the fresh entry has been rendered
+      173      setTimeout(() => {
+      174          const entries = document.querySelector(".ask-anything-
+           entries");
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 82 pass. Adding guidance about path-wise live writes to the prompt,
+  registering the test file, then linting.
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/ai-protocol.js"…
+      )
+  ⎿  /mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/ai-protocol.js
+       504:13  error  Do not use 'new' for side effects  no-new
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+3 -1)
+      200  * \`component\` parts, each a nested \`multipart/mixed\` docum
+           ent whose filename is a shape id:
+      201      * If the filename is the id of an existing widget and the
+           nested document has NO potentia part for "/", its \
+      202  \`live\` and \`potentia\` parts are applied to the existing wi
+           dget in place, retaining the rest of its state. This is \
+      203 -the way to change a widget's state, e.g. a \`live\` part for "
+          -/" holding \`{"state.count": 5}\`.
+      203 +the way to change a widget's state, e.g. a \`live\` part for "
+          +/" holding \`{"state.count": 5}\`. Each key of a \`live\` \
+      204 +part is a path, which may reach within a member such as \`stat
+          +e\` to change just one of its values, whereas writing \
+      205 +the member as a whole replaces all of its values.
+      206      * If the filename is the id of an existing widget and the
+           nested document has a potentia part for "/", the \
+      207  widget is replaced by a fresh one constructed from the nested
+           document.
+      208      * If the filename is not the id of an existing shape (choo
+           se any fresh name, e.g. "new-1"), a fresh widget is \
+  ⎿  Updated package.json (+2 -1)
+      127                  "tests/framework-tests/core/html/FluidViewSFCT
+           ests.html",
+      128                  "tests/framework-tests/core/html/FluidPTFTests
+           .html",
+      129                  "tests/framework-tests/from-demos/html/TodoLis
+           tTests.html",
+      130 -                "tests/framework-tests/from-demos/html/TodoLis
+          -tAssignTests.html"
+      130 +                "tests/framework-tests/from-demos/html/TodoLis
+          +tAssignTests.html",
+      131 +                "tests/framework-tests/from-demos/html/TldrawA
+          +ITests.html"
+      132              ],
+      133              "browser": [
+      134                  "demo/compose-edit/demo-script.json"
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/ai-protocol.js"…
+      )
+  ⎿  {
+         "sources": {
+             "js": [
+     … +125 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+1 -0)
+      501      } else if (part.contentType === fluid.layerMimeTypes.javas
+           cript) {
+      502          try {
+      503              // Constructing a function compiles its body witho
+           ut executing it
+      504 +            // eslint-disable-next-line no-new
+      505              new Function("fluid", part.body);
+      506          } catch (e) {
+      507              problems.push(`The JavaScript layer ${name} ${wher
+           e} has a syntax error: ${e.message}`);
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Lint is clean on my JS. Checking the SFCs with the repo's vue lint
+  configuration.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● No Vue lint setup is effective outside fluid-lint-all (existing SFCs fail
+  identically), so moving on. Running the full test suite.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 1294 tests pass. Now an end-to-end smoke test of the real tldraw demo in
+  headless Chromium, with the AI endpoint stubbed to return scripted PTF
+  responses.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Most of the flow works end-to-end, but I found three bugs to fix: an undefined
+  $ in the in-place update, the dump exposing the host's own
+  fluid.tldrawViewComponent layer, and failed widget construction leaving an
+  empty shape behind.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● fluid.filterKeys still depends on jQuery's $.extend (a latent bug in
+  Fluid.js); I'll use fluid.filterObjKeys instead and note it. Applying the
+  three fixes.
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-ai.js"…)
+  ⎿  99:    const checkInstantiation = async function (ptfToken, instantiat
+     ion, shapeId, change) {
+     100:        const problems = await diagnoseInstantiation(instantiation
+     … +7 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/js/tldraw-ai.js (+21 -2)
+       97       * @return {Promise<String[]>} A promise for descriptions
+           of any problems found
+       98       */
+       99      const checkInstantiation = async function (ptfToken, insta
+           ntiation, shapeId, change) {
+      100 +        const problems = await diagnoseInstantiation(instantia
+          +tion, shapeId, change);
+      101 +        // A fresh widget which could not be constructed is re
+          +moved, so that a corrected response can create it afresh
+      102 +        const isFresh = shapeId !== change.key;
+      103 +        const failed = problems.length > 0 && (!infusionInstan
+          +ces.has(shapeId) || fluid.isUnavailable(fluid.ptf.componentToS
+          +hadow(infusionInstances.get(shapeId)).availableInstance.get())
+          +);
+      104 +        if (isFresh && failed) {
+      105 +            editor.deleteShapes([shapeId]);
+      106 +        }
+      107 +        return isFresh && failed ? problems.map(problem => pro
+          +blem + " - its shape has been removed") : problems;
+      108 +    };
+      109 +
+      110 +    /**
+      111 +     * Await the construction of a widget from parts registere
+          +d under a token, and describe any problems with it
+      112 +     * @param {Promise<InstantiationReport>} instantiation - T
+          +he promise from `awaitInstantiation` for the widget's token
+      113 +     * @param {String} shapeId - The id of the shape hosting t
+          +he widget
+      114 +     * @param {ShapeChange} change - The change which led to t
+          +he widget's construction
+      115 +     * @return {Promise<String[]>} A promise for descriptions
+          +of any problems found
+      116 +     */
+      117 +    const diagnoseInstantiation = async function (instantiatio
+          +n, shapeId, change) {
+      118          const report = await Promise.race([instantiation, wait
+           (instantiationTimeout, null)]);
+      119          const what = `The widget ${JSON.stringify(change.key)}
+           ` + (shapeId === change.key ? "" : ` (now shape ${shapeId})`);
+      120          let togo;
+     ...
+      184          for (const change of plan.updates) {
+      185              const shape = editor.getShape(change.key);
+      186              if (Object.keys(change.shape).length > 0) {
+      169 -                const props = fluid.filterKeys(change.shape, [
+          -"w", "h"]);
+      170 -                editor.updateShape({id: shape.id, type: shape.
+          -type, ...fluid.filterKeys(change.shape, ["x", "y"]), props});
+      187 +                const props = fluid.filterObjKeys(change.shape
+          +, key => key === "w" || key === "h");
+      188 +                const position = fluid.filterObjKeys(change.sh
+          +ape, key => key === "x" || key === "y");
+      189 +                editor.updateShape({id: shape.id, type: shape.
+          +type, ...position, props});
+      190              }
+      191              if (change.rebuild) {
+      192                  snapshotForUndo(editor, [shape]);
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+9 -2)
+      31  // The number of times a response which could not be applied is
+           reported back to the AI for it to correct
+      32  fluid.tldraw.ai.maxRepairs = 2;
+      33
+      34 +// Layers which the host broadcasts onto every widget, which ar
+         +e part of the canvas rather than any widget and so are
+      35 +// not transmitted as part of the workspace
+      36 +fluid.tldraw.ai.hostLayers = ["fluid.tldrawViewComponent"];
+      37 +
+      38  // The number of earlier messages of the conversation which are
+           sent along with each fresh direction
+      39  fluid.tldraw.ai.maxHistory = 8;
+      40
+     ...
+      116      const layerParts = new Map();
+      117      const componentParts = workspace.widgets.map(widget => {
+      118          const parts = widget.component ? fluid.ptf.componentTo
+           Parts(widget.component) : [];
+      115 -        parts.filter(part => part.kind === "layer").forEach(pa
+          -rt => layerParts.set(part.filename, part));
+      119 +        parts.filter(part => part.kind === "layer" && !fluid.t
+          +ldraw.ai.hostLayers.includes(part.filename))
+      120 +            .forEach(part => layerParts.set(part.filename, par
+          +t));
+      121          const shapePart = {
+      122              kind: "shape",
+      123              contentType: fluid.layerMimeTypes.json,
+     ...
+      209  part is a path, which may reach within a member such as \`stat
+           e\` to change just one of its values, whereas writing \
+      210  the member as a whole replaces all of its values.
+      211      * If the filename is the id of an existing widget and the
+           nested document has a potentia part for "/", the \
+      207 -widget is replaced by a fresh one constructed from the nested
+          -document.
+      212 +widget is replaced by a fresh one constructed from the nested
+          +document. Its existing state is not retained, so \
+      213 +include \`live\` parts for any which should be carried over -
+          +e.g. for an umbrella holding the existing widget as its \
+      214 +subcomponent \`counter\`, a \`live\` part for "/counter".
+      215      * If the filename is not the id of an existing shape (choo
+           se any fresh name, e.g. "new-1"), a fresh widget is \
+      216  created on the canvas. Its nested document must hold a potenti
+           a part for "/" whose \`$layers\` names the layer to \
+      217  construct, e.g. \`{"$layers": ["fluid.demos.counter"]}\`, and
+           the layer must have \`fluid.topLevelWidget\` amongst \
+
+  Read 1 file (ctrl+o to expand)
+
+● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
+      f="/mnt/outer-source/gits/fluid-infusion-6/demo/tldraw/js/tldraw-ai.js"…)
+  ⎿  204:                instantiations.push(checkInstantiation(instantiati
+     on, shape.id, change));
+     243:            instantiations.push(checkInstantiation(instantiation,
+     id, change));
+  ⎿  Updated demo/tldraw/js/tldraw-ai.js (+14 -11)
+       89      };
+       90
+       91      /**
+       92 -     * Await the construction of a widget from parts registere
+          -d under a token, and diagnose it
+       93 -     * @param {String} ptfToken - The token under which the wi
+          -dget's parts were registered
+       94 -     * @param {Promise<InstantiationReport>} instantiation - T
+          -he promise from `awaitInstantiation` for the token
+       92 +     * Await the construction of a widget from parts registere
+          +d under a token, and diagnose it. A fresh widget which
+       93 +     * could not be constructed or did not become available is
+          + removed, so that a corrected response can create it afresh.
+       94 +     * @param {Promise<InstantiationReport>} instantiation - T
+          +he promise from `awaitInstantiation` for the widget's token
+       95       * @param {String} shapeId - The id of the shape hosting t
+           he widget
+       96       * @param {ShapeChange} change - The change which led to t
+           he widget's construction
+       97       * @return {Promise<String[]>} A promise for descriptions
+           of any problems found
+       98       */
+       99 -    const checkInstantiation = async function (ptfToken, insta
+          -ntiation, shapeId, change) {
+       99 +    const checkInstantiation = async function (instantiation,
+          +shapeId, change) {
+      100          const problems = await diagnoseInstantiation(instantia
+           tion, shapeId, change);
+      101 -        // A fresh widget which could not be constructed is re
+          -moved, so that a corrected response can create it afresh
+      102 -        const isFresh = shapeId !== change.key;
+      103 -        const failed = problems.length > 0 && (!infusionInstan
+          -ces.has(shapeId) || fluid.isUnavailable(fluid.ptf.componentToS
+          -hadow(infusionInstances.get(shapeId)).availableInstance.get())
+          -);
+      104 -        if (isFresh && failed) {
+      101 +        const that = infusionInstances.get(shapeId);
+      102 +        const available = that && !fluid.isUnavailable(fluid.p
+          +tf.componentToShadow(that).availableInstance.get());
+      103 +        let togo;
+      104 +        if (shapeId !== change.key && problems.length > 0 && !
+          +available) {
+      105              editor.deleteShapes([shapeId]);
+      106 +            togo = problems.map(problem => problem + " - its s
+          +hape has been removed");
+      107 +        } else {
+      108 +            togo = problems;
+      109          }
+      107 -        return isFresh && failed ? problems.map(problem => pro
+          -blem + " - its shape has been removed") : problems;
+      110 +        return togo;
+      111      };
+      112
+      113      /**
+     ...
+      201                      props: {layerName: change.layerName},
+      202                      meta: {...editor.getShape(shape.id).meta,
+           ptfToken}
+      203                  });
+      201 -                instantiations.push(checkInstantiation(ptfToke
+          -n, instantiation, shape.id, change));
+      204 +                instantiations.push(checkInstantiation(instant
+          +iation, shape.id, change));
+      205                  constructedIds.add(shape.id);
+     … 10 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All flows now work in the real demo. One more check: that undo restores the
+  counter (with state 7) that the umbrella replaced.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Undo restores the original counter at 7. Let me look at the screenshot.
+
+  Read 1 file (ctrl+o to expand)
+
+● The panel renders cleanly beside the canvas. Final checks: the self-boot
+  demo's dependency on the modules I changed, then the full test suite and lint.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Issue #22 is implemented: the tldraw demo now has an "Ask me anything" panel
+  beside the canvas. It talks to the K2 proxy and either replies with text or
+  applies a PTF document to the workspace. If a document can't be decoded or
+  applied, the errors go back to the AI for up to two correction rounds. All
+  1294 tests pass under npm test and lint is clean on the changed JS.
+
+  I have not run it against the real endpoint, because I don't have the
+  password. I made only two unauthenticated requests to check CORS, and stopped
+  there so fail2ban wouldn't ban the address. The proxy only allows POST, so the
+  model list can't be fetched. The default model IFM/K2-Think is a guess based
+  on IFM's Hugging Face naming. It can be changed in the panel and is
+  remembered. Please check it on your first real send.
+
+  Testing so far:
+  - Headless Chromium on the real demo, with the endpoint stubbed: a text reply,
+    creating a counter at 3, setting it to 7 in place, and replacing it with an
+    umbrella that composes a doubler (counter view, doubler injected from it).
+    Also a response naming an undefined layer, which triggered a correction
+    round, and undo, which restored the original counter at 7.
+  - New tests/framework-tests/from-demos/html/TldrawAITests.html (added to npm
+    test): the workspace dump, response parsing, change planning, the correction
+    cycle, routing for the umbrella, diagnostics, and the panel UI.
+
+  How it works:
+  - Login: the password is turned into the PBKDF2 token in the browser and
+    remembered locally. A 401 clears it and asks again.
+  - Prompt: in the order you suggested. The workspace dump lists each widget
+    layer once, then each widget under its shape id with its size and position,
+    its potentia and its live state, then the native tldraw shapes. It also
+    lists layers that are available but not yet on the canvas.
+  - Reply format: the AI answers in the same shape as the dump. It can define
+    layers, change a widget in place, replace it, create a new one, or delete
+    shapes. The prompt includes your umbrella and cross-injection strategy
+    hints.
+  - Correction cycle: after applying a reply, every widget is checked for new
+    problems, such as an undefined layer, a reference that doesn't resolve, or a
+    view with no container. Problems that existed before the change aren't
+    blamed on the AI. A new widget that fails to construct has its shape
+    removed.
+
+  One integration bug fixed along the way: an umbrella whose view is
+  "{first}.view" rendered nothing in tldraw. The host's container and shape id
+  were overriding that reference. fluid.tldraw.hostPotentiaFor now passes them
+  to the subcomponent that owns the view.
+
+  Framework bugs found but not fixed (outside this issue):
+  1. $if turning false: if the condition starts true and then goes false, the
+     child's rendered content is left in the page. Only its attributes are
+     removed. The existing test only covers an empty template, so it doesn't
+     catch this. Error messages in imageGenerator and storyImageGen likely stay
+     visible after they clear. The panel uses @class toggles instead.
+  2. Arrays inside a $reactiveRoot object: pushing onto them is silently lost,
+     and reassigning one throws existing.set is not a function. A top-level
+     $reactiveRoot: [] works, so the panel uses that.
+  3. fluid.filterKeys still calls jQuery's $.extend, so it throws $ is not
+     defined.
+  4. fluid.formatUnavailable doesn't exist, but the unavailable proxy's toString
+     calls it.
+
+  Limitations:
+  - Undo covers shape creation, replacement and deletion, but not layer
+    redefinitions or in-place state changes.
+  - Replacing a widget starts it fresh, so the prompt tells the AI to send live
+    parts for any state worth keeping.
+
+  Files:
+  - New: demo/tldraw/js/ai-protocol.js, demo/tldraw/js/tldraw-ai.js,
+    demo/tldraw/js/tldraw-hosting.js,
+    demo/tldraw/sfc/fluid-demos-askAnything.vue,
+    demo/tldraw/sfc/fluid-demos-askAnythingEntry.vue,
+    tests/framework-tests/from-demos/html/TldrawAITests.html,
+    tests/framework-tests/from-demos/js/TldrawAITests.js
+  - Changed: src/framework/core/js/FluidPTF.js (split into registerLayerParts,
+    constructParts and applyParts, so parts can be applied to an existing
+    component), tests/framework-tests/core/js/FluidPTFTests.js,
+    demo/tldraw/js/tldraw-driver.js, demo/tldraw/js/tldraw-clipboard.js,
+    demo/tldraw/index.html, package.json (registers the new test file)
+
+  Nothing is committed. Suggested commit line: "Implement "Ask me anything" AI
+  passthrough in tldraw demo - Resolves fluid-project/infusion-6#22".
+
+  Sources for the model id guess: IFM/K2-Think, IFM/K2-Chat
+
+✻ Brewed for 29m 33s · done 18:27
+
+※ recap: The "Ask me anything" AI panel for the tldraw demo (issue #22) is built, all tests pass, and a stubbed run in the real demo works end to end. Next, try a real send with your password and confirm the guessed model name, IFM/K2-Think. (disable recaps in /config)
+  ⎿  Read demo/tldraw/js/tldraw-ai.js (258 lines)
+  ⎿  Read demo/tldraw/sfc/fluid-demos-askAnythingEntry.vue (102 lines)
+  ⎿  Referenced file tests/framework-tests/from-demos/js/TldrawAITests.js
+  ⎿  Read demo/tldraw/sfc/fluid-demos-askAnything.vue (358 lines)
+  ⎿  Referenced file demo/tldraw/js/ai-protocol.js
+
+● Compacted while idle, before the prompt cache expired · turn off with
+  "idleCompaction": false in settings.json
+
+❯ /auto-mode-setup
+  ⎿  Gathering data and drafting your auto-mode setup; back soon
+● Saved to /home/ubuntu/.claude/settings.json (environment). Run `claude
+  auto-mode config` to see the effective result.
+
+❯ The model is IFM/K2-Horizon-375B-A23B and the password is ********* -
+  try making a simple request to direct the model to construct a simple
+  component with three buttons, red, green and blue which set the colour of a
+  box, and report if you get anything valid or intelligible
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The first 16 lines include the original server.listen( line; trim to 15.
+
+  Searched for 1 pattern, listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+● The puppeteer config is resolved from the working directory, so I'll run from
+  the repo root.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● A valid PTF reply came back on the first call. The correction round then
+  failed, because the IFM API wants a "thinking" field on earlier assistant
+  messages. Let me look at the reply in detail.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The response was close but mislabeled the nested component's boundary, causing
+  the correction round to fail with a 400. I'll check IFM's requirements for
+  multi-turn requests.
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Fetch(https://docs.ifm.ai/#/multi-turn)
+  ⎿  Received 1.1MB (200 OK)
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+● I sent the request to the real endpoint, and the first reply was valid and
+  intelligible, but no widget was created. The model made one structural mistake
+  in its PTF document, and the round meant to correct it was refused by the
+  API.
+
+  What I ran: the actual demo in headless Chromium, logging in through the panel
+  with your password. The derived token was accepted, so there was no 401. I
+  set the model to IFM/K2-Horizon-375B-A23B and sent: "Please construct a simple
+  component with three buttons, red, green and blue, which set the colour of a
+  box". The first call took about 5 seconds with an 86k-character system prompt,
+  and the reply was about 2.6k characters.
+
+  What came back: a well-formed PTF document with no text around it, which is
+  what the rules ask for.
+  - A sensible layer fluid.demos.colourBox built on fluid.topLevelWidget. It has
+    a preferred size, state: {$reactiveRoot: {colour: "red"}} and a setColour
+    method. Its template has a swatch and Red/Green/Blue buttons with
+    @onclick="{self}.setColour('red')" and similar, plus tidy styles.
+  - A component part new-colour-box-1 with a potentia {"$layers":
+    ["fluid.demos.colourBox"]} and a shape part giving x, y, w and h.
+
+  The model's mistake: it declared the component's inner boundary as
+  ptf-boundary-colourbox-2, then marked the inner parts with the outer -1
+  boundary. So the component decoded as empty, and its potentia and shape parts
+  became stray top-level parts. Only the layer was defined, which is the
+  "Defined layer fluid.demos.colourBox" entry in the panel.
+
+  Why the correction failed: the system correctly flagged the problem and sent a
+  correction request. The API rejected it with a 400: "Add a supported thinking
+  field to each assistant message in the multi-turn conversation history".
+  IFM's models need the earlier assistant turn's reasoning sent back with it in
+  the history, and callEndpoint currently keeps only message.content. This
+  breaks both correction rounds and any follow-up question in the panel.
+
+  Problems that would likely have followed even with the boundary right:
+  - The method's args use "{0}:colour", which I don't think is a valid
+    reference. "{0}" was probably meant.
+  - The swatch colour is set through a plain style="background-color:
+    @{state.colour}". Plain class attributes aren't interpolated, so style may
+    not be either.
+  - The "problem" entry in the panel shows an empty description after the colon,
+    so the problem list isn't reaching the visible text.
+
+  Proposed fixes, not yet made:
+  1. Have callEndpoint keep the reasoning from each reply and send it back with
+     that assistant message in the history.
+  2. Accept a nested component whose parts use the wrong boundary, or add a
+     worked nested example to the prompt rules.
+  3. Fix the empty problem text in the panel entry.
+  4. Check whether style interpolation and string-literal @onclick arguments
+     work, and add a line about them to the prompt rules.
+
+  Shall I go ahead with these? Fix 1 means making a few more authenticated calls
+  to the endpoint to check the exact field format.
+
+  The full exchange is in /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion
+  -6/cd16ed85-0bd6-427f-9fbf-ae5f3e28cdde/scratchpad/smoke/live-exchanges.json,
+  with a screenshot at /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/
+  cd16ed85-0bd6-427f-9fbf-ae5f3e28cdde/scratchpad/smoke/live.png.
+
+✻ Crunched for 5m 21s · done 22:04
+
+● Background command "Find how Chromium was located for the earlier smoke run"
+completed (exit code 0)
+
+● That notification is just the earlier search for where Chromium is installed
+  finishing, and it's no longer needed. I'm still waiting for your go-ahead on
+  the proposed fixes, starting with sending each reply's reasoning back in the
+  history so correction rounds and follow-up questions get past the 400.
+
+✻ Worked for 3s · done 22:04
+
+❯ No, {0}:colour is ok, the colon field sets off a hint for parameter naming.
+  Add a worked nested example to the prompt rules. Do the other fixes as you
+  have suggested. Can you write the model's first response to
+  a-scratch/responses/first-ifm-response.txt
+
+● Bash(mkdir -p a-scratch/responses && node -e 'const
+      x=require(process.argv[1]); process.stdout.write(x[0].response)'
+      /tmp/claude-1000/-mnt-outer-source-gits-fluid-in…)
+  ⎿  2590 a-scratch/responses/first-ifm-response.txt
+     190:fluid.tldraw.ai.responseRules = `## How to respond
+     226:Content-Description (the part's kind) headers. For example, a resp
+     … +7 lines (ctrl+o to expand)
+  ⎿  Created a-scratch/responses/first-ifm-response.txt (+113 -0)
+        1 +
+        2 +MIME-Version: 1.0
+        3 +Content-Type: multipart/mixed; boundary="ptf-boundary-colourbo
+          +x-1"
+        4 +
+        5 +--ptf-boundary-colourbox-1
+        6 +Content-Type: text/x-vue; charset=utf-8
+        7 +Content-Disposition: attachment; filename="fluid.demos.colourB
+          +ox"
+        8 +Content-Description: layer
+        9 +
+       10 +<script>
+       11 +fluid.def("fluid.demos.colourBox", {
+       12 +    $layers: "fluid.topLevelWidget",
+       13 +    preferredSize: {
+       14 +        w: 300,
+       15 +        h: 200
+       16 +    },
+       17 +    state: {
+       18 +        $reactiveRoot: {
+       19 +            colour: "red"
+       20 +        }
+       21 +    },
+       22 +    setColour: {
+       23 +        $method: {
+       24 +            func: (state, colour) => {
+       25 +                state.colour = colour;
+       26 +            },
+       27 +            args: ["{self}.state", "{0}:colour"]
+       28 +        }
+       29 +    }
+       30 +});
+       31 +</script>
+       32 +
+       33 +<template>
+       34 +    <div class="colourbox">
+       35 +        <div class="colourbox-swatch" style="background-color:
+          + @{state.colour}"></div>
+       36 +        <div class="colourbox-buttons">
+       37 +            <button class="colourbox-button colourbox-button-r
+          +ed" @onclick="{self}.setColour('red')">Red</button>
+       38 +            <button class="colourbox-button colourbox-button-g
+          +reen" @onclick="{self}.setColour('green')">Green</button>
+       39 +            <button class="colourbox-button colourbox-button-b
+          +lue" @onclick="{self}.setColour('blue')">Blue</button>
+       40 +        </div>
+     … 74 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The current example lacks a case showing a layer and new widget arriving
+  together with the inner boundary highlighted, so I'll add one. First, I'll
+  make a small authenticated call to inspect the raw reply format and identify
+  which field holds the reasoning.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll update callEndpoint to return both content and reasoning, then preserve
+  both in the history.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now the edits to ai-protocol.js: the typedef, callEndpoint, converse, the
+  problem and error entries, and the new worked example.
+
+● Bash(python3 - <<'EOF'
+      import re…)
+  ⎿  67:                return response.text();
+     397:        const text = await response.text();
+     441:        const documentText = fluid.tldraw.ai.trimDocument(text.sub
+     … +11 lines (ctrl+o to expand)
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+34 -10)
+      322   * @typedef {Object} ChatMessage
+      323   * @property {String} role - One of "system", "user" or "assis
+           tant"
+      324   * @property {String} content - The text of the message
+      325 + * @property {String} [reasoning] - For an assistant message,
+          +the reasoning which the model produced with it. This is
+      326 + * sent back verbatim as part of the conversation's history, w
+          +hich some models (e.g. IFM's) require.
+      327   */
+      328
+      329  /**
+      330 + * @typedef {Object} AIReply
+      331 + * @property {String} content - The content of the AI's reply
+      332 + * @property {String} [reasoning] - Any reasoning which the mo
+          +del reported separately from its content
+      333 + */
+      334 +
+      335 +/**
+      336   * Assemble the messages to be sent for a fresh direction from
+            the user. The system prompt is assembled afresh
+      337   * reflecting the current workspace, followed by recent messag
+           es of the conversation, and then the direction.
+      338   * @param {String} systemPrompt - The system prompt, as assemb
+           led by `fluid.tldraw.ai.systemPrompt`
+     ...
+      372   * @param {String} options.token - The token derived from the
+           user's password
+      373   * @param {String} options.model - The model to be used
+      374   * @param {ChatMessage[]} options.messages - The messages to b
+           e sent
+      367 - * @return {Promise<String>} A promise for the content of the
+          -AI's reply. On a rejected token, the promise rejects with
+      368 - * an error whose `unauthorised` member is `true`
+      375 + * @return {Promise<AIReply>} A promise for the AI's reply. On
+          + a rejected token, the promise rejects with an error whose
+      376 + * `unauthorised` member is `true`
+      377   */
+      378  fluid.tldraw.ai.callEndpoint = async function ({token, model,
+           messages}) {
+      379      const response = await fetch(fluid.tldraw.ai.endpoint, {
+     ...
+      387      let togo;
+      388      if (response.ok) {
+      389          const payload = await response.json();
+      382 -        togo = payload.choices?.[0]?.message?.content;
+      383 -        if (typeof(togo) !== "string") {
+      390 +        const message = payload.choices?.[0]?.message;
+      391 +        if (typeof(message?.content) === "string") {
+      392 +            togo = typeof(message.reasoning) === "string" ? {c
+          +ontent: message.content, reasoning: message.reasoning} : {cont
+          +ent: message.content};
+      393 +        } else {
+      394              throw new Error("The AI endpoint returned no messa
+           ge: " + JSON.stringify(payload).substring(0, 500));
+      395          }
+      396      } else {
+     ...
+      701   */
+     … 51 more lines (ctrl+o to expand)
+
+● Now the second worked example. Let me see where the existing one ends.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Before writing the example, I'll check how plain style attributes and
+  string-literal arguments in @onclick are handled, so the example only uses
+  what actually works.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● style is interpolated; only class is excluded. Next, how an @on... value is
+  parsed:
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● String literals in @on... handlers aren't JS, so setColour('red') would pass
+  the quotes literally while setColour(red) passes the bare value—there's also
+  an assignment form via {self}.state.colour = red. I'll build the example
+  around these behaviors, modeling it on the counter SFC idiom.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now I'll insert the example and a short section on template syntax after the
+  existing example.
+
+● Bash(python3 - <<'EOF'
+      p = "demo/tldraw/js/ai-protocol.js"…)  ⎿  LINT-OK
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+81 -0)
+      261  --inner-2--
+      262  --outer-1--
+      263
+      264 +A response defining a fresh layer and creating a widget from i
+          +t holds a \`layer\` part followed by a \`component\` \
+      265 +part. Note that every delimiter line WITHIN the nested documen
+          +t uses the nested document's own boundary ("inner-1" \
+      266 +below), and that the nested document is closed with its own cl
+          +ose delimiter before the outer document resumes:
+      267 +
+      268 +MIME-Version: 1.0
+      269 +Content-Type: multipart/mixed; boundary="outer-1"
+      270 +
+      271 +--outer-1
+      272 +Content-Type: text/x-vue; charset=utf-8
+      273 +Content-Disposition: attachment; filename="fluid.demos.ai.gree
+          +ter"
+      274 +Content-Description: layer
+      275 +
+      276 +<script>
+      277 +fluid.def("fluid.demos.ai.greeter", {
+      278 +    $layers: "fluid.topLevelWidget",
+      279 +    preferredSize: {w: 260, h: 110},
+      280 +    state: {
+      281 +        $reactiveRoot: {
+      282 +            greeting: "Hello",
+      283 +            colour: "teal"
+      284 +        }
+      285 +    },
+      286 +    setGreeting: {
+      287 +        $method: {
+      288 +            func: (state, greeting) => {
+      289 +                state.greeting = greeting;
+      290 +            },
+      291 +            args: ["{self}.state", "{0}:greeting"]
+      292 +        }
+      293 +    }
+      294 +});
+      295 +</script>
+      296 +
+      297 +<template>
+      298 +    <div class="ai-greeter">
+      299 +        <span class="ai-greeter-text" style="color: @{state.co
+          +lour}">@{state.greeting}</span>
+      300 +        <button @onclick="{self}.setGreeting(Goodbye)">Wave</b
+          +utton>
+     … 47 more lines (ctrl+o to expand)
+
+● Lint passes, but since a broken worked example would mislead the model, I'll
+  add a test that decodes both rule examples and verifies they plan cleanly. Let
+  me check the existing planning test first.
+
+  Searched for 1 pattern, ran 3 shell commands (ctrl+o to expand)
+
+● Now the test updates: the problem text, reasoning kept in the history, and the
+  examples from the rules.
+
+● Bash(python3 - <<'EOF'
+      p = "tests/framework-tests/from-demos/js/TldrawAITests.js"…)
+  ⎿  renderView beginning for askAnything-41.entryList.view with vTree 159
+     container  14
+     Browser storage is unavailable - settings will not be remembered
+     … +23 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+51 -1)
+      172      expectedProblems.forEach((fragment, i) => assert.ok(plan.p
+           roblems[i].includes(fragment), "Problem reported: " + fragment
+           ));
+      173  });
+      174
+      175 +QUnit.test("Worked examples in the response rules are valid",
+          +async function (assert) {
+      176 +    await fluid.tests.tldrawAI.loadImports();
+      177 +    const examples = fluid.tldraw.ai.responseRules.split("MIME
+          +-Version: 1.0").slice(1)
+      178 +        .map(text => fluid.tldraw.ai.trimDocument("MIME-Versio
+          +n: 1.0" + text));
+      179 +    assert.equal(examples.length, 2, "Two worked examples foun
+          +d");
+      180 +    const updating = fluid.tldraw.ai.planChanges(fluid.ptf.dec
+          +ode(examples[0]), ["shape:abc"], ["shape:abc"]);
+      181 +    assert.deepEqual(updating.problems, [], "Updating example
+          +planned without problems");
+      182 +    assert.deepEqual(updating.updates.map(change => [change.ke
+          +y, change.rebuild]), [["shape:abc", false]], "Widget updated i
+          +n place");
+      183 +    assert.deepEqual(updating.creations.map(change => change.l
+          +ayerName), ["fluid.demos.helloWorld"], "Fresh widget created")
+          +;
+      184 +
+      185 +    const creating = fluid.tldraw.ai.planChanges(fluid.ptf.dec
+          +ode(examples[1]), [], []);
+      186 +    assert.deepEqual(creating.problems, [], "Creating example
+          +planned without problems");
+      187 +    assert.deepEqual(creating.layers.map(part => part.filename
+          +), ["fluid.demos.ai.greeter"], "Fresh layer defined");
+      188 +    assert.deepEqual(creating.creations.map(change => [change.
+          +key, change.layerName, change.shape]),
+      189 +        [["new-1", "fluid.demos.ai.greeter", {x: 500, y: 300}]
+          +], "Widget of the fresh layer created");
+      190 +
+      191 +    // The template syntax described in the rules behaves as d
+          +escribed
+      192 +    creating.layers.forEach(part => fluid.ptf.registerLayerPar
+          +t(part));
+      193 +    const container = qs(".container");
+      194 +    const host = fluid.tests.tldrawAI.host();
+      195 +    const that = fluid.demos.ai.greeter(fluid.tldraw.hostPoten
+          +tiaFor("fluid.demos.ai.greeter", container, "shape:greeter"));
+      196 +    fluid.cell.stabilize();
+      197 +    const text = qs(".ai-greeter-text", container);
+      198 +    const [wave, blush] = qsa(".ai-greeter button", container)
+          +;
+      199 +    assert.equal(text.textContent, "Hello", "Greeting rendered
+          +");
+      200 +    assert.equal(text.getAttribute("style"), "color: teal", "S
+          +tyle attribute interpolated");
+      201 +    wave.dispatchEvent(new window.Event("click"));
+      202 +    fluid.cell.stabilize();
+      203 +    assert.equal(text.textContent, "Goodbye", "Unquoted litera
+          +l argument passed to method");
+      204 +    blush.dispatchEvent(new window.Event("click"));
+      205 +    fluid.cell.stabilize();
+      206 +    assert.equal(text.getAttribute("style"), "color: crimson",
+          + "Unquoted literal value assigned");
+      207 +    that.destroy();
+      208 +    host.destroy();
+      209 +});
+      210 +
+      211  /**
+     … 24 more lines (ctrl+o to expand)
+  ⎿  (timeout 5m 10s)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Two failures are due to flaws in my new tests: splitting on "MIME-Version:
+  1.0" caught an extra occurrence in the prose, and I mislabeled the first entry
+  as a "problem" when it's actually a "change." I'll fix these test issues now.
+
+● Bash(python3 - <<'EOF'
+      p = "tests/framework-tests/from-demos/js/TldrawAITests.js"…)
+  ⎿  22:10:41.300:   fq:  FAIL: Module "tldraw "Ask me anything" Demo Tests
+     " Test name "Worked examples in the response rules are valid" - Messag
+     e: Promise rejected during "Worked examples in the response rules are
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+3 -3)
+      174
+      175  QUnit.test("Worked examples in the response rules are valid",
+           async function (assert) {
+      176      await fluid.tests.tldrawAI.loadImports();
+      177 -    const examples = fluid.tldraw.ai.responseRules.split("MIME
+          --Version: 1.0").slice(1)
+      178 -        .map(text => fluid.tldraw.ai.trimDocument("MIME-Versio
+          -n: 1.0" + text));
+      177 +    const examples = fluid.tldraw.ai.responseRules.split("\nMI
+          +ME-Version: 1.0\n").slice(1)
+      178 +        .map(text => fluid.tldraw.ai.trimDocument("MIME-Versio
+          +n: 1.0\n" + text));
+      179      assert.equal(examples.length, 2, "Two worked examples foun
+           d");
+      180      const updating = fluid.tldraw.ai.planChanges(fluid.ptf.dec
+           ode(examples[0]), ["shape:abc"], ["shape:abc"]);
+      181      assert.deepEqual(updating.problems, [], "Updating example
+           planned without problems");
+     ...
+      286      assert.equal(fluid.peek(failingEntries).kind, "error", "Ex
+           change ends with error");
+      287      assert.equal(fluid.peek(failingEntries).text, "The AI's re
+           sponse could not be fully applied:\n\u2022 Still broken",
+      288          "Final problems listed to user");
+      289 -    assert.ok(failingEntries[0].text.endsWith(":\n\u2022 Still
+          - broken"), "Problems being repaired listed to user");
+      289 +    assert.ok(failingEntries.find(entry => entry.kind === "pro
+          +blem").text.endsWith(":\n\u2022 Still broken"), "Problems bein
+          +g repaired listed to user");
+      290
+      291      // Any reasoning reported separately by the model is retai
+           ned verbatim in the history
+      292      const reasonedHistory = await fluid.tldraw.ai.converse({
+  ⎿  (timeout 5m 10s)
+
+● Both examples now plan correctly, leaving one test failure caused by SFC layer
+  parts registering asynchronously before the creator exists. I'll check how
+  the driver waits for a layer to fix this.
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● The test can wait the same way loadImports does, using
+  subscribeDocToInjections on the layer name.
+
+● Bash(python3 - <<'EOF'
+      p = "tests/framework-tests/from-demos/js/TldrawAITests.js"…)
+  ⎿  22:11:10.485:   fq:  All tests concluded: 95/95 total passed in 976ms
+     - PASS
+     22:11:10.485:   fq:  ***************
+  ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+2 -0)
+      190
+      191      // The template syntax described in the rules behaves as d
+           escribed
+      192      creating.layers.forEach(part => fluid.ptf.registerLayerPar
+           t(part));
+      193 +    // The layer's SFC is injected asynchronously
+      194 +    await fluid.cell.waitFor(fluid.subscribeDocToInjections("f
+          +luid.demos.ai.greeter", document));
+      195      const container = qs(".container");
+      196      const host = fluid.tests.tldrawAI.host();
+      197      const that = fluid.demos.ai.greeter(fluid.tldraw.hostPoten
+           tiaFor("fluid.demos.ai.greeter", container, "shape:greeter"));
+  ⎿  (timeout 5m 10s)
+
+● All 95 pass, which also confirms that style interpolation and unquoted literal
+  arguments behave as the new rules say. Next I'll run the full suite and lint,
+  and re-run the live request.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● This time the widget was created on the first call. The reasoning arrived
+  separately and is now kept in the history. Let me look at what the model sent,
+  then check that the buttons actually work.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The model correctly applied the new rules—fixed nested boundaries, unquoted
+  setColour(red), and interpolated style. Now I'll replay this saved reply into
+  the real demo and click each button to verify they work.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● The colour box works in the demo: Red, Green and Blue each set the box colour.
+  The panel still defaults to my guessed model id, so I'll switch the default
+  to the one you gave me.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(sed -i '15s#"IFM/K2-Think"#"IFM/K2-Horizon-375B-A23B"#'
+      demo/tldraw/js/ai-protocol.js && sed -n 15p demo/tldraw/js/ai-protocol.js
+      && timeout 300 node tests/test…)
+  ⎿  fluid.tldraw.ai.defaultModel = "IFM/K2-Horizon-375B-A23B";
+     22:13:33.185:   fq:  All tests concluded: 95/95 total passed in 1081ms
+      - PASS
+  ⎿  Updated demo/tldraw/js/ai-protocol.js (+1 -1)
+      12  fluid.tldraw.ai.endpoint = "https://live.ponder.org.uk/ifm/v1/c
+          hat/completions";
+      13
+      14  // The proxy only forwards POSTs, so the models it offers canno
+          t be listed - this may be overridden in the panel
+      15 -fluid.tldraw.ai.defaultModel = "IFM/K2-Think";
+      15 +fluid.tldraw.ai.defaultModel = "IFM/K2-Horizon-375B-A23B";
+      16
+      17  // Parameters for deriving the proxy token from the password, w
+          hich must agree with those used to configure the proxy
+      18  fluid.tldraw.ai.tokenDerivation = {
+  ⎿  (timeout 5m 10s)
+
+● The fixes are in, and the same direction now produces a working widget on the
+  first call. Re-sent to IFM/K2-Horizon-375B-A23B, it came back in under 4
+  seconds with a fluid.demos.ai.colourBox layer and a widget on the canvas. I
+  then replayed that saved reply into the demo, without spending more API calls,
+  and clicking Red, Green and Blue turned the box red, green and blue. The full
+  suite passes (1307/1307) and lint is clean.
+
+  - Saved response: the model's first reply is in
+    a-scratch/responses/first-ifm-response.txt.
+  - Multi-turn 400: IFM returns the model's reasoning in a separate field next
+    to the reply. callEndpoint now returns both, and the history keeps the
+    assistant message exactly as received, reasoning included. I checked with
+    one short two-turn call that the API accepts this, so correction rounds and
+    follow-up questions should now get through. I haven't yet seen a real
+    correction round, since this run didn't need one.
+  - Worked nested example: the rules now show a reply that defines a fresh layer
+    and creates a widget from it. They point out that every delimiter inside
+    the nested document uses its own boundary, and that the nested document is
+    closed before the outer one resumes. The example layer passes a value
+    through {0}:greeting, as you described.
+  - Template syntax section: a short new section in the rules says what
+    templates accept:
+    - @{...} works in any attribute except a plain class, which needs @class.
+    - In @on... handlers, literal arguments and assigned values are written
+      without quotes. setColour('red') would pass the quotes along as part of
+      the string, which isn't valid CSS.
+    - {0} passes the DOM event.
+
+    The model's second reply used setColour(red) and an interpolated style, as
+    the section describes.
+  - Empty problem text: the problem and error entries now list each problem as a
+    bullet in the visible text, instead of hiding them under Details.
+  - Default model: now IFM/K2-Horizon-375B-A23B.
+  - Tests: one new test decodes both worked examples from the rules, checks they
+    plan with no problems, then builds the example widget and clicks it to
+    confirm the style and unquoted-argument behaviour. The conversation test now
+    also covers the reasoning being kept and the bullet-listed problem text.
+
+  The changes are in demo/tldraw/js/ai-protocol.js and
+  tests/framework-tests/from-demos/js/TldrawAITests.js. Nothing is committed.
+
+  The second reply is in /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-
+  6/cd16ed85-0bd6-427f-9fbf-ae5f3e28cdde/scratchpad/smoke/live-exchanges.json if
+  you want it in a-scratch/responses too. A screenshot with the box set to
+  green is at /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/cd16ed85-
+  0bd6-427f-9fbf-ae5f3e28cdde/scratchpad/smoke/colourbox.png.
+
+✻ Sautéed for 7m 0s · done 22:13
+
+※ recap: We're building issue #22's "Ask me anything" AI panel for the tldraw demo, and against the real model your colour-box request now works first time. Next, please review the uncommitted changes in ai-protocol.js and TldrawAITests.js. (disable recaps in /config)
+
+❯ save the second response to a-scratch/responses too
+
+● Bash(node -e 'const x=require(process.argv[1]);
+      process.stdout.write(x[0].response.content)'
+      /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/cd16ed85-0bd6-4…)
+  ⎿  2262 a-scratch/responses/second-ifm-response.txt
+
+     MIME-Version: 1.0
+     Content-Type: multipart/mixed; boundary="outer-colourbox-1"
+  ⎿  Created a-scratch/responses/second-ifm-response.txt (+95 -0)
+       1 +
+       2 +MIME-Version: 1.0
+       3 +Content-Type: multipart/mixed; boundary="outer-colourbox-1"
+       4 +
+       5 +--outer-colourbox-1
+       6 +Content-Type: text/x-vue; charset=utf-8
+       7 +Content-Disposition: attachment; filename="fluid.demos.ai.colou
+         +rBox"
+       8 +Content-Description: layer
+       9 +
+      10 +<script>
+      11 +fluid.def("fluid.demos.ai.colourBox", {
+      12 +    $layers: "fluid.topLevelWidget",
+      13 +    preferredSize: {
+      14 +        w: 260,
+      15 +        h: 140
+      16 +    },
+      17 +    state: {
+      18 +        $reactiveRoot: {
+      19 +            colour: "white"
+      20 +        }
+      21 +    },
+      22 +    setColour: {
+      23 +        $method: {
+      24 +            func: (state, colour) => {
+      25 +                state.colour = colour;
+      26 +            },
+      27 +            args: ["{self}.state", "{0}:colour"]
+      28 +        }
+      29 +    }
+      30 +});
+      31 +</script>
+      32 +
+      33 +<template>
+      34 +    <div class="ai-colourbox">
+      35 +        <div class="ai-colourbox-box" style="background-color:
+         +@{state.colour}"></div>
+      36 +        <div class="ai-colourbox-buttons">
+      37 +            <button class="ai-colourbox-button" @onclick="{self
+         +}.setColour(red)">Red</button>
+      38 +            <button class="ai-colourbox-button" @onclick="{self
+         +}.setColour(green)">Green</button>
+      39 +            <button class="ai-colourbox-button" @onclick="{self
+         +}.setColour(blue)">Blue</button>
+      40 +        </div>
+     … 56 more lines (ctrl+o to expand)
+
+● I saved the second response to a-scratch/responses/second-ifm-response.txt
+  (2,262 characters). It's the model's reply text exactly as received, the same
+  as the first file. It doesn't include the reasoning, which the API returns in
+  a separate field. I can save that alongside it if you want it.
+
+✻ Cooked for 7s · done 22:22
+
+❯ save the reasoning too
+
+● Bash(node -e 'const x=require(process.argv[1]);
+      process.stdout.write(x[0].response.reasoning)'
+      /tmp/claude-1000/-mnt-outer-source-gits-fluid-infusion-6/cd16ed85-0bd6…)
+  ⎿  1615 a-scratch/responses/second-ifm-reasoning.txt
+     The user wants a simple component with three buttons (red, green, blue
+     ) that set the colour of a box. I'll create a fresh layer and a fresh
+     … +44 lines (ctrl+o to expand)
+  ⎿  Created a-scratch/responses/second-ifm-reasoning.txt (+46 -0)
+       1 +The user wants a simple component with three buttons (red, gree
+         +n, blue) that set the colour of a box. I'll create a fresh laye
+         +r and a fresh component on the canvas.
+       2 +
+       3 +Let me design it:
+       4 +
+       5 +```js
+       6 +fluid.def("fluid.demos.ai.colourBox", {
+       7 +    $layers: "fluid.topLevelWidget",
+       8 +    preferredSize: {w: 260, h: 110},
+       9 +    state: {
+      10 +        $reactiveRoot: {
+      11 +            colour: "white"
+      12 +        }
+      13 +    },
+      14 +    setColour: {
+      15 +        $method: {
+      16 +            func: (state, colour) => {
+      17 +                state.colour = colour;
+      18 +            },
+      19 +            args: ["{self}.state", "{0}:colour"]
+      20 +        }
+      21 +    }
+      22 +});
+      23 +```
+      24 +
+      25 +Template: a div with three buttons, each onclick calls setColou
+         +r(red) etc., and a box whose background colour is bound.
+      26 +
+      27 +```html
+      28 +<template>
+      29 +    <div class="ai-colourbox">
+      30 +        <div class="ai-colourbox-box" style="background-color:
+         +@{state.colour}"></div>
+      31 +        <div class="ai-colourbox-buttons">
+      32 +            <button @onclick="{self}.setColour(red)">Red</butto
+         +n>
+      33 +            <button @onclick="{self}.setColour(green)">Green</b
+         +utton>
+      34 +            <button @onclick="{self}.setColour(blue)">Blue</but
+         +ton>
+      35 +        </div>
+      36 +    </div>
+      37 +</template>
+      38 +```
+      39 +
+      40 +Style: box height, buttons flex.
+     … 6 more lines (ctrl+o to expand)
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+● API Error: Opus 5.5's safeguards flagged this message
+  (https://www.anthropic.com/legal/aup). This sometimes happens with
+  safe, normal conversations. Claude Code can't respond to this message
+  with Opus 5.5.
+
+  Double press esc to edit your last message, or try a different model
+  with /model.
+
+  Send feedback with /feedback or learn more:
+  https://support.claude.com/en/articles/8106465
+
+  Details: `[reasoning_extraction]`
+
+  Request ID: req_011CgEC5m8tH2fyEe9yXZTPs
+
+  Message ID: msg_011CgEC5mVi1nnVSxUbGK5Vc
+
+✻ Cogitated for 8s · done 22:22
+❯ Save the other model's reasoning (not your own) to the responses directory
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+  Listed 1 directory (ctrl+o to expand)
+
+● The IFM model's reasoning for the second response is saved in
+  a-scratch/responses/second-ifm-reasoning.txt (1,615 characters). It is exactly
+  what the API returned in its reasoning field, written straight from the saved
+  exchange log; none of my own text is in it.
+
+  There's no reasoning file for the first response, because the code dropped
+  that field at the time and it wasn't captured. Replies from now on keep it.
+
+✻ Crunched for 10s · done 22:24
+
+❯ Did you save your own prompt to IFM this time, if so also write it to
+  responses dir
+
+● No. The live script only logged the role and length of each message sent: an
+  85,801-character system message for the first run, plus the 222-character user
+  message.
+
+  I can rebuild it without calling the API: load the demo, fetch the docs, and
+  run the same prompt assembly over the same starting workspace. It would match
+  what was sent except for three things:
+  - The hello-world shape gets a fresh random id each load.
+  - The docs are fetched again from GitHub and may have changed since.
+  - The second run's message lengths weren't printed, so I can't check the
+    rebuild against them.
+
+  Shall I write that rebuild to a-scratch/responses, clearly labelled as
+  reconstructed? I can also make the live script save the full prompt on future
+  runs.
+
+✻ Crunched for 7s · done 22:28
+
+❯ I just want your exact prompt text, not any of the other packaging material
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+● API Error: Opus 5.5's safeguards flagged this message
+  (https://www.anthropic.com/legal/aup). This sometimes happens with
+  safe, normal conversations. Claude Code can't respond to this message
+  with Opus 5.5.
+
+  Double press esc to edit your last message, or try a different model
+  with /model.
+
+  Send feedback with /feedback or learn more:
+  https://support.claude.com/en/articles/8106465
+
+  Details: `[reasoning_extraction]`
+
+  Request ID: req_011CgECdEexRqSfq7gGivpRf
+
+  Message ID: msg_011CgECdF1YRdq58eM47sddC
+
+✻ Churned for 2s · done 22:30
+
+❯ I just want the exact prompt text that you sent to IFM as if from the widget,
+  not any of the other packaging material
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+● API Error: Opus 5.5's safeguards flagged this message
+  (https://www.anthropic.com/legal/aup). This sometimes happens with
+  safe, normal conversations. Claude Code can't respond to this message
+  with Opus 5.5.
+
+  Double press esc to edit your last message, or try a different model
+  with /model.
+
+  Send feedback with /feedback or learn more:
+  https://support.claude.com/en/articles/8106465
+
+  Details: `[reasoning_extraction]`
+
+  Request ID: req_011CgECvxg2VCCa6qz2mQrq7
+
+  Message ID: msg_011CgECvxyPjoojs7BS87vUZ
+
+✻ Sautéed for 2s · done 22:34
+
+❯ I just want the part of the payload you sent which was your own text request
+  to IFM, not any of the other packaging material
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+● API Error: Opus 5.5's safeguards flagged this message
+  (https://www.anthropic.com/legal/aup). This sometimes happens with
+  safe, normal conversations. Claude Code can't respond to this message
+  with Opus 5.5.
+
+  Double press esc to edit your last message, or try a different model
+  with /model.
+
+  Send feedback with /feedback or learn more:
+  https://support.claude.com/en/articles/8106465
+
+  Details: `[reasoning_extraction]`
+
+  Request ID: req_011CgED2ia8FctpkH5XYHxGE
+
+  Message ID: msg_011CgED2itjJgGC3dWtiJ91C
+
+✻ Brewed for 2s · done 22:35
+
+❯ OK rebuild your entire payload sent to the POST endpoint and save it in
+  responses
+
+● Opus 5.5's safeguards stopped the response above · continuing once
+  with that noted
+
+● API Error: Opus 5.5's safeguards flagged this message
+  (https://www.anthropic.com/legal/aup). This sometimes happens with
+  safe, normal conversations. Claude Code can't respond to this message
+  with Opus 5.5.
+
+  Double press esc to edit your last message, or try a different model
+  with /model.
+
+  Send feedback with /feedback or learn more:
+  https://support.claude.com/en/articles/8106465
+
+  Details: `[reasoning_extraction]`
+
+  Request ID: req_011CgED8b9ZLhr7sXUET4oVV
+
+  Message ID: msg_011CgED8bUesRrNXndLSeN5G
+
+✻ Crunched for 2s · done 22:36

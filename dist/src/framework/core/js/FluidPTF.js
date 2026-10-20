@@ -21,7 +21,7 @@ const fluidPTFScope = function (fluid) {
     /**
      * Determine the MIME type in which the named layer should be transmitted or edited. Live layers, whose names are
      * rendered sites beginning with `{`, are JSON. Layers whose own definition carries the tag layer
-     * `fluid.sfcViewComponent` were loaded from a Single File Component. All other layers are JavaScript.
+     * `fluid.sfcLayer` were loaded from a Single File Component. All other layers are JavaScript.
      * @param {String} layerName - The name of the layer
      * @return {String} The MIME type for the layer, one of the values in `fluid.layerMimeTypes`
      */
@@ -32,7 +32,7 @@ const fluidPTFScope = function (fluid) {
         } else {
             const layerDef = fluid.deSignal(fluid.readLayer(layerName).get().raw);
             if (fluid.isPlainObject(layerDef, true) && !fluid.isUnavailable(layerDef)
-                && fluid.makeArray(layerDef.$layers).includes("fluid.sfcViewComponent")) {
+                && fluid.makeArray(layerDef.$layers).includes("fluid.sfcLayer")) {
                 togo = fluid.layerMimeTypes.sfc;
             }
         }
@@ -74,17 +74,6 @@ const fluidPTFScope = function (fluid) {
             togo = value === undefined ? "undefined" : JSON.stringify(value);
         }
         return togo;
-    };
-
-    /**
-     * Render a layer definition as a `fluid.def` call in JavaScript source text. Note that any global functions
-     * referenced by name from the definition are not included.
-     * @param {String} layerName - The name of the layer
-     * @param {LayerDef|Signal<LayerDef>} layerDef - The layer's definition
-     * @return {String} JavaScript source text which will register the layer definition when evaluated
-     */
-    fluid.layerToJavaScript = function (layerName, layerDef) {
-        return `fluid.def(${JSON.stringify(layerName)}, ${fluid.ptf.valueToJavaScript(fluid.deSignal(layerDef))});\n`;
     };
 
     /**
@@ -168,7 +157,8 @@ const fluidPTFScope = function (fluid) {
     /**
      * Reduce a value to the parts of it which can be faithfully transmitted as JSON. Primitives, plain objects and
      * arrays are retained, whereas any other values such as functions or DOM nodes, which are typically supplied by the
-     * host environment (for example a component's `container`), are discarded.
+     * host environment (for example the `container` of a component's view), are discarded, as are any objects all of
+     * whose members are discarded.
      * @param {any} value - The value to be reduced
      * @return {any} The JSON-amenable parts of the value, or `undefined` if none of it is amenable
      */
@@ -177,13 +167,16 @@ const fluidPTFScope = function (fluid) {
         if (Array.isArray(value)) {
             togo = value.map(element => fluid.ptf.toJSONAmenable(element) ?? null);
         } else if (fluid.isPlainObject(value, true)) {
-            togo = {};
+            const amenable = {};
             fluid.each(value, (member, key) => {
-                const amenable = fluid.ptf.toJSONAmenable(member);
-                if (amenable !== undefined) {
-                    togo[key] = amenable;
+                const amenableMember = fluid.ptf.toJSONAmenable(member);
+                if (amenableMember !== undefined) {
+                    amenable[key] = amenableMember;
                 }
             });
+            // An object all of whose members were discarded, e.g. a view holding just a container, is itself discarded
+            const allDiscarded = Object.keys(value).length > 0 && Object.keys(amenable).length === 0;
+            togo = allDiscarded ? undefined : amenable;
         } else if (value === null || ["string", "number", "boolean"].includes(typeof(value))) {
             togo = value;
         }
@@ -251,7 +244,11 @@ const fluidPTFScope = function (fluid) {
                 liveParts.push({kind: "live", contentType: fluid.layerMimeTypes.json, filename, body: JSON.stringify(live, null, 4)});
             }
             fluid.each(shadow.childComponents, (childShadow, memberName) => {
-                visit(childShadow, [...segs, memberName]);
+                // Only visit components created in place - one injected from elsewhere, perhaps an ancestor, will be
+                // reconstructed from the reference held in its parent's potentia
+                if (childShadow.path === fluid.composeSegment(shadow.path, memberName)) {
+                    visit(childShadow, [...segs, memberName]);
+                }
             });
         };
         visit(rootShadow, []);
@@ -501,15 +498,12 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
-     * Await the availability of a component. A stabilization is queued since the effect awaiting it will otherwise not
-     * run until something else stabilizes the signal graph.
+     * Await the availability of a component.
      * @param {Shadow} shadow - The shadow of the component
      * @return {Promise<fluid.component>} A promise resolving once the component is available
      */
     fluid.ptf.awaitAvailable = function (shadow) {
-        const togo = fluid.cell.signalToPromise(shadow.availableInstance);
-        fluid.cell.deferredStabilize();
-        return togo;
+        return fluid.cell.waitFor(shadow.availableInstance);
     };
 
     /**
@@ -520,10 +514,72 @@ const fluidPTFScope = function (fluid) {
      */
 
     /**
-     * Reconstruct a component from the parts of a PTF document. Any layers which are not already defined are registered, unless
-     * `options.overrideLayers` is set in which case all transmitted layers are registered. The component is
-     * constructed as a free component from the root potentia, and once it becomes available, any further potentia and
-     * live layer contents are applied to it and its subcomponents.
+     * Register the layer definitions held in the layer parts of a PTF document. Any layers which are not already
+     * defined are registered, unless `overrideLayers` is set in which case all transmitted layers are registered.
+     * @param {PTFPart[]} parts - The decoded parts of the PTF document - any which are not layer parts are ignored
+     * @param {Boolean} [overrideLayers] - If `true`, transmitted layers override any existing definitions
+     */
+    fluid.ptf.registerLayerParts = function (parts, overrideLayers) {
+        parts.filter(part => part.kind === "layer").forEach(part => {
+            const existing = fluid.readLayer(part.filename).get();
+            if (overrideLayers || fluid.isUnavailable(existing) || fluid.isUnavailable(fluid.deSignal(existing.raw))) {
+                fluid.ptf.registerLayerPart(part);
+            }
+        });
+    };
+
+    /**
+     * Determine whether a part of a PTF document holds the potentia of its root component.
+     * @param {PTFPart} part - The part to be tested
+     * @return {Boolean} `true` if the part is a potentia part for the path `/`
+     */
+    fluid.ptf.isRootPotentiaPart = function (part) {
+        return part.kind === "potentia" && fluid.ptf.filenameToSegs(part.filename).length === 0;
+    };
+
+    /**
+     * Apply the potentia of subcomponents and the live layer contents held in the parts of a PTF document to an
+     * existing component and its subcomponents. Any potentia for the root component itself is ignored, since this
+     * determines how the component is created rather than anything which can be applied to it.
+     * @param {fluid.component} that - The component to which the parts are to be applied
+     * @param {PTFPart[]} parts - The decoded parts of the PTF document - any which are not potentia or live parts are ignored
+     * @return {Promise<String[]>} A promise for the filenames of any parts which could not be applied since no
+     * component was found at their path, resolving once all parts have been applied
+     */
+    fluid.ptf.applyParts = async function (that, parts) {
+        const rootShadow = fluid.ptf.componentToShadow(that);
+        await fluid.ptf.awaitAvailable(rootShadow);
+        const unresolved = [];
+        parts.filter(part => part.kind === "potentia" && !fluid.ptf.isRootPotentiaPart(part)).forEach(part => {
+            const segs = fluid.ptf.filenameToSegs(part.filename);
+            const parentShadow = fluid.ptf.resolveShadow(rootShadow, segs.slice(0, -1));
+            if (parentShadow) {
+                const layer = JSON.parse(part.body);
+                fluid.pushPotentia(parentShadow, fluid.peek(segs), [{mergeRecordType: "user", layer}], fluid.makeArray(layer.$layers));
+            } else {
+                unresolved.push(part.filename);
+            }
+        });
+        fluid.cell.stabilize();
+        for (const part of parts.filter(part => part.kind === "live")) {
+            const shadow = fluid.ptf.resolveShadow(rootShadow, fluid.ptf.filenameToSegs(part.filename));
+            if (shadow) {
+                await fluid.ptf.awaitAvailable(shadow);
+                fluid.each(JSON.parse(part.body), (value, path) => {
+                    fluid.setForComponent(shadow.that, path, value);
+                });
+            } else {
+                unresolved.push(part.filename);
+            }
+        }
+        fluid.cell.stabilize();
+        return unresolved;
+    };
+
+    /**
+     * Reconstruct a component from the parts of a PTF document. Its layers are registered as by
+     * `fluid.ptf.registerLayerParts`. The component is constructed as a free component from the root potentia, and
+     * once it becomes available, any further potentia and live layer contents are applied to it and its subcomponents.
      * @param {PTFPart[]} parts - The decoded parts of the PTF document
      * @param {Object} [options] - Options governing reconstruction
      * @param {Boolean} [options.overrideLayers] - If `true`, transmitted layers override any existing definitions
@@ -532,47 +588,30 @@ const fluidPTFScope = function (fluid) {
      * @return {Promise<PTFInstantiation>} A promise resolving once the component and its transmitted state are available
      */
     fluid.ptf.instantiateParts = async function (parts, options = {}) {
+        const that = fluid.ptf.constructParts(parts, options);
+        const unresolved = await fluid.ptf.applyParts(that, parts);
+        return {that, unresolved};
+    };
+
+    /**
+     * Construct the root component of a PTF document without waiting for it to become available, or applying any of
+     * the document's further potentia or live parts, which may then be applied by `fluid.ptf.applyParts`. Its layers
+     * are registered as by `fluid.ptf.registerLayerParts`. This allows a host to take responsibility for the component,
+     * e.g. for destroying it, whilst it is still unavailable.
+     * @param {PTFPart[]} parts - The decoded parts of the PTF document
+     * @param {Object} [options] - Options governing reconstruction, as for `fluid.ptf.instantiateParts`
+     * @return {fluid.component} The freshly constructed component, which may not yet be available
+     */
+    fluid.ptf.constructParts = function (parts, options = {}) {
+        fluid.ptf.registerLayerParts(parts, options.overrideLayers);
+        const rootPart = parts.find(fluid.ptf.isRootPotentiaPart);
         let togo;
-        parts.filter(part => part.kind === "layer").forEach(part => {
-            const existing = fluid.readLayer(part.filename).get();
-            if (options.overrideLayers || fluid.isUnavailable(existing) || fluid.isUnavailable(fluid.deSignal(existing.raw))) {
-                fluid.ptf.registerLayerPart(part);
-            }
-        });
-        const rootPart = parts.find(part => part.kind === "potentia" && fluid.ptf.filenameToSegs(part.filename).length === 0);
-        if (!rootPart) {
-            togo = Promise.reject(fluid.unavailable("PTF document has no potentia for its root component", "error"));
-        } else {
+        if (rootPart) {
             const rootPotentia = JSON.parse(rootPart.body);
             const [componentName, ...layerNames] = fluid.makeArray(rootPotentia.$layers);
-            const that = fluid.initFreeComponent(componentName, {...rootPotentia, ...options.potentia, $layers: layerNames});
-            const rootShadow = fluid.ptf.componentToShadow(that);
-            await fluid.ptf.awaitAvailable(rootShadow);
-            const unresolved = [];
-            parts.filter(part => part !== rootPart && part.kind === "potentia").forEach(part => {
-                const segs = fluid.ptf.filenameToSegs(part.filename);
-                const parentShadow = fluid.ptf.resolveShadow(rootShadow, segs.slice(0, -1));
-                if (parentShadow) {
-                    const layer = JSON.parse(part.body);
-                    fluid.pushPotentia(parentShadow, fluid.peek(segs), [{mergeRecordType: "user", layer}], fluid.makeArray(layer.$layers));
-                } else {
-                    unresolved.push(part.filename);
-                }
-            });
-            fluid.cell.stabilize();
-            for (const part of parts.filter(part => part.kind === "live")) {
-                const shadow = fluid.ptf.resolveShadow(rootShadow, fluid.ptf.filenameToSegs(part.filename));
-                if (shadow) {
-                    await fluid.ptf.awaitAvailable(shadow);
-                    fluid.each(JSON.parse(part.body), (value, path) => {
-                        fluid.setForComponent(shadow.that, path, value);
-                    });
-                } else {
-                    unresolved.push(part.filename);
-                }
-            }
-            fluid.cell.stabilize();
-            togo = {that, unresolved};
+            togo = fluid.initFreeComponent(componentName, {...rootPotentia, ...options.potentia, $layers: layerNames});
+        } else {
+            throw fluid.unavailable("PTF document has no potentia for its root component", "error");
         }
         return togo;
     };

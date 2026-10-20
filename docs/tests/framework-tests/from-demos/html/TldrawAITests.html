@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title>tldraw "Ask me anything" Demo Tests</title>
+
+        <link rel="stylesheet" media="screen" href="../../../lib/qunit/css/qunit.css" />
+
+        <fluid-module id="infusion-6" src="../../../../"></fluid-module>
+
+        <script src="../../../../src/lib/lezer/lezer-javascript-browser.js"></script>
+
+        <script src="../../../../src/framework/core/js/FluidCore.js"></script>
+        <script src="../../../../src/framework/core/js/FluidSignals.js"></script>
+        <script src="../../../../src/framework/core/js/Fluid.js"></script>
+        <script src="../../../../src/framework/core/js/FluidModules.js"></script>
+        <script src="../../../../src/framework/core/js/FluidIL.js"></script>
+        <script src="../../../../src/framework/core/js/FluidView.js"></script>
+        <script src="../../../../src/framework/core/js/FluidPTF.js"></script>
+        <script src="../../../../src/framework/core/js/FluidView-browser.js"></script>
+        <script src="../../../../src/framework/core/js/template-parser.js"></script>
+        <script src="../../../../src/framework/core/js/sfc-parser.js"></script>
+
+        <!-- The actual SFC files and scripts of the demo at demo/tldraw which do not depend on tldraw -->
+        <fluid-module id="tldrawDemo" src="../../../../demo/tldraw/"></fluid-module>
+
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnything.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnythingEntry.vue"></fluid-import>
+
+        <script src="../../../../demo/tldraw/js/tldraw-hosting.js"></script>
+        <script src="../../../../demo/tldraw/js/ai-protocol.js"></script>
+
+        <script src="../../../lib/qunit/js/qunit.js"></script>
+        <script src="../../../test-core/qunit/js/qunit-fluid.js"></script>
+
+        <script src="../js/TldrawAITests.js"></script>
+    </head>
+    <body>
+    <div id="qunit"></div>
+    <!-- Test HTML -->
+    <div id="qunit-fixture">
+        <div class="container"></div>
+        <div class="container2"></div>
+    </div>
+
+    </body>
+</html>

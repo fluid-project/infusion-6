@@ -24,6 +24,55 @@ export const lookupPendingParts = function (ptfToken) {
     return ptfToken ? pendingParts.get(ptfToken) : undefined;
 };
 
+/**
+ * Register PTF parts from which an Infusion shape is to be constructed, under a fresh token which should be written
+ * into the shape's `meta.ptfToken`.
+ * @param {PTFPart[]} parts - The parts from which the shape's component is to be constructed
+ * @return {String} The fresh token
+ */
+export const registerPendingParts = function (parts) {
+    const ptfToken = "ptf-" + crypto.randomUUID();
+    pendingParts.set(ptfToken, parts);
+    return ptfToken;
+};
+
+/**
+ * Resolvers of promises awaiting the reconstruction of a shape's component from the parts registered under a token,
+ * keyed by that token
+ * @type {Map<String, Function[]>}
+ */
+const instantiationWaiters = new Map();
+
+/**
+ * @typedef {Object} InstantiationReport
+ * @property {fluid.component} [that] - The reconstructed component, if it could be constructed
+ * @property {String[]} [unresolved] - The filenames of any parts which could not be applied to it
+ * @property {Error|Unavailable} [error] - Why reconstruction failed, if it did
+ */
+
+/**
+ * Await the next reconstruction of a shape's component from the parts registered under a token
+ * @param {String} ptfToken - The token
+ * @return {Promise<InstantiationReport>} A promise for the outcome of reconstruction, which never rejects
+ */
+export const awaitInstantiation = function (ptfToken) {
+    return new Promise(resolve => {
+        instantiationWaiters.set(ptfToken, [...(instantiationWaiters.get(ptfToken) || []), resolve]);
+    });
+};
+
+/**
+ * Report the outcome of reconstructing a shape's component from the parts registered under a token to anyone
+ * awaiting it. Called by InfusionHost.
+ * @param {String} ptfToken - The token
+ * @param {InstantiationReport} report - The outcome of reconstruction
+ */
+export const notifyInstantiation = function (ptfToken, report) {
+    const waiters = instantiationWaiters.get(ptfToken) || [];
+    instantiationWaiters.delete(ptfToken);
+    waiters.forEach(resolve => resolve(report));
+};
+
 const ptfPreamble = "This is a Potentia Transmission Format (PTF) document holding tldraw shapes together with the " +
     "layers and potentia of the Infusion components they host.";
 
@@ -51,16 +100,15 @@ export const contentToPTF = function (content) {
 };
 
 /**
- * Before Infusion shapes are deleted by a cut, write a fresh token into each one resolving to a snapshot of its
- * component, so that if the cut is undone, the restored shape is reconstructed with the state it had when it was cut.
+ * Before Infusion shapes are deleted or replaced, e.g. by a cut, write a fresh token into each one resolving to a snapshot
+ * of its component, so that if the change is undone, the restored shape is reconstructed with the state it had before.
  * The token is written outside the undo history so that the record captured by the deletion carries it.
  * @param {Editor} editor - The tldraw editor
  * @param {TLShape[]} shapes - The shapes about to be deleted, including any descendants of the selected shapes
  */
-const snapshotForUndo = function (editor, shapes) {
+export const snapshotForUndo = function (editor, shapes) {
     const updates = shapes.filter(shape => shape.type === "infusion" && infusionInstances.has(shape.id)).map(shape => {
-        const ptfToken = "ptf-" + crypto.randomUUID();
-        pendingParts.set(ptfToken, fluid.ptf.componentToParts(infusionInstances.get(shape.id)));
+        const ptfToken = registerPendingParts(fluid.ptf.componentToParts(infusionInstances.get(shape.id)));
         return {id: shape.id, type: shape.type, meta: {...editor.getShape(shape.id)?.meta, ptfToken}};
     });
     editor.run(() => editor.updateShapes(updates), {history: "ignore"});
@@ -74,11 +122,8 @@ const snapshotForUndo = function (editor, shapes) {
  * @param {Editor} editor - The tldraw editor
  * @param {String} text - The text of the PTF document
  * @param {VecLike} [point] - The page point at which to paste, if any
- * @param {Object} shapeDefaults - Defaults for a freshly created Infusion shape
- * @param {Number} shapeDefaults.w - The default width of a fresh shape
- * @param {Number} shapeDefaults.h - The default height of a fresh shape
  */
-export const pastePTF = function (editor, text, point, shapeDefaults) {
+export const pastePTF = function (editor, text, point) {
     const parts = fluid.ptf.decode(text);
     const contentPart = parts.find(part => part.kind === "tldraw");
     if (contentPart) {
@@ -86,22 +131,19 @@ export const pastePTF = function (editor, text, point, shapeDefaults) {
         parts.filter(part => part.kind === "component" && part.parts).forEach(part => {
             const shape = content.shapes.find(oneShape => oneShape.id === part.filename);
             if (shape) {
-                const ptfToken = "ptf-" + crypto.randomUUID();
-                pendingParts.set(ptfToken, part.parts);
+                const ptfToken = registerPendingParts(part.parts);
                 shape.meta = {...shape.meta, ptfToken};
             }
         });
         editor.putExternalContent({type: "tldraw", content, point});
     } else {
-        const rootPart = parts.find(part => part.kind === "potentia" && fluid.ptf.filenameToSegs(part.filename).length === 0);
+        const rootPart = parts.find(fluid.ptf.isRootPotentiaPart);
         const layerName = rootPart && fluid.makeArray(JSON.parse(rootPart.body).$layers)[0];
         if (layerName) {
-            const ptfToken = "ptf-" + crypto.randomUUID();
-            pendingParts.set(ptfToken, parts);
+            const ptfToken = registerPendingParts(parts);
             const center = point || editor.getViewportPageBounds().center;
-            const preferredSize = fluid.def(layerName)?.preferredSize;
-            const w = preferredSize?.w || shapeDefaults.w;
-            const h = preferredSize?.h || shapeDefaults.h;
+            // Sized as for a fresh widget - see tldraw-driver.js
+            const {w, h} = fluid.tldraw.shapeSizeFor(layerName);
             editor.markHistoryStoppingPoint("paste");
             editor.createShape({
                 type: "infusion",
@@ -118,10 +160,9 @@ export const pastePTF = function (editor, text, point, shapeDefaults) {
 
 /**
  * Construct tldraw editor options which install PTF as the clipboard format for Infusion shapes.
- * @param {Object} shapeDefaults - Defaults for a freshly created Infusion shape, as for `pastePTF`
  * @return {Object} Options to be supplied as the `options` prop of the `Tldraw` component
  */
-export const makeClipboardOptions = function (shapeDefaults) {
+export const makeClipboardOptions = function () {
     return {
         /**
          * Write a PTF document to the clipboard in place of tldraw's own format if any Infusion shapes are being
@@ -165,7 +206,7 @@ export const makeClipboardOptions = function (shapeDefaults) {
             if (source === "native-event") {
                 const text = clipboardData?.getData("text/plain");
                 if (fluid.ptf.isPTF(text)) {
-                    pastePTF(editor, text, point, shapeDefaults);
+                    pastePTF(editor, text, point);
                     togo = false;
                 }
             } else {
@@ -173,7 +214,7 @@ export const makeClipboardOptions = function (shapeDefaults) {
                 if (item && item.types.includes("text/plain") && !item.types.includes("text/html")) {
                     item.getType("text/plain").then(blob => blob.text()).then(text => {
                         if (fluid.ptf.isPTF(text)) {
-                            pastePTF(editor, text, point, shapeDefaults);
+                            pastePTF(editor, text, point);
                         } else {
                             editor.markHistoryStoppingPoint("paste");
                             editor.putExternalContent({type: "text", text, point});

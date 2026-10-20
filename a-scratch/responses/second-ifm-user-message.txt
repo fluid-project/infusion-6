@@ -1,0 +1,3 @@
+The user's direction follows. Attend to it carefully, and respond in exactly one of the two forms described above.
+
+Please construct a simple component with three buttons, red, green and blue, which set the colour of a box

@@ -1,12 +1,28 @@
 <script>
 fluid.def("fluid.editorRoot", {
-    $layers: ["fluid.sfcTemplateViewComponent", "fluid.resolveRoot"],
+    $layers: "fluid.resolveRoot",
+    view: {
+        $component: {
+            $layers: "fluid.sfcTemplateViewComponent"
+        }
+    },
     openLayerTabs: {
         // Holds an array of LayerRec structures as dispensed from {layerList}
         $reactiveRoot: []
     },
     showUserLayersOnly: true,
     selectedLayerTab: null,
+    // The tab whose editor is shown - the selected tab if it is open, otherwise the last open tab. Only openLayerTabs
+    // is recorded in history, so that navigating history may restore tabs without restoring their selection
+    activeLayerTab: {
+        $compute: {
+            func: (openLayerTabs, selectedLayerTab) => {
+                const isOpen = openLayerTabs.some(layerRec => layerRec.layerName === selectedLayerTab);
+                return isOpen ? selectedLayerTab : openLayerTabs[openLayerTabs.length - 1]?.layerName ?? null;
+            },
+            args: ["{self}.openLayerTabs", "{self}.selectedLayerTab"]
+        }
+    },
     inspectingSite: null,
     selfEditing: false,
 
@@ -64,13 +80,9 @@ fluid.def("fluid.editorRoot", {
         $method: {
             func: async (editorsPane, layerName) => {
                 const childSearch = fluid.liveQueryILSelector(editorsPane, "fluid.editor");
-
-                // Horrid hacks to wait long enough - need FDS
-                let children = await(fluid.cell.signalToPromise(childSearch));
-                fluid.cell.stabilize();
-                children = await(fluid.cell.signalToPromise(childSearch));
-
-                return children.find(child => child.layerRec.layerName === layerName);
+                const findHolder = children => children.find(child => child.layerRec.layerName === layerName);
+                // The editor for a freshly opened layer tab is constructed asynchronously - wait until it appears
+                return findHolder(await fluid.cell.waitFor(childSearch, findHolder));
             },
             args: ["{editorsPane}", "{0}:layerName"]
         }
@@ -136,7 +148,7 @@ fluid.def("fluid.editorRoot", {
                 if (self.inspectingSite) {
                     const that = self.inspectingSite.shadow.that;
                     const layerName = fluid.peek(that.$layers);
-                    self.menu.inspect.inspecting = false;
+                    self.menu.inspect.active = false;
                     self.inspectingSite = null;
                     // In time go direct to part of definition
                     self.openLayerTab(layerName);
@@ -158,7 +170,6 @@ fluid.def("fluid.editorRoot", {
                 args: ["{self}", "{global}.MutationObserver"]
             },
             unbind: (observer) => {
-                debugger;
                 observer.disconnect();
             }
         }
@@ -180,7 +191,7 @@ fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
                 console.log("Found mutation of target ", target, " within root ", editRoot, " within container ", container);
                 const path = fluid.pathToNode(editRoot, container);
                 console.log("Path from editRoot to parent ", path.join(""));
-                const vTree = shadow.that.vTree._value;
+                const vTree = fluid.viewShadowFor(shadow).that.vTree._value;
                 const vNode = fluid.navigatePath(vTree, path);
                 console.log("Found corresponding vNode ", vNode);
                 if (fluid.textDiff(vNode, editRoot)) {
@@ -194,7 +205,6 @@ fluid.editorRoot.editUpdateListener = function (editorRoot, MutationObserver) {
                     const newText = origText.slice(0, from) + editRoot.innerHTML + origText.slice(to);
                     console.log(`Proposing updating text from\n${origText} to \n${newText}`);
                     sfcRec.textSignal.set(newText);
-                    fluid.cell.deferredStabilize();
                 }
             }
         });
@@ -221,7 +231,7 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
             const layerName = fluid.peek(that.$layers);
             colour = layerColours[layerName] || "transparent";
             Object.values(overlays).map(overlay => overlay.querySelector(".fl-inspect-layer").innerText = layerName);
-            target = fluid.deSignal(that.renderedContainer);
+            target = fluid.renderedContainerFor(inspectingSite.shadow);
         }
         fluid.applyOverlay(overlays, target, colour);
     }
@@ -383,10 +393,12 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
     display: none;
     opacity: 0.5;
     position: absolute;
+    box-sizing: border-box;
     cursor: pointer;
 }
 
-#fl-inspect-overlay {
+/* Highlights which must not intercept the pointer events determining what they highlight */
+#fl-inspect-overlay, #fl-editor-inspect-overlay {
     pointer-events: none;
     cursor: default;
 }

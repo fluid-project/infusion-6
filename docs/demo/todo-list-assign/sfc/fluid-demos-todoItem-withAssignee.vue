@@ -1,7 +1,12 @@
 <script>
 fluid.def("fluid.demos.todoItem.withAssignee", {
-    $layers: "fluid.partialViewComponent",
-    relativeContainer: "after: .item-text",
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.partialViewComponent",
+            relativeContainer: "after: .item-text"
+        }
+    },
     select: {
         $component: {
             $layers: "fluid.UISelect",
@@ -17,13 +22,15 @@ fluid.def("fluid.demos.todoItem.withAssignee", {
                     args: "{assignees}.assignees"
                 },
             },
-            selectEffect: {
-                // Whole effect is an epicycle from the fact we can't yet simply assign straight back to the source data through the projection of it
-                // Then we further need the "includeSource" to get around the fact that reference sliding amongst members of the list will activate this
-                $effect: {
-                    func: (selection, itemIndex, assignItem) => assignItem(itemIndex, selection === "<none>" ? null : selection),
-                    args: ["{self}.selection", "{todoItem}.itemIndex", "{todoList}.assignItem"],
-                    includeSource: "dom"
+            // Rather than updating its own selection, write the choice straight back through the projection of the
+            // todo to the source data - the selection above will then update from it
+            updateSelection: {
+                $method: {
+                    func: (todoItem, e) => {
+                        const value = e.target.value;
+                        todoItem.todo.assignee = value === "<none>" ? null : value;
+                    },
+                    args: ["{todoItem}", "{0}:event"]
                 }
             }
         }

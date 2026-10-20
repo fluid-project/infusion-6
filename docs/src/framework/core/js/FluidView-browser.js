@@ -6,6 +6,10 @@ const $fluidViewBrowserScope = function (fluid) {
 
     fluid.environment = "browser";
 
+    // The document into which SFCs are injected for a component which has no container from which to find one, e.g.
+    // an avatar - in the browser there is just the one. Left undefined on the server, which may host several.
+    fluid.defaultDocument = document;
+
     // Currently disused
     /**
      * Parses an HTML string into a DOM element.
@@ -113,7 +117,7 @@ const $fluidViewBrowserScope = function (fluid) {
                 if (negate) {
                     rvalue = !rvalue;
                 }
-                fluid.setForComponent(target.get(), parsedLH.path, rvalue);
+                fluid.setForComponent(fluid.deSignal(target), parsedLH.path, rvalue);
             });
         } else {
             const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
@@ -156,13 +160,18 @@ const $fluidViewBrowserScope = function (fluid) {
     fluid.globalDismissalSignal = fluid.cell(0, {name: "Global dismissal signal"});
 
     fluid.def("fluid.globalDismissal", {
-        $layers: ["fluid.resolveRoot", "fluid.viewComponent"],
-        container: document,
+        $layers: "fluid.resolveRoot",
+        view: {
+            $component: {
+                $layers: "fluid.viewComponent",
+                container: document
+            }
+        },
         clicked: 0,
         register: {
             $effect: {
                 func: (self) => {
-                    self.container.addEventListener("click", (e) => {
+                    self.view.container.addEventListener("click", (e) => {
                         const noDismiss = e.target.closest(".fl-no-dismiss");
                         if (!noDismiss) {
                             ++fluid.globalDismissalSignal.value;

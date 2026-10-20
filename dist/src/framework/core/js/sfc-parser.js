@@ -121,7 +121,8 @@ const sfcParserScope = function (fluid) {
         } else if (state.currentDef && token.name === "Property") {
             const propDef = expectTokens(token.children[0], ["PropertyDefinition", "String"]); // Could be unquoted or quoted
             const value = token.children[2]; // Could be ObjectExpression, String, or any other RH
-            state.segs.push(propDef.text);
+            // Slice off the quotes of a quoted property name, e.g. as written by fluid.patchDefMap
+            state.segs.push(propDef.name === "String" ? propDef.text.slice(1, -1) : propDef.text);
             pushedSeg = true;
             fluid.set(state, ["defMap", state.currentDef, ...state.segs, $m], {from: value.from + state.offset, to: value.to + state.offset});
         }
@@ -140,11 +141,11 @@ const sfcParserScope = function (fluid) {
      * @param {String} text - The original textual form of the structure to patch.
      * @param {DefMap} defMap - A defMap mapping (recursive) property names to their source ranges.
      * @param {String} layerName - Required layerName within the defMap
-     * @param {String} key - The property key to add or update in the structure.
+     * @param {String|String[]} key - The property key, or path of keys, to be fetched from the structure.
      * @return {Object|undefined} - The parsed JSON value
      */
     fluid.defFromMap = function (text, defMap, layerName, key) {
-        const entry = fluid.get(defMap, [layerName, key, $m]);
+        const entry = fluid.get(defMap, [layerName, ...fluid.makeArray(key), $m]);
         return entry && JSON.parse(text.slice(entry.from, entry.to));
     };
 
@@ -185,6 +186,35 @@ const sfcParserScope = function (fluid) {
         }
 
         return resultText;
+    };
+
+    /**
+     * Patches a textual representation of a JSON-like structure at a path of keys using a defMap. Any intermediate
+     * object literals present in the text are patched into, and any absent ones are created to hold the value.
+     *
+     * @param {String} text - The original textual form of the structure to patch.
+     * @param {DefMap} defMap - A defMap mapping (recursive) property names to their source ranges.
+     *                          Must include a root range at defMap.$m.
+     * @param {String[]} segs - The path of property keys to add or update in the structure.
+     * @param {Object} value - The new value to assign at the path.
+     * @param {String} disposition - "first" or "last"
+     * @return {String} - The updated textual representation with the path and value patched in.
+     */
+    fluid.patchDefMapPath = function (text, defMap, segs, value, disposition) {
+        const [key, ...rest] = segs;
+        const entry = defMap[key]?.[$m];
+        let togo;
+        if (rest.length === 0) {
+            togo = fluid.patchDefMap(text, defMap, key, value, disposition);
+        } else if (entry && text[entry.from] === "{") {
+            togo = fluid.patchDefMapPath(text, defMap[key], rest, value, disposition);
+        } else if (entry) {
+            fluid.fail(`Cannot patch path ${segs.join(".")} into non-object value ${text.slice(entry.from, entry.to)}`);
+        } else {
+            const nested = rest.reduceRight((acc, seg) => ({[seg]: acc}), value);
+            togo = fluid.patchDefMap(text, defMap, key, nested, disposition);
+        }
+        return togo;
     };
 
     /**

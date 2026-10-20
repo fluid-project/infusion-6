@@ -205,7 +205,8 @@ const $fluidSignalsScope = function (fluid) {
     /** A list of non-clean 'effect' nodes that will be updated when stabilize() is called */
     fluid.cell.EffectQueue = [];
 
-    /* fn to call to notify that there are dirty effect nodes - by default no-op but could be set to autoStabilize */
+    /* fn to call to notify that there are dirty effect nodes - assigned by fluid.cell.autoStabilize, by default to
+     * fluid.cell.deferredStabilize once that is defined */
     fluid.cell.queueStabilize = () => {};
 
     fluid.cell.cellId = 0;
@@ -237,7 +238,8 @@ const $fluidSignalsScope = function (fluid) {
 
     fluid.cell.filterPendingEffects = function (effects) {
         return effects.filter((oneEffect) => {
-            return oneEffect._isEffect ? fluid.isPending(oneEffect.get(false, true)) : false;
+            // A disposed effect has no further obligations, and so cannot hold its fit open
+            return oneEffect._isEffect && !oneEffect._isDisposed ? fluid.isPending(oneEffect.get(false, true)) : false;
         });
     };
 
@@ -284,7 +286,8 @@ const $fluidSignalsScope = function (fluid) {
     fluid.cell.endFits = function (touchedFits) {
         const pendingFits = [];
         fluid.cell.untracked( () => {
-            touchedFits.forEach(oneFit => {
+            // Iterate over a copy, since endFit removes the fit from fluid.cell.CurrentFits, which may be the argument
+            touchedFits.slice().forEach(oneFit => {
                 const pendingEffects = fluid.cell.filterPendingEffects(oneFit.targetsConsumed);
                 if (pendingEffects.length === 0) {
                     fluid.cell.endFit(oneFit);
@@ -1198,17 +1201,18 @@ const $fluidSignalsScope = function (fluid) {
         });
     };
 
-    // Stabilize function to process effect queue
-    fluid.cell.stabilize = function () {
+    /**
+     * Pull every effect in the effect queue once, including any queued whilst doing so, and then end any fits which no
+     * longer have pending effects.
+     * @return {Cell[]} The effects processed by this pass
+     */
+    fluid.cell.stabilizeOnce = function () {
         const EffectQueue = fluid.cell.EffectQueue;
         for (let i = 0; i < EffectQueue.length; i++) {
-            function pullOneEffect(effect) {
-                effect.get(false, true);
-                effect._isQueued = false;
-            };
             const effect = EffectQueue[i];
             if (!effect._isDisposed) {
-                pullOneEffect(effect);
+                effect.get(false, true);
+                effect._isQueued = false;
             }
         }
         const processedEffects = EffectQueue.slice(0);
@@ -1219,104 +1223,191 @@ const $fluidSignalsScope = function (fluid) {
         return processedEffects;
     };
 
-    fluid.cell.stabilizeAsync = function (processedEffectsIn) {
+    /** `true` whilst a call to fluid.cell.stabilize is draining the effect queue */
+    fluid.cell.isStabilizing = false;
+    /** Set by a reentrant call to fluid.cell.stabilize, which is folded into the pass in progress */
+    fluid.cell.stabilizeAgain = false;
 
-        const processedEffectsCell = fluid.cell([], {name: "processedEffectsCell", _fit: fluid.cell.frameworkFit});
-        const processedEffects = processedEffectsIn || fluid.cell.stabilize();
-        processedEffectsCell.set(processedEffects);
-
-        const togo = new Promise(resolve => {
-            const pendingStabilization = fluid.cell.effect(function (processedEffects) {
-                const pendingEffects = fluid.cell.filterPendingEffects(processedEffects);
-                if (pendingEffects.length === 0) {
-                    resolve();
-                    fluid.cell.endFit(pendingStabilization._fit);
-                    // Can't dispose it immediately since it is still in the process of being pulled in stabilize
-                    fluid.invokeLater( () => {
-                        pendingStabilization.dispose();
-                    });
-                } else {
-                    fluid.invokeLater(() => {
-                        pendingEffects.forEach(fluid.cell.queueEffect);
-                        const e = fluid.cell.stabilize();
-                        if (e.length !== processedEffectsCell._value.length) {
-                            processedEffectsCell.set(e);
-                            fluid.cell.endFit(processedEffectsCell._fit);
-                        }
-                    });
-                }
-            }, [processedEffectsCell], {
-                _fit: fluid.cell.frameworkFit,
-                isFree: true,
-                name: "pending stabilization effect"
-            });
-            pendingStabilization.get();
-        });
-
-        if (processedEffectsIn) {
-            fluid.cell.stabilize();
-        }
-
-        return togo;
-
-    };
-
-    fluid.cell.stabilizationQueued = false; // stabilizeFn() is queued to run after this event loop by autoStabilize
-
-    /** A standard implementation of "immediately deferred stabilization" which will queue stabilize() to run at the next idle time */
-    fluid.cell.deferredStabilize = function () {
-        if (!fluid.cell.stabilizationQueued) {
-            fluid.cell.stabilizationQueued = true;
-
-            fluid.invokeLater(() => {
-                fluid.cell.stabilizationQueued = false;
-                fluid.cell.stabilize();
-            });
-        }
-    };
-
-    /** Configure an auto-stabilization strategy which will run a function for each dirty effect node at a determined point.
-     * This is expected to be non-reentrant.
-     * @param {Function} [fn=fluid.cell.deferredStabilize] - The function to use for stabilization.
-     * If not provided, defaults to `fluid.cell.deferredStabilize`, which queues stabilization
-     * to run at the next idle time
+    /**
+     * Synchronously drain the effect queue - an idempotent flush which may be called at any time, e.g. by tests and
+     * event handlers which require the DOM to be consistent before they return. A call made whilst a stabilization is
+     * in progress (e.g. from within an effect) is folded into the outer pass. Any deferred stabilization which has been
+     * queued is consumed, and so will become a no-op.
+     * @return {Cell[]} The effects processed by this call
      */
-    fluid.cell.autoStabilize = function (fn = fluid.cell.deferredStabilize) {
-        fluid.cell.queueStabilize = fn;
+    fluid.cell.stabilize = function () {
+        let processed = [];
+        fluid.cell.stabilizationQueued = false;
+        if (fluid.cell.isStabilizing) {
+            fluid.cell.stabilizeAgain = true;
+        } else {
+            fluid.cell.isStabilizing = true;
+            try {
+                do {
+                    fluid.cell.stabilizeAgain = false;
+                    processed = processed.concat(fluid.cell.stabilizeOnce());
+                } while (fluid.cell.stabilizeAgain || fluid.cell.EffectQueue.length > 0);
+            } finally {
+                fluid.cell.isStabilizing = false;
+            }
+        }
+        return processed;
     };
 
     /**
-     * Converts a signal into a Promise that resolves when the signal's value changes to an
-     * available value.
-     *
-     * @param {Cell<any>} valSignal - The signal to monitor.
-     * @return {Promise<any>} A Promise that resolves with the signal's first available value.
+     * Stabilize the reactive graph and resolve once the effects concerned are no longer pending. If no effects are
+     * supplied, this waits for the whole graph, via fluid.cell.settle - since under auto-stabilization the effects
+     * dirtied by the caller may already have been drained by a deferred pass, those processed by any one call to
+     * fluid.cell.stabilize are not a reliable indication of the work outstanding.
+     * @param {Cell[]} [processedEffectsIn] - Effects, as returned from a call to fluid.cell.stabilize, to wait for
+     * @return {Promise} A promise which resolves once none of the effects concerned are pending
      */
-    fluid.cell.signalToPromise = function (valSignal) {
-        const togo = new Promise((resolve, reject) => {
-            const fetchEffect = fluid.cell.effect(function (value) {
+    fluid.cell.stabilizeAsync = function (processedEffectsIn) {
+        let togo;
+        if (processedEffectsIn) {
+            const processedEffectsCell = fluid.cell([], {name: "processedEffectsCell", _fit: fluid.cell.frameworkFit});
+            processedEffectsCell.set(processedEffectsIn);
+
+            togo = new Promise(resolve => {
+                const pendingStabilization = fluid.cell.effect(function (processedEffects) {
+                    const pendingEffects = fluid.cell.filterPendingEffects(processedEffects);
+                    if (pendingEffects.length === 0) {
+                        resolve();
+                        fluid.cell.endFit(pendingStabilization._fit);
+                        // Can't dispose it immediately since it is still in the process of being pulled in stabilize
+                        fluid.invokeLater( () => {
+                            pendingStabilization.dispose();
+                        });
+                    } else {
+                        fluid.invokeLater(() => {
+                            pendingEffects.forEach(fluid.cell.queueEffect);
+                            const e = fluid.cell.stabilize();
+                            if (e.length !== processedEffectsCell._value.length) {
+                                processedEffectsCell.set(e);
+                                fluid.cell.endFit(processedEffectsCell._fit);
+                            }
+                        });
+                    }
+                }, [processedEffectsCell], {
+                    _fit: fluid.cell.frameworkFit,
+                    isFree: true,
+                    name: "pending stabilization effect"
+                });
+                pendingStabilization.get();
+            });
+
+            fluid.cell.stabilize();
+        } else {
+            togo = fluid.cell.settle();
+        }
+        return togo;
+    };
+
+    /** `true` if a deferred stabilization has been queued by fluid.cell.deferredStabilize and not yet consumed */
+    fluid.cell.stabilizationQueued = false;
+
+    /** Queue a stabilization pass in a microtask, so that it runs at the end of the current task, before any timers,
+     * I/O or further macrotasks. A synchronous call to fluid.cell.stabilize in the meantime consumes the request, so that
+     * the deferred pass becomes a no-op. No pass is queued during a stabilization, since that drains any effects queued
+     * whilst it is in progress.
+     */
+    fluid.cell.deferredStabilize = function () {
+        if (!fluid.cell.stabilizationQueued && !fluid.cell.isStabilizing) {
+            fluid.cell.stabilizationQueued = true;
+            queueMicrotask(() => {
+                if (fluid.cell.stabilizationQueued) {
+                    fluid.cell.stabilize();
+                }
+            });
+        }
+    };
+
+    /** Configure an auto-stabilization strategy, a function which is run whenever an effect may have become dirty.
+     * Auto-stabilization with fluid.cell.deferredStabilize is on by default.
+     * @param {Function|null} [fn=fluid.cell.deferredStabilize] - The function to use for stabilization, or `null` to turn
+     * auto-stabilization off, so that the effect queue is only drained by explicit calls to fluid.cell.stabilize
+     */
+    fluid.cell.autoStabilize = function (fn = fluid.cell.deferredStabilize) {
+        fluid.cell.queueStabilize = fn || (() => {});
+    };
+
+    fluid.cell.autoStabilize();
+
+    /**
+     * Determine whether the reactive graph is quiescent - that is, no effects are queued and no fits other than static
+     * ones remain open.
+     * @return {Boolean} `true` if the graph is quiescent
+     */
+    fluid.cell.isQuiescent = function () {
+        return fluid.cell.EffectQueue.length === 0 && fluid.cell.CurrentFits.every(fit => fit.staticFit);
+    };
+
+    /**
+     * Find the effects which are holding fits open because they are pending - for example, awaiting I/O or an async
+     * computation. This is the outstanding work for which fluid.cell.settle waits.
+     * @return {Cell[]} The pending effects in open fits
+     */
+    fluid.cell.pendingEffects = function () {
+        return fluid.cell.untracked(() => fluid.cell.CurrentFits.flatMap(fit => fluid.cell.filterPendingEffects(fit.targetsConsumed)));
+    };
+
+    /**
+     * Resolve once the reactive graph is quiescent - no effects are queued, and no fit is held open by a pending effect.
+     * Asynchronous work issued from within the graph, whether by an async computation or a fetch which an effect
+     * consumes, holds open the fit in which it was issued until it completes, and so no polling is needed. This is the
+     * sanctioned way for async code to wait for work internal to the graph - work whose timing lies outside it should
+     * be awaited with fluid.cell.waitFor. Note that the promise returned by an async effect function is not tracked -
+     * such work should instead be signalled through a cell which is pending until it completes, and which is
+     * consumed by some effect, e.g. one allocated by fluid.cell.waitFor. A graph holding an effect which is pending
+     * forever never settles - fluid.cell.pendingEffects reports such effects.
+     * @return {Promise} A promise which resolves when the graph is quiescent
+     */
+    fluid.cell.settle = async function () {
+        fluid.cell.stabilize();
+        while (!fluid.cell.isQuiescent()) {
+            // idleSignal becomes true when the last fit ends, as a stabilization following completion of work ends it
+            await fluid.cell.waitFor(fluid.cell.idleSignal, idle => idle);
+            fluid.cell.stabilize();
+        }
+    };
+
+    /**
+     * Resolve with the first available value of a cell which satisfies a predicate, or reject if the cell holds an
+     * error. Whilst the cell is pending, the watching effect is itself pending, so that the fit in which it is pulled
+     * stays open and fluid.cell.settle waits for it - this is work internal to the graph. Whilst the cell is available
+     * but its value does not satisfy the predicate, the effect is not pending, since the awaited condition depends on
+     * something outside the graph, e.g. a value delivered from an external timer.
+     * @param {Cell} cell - The cell to watch
+     * @param {Function} [predicate] - A test applied to each available value of the cell, which accepts any available
+     * value if omitted
+     * @return {Promise<Any>} A promise which resolves with the first available value satisfying `predicate`, and
+     * rejects with the cell's value if it becomes an error
+     */
+    fluid.cell.waitFor = function (cell, predicate = () => true) {
+        return new Promise((resolve, reject) => {
+            const watcher = fluid.cell.effect(value => {
+                let togo;
                 if (fluid.isUnavailable(value)) {
                     if (value.variety === "error") {
                         reject(value);
-                        this.dispose();
+                        watcher.dispose();
                     }
-                    return value;  // keep effect pending so stabilize tracks it
+                    // Return a pending value unchanged so that the watcher is pending and holds its fit open
+                    togo = value;
+                } else if (predicate(value)) {
+                    resolve(value);
+                    watcher.dispose();
+                    togo = value;
+                } else {
+                    togo = true;
                 }
-                resolve(value);
-                this.dispose();
-                return value;
-            }, [valSignal], {
+                return togo;
+            }, [cell], {
                 isFree: true,
-                name: "Resolution effect for cell " + valSignal.name + "/" + fluid.cell.fitId
+                name: "waitFor " + cell.name + "/" + fluid.cell.fitId
             });
-
-            // Ensure that any pending effects start to be honoured which had been kicked off on this stack frame,
-            // since we are almost certainly in an "await" block
-            // fluid.cell.stabilize();
-
-            fetchEffect.get();
+            watcher.get();
         });
-        return togo;
     };
 };
 

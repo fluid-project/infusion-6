@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title>Todo List With Assignees Demo Tests</title>
+
+        <link rel="stylesheet" media="screen" href="../../../lib/qunit/css/qunit.css" />
+
+        <fluid-module id="infusion-6" src="../../../../"></fluid-module>
+
+        <script src="../../../../src/lib/lezer/lezer-javascript-browser.js"></script>
+
+        <script src="../../../../src/framework/core/js/FluidCore.js"></script>
+        <script src="../../../../src/framework/core/js/FluidSignals.js"></script>
+        <script src="../../../../src/framework/core/js/Fluid.js"></script>
+        <script src="../../../../src/framework/core/js/FluidModules.js"></script>
+        <script src="../../../../src/framework/core/js/FluidIL.js"></script>
+        <script src="../../../../src/framework/core/js/FluidView.js"></script>
+        <script src="../../../../src/framework/core/js/FluidPTF.js"></script>
+        <script src="../../../../src/framework/core/js/FluidView-browser.js"></script>
+        <script src="../../../../src/framework/core/js/template-parser.js"></script>
+        <script src="../../../../src/framework/core/js/sfc-parser.js"></script>
+
+        <!-- The actual SFC files of the demo at demo/todo-list-assign -->
+        <fluid-module id="todoApp" src="../../../../demo/todo-list-assign/"></fluid-module>
+
+        <!-- definitions for base app -->
+        <fluid-import src="%todoApp/sfc/fluid-demos-todoApp.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-todoList.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-todoItem.vue"></fluid-import>
+
+        <!-- definitions for filtering per se -->
+        <fluid-import src="%todoApp/sfc/fluid-demos-filter.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-filters.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-filterCompleted.vue"></fluid-import>
+
+        <!-- block of imports to enable assignees -->
+        <fluid-import src="%todoApp/sfc/fluid-demos-assigneeControl.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-todoList-withAssignee.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-todoItem-withAssignee.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-filterAssignee.vue"></fluid-import>
+        <fluid-import src="%todoApp/sfc/fluid-demos-filters-withAssignee.vue"></fluid-import>
+
+        <!-- facet checkbox definition to make assignees infusable -->
+        <fluid-import src="%todoApp/sfc/fluid-demos-facets.vue"></fluid-import>
+
+        <script src="../../../lib/qunit/js/qunit.js"></script>
+        <script src="../../../test-core/qunit/js/qunit-fluid.js"></script>
+
+        <script src="../js/TodoListTestUtils.js"></script>
+        <script src="../js/TodoListAssignTests.js"></script>
+    </head>
+    <body>
+    <div id="qunit"></div>
+    <!-- Test HTML -->
+    <div id="qunit-fixture">
+        <div class="container"></div>
+    </div>
+
+    </body>
+</html>

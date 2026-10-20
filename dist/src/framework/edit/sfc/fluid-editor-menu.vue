@@ -1,6 +1,10 @@
 <script>
 fluid.def("fluid.editor.menu", {
-    elideParent: false,
+    view: {
+        $component: {
+            elideParent: false
+        }
+    },
     menuItemsData: {
         File: [{
             text: "Export...",
@@ -45,7 +49,7 @@ fluid.def("fluid.editor.menu", {
     },
     menuItems: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $for: {
                 source: "{menu}.menuItemsData",
                 valueAs: "menuRecords",
@@ -57,7 +61,10 @@ fluid.def("fluid.editor.menu", {
                     args: ["{self}.itemName", "{menu}.menuOpen"]
                 }
             },
-            template: `
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `
             <div class="fl-menu-item-holder">
                 <div class="fl-menu-item fl-clickable fl-no-dismiss"
                     @onclick="{menu}.menuOpen = {self}.itemName"
@@ -66,15 +73,22 @@ fluid.def("fluid.editor.menu", {
                 <div class="fl-menu-body fl-no-dismiss" @class="active:@{{self}.isOpen}">
                     <div class="fl-menu-body-item" @id="menuBodyItems"></div>
                 </div>
-            </div>`,
+            </div>`
+                }
+            },
             menuBodyItems: {
                 $component: {
-                    $layers: ["fluid.templateViewComponent", "{self}.menuRecord.layers"],
+                    $layers: ["fluid.component", "{self}.menuRecord.layers"],
                     $for: {
                         source: "{self}.menuRecords",
                         valueAs: "menuRecord"
                     },
-                    template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({self}.menuRecord)">@{menuRecord.text}</div>`
+                    view: {
+                        $component: {
+                            $layers: "fluid.templateViewComponent",
+                            template: `<div class="fl-menu-body-inner fl-clickable" @onclick="{menu}.itemChosen({self}.menuRecord)">@{menuRecord.text}</div>`
+                        }
+                    }
                 }
             }
         }
@@ -89,9 +103,14 @@ fluid.editor.menu.mouseOver = function (menu, itemName) {
 };
 
 fluid.def("fluid.editor.menu.filterLayers", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     value: "{editorRoot}.showUserLayersOnly",
-    template: `<div class="fl-menu-body-inner"><input type="checkbox" checked="@{value}" @onchange="{self}.updateChecked({0})"/>Filter framework layers</div>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="fl-menu-body-inner"><input type="checkbox" checked="@{value}" @onchange="{self}.updateChecked({0})"/>Filter framework layers</div>`
+        }
+    },
     $variety: "frameworkAux",
     updateChecked: {
         $method: {
@@ -105,9 +124,12 @@ fluid.def("fluid.editor.menu.filterLayers", {
 });
 
 fluid.def("fluid.editor.menu.inspect", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     active: false,
-    template: `
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `
 <div class="fl-magic-button" @class="fl-active:@{active}" @onclick="{self}.click()" title="Select an element on the page to open its layer in the editor">
     <svg viewBox="146 124 16 16" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
         <g fill="none">
@@ -115,9 +137,12 @@ fluid.def("fluid.editor.menu.inspect", {
             <path d="M152 138h-2.5c-1 0-1.5-.5-1.5-1.5v-9c0-1 .5-1.5 1.5-1.5h9c1.5 0 1.5 1.468 1.5 1.5v2.5h-1v-3h-10v10h3zm9-5l-3 2 3 3-1 1-3-3-2 3-2-8z" fill="currentcolor" shape-rendering="geometricPrecision"/>
         </g>
     </svg>
-</div>`,
+</div>`
+        }
+    },
     inspectEffect: "$effect:fluid.inspect.effect({self}, {self}.active, {global}.document)",
     mouseMove: "$method:fluid.inspect.mouseMove({self}, {0}:event, {editorRoot})",
+    pageClick: "$method:fluid.inspect.pageClick({0}:event, {editorRoot})",
     click: "$method:fluid.clickMagic({inspect}, {selfEdit}, 0)",
 
     $variety: "frameworkAux"
@@ -136,24 +161,44 @@ fluid.inspect.mouseMove = function (self, event, editorRoot) {
     const useShadow = shadow && (!editorRoot.showUserLayersOnly || fluid.shadowHasUserLayer(shadow)) ? shadow : null;
     // Some nice tool will in future show up this distant write access
     editorRoot.inspectingSite = useShadow ? {shadow: useShadow} : null;
-    fluid.cell.deferredStabilize();
+};
+
+/**
+ * Open the layer of the component being inspected in the editor on a click within the application. The inspect overlay
+ * does not receive pointer events, so that the component beneath it can be found, and so the click is intercepted
+ * here, during capture, before it can reach the application.
+ * @param {MouseEvent} event - The click event
+ * @param {fluid.editorRoot} editorRoot - The editor root, whose `inspectingSite` holds any component being inspected
+ */
+fluid.inspect.pageClick = function (event, editorRoot) {
+    if (editorRoot.inspectingSite && event.target.closest("body")) {
+        event.preventDefault();
+        event.stopPropagation();
+        editorRoot.overlayClick();
+    }
 };
 
 fluid.inspect.effect = function (self, inspecting, document) {
     const listener = self.mouseMove;
+    const clickListener = self.pageClick;
     if (inspecting) {
         document.addEventListener("mousemove", listener);
+        document.addEventListener("click", clickListener, true);
     } else {
         // TODO: Not bound to anything
         self.inspectTarget = null;
         document.removeEventListener("mousemove", listener);
+        document.removeEventListener("click", clickListener, true);
     }
 };
 
 fluid.def("fluid.editor.menu.selfEdit", {
-    $layers: "fluid.templateViewComponent",
+    $layers: "fluid.component",
     active: false,
-    template: `
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `
 <div class="fl-magic-button" @class="fl-active:@{active}" @onclick="{self}.click()" title="Select an element on the page to edit it directly">
     <svg viewBox="0 0 24 24" width="19" height="19" xmlns="http://www.w3.org/2000/svg">
         <g fill="none">
@@ -168,7 +213,9 @@ fluid.def("fluid.editor.menu.selfEdit", {
                 20.6 23.8 19.4 23 18.6L11.7 7.3L9.4 5ZM6.4 8L8 6.4L9.6 8L8 9.6L6.4 8ZM9.4 11L11 9.4L21.6 20L20 21.6L9.4 11Z" fill="currentcolor"/>
          </g>
     </svg>
-</div>`,
+</div>`
+        }
+    },
     click: "$method:fluid.clickMagic({inspect}, {selfEdit}, 1)",
     editEffect: "$effect:fluid.selfEdit.effect({self}, {self}.active, {editorRoot})",
 

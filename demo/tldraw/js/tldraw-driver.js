@@ -1,7 +1,8 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react} from "tldraw";
-import {infusionInstances, lookupPendingParts, makeClipboardOptions} from "./tldraw-clipboard.js";
+import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions} from "./tldraw-clipboard.js";
+import {makeAIBridge} from "./tldraw-ai.js";
 
 const h = React.createElement;
 
@@ -207,36 +208,44 @@ const InfusionHost = function ({layerName, shapeId, ptfToken}) {
         let that = null;
         let unmounted = false;
         const adopt = function (constructed, how) {
-            if (unmounted) {
-                constructed.destroy();
-            } else {
-                that = constructed;
-                infusionInstances.set(shapeId, that);
-                console.log(`${how} Infusion component ${layerName} with id ${that.$id}`);
-            }
+            that = constructed;
+            infusionInstances.set(shapeId, that);
+            console.log(`${how} Infusion component ${layerName} with id ${that.$id}`);
         };
-        const hostPotentia = {
-            container: containerRef.current,
-            view: {
-                $component: {shapeId}
-            }
-        };
+        const container = containerRef.current;
         const parts = lookupPendingParts(ptfToken);
         if (parts) {
-            fluid.ptf.instantiateParts(parts, {potentia: hostPotentia}).then(
-                ({that: constructed, unresolved}) => {
-                    if (unresolved.length > 0) {
-                        console.warn(`Could not apply PTF parts ${unresolved.join(", ")} for shape ${shapeId}`);
+            // Layers are registered first, since the host potentia can only be determined once the widget's own layer,
+            // which may be an SFC which is parsed asynchronously, is available
+            fluid.ptf.registerLayerParts(parts);
+            awaitLayer(layerName).then(() => {
+                if (!unmounted) {
+                    // The component is adopted as soon as it is constructed, before it is available, so that it can be
+                    // diagnosed whilst it is incomplete and is destroyed if the shape unmounts in the meantime
+                    try {
+                        const potentia = fluid.tldraw.hostPotentiaFor(layerName, container, shapeId);
+                        adopt(fluid.ptf.constructParts(parts, {potentia}), "Reconstructed");
+                        const constructed = that;
+                        fluid.ptf.applyParts(constructed, parts).then(unresolved => {
+                            if (unresolved.length > 0) {
+                                console.warn(`Could not apply PTF parts ${unresolved.join(", ")} for shape ${shapeId}`);
+                            }
+                            notifyInstantiation(ptfToken, {that: constructed, unresolved});
+                        }, error => {
+                            console.error(`Failed to apply PTF parts for shape ${shapeId}: `, error);
+                            notifyInstantiation(ptfToken, {that: constructed, error});
+                        });
+                    } catch (error) {
+                        console.error(`Failed to reconstruct Infusion component for shape ${shapeId} from PTF: `, error);
+                        notifyInstantiation(ptfToken, {error});
                     }
-                    adopt(constructed, "Reconstructed");
-                },
-                error => console.error(`Failed to reconstruct Infusion component for shape ${shapeId} from PTF: `, error)
-            );
+                }
+            });
         } else {
             awaitLayer(layerName).then(() => {
                 if (!unmounted) {
                     const creator = fluid.getGlobalValue(layerName);
-                    adopt(creator(hostPotentia), "Constructed");
+                    adopt(creator(fluid.tldraw.hostPotentiaFor(layerName, container, shapeId)), "Constructed");
                 }
             });
         }
@@ -376,7 +385,7 @@ const maxNudges = 8;
  * @param {Object} site - The desired top left corner of the shape in page space, as `{x, y}`
  * @return {Object} The site at which to create the shape, as `{x, y}`
  */
-const findFreeSite = function (editor, site) {
+fluid.tldraw.findFreeSite = function (editor, site) {
     const widgetSites = editor.getCurrentPageShapes().filter(shape => shape.type === "infusion")
         .map(shape => editor.getShapePageBounds(shape));
     const isOccupied = candidate => widgetSites.some(bounds => Math.hypot(bounds.x - candidate.x, bounds.y - candidate.y) < nudgeDistance / 2);
@@ -402,7 +411,7 @@ const NewShapePanel = function () {
         const center = editor.getViewportPageBounds().center;
         const id = createShapeId();
         const {w, h: hh} = fluid.tldraw.shapeSizeFor(choice);
-        const site = findFreeSite(editor, {x: center.x - w / 2, y: center.y - hh / 2});
+        const site = fluid.tldraw.findFreeSite(editor, {x: center.x - w / 2, y: center.y - hh / 2});
         editor.createShape({
             id,
             type: "infusion",
@@ -447,6 +456,8 @@ const onMount = function (editor) {
     fluid.tldraw.editorInstance = editor;
     fluid.tldraw.instances = infusionInstances;
     const tldrawHost = fluid.demos.tldrawHost({editor});
+    // Lets the "Ask me anything" panel reflect on and alter the canvas
+    fluid.tldraw.ai.bridge = makeAIBridge(editor);
     if (editor.getCurrentPageShapes().length === 0) {
         editor.createShape({
             type: "infusion",

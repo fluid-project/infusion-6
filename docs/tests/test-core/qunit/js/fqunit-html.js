@@ -103,9 +103,26 @@ fQUnit.executeConnectedScript = function (script) {
 };
 
 /**
+ * Simulate the loading of a stylesheet link element connected to a live document, as a browser does. linkedom neither
+ * fetches nor applies stylesheets, so a "load" event is dispatched if the stylesheet's file exists, and otherwise an
+ * "error" event. Remote stylesheets are assumed to load.
+ * @param {Element} link - The link element which has just been connected
+ */
+fQUnit.loadConnectedLink = function (link) {
+    const context = fQUnit.liveDocuments.get(link.ownerDocument);
+    const href = link.getAttribute("href");
+    if (context && link.getAttribute("rel") === "stylesheet" && href && link.isConnected) {
+        const url = new URL(href, context.location);
+        const exists = url.protocol === "file:" ? fs.existsSync(fileURLToPath(url)) : true;
+        setTimeout(() => link.dispatchEvent(new linkedom.Event(exists ? "load" : "error")), 0);
+    }
+};
+
+/**
  * Patch the node insertion methods of linkedom so that inline script elements inserted into a live document are
- * executed. This affects only documents registered in `fQUnit.liveDocuments`. Since linkedom defines these methods
- * on several prototypes, some of them (e.g. ParentNode) not exported, every prototype which owns one is patched.
+ * executed, and stylesheet links inserted into it are loaded. This affects only documents registered in
+ * `fQUnit.liveDocuments`. Since linkedom defines these methods on several prototypes, some of them (e.g. ParentNode)
+ * not exported, every prototype which owns one is patched.
  */
 fQUnit.patchScriptExecution = function () {
     const methods = ["appendChild", "insertBefore", "replaceChild", "replaceWith", "before", "after", "append", "prepend"];
@@ -122,6 +139,8 @@ fQUnit.patchScriptExecution = function () {
                         args.forEach(arg => {
                             if (arg && arg.localName === "script") {
                                 fQUnit.executeConnectedScript(arg);
+                            } else if (arg && arg.localName === "link") {
+                                fQUnit.loadConnectedLink(arg);
                             }
                         });
                         return togo;
@@ -172,6 +191,14 @@ fQUnit.makeBrowserContext = function (htmlPath) {
     // linkedom's own defaultView is a proxy onto node's globalThis - substitute the inner window
     Object.defineProperty(document, "defaultView", {value: context});
     Object.defineProperty(document, "location", {value: location});
+    // linkedom supplies no readyState - as in a browser, it is "loading" whilst the driver's scripts run
+    let readyState = "loading";
+    Object.defineProperty(document, "readyState", {
+        get: () => readyState,
+        set: value => {
+            readyState = value;
+        }
+    });
     fQUnit.liveDocuments.set(document, context);
     return context;
 };
@@ -228,6 +255,10 @@ fQUnit.runHtmlFile = function (htmlPath) {
                     fluid.fail("Inner context for " + fullPath + " has been polluted by the node global fluid");
                 }
                 fQUnit.attachReporter(QUnit, resolve);
+                // Follow the browser's document lifecycle - e.g. fluid.bootDocument awaits DOMContentLoaded
+                context.document.readyState = "interactive";
+                context.document.dispatchEvent(new linkedom.Event("DOMContentLoaded"));
+                context.document.readyState = "complete";
                 // QUnit's browser bootstrap awaits the window's load event
                 context.dispatchEvent(new linkedom.Event("load"));
             } else {

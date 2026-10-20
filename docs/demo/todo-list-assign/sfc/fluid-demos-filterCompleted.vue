@@ -1,12 +1,22 @@
 <script>
 fluid.def("fluid.demos.filterCompleted", {
-    $layers: ["fluid.demos.filter", "fluid.sfcTemplateViewComponent"],
+    $layers: "fluid.demos.filter",
+    view: {
+        $component: {
+            $layers: "fluid.sfcTemplateViewComponent"
+        }
+    },
     $importMap: {
         "fluid.UISelect": "%todoApp/sfc/fluid-UISelect.vue"
     },
     select: {
         $component: {
-            $layers: ["fluid.UISelect", "fluid.selfTemplate"],
+            $layers: "fluid.UISelect",
+            view: {
+                $component: {
+                    $layers: "fluid.selfTemplateViewComponent"
+                }
+            },
             selection: "all"
         }
     },

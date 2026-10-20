@@ -1,5 +1,6 @@
 <script>
 fluid.def("fluid.demos.counter", {
+    $layers: "fluid.topLevelWidget",
     state: {
         $reactiveRoot: {
             count: 0

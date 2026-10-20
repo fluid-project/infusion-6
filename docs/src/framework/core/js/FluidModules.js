@@ -84,8 +84,9 @@ fluid.module.resolveRelativePath = function (base, path) {
                 const moduleUrl = new URL(moduleBase);
 
                 if (baseUrl.protocol === moduleUrl.protocol && baseUrl.host === moduleUrl.host) {
-                    // Same origin - compute relative path
-                    const baseSegments = baseUrl.pathname.split("/").filter(Boolean);
+                    // Same origin - compute relative path from the directory holding the base document
+                    const baseDir = baseUrl.pathname.substring(0, baseUrl.pathname.lastIndexOf("/") + 1);
+                    const baseSegments = baseDir.split("/").filter(Boolean);
                     const moduleSegments = moduleUrl.pathname.split("/").filter(Boolean);
 
                     let prefixIndex = 0;

@@ -1,0 +1,113 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-colourbox-1"
+
+--ptf-boundary-colourbox-1
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.colourBox"
+Content-Description: layer
+
+<script>
+fluid.def("fluid.demos.colourBox", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 300,
+        h: 200
+    },
+    state: {
+        $reactiveRoot: {
+            colour: "red"
+        }
+    },
+    setColour: {
+        $method: {
+            func: (state, colour) => {
+                state.colour = colour;
+            },
+            args: ["{self}.state", "{0}:colour"]
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="colourbox">
+        <div class="colourbox-swatch" style="background-color: @{state.colour}"></div>
+        <div class="colourbox-buttons">
+            <button class="colourbox-button colourbox-button-red" @onclick="{self}.setColour('red')">Red</button>
+            <button class="colourbox-button colourbox-button-green" @onclick="{self}.setColour('green')">Green</button>
+            <button class="colourbox-button colourbox-button-blue" @onclick="{self}.setColour('blue')">Blue</button>
+        </div>
+    </div>
+</template>
+
+<style>
+.colourbox {
+    padding: 16px;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-family: sans-serif;
+}
+
+.colourbox-swatch {
+    width: 100%;
+    height: 80px;
+    border: 2px solid #333;
+    border-radius: 4px;
+}
+
+.colourbox-buttons {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.colourbox-button {
+    flex: 1;
+    font: inherit;
+    padding: 8px 0;
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+}
+
+.colourbox-button-red {
+    background-color: #d32f2f;
+}
+
+.colourbox-button-green {
+    background-color: #388e3c;
+}
+
+.colourbox-button-blue {
+    background-color: #1976d2;
+}
+</style>
+
+--ptf-boundary-colourbox-1
+Content-Type: multipart/mixed; boundary="ptf-boundary-colourbox-2"
+Content-Disposition: attachment; filename="new-colour-box-1"
+Content-Description: component
+
+--ptf-boundary-colourbox-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.colourBox"
+    ]
+}
+--ptf-boundary-colourbox-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 500, "y": 300, "w": 300, "h": 200}
+--ptf-boundary-colourbox-1--
+--ptf-boundary-colourbox-1--

@@ -28,9 +28,14 @@
     <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyImageGen.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
     <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerator.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
     <fluid-import src="%tldrawDemo/sfc/fluid-demos-closestNoteFinder.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnything.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnythingEntry.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
 
     <!-- Stubs for the "#Agents" widget helpers used by the story time widget -->
     <script src="js/agents-stubs.js"></script>
+    <!-- Hosting machinery, and the protocol of the "Ask me anything" AI panel, which do not depend on tldraw -->
+    <script src="js/tldraw-hosting.js"></script>
+    <script src="js/ai-protocol.js"></script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,6 +56,7 @@
         :root {
             /* tldraw's UI inherits its font, and refers to this variable in some places */
             --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+            --ai-panel-width: 360px;
         }
         html, body {
             margin: 0;
@@ -79,13 +85,22 @@
         }
         #tldraw-root {
             position: fixed;
-            inset: 0;
+            inset: 0 var(--ai-panel-width) 0 0;
+        }
+        #ai-root {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: var(--ai-panel-width);
         }
     </style>
 </head>
 <body>
 <!-- tldraw mounts here; its Infusion shapes construct and destroy their component explicitly from React lifecycle hooks -->
 <div id="tldraw-root"></div>
+<!-- The "Ask me anything" panel, through which an AI may reflect on and alter the workspace -->
+<div id="ai-root" fluid-layers="fluid.demos.askAnything"></div>
 <script type="module" src="js/tldraw-driver.js"></script>
 </body>
 </html>

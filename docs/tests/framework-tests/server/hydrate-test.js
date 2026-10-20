@@ -4,9 +4,8 @@
 // Smoke test for server-side hydration: runs src/framework/server/hydrate.js on the todo-list-sfc demo and checks
 // that the hydrated document it writes holds the rendered markup for the demo's todo items.
 
-// Note: This test currently fails "most of the time" since it write prematurely as a result of the rendering cycle
-// not being settled. A proper fix to this relies on implementing a better API to the underlying signals system to
-// be able to track outstanding work, probably best done along with the "fully deferred stabilisation" work.
+// hydrate.js writes the document once all injections are complete and the reactive graph has settled, as determined
+// by fluid.cell.settle() - see fluid-project/infusion-6#17
 
 const childProcess = require("child_process"),
     fs = require("fs"),

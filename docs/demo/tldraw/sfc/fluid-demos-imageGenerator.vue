@@ -1,13 +1,12 @@
 <script>
-// DRAFT port of a-scratch/image-generator.js - untested, an aid to thought
+// Port of a-scratch/react-originals/image-generator.js
 
 fluid.def("fluid.demos.imageGenerator", {
+    $layers: "fluid.topLevelWidget",
     preferredSize: {
         w: 320,
         h: 240
     },
-    // Supplied by InfusionHost
-    shapeId: null,
     state: {
         $reactiveRoot: {
             prompt: "",
@@ -22,16 +21,26 @@ fluid.def("fluid.demos.imageGenerator", {
     buttonLabel: "$compute:fluid.demos.imageGenerator.buttonLabel({self}.isGenerating)",
     errorMessage: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $if: "{imageGenerator}.error",
-            template: `<p class="imagegen-error">@{{imageGenerator}.error}</p>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<p class="imagegen-error">@{{imageGenerator}.error}</p>`
+                }
+            }
         }
     },
     loadingMessage: {
         $component: {
-            $layers: "fluid.templateViewComponent",
+            $layers: "fluid.component",
             $if: "{imageGenerator}.isGenerating",
-            template: `<p class="imagegen-loading">Creating your image... This may take a moment.</p>`
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<p class="imagegen-loading">Creating your image... This may take a moment.</p>`
+                }
+            }
         }
     },
     keyDown: {
@@ -47,7 +56,7 @@ fluid.def("fluid.demos.imageGenerator", {
     generate: {
         $method: {
             func: "fluid.demos.imageGenerator.generate",
-            args: ["{self}.state", "{tldrawHost}.editor", "{self}.shapeId"]
+            args: ["{self}.state", "{tldrawHost}.editor", "{self}.hostBounds"]
         }
     }
 });
@@ -59,13 +68,13 @@ fluid.demos.imageGenerator.buttonLabel = isGenerating => isGenerating ? "Generat
 /**
  * Compute where a generated image should be placed - to the right of the widget, or centred in the viewport
  * @param {Editor} editor - The tldraw editor
- * @param {Object|undefined} widgetShape - The shape hosting the widget, if it could be found
+ * @param {ShapeBounds|null} bounds - The bounds of the widget as hosted, if it is hosted on the canvas
  * @return {Object} The position as `{x, y}`
  */
-fluid.demos.imageGenerator.imagePosition = function (editor, widgetShape) {
+fluid.demos.imageGenerator.imagePosition = function (editor, bounds) {
     let togo;
-    if (widgetShape) {
-        togo = {x: widgetShape.x + (widgetShape.props.w || 300) + 20, y: widgetShape.y};
+    if (bounds) {
+        togo = {x: bounds.x + bounds.w + 20, y: bounds.y};
     } else {
         const viewport = editor.getViewportPageBounds();
         togo = {x: viewport.x + viewport.w / 2 - 512, y: viewport.y + viewport.h / 2 - 512};
@@ -77,10 +86,10 @@ fluid.demos.imageGenerator.imagePosition = function (editor, widgetShape) {
  * Generate an image from the current prompt and place it on the canvas
  * @param {Object} state - The component's reactive state
  * @param {Editor} editor - The tldraw editor, resolved from the root-scoped tldrawHost component
- * @param {String} shapeId - The id of the shape hosting the widget
+ * @param {ShapeBounds|null} bounds - The bounds of the widget as hosted, as received from its tldraw view
  * @return {Promise} A promise which resolves when generation has finished, successfully or not
  */
-fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
+fluid.demos.imageGenerator.generate = async function (state, editor, bounds) {
     if (state.isGenerating) {
         console.log("Ignoring generate request while generation is in progress");
     } else if (!state.prompt.trim()) {
@@ -90,7 +99,7 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
         state.error = "";
         try {
             const assetId = await fluid.demos.agents.generateImageAsset(state.prompt, {width: 1024, height: 1024});
-            const pos = fluid.demos.imageGenerator.imagePosition(editor, editor.getShape(shapeId));
+            const pos = fluid.demos.imageGenerator.imagePosition(editor, bounds);
             // The original creates the image shape directly - routed through the stub so the fake asset becomes a placeholder
             const {validatedShapes} = fluid.demos.agents.convertAndValidateShapes([{
                 type: "image",
@@ -106,8 +115,6 @@ fluid.demos.imageGenerator.generate = async function (state, editor, shapeId) {
             console.error("Image generation error:", err);
         } finally {
             state.isGenerating = false;
-            // GAP: writes made after an await are not rendered until something stabilizes
-            fluid.cell.stabilize();
         }
     }
 };

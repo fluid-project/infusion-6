@@ -51,6 +51,7 @@ const context = vm.createContext({
     clearTimeout: clearTimeout,
     setInterval: setInterval,
     clearInterval: clearInterval,
+    queueMicrotask: queueMicrotask,
     __dirname: __dirname,
     path: path,
     process: process, // Enable straightforward ContextAwareness check

@@ -1,5 +1,6 @@
 <script>
 fluid.def("fluid.demos.helloWorld", {
+    $layers: "fluid.topLevelWidget"
 });
 </script>
 

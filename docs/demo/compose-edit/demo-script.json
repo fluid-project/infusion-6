@@ -1,0 +1,329 @@
+{
+    "title": "Self-editing demo",
+    "page": "demo/compose-edit/index.html",
+    "viewport": {"width": 1600, "height": 1000},
+    "ready": [
+        {"target": {"selector": "button.fl-editor-edit"}, "count": {"atLeast": 1}},
+        {"target": {"selector": "footer"}, "count": {"equals": 2}}
+    ],
+    "steps": [{
+        "description": "Open up the editing panel by pressing the Edit button",
+        "action": {"type": "click", "target": {"selector": "button.fl-editor-edit"}},
+        "expect": [{
+            "description": "Should observe a substrate view showing the two posts",
+            "target": {"selector": ".fl-substrate-row", "text": "fluid.demos.substratePost"},
+            "count": {"atLeast": 1}
+        }, {
+            "target": {"selector": ".fl-substrate-row", "text": "fluid.demos.divergencePost"},
+            "count": {"atLeast": 1}
+        }, {
+            "description": "in which components having a view are shown as viewComponent",
+            "target": {"selector": ".fl-substrate-hover", "within": {"selector": "[data-row-id$='.post.0.footer}']"}, "index": 0},
+            "text": {"equals": "viewComponent"}
+        }, {
+            "description": "and the list of posts as listViewComponent",
+            "target": {"selector": ".fl-substrate-hover", "within": {"selector": "[data-row-id$='.post}']"}, "index": 0},
+            "text": {"equals": "listViewComponent"}
+        }, {
+            "description": "and a layer list of 8 colours",
+            "target": {"selector": ".fl-layerlist-layer"},
+            "count": {"equals": 8},
+            "distinctStyle": "background-color"
+        }]
+    }, {
+        "description": "Hover over the footer of the left-hand post in the substrate view",
+        "action": {"type": "hover", "target": {"selector": ".fl-substrate-hover", "within": {"selector": "[data-row-id$='.post.0.footer}']"}, "index": 0}},
+        "expect": [{
+            "description": "The substrate row should be highlighted",
+            "target": {"selector": "#fl-editor-inspect-overlay"},
+            "visible": true,
+            "covers": {"selector": "[data-row-id$='.post.0.footer}']"}
+        }, {
+            "description": "and a hover pane should cover the corresponding footer component in the app",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "visible": true,
+            "covers": {"selector": "[id$='.post.0.footer']"}
+        }, {
+            "description": "showing its layer name",
+            "target": {"selector": "#fl-inspect-overlay .fl-inspect-layer"},
+            "text": {"equals": "fluid.demos.footer"}
+        }]
+    }, {
+        "description": "Move the mouse out of the substrate view onto the \"Layers\" label",
+        "action": {"type": "hover", "target": {"selector": ".fl-layers-label"}},
+        "expect": [{
+            "description": "The substrate row highlight should disappear",
+            "target": {"selector": "#fl-editor-inspect-overlay"},
+            "visible": false
+        }, {
+            "description": "as should the hover pane in the app",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "visible": false
+        }]
+    }, {
+        "description": "Select the \"magic wand\" button",
+        "action": {"type": "click", "target": {"selector": ".fl-magic-button[title*='edit it directly']"}},
+        "expect": [{
+            "description": "All major elements in the main apps should be highlighted as editable",
+            "target": {"selector": ".fl-edit-root[fl-template-layer='fluid.demos.navbar']"},
+            "count": {"atLeast": 2}
+        }, {
+            "target": {"selector": ".fl-edit-root[fl-template-layer='fluid.demos.substratePost']"},
+            "count": {"atLeast": 1}
+        }, {
+            "target": {"selector": ".fl-edit-root[fl-template-layer='fluid.demos.divergencePost']"},
+            "count": {"atLeast": 1}
+        }, {
+            "target": {"selector": ".fl-edit-root[fl-template-layer='fluid.demos.footer']"},
+            "count": {"equals": 4}
+        }]
+    }, {
+        "description": "Scroll to the bottom of the page and edit the text \"Boz\" in the right-hand post to read \"Booz\"",
+        "action": {
+            "type": "editText",
+            "target": {"selector": "footer .fl-edit-root", "text": "Boz", "index": 1},
+            "find": "Boz",
+            "replace": "Booz"
+        },
+        "expect": [{
+            "description": "Observe that the corresponding text in the left-hand post should have changed correspondingly",
+            "target": {"selector": "footer", "index": 0},
+            "text": {"contains": "by Booz"}
+        }, {
+            "target": {"selector": "footer", "index": 1},
+            "text": {"contains": "by Booz"}
+        }, {
+            "description": "The history list should show a fresh record for fluid.demos.footer updateLayer",
+            "target": {"selector": ".fl-history-rec"},
+            "count": {"increase": 1}
+        }, {
+            "target": {"selector": ".fl-history-rec", "last": true},
+            "text": {"contains": ["fluid.demos.footer", "updateLayer"]}
+        }]
+    }, {
+        "description": "Double click on \"fluid.demos.substratePost\" in the layers list",
+        "action": {"type": "dblclick", "target": {"selector": ".fl-layerlist-layer", "exactText": "fluid.demos.substratePost"}},
+        "expect": [{
+            "description": "A CodeMirror sfc layer should come up in the right hand side",
+            "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.substratePost"},
+            "count": {"equals": 1}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 1},
+            "visible": true
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "text": {"contains": "Persistent code"}
+        }]
+    }, {
+        "description": "Edit the text \"Persistent code\" to read \"Persistent cod\"",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "find": "Persistent code",
+            "replace": "Persistent cod"
+        },
+        "expect": [{
+            "description": "The corresponding text in the left pane should change",
+            "target": {"selector": "li", "within": {"selector": "body"}, "text": "Persistent cod"},
+            "text": {"contains": "Persistent cod &", "notContains": "Persistent code"}
+        }, {
+            "description": "The history list should show a fresh record for fluid.demos.substratePost updateLayer",
+            "target": {"selector": ".fl-history-rec"},
+            "count": {"increase": 1}
+        }, {
+            "target": {"selector": ".fl-history-rec", "last": true},
+            "text": {"contains": ["fluid.demos.substratePost", "updateLayer"]}
+        }]
+    }, {
+        "description": "Edit the layer's name in its script from \"Substrate\" to \"Substrata\"",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "find": "name: \"Substrate\"",
+            "replace": "name: \"Substrata\""
+        },
+        "expect": [{
+            "description": "The heading of the left-hand post should change",
+            "target": {"selector": "h1", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "text": {"contains": "Substrata"}
+        }, {
+            "description": "The history list should show exactly one fresh record for fluid.demos.substratePost updateLayer",
+            "target": {"selector": ".fl-history-rec"},
+            "count": {"increase": 1}
+        }, {
+            "target": {"selector": ".fl-history-rec", "last": true},
+            "text": {"contains": ["fluid.demos.substratePost", "updateLayer"]}
+        }]
+    }, {
+        "description": "Close the CodeMirror tab by hitting X on the fluid.demos.substratePost heading",
+        "action": {
+            "type": "click",
+            "target": {"selector": ".fl-editor-close", "within": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.substratePost"}}
+        },
+        "expect": [{
+            "description": "The editor tab should disappear",
+            "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Select the \"inspect\" button",
+        "action": {"type": "click", "target": {"selector": ".fl-magic-button[title*='open its layer']"}},
+        "expect": [{
+            "description": "The inspect button should become active",
+            "target": {"selector": ".fl-magic-button.fl-active[title*='open its layer']"},
+            "count": {"equals": 1}
+        }, {
+            "description": "and the magic wand inactive, so that elements are no longer highlighted as editable",
+            "target": {"selector": ".fl-magic-button.fl-active[title*='edit it directly']"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-edit-root"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Hover over the footer of the right-hand post",
+        "action": {"type": "hover", "target": {"selector": "footer", "index": 1}},
+        "expect": [{
+            "description": "A hover pane should cover the footer component",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "visible": true,
+            "covers": {"selector": "[id$='.post.1.footer']"}
+        }, {
+            "description": "showing its layer name",
+            "target": {"selector": "#fl-inspect-overlay .fl-inspect-layer"},
+            "text": {"equals": "fluid.demos.footer"}
+        }, {
+            "description": "in its layer's colour",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "matchesStyle": {"property": "background-color", "target": {"selector": ".fl-layerlist-layer", "exactText": "fluid.demos.footer"}}
+        }]
+    }, {
+        "description": "Hover over the text of the left-hand post",
+        "action": {"type": "hover", "target": {"selector": "p", "text": "A substrate is a kind"}},
+        "expect": [{
+            "description": "The hover pane should move to cover the post component",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "visible": true,
+            "covers": {"selector": "[id$='.post.0.post']"}
+        }, {
+            "description": "showing its layer name",
+            "target": {"selector": "#fl-inspect-overlay .fl-inspect-layer"},
+            "text": {"equals": "fluid.demos.substratePost"}
+        }, {
+            "description": "in its layer's colour",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "matchesStyle": {"property": "background-color", "target": {"selector": ".fl-layerlist-layer", "exactText": "fluid.demos.substratePost"}}
+        }]
+    }, {
+        "description": "Click on the hover pane over the link \"2016 paper\" in the right-hand post",
+        "action": {"type": "click", "target": {"selector": "a", "exactText": "2016 paper"}},
+        "expect": [{
+            "description": "The layer of the right-hand post should open in an editor tab",
+            "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"},
+            "count": {"equals": 1}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "text": {"contains": "2016 paper"}
+        }, {
+            "description": "the click should not reach the link, so that the page does not navigate away",
+            "target": {"selector": ".fl-editor-root"},
+            "visible": true
+        }, {
+            "description": "and the inspect button should become inactive, hiding the hover pane",
+            "target": {"selector": ".fl-magic-button.fl-active[title*='open its layer']"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": "#fl-inspect-overlay"},
+            "visible": false
+        }]
+    }, {
+        "description": "Hover over the footer of the left-hand post",
+        "action": {"type": "hover", "target": {"selector": "footer", "index": 0}},
+        "expect": [{
+            "description": "No hover pane should appear since the inspect button is no longer active",
+            "target": {"selector": "#fl-inspect-overlay"},
+            "visible": false
+        }]
+    }, {
+        "description": "Close the CodeMirror tab by hitting X on the fluid.demos.divergencePost heading",
+        "action": {
+            "type": "click",
+            "target": {"selector": ".fl-editor-close", "within": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"}}
+        },
+        "expect": [{
+            "description": "The editor tab should disappear",
+            "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Go back in history by hitting the back arrow in the history pane",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-left-top"}},
+        "expect": [{
+            "description": "The fluid.demos.divergencePost tab should reappear",
+            "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"},
+            "count": {"equals": 1}
+        }, {
+            "description": "together with its editor body",
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 1},
+            "visible": true
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "text": {"contains": "2016 paper"}
+        }]
+    }, {
+        "description": "Go back in history again",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-left-top"}},
+        "expect": [{
+            "description": "The tab should disappear, as before it was opened",
+            "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Go forward in history by hitting the forward arrow in the history pane",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-right-top"}},
+        "expect": [{
+            "description": "The fluid.demos.divergencePost tab should reappear",
+            "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"},
+            "count": {"equals": 1}
+        }, {
+            "description": "together with its editor body",
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 1},
+            "visible": true
+        }]
+    }, {
+        "description": "Go forward in history again",
+        "action": {"type": "click", "target": {"selector": ".fl-history-pane-top .mdi-arrow-u-right-top"}},
+        "expect": [{
+            "description": "The tab should disappear, as after it was closed",
+            "target": {"selector": ".fl-editor-layer-tab"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Close the editor panel by hitting X in the top right corner",
+        "action": {"type": "click", "target": {"selector": ".fl-menubar > .fl-editor-close"}},
+        "expect": [{
+            "description": "Editor panel should close",
+            "target": {"selector": ".fl-editor-root"},
+            "visible": false
+        }, {
+            "description": "and app appear as before",
+            "target": {"selector": "button.fl-editor-edit"},
+            "visible": true
+        }, {
+            "target": {"selector": "footer", "index": 1},
+            "text": {"contains": "by Booz"}
+        }]
+    }]
+}
