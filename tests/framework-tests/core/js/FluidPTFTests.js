@@ -296,3 +296,44 @@ QUnit.test("JavaScript component with subcomponent transmitted and reconstructed
     that.destroy();
     copy.destroy();
 });
+
+QUnit.test("Component injecting its grandparent transmitted and reconstructed - fluid-project/infusion-6#20", async function (assert) {
+    fluid.def("fluid.tests.ptf.loader", {
+        $layers: "fluid.component",
+        value: "loader",
+        panel: {
+            $component: {
+                $layers: "fluid.component",
+                filter: {
+                    $component: {
+                        $layers: "fluid.component",
+                        filterRoot: "{loader}",
+                        loaderValue: "{filterRoot}.value"
+                    }
+                }
+            }
+        }
+    });
+    const that = fluid.tests.ptf.loader();
+    fluid.cell.stabilize();
+    assert.ok(that.panel.filter.filterRoot === that, "Grandparent injected into source component");
+
+    const parts = fluid.ptf.componentToParts(that);
+    assert.deepEqual(parts.map(part => [part.kind, part.filename]), [
+        ["layer", "fluid.tests.ptf.loader"],
+        ["potentia", "/"]
+    ], "Injected grandparent is not traversed again when assembling parts");
+
+    // Destroy the source and erase its definition so that reconstruction must register it afresh from the document
+    const text = fluid.ptf.componentToPTF(that);
+    that.destroy();
+    fluid.deleteLayer("fluid.tests.ptf.loader");
+    assert.ok(fluid.isUnavailable(fluid.readLayer("fluid.tests.ptf.loader").get()), "Definition erased from the registry");
+
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text);
+    assert.deepEqual(unresolved, [], "All parts applied");
+    assert.notOk(fluid.isUnavailable(fluid.readLayer("fluid.tests.ptf.loader").get()), "Transmitted definition registered");
+    assert.ok(copy.panel.filter.filterRoot === copy, "Grandparent injected into reconstructed component");
+    assert.equal(copy.panel.filter.loaderValue, "loader", "Injected grandparent resolves by its injected name");
+    copy.destroy();
+});

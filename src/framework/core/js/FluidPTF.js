@@ -244,7 +244,11 @@ const fluidPTFScope = function (fluid) {
                 liveParts.push({kind: "live", contentType: fluid.layerMimeTypes.json, filename, body: JSON.stringify(live, null, 4)});
             }
             fluid.each(shadow.childComponents, (childShadow, memberName) => {
-                visit(childShadow, [...segs, memberName]);
+                // Only visit components created in place - one injected from elsewhere, perhaps an ancestor, will be
+                // reconstructed from the reference held in its parent's potentia
+                if (childShadow.path === fluid.composeSegment(shadow.path, memberName)) {
+                    visit(childShadow, [...segs, memberName]);
+                }
             });
         };
         visit(rootShadow, []);

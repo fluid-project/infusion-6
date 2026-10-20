@@ -1134,3 +1134,281 @@ QUnit.test("Plain value merged with a subcomponent record is reported - fluid-pr
     assert.ok(message.includes("at path sub from user"), "Error identifies the path and source of the malformed value");
     assert.ok(message.includes("{$component: ...}"), "Error explains how the record should be written");
 });
+
+// Injected component references - fluid-project/infusion-6#20
+
+fluid.def("fluid.tests.injection.innerType", {
+    $layers: "fluid.component",
+    value: "inner"
+});
+
+fluid.def("fluid.tests.injection.otherType", {
+    $layers: "fluid.component",
+    value: "other"
+});
+
+fluid.def("fluid.tests.injection.holder", {
+    $layers: "fluid.component",
+    original: {
+        $component: {
+            $layers: "fluid.component",
+            inner: {
+                $component: {
+                    $layers: "fluid.tests.injection.innerType"
+                }
+            }
+        }
+    },
+    other: {
+        $component: {
+            $layers: "fluid.tests.injection.otherType"
+        }
+    },
+    injected: "{original}.inner",
+    reader: {
+        $component: {
+            $layers: "fluid.component",
+            byMember: "{injected}.value",
+            byNickName: "{innerType}.value",
+            byLayerName: "{fluid.tests.injection.innerType}.value",
+            byOriginalName: "{inner}.value"
+        }
+    },
+    // References which do not designate a component at a location in the tree are not injected
+    plainValue: "{original}.inner.value",
+    selfRef: "{self}"
+});
+
+QUnit.test("Injected component reference - fluid-project/infusion-6#20", function (assert) {
+    const that = fluid.tests.injection.holder();
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const innerShadow = that.original.inner[fluid.metadataSymbol];
+    const injectedPath = fluid.composeSegment(shadow.path, "injected");
+
+    assert.equal(that.injected, that.original.inner, "Injected member is the same component as the original");
+    assert.equal(that.injected.value, "inner", "Injected component's members are readable through its injected site");
+    assert.equal(innerShadow.path, fluid.composeSegments([shadow.path, "original", "inner"]), "Injected component retains its original path");
+    assert.equal(shadow.childComponents.injected, innerShadow, "Injected component is recorded as a child of its new parent");
+    assert.equal(fluid.globalInstantiator.pathToComponent[injectedPath], innerShadow, "Injected component is recorded at its injected path");
+    assert.ok(innerShadow.injectedPaths[injectedPath], "Injected path is recorded on the injected component");
+
+    assert.equal(that.reader.byMember, "inner", "Injected component resolves by its injected member name");
+    assert.equal(that.reader.byNickName, "inner", "Injected component resolves by its layer's nickname");
+    assert.equal(that.reader.byLayerName, "inner", "Injected component resolves by its layer name");
+    assert.ok(fluid.isUnavailable(that.reader.byOriginalName), "Injected component does not resolve by its member name at its original site");
+    assert.equal(that.plainValue, "inner", "Reference to a plain value resolves to that value");
+    ["plainValue", "selfRef"].forEach(member => {
+        assert.undefined(shadow.childComponents[member], `Reference at member ${member} not designating an injectable component is not injected`);
+    });
+
+    that.original.inner.destroy();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isDestroyedShadow(innerShadow), "Original component destroyed");
+    assert.ok(fluid.isUnavailable(that.injected), "Injected member is unavailable once its component is destroyed");
+    assert.undefined(shadow.childComponents.injected, "Injected component is no longer recorded as a child of its new parent");
+    assert.undefined(fluid.globalInstantiator.pathToComponent[injectedPath], "Injected component is no longer recorded at its injected path");
+    assert.ok(fluid.isUnavailable(that.reader.byMember), "Injected member name no longer resolves");
+    assert.ok(fluid.isUnavailable(that.reader.byNickName), "Injected component's layer nickname no longer resolves");
+    that.destroy();
+});
+
+QUnit.test("Injected component reference withdrawn when its record changes - fluid-project/infusion-6#20", function (assert) {
+    const that = fluid.tests.injection.holder();
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const innerShadow = that.original.inner[fluid.metadataSymbol];
+    const otherShadow = that.other[fluid.metadataSymbol];
+    const injectedPath = fluid.composeSegment(shadow.path, "injected");
+    assert.equal(that.reader.byNickName, "inner", "Injected component initially resolves by its layer's nickname");
+
+    const oldDef = fluid.def("fluid.tests.injection.holder");
+    fluid.def("fluid.tests.injection.holder", {...oldDef, injected: "{other}"});
+    fluid.cell.stabilize();
+    assert.equal(that.injected, that.other, "Freshly referenced component is injected");
+    assert.equal(that.reader.byMember, "other", "Injected member name resolves to freshly injected component");
+    assert.ok(fluid.isUnavailable(that.reader.byNickName), "Formerly injected component's layer nickname no longer resolves");
+    assert.equal(fluid.globalInstantiator.pathToComponent[injectedPath], otherShadow, "Freshly injected component recorded at the injected path");
+    assert.notOk(innerShadow.injectedPaths[injectedPath], "Formerly injected component no longer records the injected path");
+    assert.notOk(fluid.isDestroyed(that.original.inner), "Formerly injected component is not destroyed");
+
+    fluid.def("fluid.tests.injection.holder", oldDef);
+    that.destroy();
+});
+
+fluid.def("fluid.tests.injection.freeHolder", {
+    $layers: "fluid.component"
+});
+
+QUnit.test("Destroying a component holding an injected component leaves it intact - fluid-project/infusion-6#20", function (assert) {
+    const target = fluid.tests.injection.innerType();
+    const targetShadow = target[fluid.metadataSymbol];
+    const that = fluid.tests.injection.freeHolder({
+        injected: `{/${targetShadow.path}}`
+    });
+    fluid.cell.stabilize();
+    const injectedPath = fluid.composeSegment(that[fluid.metadataSymbol].path, "injected");
+    assert.equal(that.injected, target, "Free component injected through global reference");
+    assert.ok(targetShadow.injectedPaths[injectedPath], "Injected path is recorded on the injected component");
+
+    that.destroy();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isDestroyed(that), "Component holding injected component is destroyed");
+    assert.notOk(fluid.isDestroyed(target), "Injected component is not destroyed");
+    assert.equal(target.value, "inner", "Injected component is still readable");
+    assert.notOk(targetShadow.injectedPaths[injectedPath], "Injected path is no longer recorded on the injected component");
+    assert.undefined(fluid.globalInstantiator.pathToComponent[injectedPath], "Injected component is no longer recorded at its injected path");
+    target.destroy();
+});
+
+QUnit.test("Destroying a component lensed from a data item deletes the item - fluid-project/infusion-6#20", function (assert) {
+    const that = fluid.tests.editorHolder();
+    that.names.push("alpha");
+    that.names.push("beta");
+    that.names.push("gamma");
+    fluid.cell.stabilize();
+    const query = fluid.liveQueryILSelector(that, "fluid.tests.editor");
+    assert.deepEqual(fluid.tests.queryEditorNames(query), ["alpha", "beta", "gamma"], "Three editors lensed from data");
+
+    const [, beta] = query.get();
+    beta.destroy();
+    assert.deepEqual([...that.names], ["alpha", "gamma"], "Destroying lensed component deletes its data item from the source");
+    assert.deepEqual(fluid.tests.queryEditorNames(query), ["alpha", "gamma"], "Component list follows the deletion");
+    assert.notOk(fluid.isDestroyed(that), "Holder of the source data is not destroyed");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.injection.overridden", {
+    $layers: "fluid.component",
+    sub: {
+        $component: {
+            $layers: "fluid.tests.injection.innerType",
+            value: "own"
+        }
+    }
+});
+
+QUnit.test("Reference overrides weaker subcomponent record and is injected - fluid-project/infusion-6#20", function (assert) {
+    const target = fluid.tests.injection.otherType();
+    const targetShadow = target[fluid.metadataSymbol];
+    const that = fluid.tests.injection.overridden({
+        sub: `{/${targetShadow.path}}`
+    });
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    assert.equal(that.sub, target, "Reference overrides weaker subcomponent record");
+    assert.equal(that.sub.value, "other", "Injected component's own value is visible");
+    assert.notOk(Object.values(fluid.globalInstantiator.pathToComponent).some(oneShadow => oneShadow.path === fluid.composeSegment(shadow.path, "sub")),
+        "No component was created for the overridden subcomponent record");
+    that.destroy();
+    target.destroy();
+});
+
+QUnit.test("Subcomponent record holding a String is reported - fluid-project/infusion-6#20", function (assert) {
+    const that = fluid.tests.injection.freeHolder({sub: {$component: "{self}"}});
+    assert.ok(fluid.isUnavailable(that), "Component holding a String subcomponent record is unavailable");
+    const message = fluid.deSignal(that[fluid.proxySymbol].shadow.flatMerged).message;
+    assert.ok(message.includes("\"{context}.path\""), "Error explains that a reference should be written directly");
+});
+
+fluid.def("fluid.tests.injection.flattenedArgument", {
+    $layers: "fluid.component",
+    original: {
+        $component: {
+            $layers: "fluid.component",
+            inner: {
+                $component: {
+                    $layers: "fluid.tests.injection.innerType"
+                }
+            }
+        }
+    },
+    innerValue: {
+        $compute: {
+            func: inner => fluid.isComponent(inner) ? inner.value : "not a component",
+            args: "{original}.inner"
+        }
+    }
+});
+
+QUnit.test("Reference to a component member is flattened as a component argument - fluid-project/infusion-6#20", function (assert) {
+    const that = fluid.tests.injection.flattenedArgument();
+    fluid.cell.stabilize();
+    assert.equal(that.innerValue, "inner", "Argument designating a subcomponent through a path arrives as the component");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.injection.vizLoader", {
+    $layers: "fluid.component",
+    value: "loader",
+    // A nearer component of the same name as the one injected below, which the injection hides
+    filterRoot: {
+        $component: {
+            $layers: "fluid.tests.injection.otherType"
+        }
+    },
+    panel: {
+        $component: {
+            $layers: "fluid.component",
+            outerReader: {
+                $component: {
+                    $layers: "fluid.component",
+                    root: "{filterRoot}.value"
+                }
+            },
+            filter: {
+                $component: {
+                    $layers: "fluid.component",
+                    // Injection of a grandparent under a different name - an Infusion 4 idiom
+                    filterRoot: "{vizLoader}",
+                    reader: {
+                        $component: {
+                            $layers: "fluid.component",
+                            root: "{filterRoot}.value",
+                            loader: "{vizLoader}.value"
+                        }
+                    }
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Injection of an ancestor component - fluid-project/infusion-6#20", function (assert) {
+    const that = fluid.tests.injection.vizLoader();
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const filter = that.panel.filter;
+    const filterShadow = filter[fluid.metadataSymbol];
+    const injectedPath = fluid.composeSegment(filterShadow.path, "filterRoot");
+
+    assert.equal(filter.filterRoot, that, "Grandparent is injected under a different name");
+    assert.equal(filterShadow.childComponents.filterRoot, shadow, "Grandparent is recorded as a child of the injecting component");
+    assert.equal(fluid.globalInstantiator.pathToComponent[injectedPath], shadow, "Grandparent is recorded at its injected path");
+    assert.equal(filter.reader.root, "loader", "Injected name hides the more distant component of the same name");
+    assert.equal(filter.reader.loader, "loader", "Grandparent still resolves by its own name");
+    assert.equal(that.panel.outerReader.root, "other", "Outside the injecting component the name resolves as before");
+    assert.equal(that.filterRoot.value, "other", "Grandparent's own subcomponent of the same name is undisturbed");
+
+    let visited = 0;
+    fluid.visitComponentChildren(shadow, () => ++visited, {visited: {}});
+    assert.equal(visited, 6, "Visiting the tree is not trapped by the cyclic injection");
+
+    filter.destroy();
+    fluid.cell.stabilize();
+    assert.notOk(fluid.isDestroyed(that), "Destroying the injecting component leaves the injected grandparent intact");
+    assert.undefined(fluid.globalInstantiator.pathToComponent[injectedPath], "Injected path is withdrawn");
+    assert.undefined(shadow.injectedPaths[injectedPath], "Injected path is withdrawn from the grandparent");
+    assert.equal(that.panel.outerReader.root, "other", "Name resolves as before");
+    that.destroy();
+
+    const that2 = fluid.tests.injection.vizLoader();
+    fluid.cell.stabilize();
+    const shadow2 = that2[fluid.metadataSymbol];
+    const filterShadow2 = that2.panel.filter[fluid.metadataSymbol];
+    assert.equal(that2.panel.filter.filterRoot, that2, "Grandparent is injected in a fresh tree");
+    that2.destroy();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isDestroyedShadow(shadow2), "Grandparent is destroyed whilst injected into its grandchild");
+    assert.ok(fluid.isDestroyedShadow(filterShadow2), "Grandchild injecting it is destroyed with it");
+});

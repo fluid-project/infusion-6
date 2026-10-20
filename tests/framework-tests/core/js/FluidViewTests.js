@@ -906,3 +906,89 @@ QUnit.test("Binding attributes and live state properties - fluid-project/infusio
     assert.deepEqual(options.map(option => option.hasAttribute("selected")), [true, false], "Select value updated");
     assert.equal(qs("select", container).value, "a", "Select value property agrees");
 });
+
+// Cross-injection of views - fluid-project/infusion-6#20
+
+fluid.def("fluid.tests.crossInject.first", {
+    $layers: "fluid.component",
+    text: "First",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="first">@{text}</div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.crossInject.second", {
+    $layers: "fluid.component",
+    text: "Second",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="second">@{text}</div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.crossInjectView", {
+    $layers: "fluid.component",
+    view1: {
+        $component: {
+            $layers: "fluid.tests.crossInject.first"
+        }
+    },
+    view2: {
+        $component: {
+            $layers: "fluid.tests.crossInject.second",
+            // cross-link to view1's view, sharing its view and defeating our own rendering
+            view: "{view1}.view"
+        }
+    },
+    // Produce what from the outside appears to be a regular view component built out of view1's view
+    view: "{view1}.view" // Note that "proleptic scoping" works - {view1} resolves before view1 is created
+});
+
+QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.crossInjectView({
+        view1: {
+            $component: {
+                view: {
+                    $component: {container}
+                }
+            }
+        }
+    });
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const viewShadow = that.view1.view[fluid.metadataSymbol];
+    const view2Shadow = that.view2[fluid.metadataSymbol];
+
+    assert.assertNode(container, {$tagName: "div", "class": "first", $nodeValue: "First"}, "First component's view rendered into its container");
+    assert.equal(qsa(".second", container).length, 0, "Second component's own template is not rendered");
+
+    assert.equal(that.view, that.view1.view, "Outer component's view is the first component's view");
+    assert.ok(fluid.hasLayer(that.view, "fluid.viewComponent"), "Outer component's view is a view component");
+    assert.equal(fluid.viewShadowFor(shadow), viewShadow, "Outer component's view is found as its view subcomponent");
+    assert.equal(fluid.renderedContainerFor(shadow), container, "Outer component exposes the first component's rendered container");
+
+    assert.equal(that.view2.view, that.view1.view, "Second component's view is the first component's view");
+    assert.equal(fluid.viewShadowFor(view2Shadow), viewShadow, "Second component's view is found as its view subcomponent");
+    const view2ViewPath = fluid.composeSegment(view2Shadow.path, "view");
+    assert.equal(fluid.globalInstantiator.pathToComponent[view2ViewPath], viewShadow, "Second component's view path holds the injected view");
+    assert.notOk(Object.values(fluid.globalInstantiator.pathToComponent).some(oneShadow => oneShadow.path === view2ViewPath),
+        "No view was created for the second component");
+
+    that.view1.text = "Updated";
+    fluid.cell.stabilize();
+    assert.assertNode(container, {$tagName: "div", "class": "first", $nodeValue: "Updated"}, "Shared view rerenders on update");
+
+    that.view1.destroy();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(that.view), "Outer component's view is unavailable once the first component is destroyed");
+    assert.ok(fluid.isUnavailable(that.view2.view), "Second component's view is unavailable once the first component is destroyed");
+    assert.undefined(fluid.viewShadowFor(shadow), "Outer component no longer has a view subcomponent");
+    assert.undefined(fluid.viewShadowFor(view2Shadow), "Second component no longer has a view subcomponent");
+    that.destroy();
+});

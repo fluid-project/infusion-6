@@ -113,7 +113,7 @@ const $fluidViewBrowserScope = function (fluid) {
                 if (negate) {
                     rvalue = !rvalue;
                 }
-                fluid.setForComponent(target.get(), parsedLH.path, rvalue);
+                fluid.setForComponent(fluid.deSignal(target), parsedLH.path, rvalue);
             });
         } else {
             const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");

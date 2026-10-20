@@ -2046,28 +2046,38 @@ const $fluidScope = function (fluid) {
 
     /**
      * Collect the contributions of a set of layers to a subcomponent record at a path into a `fluid.componentRecords`
-     * rather than merging them. Any value at that path which is not a subcomponent record is an error.
+     * rather than merging them. A layer may instead hold an IL reference at the path - whether this designates a
+     * component, which will then be injected there, can only be known once it is resolved (see
+     * `fluid.expandReferenceRecord`) and so, as for any other value, it simply overrides all weaker contributions. Any
+     * other value at that path which is not a subcomponent record is an error.
      * @param {Object[]} layers - The layers being merged, weakest first
      * @param {String} key - The key at which the subcomponent record is held
      * @param {String[]} segs - The path of the layers' parent within the root being merged
      * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
-     * @return {Object} A value holding the collected contributions as its `$component` member
+     * @return {Object|String} A value holding the collected contributions as its `$component` member, or an IL reference
+     * if this is the strongest value at the path
      */
     fluid.collectComponentRecords = function (layers, key, segs, mergeRecords) {
         const contributions = [];
+        let reference;
         layers.forEach((layer, i) => {
             if (fluid.isPlainObject(layer) && key in layer) {
                 const value = layer[key];
-                if (fluid.isComponentRecordHolder(value)) {
+                if (fluid.isComponentRecordHolder(value) && fluid.isPlainObject(value.$component, true)) {
                     contributions.push({record: value.$component, mergeRecordName: mergeRecords[i].mergeRecordName});
+                    reference = undefined;
+                } else if (fluid.isILReference(value)) {
+                    contributions.length = 0;
+                    reference = value;
                 } else if (value !== undefined) {
                     const from = mergeRecords[i].mergeRecordName ?? mergeRecords[i].mergeRecordType;
                     fluid.fail(`Cannot merge value ${JSON.stringify(value)} at path ${[...segs, key].join(".")} from ` +
-                        `${from} with a subcomponent record - this should be written as {$component: ...}`);
+                        `${from} with a subcomponent record - this should be written as {$component: ...}, ` +
+                        `or as a reference to an existing component, e.g. "{context}.path"`);
                 }
             }
         });
-        return {$component: new fluid.componentRecords(contributions)};
+        return reference === undefined ? {$component: new fluid.componentRecords(contributions)} : reference;
     };
 
     /**

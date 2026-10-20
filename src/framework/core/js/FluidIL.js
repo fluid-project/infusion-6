@@ -354,14 +354,71 @@ const $fluidILScope = function (fluid) {
         }, [], {name: `scopeEffect for path "${shadow.path}"`, shadow});
     };
 
-    fluid.clearScope = function (parentShadow, childShadow) {
-        const ownScope = Object.getOwnPropertyNames(childShadow.ownScope);
-        ownScope.forEach(context => {
-            if (parentShadow.childrenScope[context].value === childShadow) {
+    /**
+     * Remove any entries placing a child component into the scope of its parent's children
+     * @param {Shadow} parentShadow - The shadow of the parent from whose childrenScope entries are to be removed
+     * @param {Shadow} childShadow - The shadow of the child whose entries are to be removed
+     * @param {String} memberName - The member name at which the child is held in the parent, which may differ from its
+     * own member name if it has been injected there
+     */
+    fluid.clearScope = function (parentShadow, childShadow, memberName) {
+        const contexts = [...Object.getOwnPropertyNames(childShadow.ownScope), memberName];
+        contexts.forEach(context => {
+            if (Object.prototype.hasOwnProperty.call(parentShadow.childrenScope, context) && parentShadow.childrenScope[context].value === childShadow) {
                 delete parentShadow.childrenScope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
             }
         });
         childShadow.ownScopeTick.set(childShadow.ownScopeTick._value + 1);
+        // Any context resolved at the parent to the child, e.g. from a sibling member, needs to be reevaluated
+        parentShadow.ownScopeTick.set(parentShadow.ownScopeTick._value + 1);
+    };
+
+    /**
+     * Compute the context names under which an injected component will be placed into the scope of its new parent's
+     * children - these are the same as it would have been placed under had it been created there, i.e. its layer names
+     * and their nicknames together with the member name at which it is injected. Its member name at its original site
+     * is omitted.
+     * @param {Shadow} targetShadow - The shadow of the injected component
+     * @param {String} memberName - The member name at which the component is injected
+     * @return {String[]} The context names for the injected component
+     */
+    fluid.injectedScopeContexts = function (targetShadow, memberName) {
+        const contexts = Object.getOwnPropertyNames(targetShadow.ownScope).filter(context =>
+            !(context === targetShadow.memberName && targetShadow.ownScope[context].priority === fluid.memberName));
+        return [...new Set([...contexts, memberName])];
+    };
+
+    /**
+     * Withdraw the entries placing an injected component into the scope of its parent's children
+     * @param {InjectionRecord} injection - The record of the injection whose scope entries are to be withdrawn
+     */
+    fluid.withdrawInjectedScope = function (injection) {
+        const {parentShadow, targetShadow} = injection;
+        injection.scopeContexts.forEach(context => {
+            if (Object.prototype.hasOwnProperty.call(parentShadow.childrenScope, context) && parentShadow.childrenScope[context].value === targetShadow) {
+                delete parentShadow.childrenScope[context];
+            }
+        });
+        injection.scopeContexts = [];
+    };
+
+    /**
+     * Place an injected component into the scope of its parent's children, under the contexts computed by
+     * `fluid.injectedScopeContexts`, withdrawing any entries made previously for the same injection if these have changed
+     * @param {InjectionRecord} injection - The record of the injection whose scope entries are to be applied
+     */
+    fluid.applyInjectedScope = function (injection) {
+        const {parentShadow, targetShadow, memberName} = injection;
+        const contexts = fluid.injectedScopeContexts(targetShadow, memberName);
+        if (!fluid.arrayEqual(contexts, injection.scopeContexts)) {
+            fluid.withdrawInjectedScope(injection);
+            contexts.forEach(context => {
+                const priority = context === memberName ? fluid.memberName : targetShadow.ownScope[context].priority;
+                fluid.applyToScope(parentShadow.childrenScope, context, targetShadow, priority);
+            });
+            injection.scopeContexts = contexts;
+            parentShadow.ownScopeTick.set(parentShadow.ownScopeTick._value + 1);
+        }
     };
 
     // About the SHADOW
@@ -381,6 +438,8 @@ const $fluidILScope = function (fluid) {
      * @property {Object<String, ScopeRecord>} ownScope - Cached layer scopes for the component.
      * @property {Object<String, ScopeRecord>} childrenScope - Cached layer scopes for the component.
      * @property {Object} [injectedPaths] - A record of paths where this component has been injected, keyed by path.
+     * @property {Object<String, InjectionRecord>} [injections] - Records of components injected into this component, keyed by member name
+     * @property {Site|null} [lensedSite] - For a member of a component list, the site of the data item from which it is lensed
      * @property {String[]} [listKeys] - For a component list, the keys of the list elements most recently allocated
      *
      * @property {fluid.instantiator} instantiator - The instantiator which allocated this component/shadow
@@ -444,15 +503,14 @@ const $fluidILScope = function (fluid) {
      * @param {DestroyRec} destroyRec - A "destroy record" as allocated within instantiator.clearComponent
      */
     fluid.doDestroy = function (instantiator, destroyRec) {
-        const shadow = destroyRec.childShadow,
-            that = destroyRec.child;
+        const shadow = destroyRec.childShadow;
         // Clear injected instance of this component from all other paths - historically we didn't bother
         // to do this since injecting into a shorter scope is an error - but now we have resolveRoot area
         fluid.each(shadow.injectedPaths, function (troo, injectedPath) {
             const segs = fluid.parsePath(injectedPath);
-            const parentPath = segs.slice(0, -1);
+            const parentPath = fluid.composeSegments(segs.slice(0, -1));
             const otherShadow = instantiator.pathToComponent[parentPath];
-            instantiator.clearComponent(otherShadow, fluid.peek(segs), that);
+            instantiator.clearComponent(otherShadow, fluid.peek(segs), shadow);
         });
         fluid.clearComponentIndexes(instantiator, destroyRec);
         // fluid.clearDistributions(shadow);
@@ -486,9 +544,9 @@ const $fluidILScope = function (fluid) {
         function recordComponent(parentShadow, shadow, name, created) {
             // This is allocated in fluid.freshComponent or fluid.computeInstance
             shadow.instantiator = that;
-            const path = shadow.path ?? parentShadow ? fluid.composeSegment(parentShadow.path, name) : name; // "" if root component
-            shadow.path = path;
+            const path = parentShadow ? fluid.composeSegment(parentShadow.path, name) : name; // "" if root component
             if (created) {
+                shadow.path = path;
                 shadow.memberName = name;
                 shadow.parentShadow = parentShadow;
                 shadow.childComponents = {};
@@ -498,20 +556,7 @@ const $fluidILScope = function (fluid) {
             } else {
                 shadow.injectedPaths = shadow.injectedPaths || {}; // a hash since we will modify whilst iterating
                 shadow.injectedPaths[path] = true;
-                // TODO: Change injected logic to replace existing memberName from old site via ownScope with new one
-                // Note contextHash is long gone but we haven't ported injected components from Infusion 4 yet
-                const contextHash = shadow.contextHash.value;
-                const keys = fluid.keys(contextHash);
-                fluid.remove_if(keys, function (key) {
-                    return contextHash && (contextHash[key] === fluid.memberName);
-                });
-
-                keys.push(name); // add local name - FLUID-5696 and FLUID-5820
-                keys.forEach(function (context) {
-                    if (!parentShadow.scope.hasOwnProperty(context)) { // FLUID-6444
-                        parentShadow.scope[context] = shadow;
-                    }
-                });
+                // The injected component's entries in its new parent's scope are maintained by fluid.applyInjectedScope
             }
             if (that.pathToComponent[path]) {
                 fluid.fail("Error during instantiation - path " + path + " which has just created component " + fluid.dumpThat(shadow) +
@@ -583,10 +628,13 @@ const $fluidILScope = function (fluid) {
                 // fluid.fireDestroy(child, name, component);
                 destroyRecs.push(destroyRec);
             } else {
-                fluid.remove_if(childShadow.injectedPaths, function (troo, path) {
-                    return path === childPath;
-                });
-                fluid.clearComponentIndexes(that, destroyRec);
+                const injection = shadow.injections?.[name];
+                if (injection && injection.targetShadow === childShadow) {
+                    fluid.withdrawInjectedComponent(injection);
+                } else {
+                    delete childShadow.injectedPaths[childPath];
+                    fluid.clearComponentIndexes(that, destroyRec);
+                }
             }
             if (!nested) {
                 // Do actual destruction for the whole tree here, including "afterDestroy" and deleting shadows
@@ -780,7 +828,9 @@ const $fluidILScope = function (fluid) {
                 shadow.scopeTick.get(); // Read the scope tick to cause a dependency
                 const resolvedRec = shadow.ownScope[context];
                 if (resolvedRec) {
-                    return resolvedRec.value.computer.get() || fluid.contextUnavailable(context, shadow);
+                    // Return the component's signal rather than its instance so that the component may be found by
+                    // fluid.componentShadowForSignal
+                    return resolvedRec.value.computer || fluid.contextUnavailable(context, shadow);
                 } else {
                     return fluid.contextUnavailable(context, shadow);
                 }
@@ -1109,17 +1159,19 @@ const $fluidILScope = function (fluid) {
             segs = ["" + segs];
         }
         if (fluid.isSignal(deref)) { // It must be a $sitedRef or $component
-            // If it is a $sitedRef, retraverse it carefully step by step to discover the final site
-            // TODO: Error here, deSignalToUltimate is actually broken and will deref a bare $sitedRef
-            const ult = deref.variety === "$sitedRef" ? fluid.deSignalToUltimate(deref) : deref;
+            // If it is a $sitedRef, retraverse it carefully step by step to discover the final site, which may hold a
+            // further $sitedRef or a $component - if it holds a plain value, the original $sitedRef is the final site
+            const upstream = deref.$variety === "$sitedRef" ? fluid.deSignalToUltimate(deref) : deref;
+            const ult = fluid.isSignal(upstream) ? upstream : deref;
             const value = ult.get(ult.$variety === "$component");
 
             if (fluid.isUnavailable(value)) {
                 return value;
+            } else if (ult.$variety === "$component") {
+                return fluid.proxyMat(ult, ult.shadow, []);
             } else {
-                return deref.$variety === "$sitedRef" ?
-                    (fluid.isMatForming(deref.site.shadow, deref.site.segs) && fluid.isPlainObject(value) ? fluid.proxyMat(ult, ult.site.shadow, ult.site.segs) : value) :
-                    fluid.proxyMat(ult, deref.shadow, []);
+                return fluid.isMatForming(ult.site.shadow, ult.site.segs) && fluid.isPlainObject(value) ?
+                    fluid.proxyMat(ult, ult.site.shadow, ult.site.segs) : value;
             }
         }
         if (fluid.isComponent(deref) && !deref[$t]) {
@@ -1524,6 +1576,163 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} InjectionRecord
+     * @property {Shadow} parentShadow - The shadow of the component into which a component is injected
+     * @property {String} memberName - The member of the parent at which the component is injected
+     * @property {String} path - The path in the component tree at which the component is injected
+     * @property {Shadow|null} targetShadow - The shadow of the component currently injected, or `null` if none is
+     * @property {String[]} scopeContexts - The context names under which the injected component has been placed into
+     * the scope of its parent's children
+     * @property {Cell<Number>} withdrawals - A tick which is incremented whenever an injected component is withdrawn
+     */
+
+    /**
+     * Inject an existing component at a member of a parent component - it is recorded at the member's path in the
+     * component tree, and placed into the scope of the parent's children just as it would have been had it been created
+     * there. Any component previously injected by the same record is first withdrawn.
+     * @param {InjectionRecord} injection - The record of the injection
+     * @param {Shadow} targetShadow - The shadow of the component to be injected
+     */
+    fluid.registerInjectedComponent = function (injection, targetShadow) {
+        const {parentShadow, memberName, path} = injection;
+        if (injection.targetShadow !== targetShadow) {
+            fluid.withdrawInjectedComponent(injection);
+            const instantiator = parentShadow.instantiator;
+            const occupant = parentShadow.childComponents[memberName];
+            if (occupant && occupant.path === path && fluid.isEmptyPotentia(occupant.potentia._value)) {
+                // A component formerly created at this member, e.g. by a previous record, which is awaiting destruction
+                instantiator.clearComponent(parentShadow, memberName, occupant);
+            }
+            instantiator.recordKnownComponent(parentShadow, targetShadow, memberName, false);
+            injection.targetShadow = targetShadow;
+            parentShadow.injections = parentShadow.injections || {};
+            parentShadow.injections[memberName] = injection;
+        }
+        fluid.applyInjectedScope(injection);
+    };
+
+    /**
+     * Withdraw any component injected by an injection record, clearing its records at the injected path and its entries
+     * in the scope of the parent's children. The component itself is not affected.
+     * @param {InjectionRecord} injection - The record of the injection
+     */
+    fluid.withdrawInjectedComponent = function (injection) {
+        const {parentShadow, memberName, path, targetShadow} = injection;
+        if (targetShadow) {
+            const instantiator = parentShadow.instantiator;
+            fluid.withdrawInjectedScope(injection);
+            if (parentShadow.childComponents[memberName] === targetShadow) {
+                delete parentShadow.childComponents[memberName];
+            }
+            if (instantiator.pathToComponent[path] === targetShadow) {
+                delete instantiator.pathToComponent[path];
+            }
+            if (targetShadow.injectedPaths) {
+                delete targetShadow.injectedPaths[path];
+            }
+            if (parentShadow.injections?.[memberName] === injection) {
+                delete parentShadow.injections[memberName];
+            }
+            injection.targetShadow = null;
+            parentShadow.ownScopeTick.set(parentShadow.ownScopeTick._value + 1);
+            injection.withdrawals.set(injection.withdrawals._value + 1);
+        }
+    };
+
+    /**
+     * Trace a signal through its chain of signals to discover whether a component is held at the location in the tree
+     * it designates, i.e. whether a signal of variety `$component` or `$availableInstance` is present there, or a proxy
+     * onto one.
+     * @param {any} ref - The signal to be traced, e.g. as resolved from an IL reference by `fluid.fetchContextReference`
+     * @return {Shadow|null} The shadow of the component found at the designated location, or `null` if there is none
+     */
+    fluid.componentShadowForSignal = function (ref) {
+        let move = ref;
+        let togo = null;
+        while (togo === null && fluid.isSignal(move)) {
+            if (move.$variety === "$component" || move.$variety === "$availableInstance") {
+                togo = move.shadow;
+            } else {
+                move = move.get();
+            }
+        }
+        if (togo === null) {
+            const target = fluid.unProxy(move);
+            if (fluid.isSignal(target) && target.$variety === "$component") {
+                togo = target.shadow;
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * Expands an IL reference held at a top-level member of a component. Whether the reference designates a component
+     * can only be known once it is resolved - it may resolve to any part of the tree. Whilst the location it resolves to
+     * holds a component, that component is injected at the member: it is recorded at the member's path and placed into
+     * scope as described in `fluid.registerInjectedComponent`. It is withdrawn again if the reference ceases to
+     * resolve to it, if the reference is disposed, or if the component is destroyed. A reference to the component
+     * itself, e.g. `{self}`, is never injected. A reference to an ancestor, e.g. `filterRoot: "{vizLoader}"`, is
+     * injected, which brings it down into nearer scope where it may hide other components of the same name. In all cases the value of the member is just the value the reference resolves to.
+     *
+     * @param {String} reference - The IL reference
+     * @param {Shadow} shadow - The shadow record of the component holding the reference
+     * @param {String[]} segs - The path in the component holding the reference, which will have a single segment
+     * @param {String} memberName - The member name holding the reference
+     * @return {Signal<any>} A signal for the value of the reference, which is unavailable if it designates a component
+     * which has been destroyed. Includes a `$variety` property set to `"$memberRef"`.
+     */
+    fluid.expandReferenceRecord = function (reference, shadow, segs, memberName) {
+        const path = fluid.composeSegment(shadow.path, memberName);
+        /** @type {InjectionRecord} */
+        const injection = {
+            parentShadow: shadow,
+            memberName,
+            path,
+            targetShadow: null,
+            scopeContexts: [],
+            withdrawals: fluid.cell(0, {name: `withdrawals of injected component at path ${path}`})
+        };
+        const referenceSignal = fluid.fetchContextReference(reference, shadow, segs);
+        // The component, if any, designated by the reference - early cutoff will ensure that the injector is notified
+        // only when this changes, and not on every change in a value the reference designates
+        const targetShadow = fluid.cell(undefined, {name: `injectable target of ${reference} at path ${path}`}).computed(() => {
+            const target = fluid.componentShadowForSignal(referenceSignal);
+            return target && target !== shadow && target.path !== path ? target : null;
+        });
+        const injector = fluid.cell.effect(() => {
+            const target = targetShadow.get();
+            if (target && !fluid.isDestroyedShadow(target)) {
+                // Read the target's own scope tick so that its scope entries are reapplied if its layers change
+                target.ownScopeTick.get();
+                fluid.registerInjectedComponent(injection, target);
+            } else {
+                fluid.withdrawInjectedComponent(injection);
+            }
+        }, [], {
+            name: `injector for reference ${reference} at path ${path}`,
+            onDispose: () => fluid.withdrawInjectedComponent(injection)
+        });
+        const togo = fluid.cell(undefined, {name: `member reference ${reference} at path ${path}`}).computed(() => {
+            injection.withdrawals.get();
+            const target = targetShadow.get();
+            return target && fluid.isDestroyedShadow(target) ? fluid.unavailable({
+                message: `Component designated by ${reference} at path ${path} has been destroyed`,
+                site: {shadow, segs: [...segs]}
+            }, "config") : referenceSignal;
+        });
+        togo.$variety = "$memberRef";
+        togo.injection = injection;
+        togo.dispose = () => injector.dispose();
+        return togo;
+    };
+
+    // Handler record for IL references held at top-level members, which may designate a component to be injected
+    fluid.memberReferenceExpanderRecord = {
+        key: "$memberRef",
+        handler: fluid.expandReferenceRecord
+    };
+
+    /**
      * Determine whether two signal records are equivalent, so that a signal product allocated for one may be reused for
      * the other. Records collected into a `fluid.componentRecords` are freshly allocated on every merge, and so are
      * equivalent if their contributions are identical.
@@ -1587,19 +1796,24 @@ const $fluidILScope = function (fluid) {
                     const pushSubcomponentPotentia = function (value, subKey) {
                         allKeys.push("" + subKey);
                         const variables = {};
+                        // A value which is itself a proxy onto a site, e.g. an element selected by filter() from
+                        // proxied material, retains the provenance of that site. Otherwise, where the source has a
+                        // site, its element is the site of the value
+                        const valueRef = fluid.unProxy(value);
+                        const valueSite = fluid.isSignal(valueRef) && valueRef.$variety === "$sitedRef" ? valueRef.site :
+                            sourceSite ? {shadow: sourceSite.shadow, segs: [...sourceSite.segs, "" + subKey]} : null;
                         if (forRecord.valueAs !== undefined) {
-                            // A value which is itself a proxy onto a site, e.g. an element selected by filter() from
-                            // proxied material, retains the provenance of that site. Otherwise, where the source has a
-                            // site, express the value as a global reference to its element so that it stays live
-                            const valueRef = fluid.unProxy(value);
-                            const valueSite = fluid.isSignal(valueRef) && valueRef.$variety === "$sitedRef" ? valueRef.site :
-                                sourceSite ? {shadow: sourceSite.shadow, segs: [...sourceSite.segs, "" + subKey]} : null;
+                            // Express a sited value as a global reference to it so that it stays live
                             variables[forRecord.valueAs] = valueSite ? fluid.renderGlobalReference(valueSite) : value;
                         }
                         if (forRecord.keyAs !== undefined) {
                             variables[forRecord.keyAs] = subKey;
                         }
-                        return fluid.pushSubcomponentPotentia(listShadow, subKey, contributions, variables);
+                        const computer = fluid.pushSubcomponentPotentia(listShadow, subKey, contributions, variables);
+                        // Record the data item from which the component is lensed, so that destroying the component
+                        // deletes the item from its source - see fluid.destroyComponent
+                        computer.shadow.lensedSite = valueSite;
+                        return computer;
                     };
 
                     let togo;
@@ -1808,9 +2022,9 @@ const $fluidILScope = function (fluid) {
                 return element;
             }
         } else if (fluid.isILReference(element)) {
-            const togo = fluid.fetchContextReference(element, shadow, segs);
-            // fluid.siteSignal(togo, shadow, segs);
-            return togo;
+            // A reference at a top-level member may designate a component, which will be injected there
+            return segs.length === 1 ? fluid.mountSignalRecord(fluid.memberReferenceExpanderRecord, element, shadow, segs) :
+                fluid.fetchContextReference(element, shadow, segs);
         } else {
             return element;
         }
@@ -2092,6 +2306,7 @@ const $fluidILScope = function (fluid) {
             return unavailableLayerVals.length > 0 ? fluid.mergeUnavailables(unavailableLayerVals) : computer;
         });
         shadow.availableInstance.$variety = "$availableInstance";
+        shadow.availableInstance.shadow = shadow;
 
         // At this point there will be fluid.cacheLayerScopes which will start to demand shadow.computer.value.$layers
         const instantiator = parentShadow.instantiator;
@@ -2425,11 +2640,13 @@ const $fluidILScope = function (fluid) {
                         // although we do reevaluate our signal target
                         // If it is unavailable, we need to ensure that user does not try to dereference into it by next property access
                         // If it is another component, hand off to fresh lineage of proxy
+                        // A component reached by any other route, e.g. one injected from elsewhere, is proxied at its own site
                         return fluid.isUnavailable(upcoming) ? fluid.unavailableProxy(upcoming) :
                             next.$variety === "$component" ? fluid.proxyMat(next, next.shadow, []) :
-                                !fluid.isPlainObject(upcoming) ? upcoming :
-                                    proxyNext ? fluid.proxyMat(next, shadow, nextSegs) :
-                                        fluid.proxyUpstream(next, upcoming);
+                                fluid.isComponent(upcoming) && upcoming[$m].computer ? fluid.proxyMat(upcoming[$m].computer, upcoming[$m], []) :
+                                    !fluid.isPlainObject(upcoming) ? upcoming :
+                                        proxyNext ? fluid.proxyMat(next, shadow, nextSegs) :
+                                            fluid.proxyUpstream(next, upcoming);
                     } else {
                         return next;
                     }
@@ -2542,11 +2759,20 @@ const $fluidILScope = function (fluid) {
 
     // TODO: Special syntax to just access signal
     /**
-     * Destroys a component by resetting its Potentia, removing all layer names and merge records.
+     * Destroys a component. A component which has been lensed from a data item, i.e. as a member of a `$for`-driven
+     * component list, is not destroyed in place but by deleting the item from its original source, following the fish
+     * upstream as for the delete proxy - the component list then destroys the component in turn. Any other component is
+     * destroyed by resetting its Potentia, removing all layer names and merge records.
      * @param {ComponentComputer} proxy - The component to be destroyed.
      */
     fluid.destroyComponent = function (proxy) {
-        proxy[$t].shadow.potentia.set(fluid.emptyPotentia);
+        const shadow = proxy[$t].shadow;
+        if (shadow.lensedSite) {
+            const site = fluid.upstreamSite(shadow.lensedSite.shadow, shadow.lensedSite.segs);
+            fluid.deleteForComponent(site.shadow.that, site.segs);
+        } else {
+            shadow.potentia.set(fluid.emptyPotentia);
+        }
     };
 
     fluid.def("fluid.component", {
