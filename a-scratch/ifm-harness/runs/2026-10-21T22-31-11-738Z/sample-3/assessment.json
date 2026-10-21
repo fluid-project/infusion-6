@@ -1,0 +1,77 @@
+{
+  "verdict": "DOES NOT WORK - fit 8/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 95.471,
+      "usage": {
+        "inputTokens": 23489,
+        "outputTokens": 12483,
+        "reasoningTokens": 0
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.ai.noteImageGenerator": "fluid.def(\"fluid.demos.ai.noteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    // The closest-note finder runs hidden as a subcomponent, sharing this widget's view (and so its\n    // place on the canvas), supplying the image prompt from the nearest sticky note\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{noteImageGenerator}.view\"\n        }\n    },\n    // The text of the closest note, left blank while no note is actually nearby, so that the Find\n    // Image button is enabled only when there is something worth searching for\n    closestPrompt: {\n        $compute: function (text, distance) {\n            return distance === null ? \"\" : text;\n        },\n        args: [\"{finder}.closest.text\", \"{finder}.closest.distance\"]\n    },\n    // Wire the finder's output into the generator's prompt - the input then stays writable and is\n    // re-aimed at the closest note whenever the widget is moved or a note changes\n    state: {\n        prompt: \"{noteImageGenerator}.closestPrompt\"\n    }\n});"
+  },
+  "deletions": [
+    "shape:finder",
+    "shape:imagegen"
+  ],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.ai.noteImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": true,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": true,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": true,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": true,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": true,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": true,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        }
+      ],
+      "markup": "<h3 class=\"imagegen-title\">Image Generator</h3><input value=\"\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button disabled class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div id=\"fl-id-noteImageGenerator-37.errorMessage\" class=\"imagegen-error\">Please enter a prompt</div><div></div><div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

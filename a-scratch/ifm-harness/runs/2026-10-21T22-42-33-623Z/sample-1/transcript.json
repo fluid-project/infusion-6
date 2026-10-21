@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "change",
+    "text": "Defined layer fluid.demos.ai.closestNoteImageGenerator\nCreated widget \"new-1\" as shape shape:created-1 from layer fluid.demos.ai.closestNoteImageGenerator",
+    "detail": "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"ptf-boundary-19jvqgj5ep\"\n\nThis is a Potentia Transmission Format (PTF) document holding the layers and potentia of an Infusion component.\n--ptf-boundary-19jvqgj5ep\nContent-Type: text/javascript; charset=utf-8\nContent-Disposition: attachment; filename=\"fluid.demos.ai.closestNoteImageGenerator\"\nContent-Description: layer\n\nfluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});\n--ptf-boundary-19jvqgj5ep\nContent-Type: multipart/mixed; boundary=\"ptf-boundary-3998gigo87\"\nContent-Disposition: attachment; filename=\"new-1\"\nContent-Description: component\n\n--ptf-boundary-3998gigo87\nContent-Type: application/json; charset=utf-8\nContent-Disposition: attachment; filename=\"/\"\nContent-Description: potentia\n\n{\"$layers\":[\"fluid.demos.ai.closestNoteImageGenerator\"]}\n--ptf-boundary-3998gigo87--\n--ptf-boundary-19jvqgj5ep--"
+  }
+]

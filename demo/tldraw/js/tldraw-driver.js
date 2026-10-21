@@ -93,14 +93,23 @@ fluid.tldraw.stopReactiveCell = function (cell) {
  * cell is updated only when that shape, or an ancestor, moves or is resized - and not, for example, on every frame of
  * a drag of some other shape.
  * @param {Editor} editor - The tldraw editor
- * @param {String} shapeId - The id of the shape whose bounds are required
+ * @param {String|null} shapeId - The id of the shape whose bounds are required, or `null` for a widget not hosted in
+ * a shape of its own, e.g. one nested within another widget
  * @return {fluid.cell<ShapeBounds|null>} A cell holding the shape's page bounds, or `null` if it is not in the document
+ * or there is no shape
  */
 fluid.tldraw.bindShapeBounds = function (editor, shapeId) {
-    return fluid.tldraw.reactiveCell(`tldraw bounds of shape ${shapeId}`, () => {
-        const bounds = editor.getShapePageBounds(shapeId);
-        return bounds ? {x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h} : null;
-    });
+    let togo;
+    if (shapeId) {
+        togo = fluid.tldraw.reactiveCell(`tldraw bounds of shape ${shapeId}`, () => {
+            const bounds = editor.getShapePageBounds(shapeId);
+            return bounds ? {x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h} : null;
+        });
+    } else {
+        togo = fluid.cell(null, {name: "tldraw bounds of no shape"});
+        togo.stop = () => {};
+    }
+    return togo;
 };
 
 /**
@@ -169,8 +178,9 @@ fluid.def("fluid.demos.tldrawHost", {
  */
 fluid.def("fluid.tldrawViewComponent", {
     $layers: "fluid.topLevelWidgetView",
-    // Supplied by InfusionHost - absent, e.g. in an avatar, nothing is bound
-    shapeId: fluid.unavailable({cause: "No tldraw shape id supplied", variety: "config"}),
+    // Supplied by InfusionHost - absent, for a widget nested within another, no bounds are reported, so that the widget
+    // takes those of the widget enclosing it - see fluid.topLevelWidget
+    shapeId: null,
     editor: "{tldrawHost}.editor",
     hostBounds: {
         $bindable: {

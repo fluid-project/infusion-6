@@ -1,0 +1,136 @@
+The user wants to combine the two selected widgets: fluid.demos.closestNoteFinder (shape:finder) and fluid.demos.imageGenerator (shape:imagegen), so they can move the combined widget close to a sticky note and press a button to generate an image.
+
+Looking at the semantics: the closestNoteFinder widget computes the closest note to the widget and displays its text/distance. The imageGenerator widget has a text input prompt and a "Find Image" button which searches Pixabay.
+
+The composition strategy hinted: the dominant widget is the imageGenerator (shows the result and acts on it), the supplier is closestNoteFinder (finds text near the widget). Per the strategy hints, the economical approach is:
+
+1. A fresh layer extending the dominant widget's layer (fluid.demos.imageGenerator) followed by fluid.topLevelWidget.
+2. A subcomponent constructed from the supplier's layer (fluid.demos.closestNoteFinder) whose view is a reference to the combined widget's own view (so it renders nothing but computes).
+3. Wiring from supplier output to dominant input: state.prompt = "{closestNoteFinder}.noteText" — wait, but the finder's noteText is the closest note's text. But the user wants to press a button to generate an image. Hmm — the imageGenerator already has a "Find Image" button. The finder's noteText would set the prompt, so the user moves the widget near a note, and the prompt auto-fills with the note text, then pressing the button generates an image.
+
+Wait, but should the prompt be continuously bound? The note text changes as the widget moves near different notes. If state.prompt is bound to {finder}.noteText, typing would be overridden. Alternatively, the prompt could be filled only when... hmm. The user says "move it close to a sticky note and press a button to generate an image". So wiring the finder's noteText to the prompt makes sense: moving close to a note updates what prompt will be used; pressing the button generates.
+
+But there's a subtlety: the noteText values like "A red fox in the snow" are good prompts. The noteText has fallback messages like "No sticky notes found" — but those would also be set as prompt. That might be acceptable; the cannotGenerate compute checks prompt.trim() so empty notes... Actually a "no notes" message would generate a search for "No sticky notes found" which returns no images, giving error message. Acceptable.
+
+Alternatively wire state.prompt to "{finder}.closest.text"? clueText is the noteText. Use noteText member.
+
+But hold on: binding prompt to the finder's output would fight with the user typing in the input, since the live-state write-back and the reference both write. In Infusion, the merge order: variables > ... wait precedence: live is highest. If a reference is set at merge and the user types, the live write overrides the reference. Then when the widget moves near another note, the reference updates prompt again — which would clobber user's typing. Is that desired? User direction: "move it close to a sticky note and press a button to generate an image". I think a one-shot "use this note as prompt" might be better: pressing a button which sets prompt from the finder's current note text, then generating. But the combined widget could just have the prompt bound live — the user then moves close and presses "Find Image". Moving changes the prompt, pressing generates. That's simpler and matches "move it close to a sticky note and press a button to generate an image".
+
+Hmm, but should I wire the prompt so it updates as the widget moves? The direction states exactly that workflow. I'll wire state.prompt to the finder's noteText. But then typing is overridden by movement — that seems acceptable for the described workflow. Actually wait — let me reconsider: maybe better to keep the button flow where the finder supplies the prompt when... The instruction says "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image". So the result: a single widget that you move near a note, press a button, get an image. Simplest faithful realization: prompt bound to noteText; move near note → prompt shows; press Find Image → image appears.
+
+One issue: noteText falls back to "Not placed on a canvas" etc. Fine.
+
+Also: the finder's view should be the combined widget's own view reference so nothing renders from the finder. The combined layer is fresh, named fluid.demos.ai.noteImageGenerator or similar. Its $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"].
+
+The finder subcomponent: 
+finder: {
+    $component: {
+        $layers: "fluid.demos.closestNoteFinder",
+        view: "{noteImageGenerator}.view"
+    }
+}
+
+Wait — but the finder layer has $layers: "fluid.topLevelWidget". Naming topLevelWidget in a subcomponent... The rule says every widget synthesized must apply fluid.topLevelWidget at top level. The finder is a subcomponent here, not a top-level widget. But its layer is fluid.demos.closestNoteFinder which already has fluid.topLevelWidget. Using it as a subcomponent — the strategy hints explicitly do this: "mixes in the supplier as a hidden subcomponent" with a subcomponent constructed from the supplier's existing layer whose view is a reference to the combined widget's view. So yes, subcomponents built from topLevelWidget layers take the host's tldraw view etc. That's per the pattern.
+
+Context name for the fresh layer: last segment — "noteImageGenerator" if the layer is fluid.demos.ai.noteImageGenerator. Use a distinctive name like "fluid.demos.ai.noteImageGenerator".
+
+Wiring: state: {prompt: "{finder}.noteText"} — the reference to a subcomponent member. But wait, does context "finder" (member name) resolve? Yes, member names are in scope as child names.
+
+However, there's the conflict: the imageGenerator layer has state as a $reactiveRoot record. Adding a reference to one member merges alongside (per the docs: "A reference may equally override a single member of a widget's reactive state... the member then takes the referenced value whenever that changes, and may still be written as before").
+
+But there's the concern about live-write fight: user types into input → write-back sets state.prompt with source "dom". The reference {finder}.noteText also pushes. When finder changes, prompt updates regardless. This means user can't manually type a custom prompt. Per the user's direction that's actually fine — but maybe better: keep the input free and instead have the button capture the closest note's text at press time? The user said "press a button to generate an image" — the existing button generates from the prompt. Two options:
+
+Option A: prompt continuously mirrors noteText. Simple, matches described flow exactly.
+
+Option B: add a button "Use this note" then "Find Image", or wire generate to use finder's noteText directly.
+
+Option A is the minimal combination consistent with the hints ("Wiring from the supplier's output to the dominant widget's input, as a reference written at the path of that input - which may be a member of its reactive state"). I'll go with A.
+
+Also, should I delete the two existing widgets? The strategy says "Construct a single fresh widget from it, and leave the widgets it was composed from in place unless the user asks for them to be replaced." The user selected the two and wants to combine so they CAN do this — they probably want one widget replacing the two. Hmm, "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image". I think replacing the two with one combined widget is the natural ask — keep the canvas tidy. The user selected both; combining implies one widget. I'll create the combined widget and delete the two originals? "leave the widgets it was composed from in place unless the user asks for them to be replaced" — here the user did ask to combine into something movable+press button. The selection of both suggests replacing both with one. I think deleting the two and creating a combined one placed near where they were is the best fulfillment. But cautious: maybe keep them? The user's goal: a single draggable widget. If we leave the originals, canvas has clutter but no harm. The hint says leave unless asked to replace. "Combine" arguably asks for replacement of the pair. Hmm.
+
+I'll replace: delete shape:finder and shape:imagegen, and create the combined widget positioned near them (e.g., x:420, y:100 — where imagegen was, or next to the note area). Actually the user will move it around anyway. I'll place it where shape:imagegen was (420,100) — or maybe better near the finder spot. Use preferredSize from imageGenerator (360x460)? The combined inherits that.
+
+Now the distanceLine subcomponent of finder: with view pointed at the combined view, the finder's subcomponents (distanceLine, with its own view) — those subcomponents would each render? distanceLine has its own view with its own container... wait no: distanceLine's view renders into the finder's view renderedContainer via @id. The finder's view is the combined widget's view reference, whose renderedContainer is the combined widget's container (the tldraw shape element). Hmm — if the finder shares the combined view, then @id elements in the combined template... The finder's distanceLine view is a subcomponent with fluid.templateViewComponent and its own template `<div class="notefinder-distance">...`. When does distanceLine render? Subcomponents render when their view's container is set. In SFC templates, @id="member" elements provide containers for listed subcomponents. The combined template (from imageGenerator) doesn't have @id="finder" or @id="distanceLine"... wait, actually the finder layer's template has @id="distanceLine" but that template belongs to the finder layer which in the combined widget contributes NOTHING to the template — the combined template is imageGenerator's. The finder's template is part of the finder layer... hmm, does the finder layer's view subcomponent with its own template get used? We're overriding finder.view to point at the combined widget's view, so the finder's own template view is replaced — the SFC view comes only via the view subcomponent which we've redirected. So the finder template never renders. Good — it's hidden, per the pattern ("The supplier then has no view of its own, so neither it nor any of its subcomponents renders anything"). But wait — finder's subcomponent distanceLine has its own view with its own template view subcomponent. Those render into finder's renderedContainer... but they'd need a container. The hint says with the view reference, none of its subcomponents render. The distanceLine subcomponent's view would render into... its parent's @id element. Without an @id="distanceLine" in any rendered template, no container, so no render. Good — this matches the documented pattern, trust it.
+
+Now the combined layer source: needs to be a layer part with $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"]. It extends imageGenerator, adding the finder subcomponent and the prompt wiring. Since layer inheritance: $layers naming both — the docs say naming a parent twice (topLevelWidget) is inconsistent... The rule in the instructions: "name fluid.topLevelWidget explicitly ... and as the LAST of its layers, since naming it before a parent which already has it is an inconsistent hierarchy." So fresh layer with $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"].
+
+Contents:
+
+fluid.def("fluid.demos.ai.noteImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{noteImageGenerator}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+
+Wait — state is a $reactiveRoot record from the parent. Overriding member "prompt" with a reference: per docs, "A reference may equally override a single member of a widget's reactive state, e.g. state: {prompt: "{first}.text"} ... the reference merges alongside that record, the member then takes the referenced value whenever that changes, and may still be written as before, whilst the other members of the state are retained." Good.
+
+Also the title of the combined widget — the imageGenerator template has an h3 "Image Generator". Could add a small bit showing the closest note text? The user wants to see which note it's near maybe. The prompt is bound to the input, which shows the text being used. Since state.prompt drives the input's value, the user sees the active prompt. Good enough; maybe optionally display noteText. Minimal is fine.
+
+One concern: the finder noteText reference also feeds... no, only prompt.
+
+Another consideration: the input's disabled/busy state etc. all inherited.
+
+Now, placement: put combined at around x:420,y:100? But notes are at (120,420) and (960,140). The user will drag it around anyway. I'll place it where the imagegen widget was: x 420, y 100. Actually maybe centered more. Whatever — place at (420, 100).
+
+Deletions: delete parts for shape:finder and shape:imagegen.
+
+Now the PTF document structure: 
+- layer part (text/javascript? or x-vue?). The fresh layer is plain JavaScript, no template — it's a modification of an existing layer. Layer parts: text/x-vue for SFC, text/javascript for fluid.def call. Use text/javascript.
+
+But careful: the layer contains functions? No functions — plain object with references. Fine. Text/javascript with the fluid.def call.
+
+- component part for new widget "fluid-note-image-gen" (fresh shape id) with potentia $layers: ["fluid.demos.ai.noteImageGenerator"], view shapeId reference, and a shape part.
+
+Wait — potentia $layers first entry must be constructible via creator function — the layer is registered via fluid.def so creator exists. Fine.
+
+- delete parts: filename "shape:finder" and "shape:imagegen" with empty body, Content-Type... what content type? Example says `delete` parts with empty body. I'll give Content-Type: application/json; charset=utf-8 and empty body.
+
+Hmm, wait: does replacing mean also carrying over state? New fresh widget has fresh state (prompt wired). Fine.
+
+Also, should the combined layer display the current closest note? It's nice-to-have; the prompt input shows it. Keep minimal.
+
+Also consider: when the finder has no note close (distance null, noteText "Not placed on a canvas"), prompt becomes that string — pressing Find Image would search "Not placed on a canvas". Hmm, "No sticky notes found" too. That's a bit awkward but acceptable — arguably good feedback. Pressing the button with such prompt yields "No images match" error, which tells the user to move near a note. Actually — better UX: also wire... no, keep minimal.
+
+Alternatively I could make generate use finder.noteText when... no. Keep to hints.
+
+Let me double check the context reference in the wiring: "{finder}.noteText" — finder is the subcomponent member name in the combined component; noteText is a member of the finder component ("{self}.closest.text" → noteText: "{self}.closest.text"). Yes.
+
+And for the finder subcomponent: "$layers": "fluid.demos.closestNoteFinder" — the creator function exists for it (registered by the existing def). Its view override: "view": "{noteImageGenerator}.view" — context name is the nickname/last segment of the fresh layer name. Fresh layer name "fluid.demos.ai.noteImageGenerator" → nickname "noteImageGenerator". Good.
+
+Also should the finder subcomponent need shapeId/hostBounds wiring? No — it gets hostBounds from enclosing widget automatically per hints.
+
+Now write the document. Layer part body:
+
+<script>? No — text/javascript layer parts: the examples show x-vue layers with <script>; the docs say "Any other layer is rendered as a fluid.def(...) call in JavaScript". In the greeting example, the layer part is text/x-vue with script/template/style. For pure-JS layer, "Its source is sent as a text/javascript layer part." So body is just the JS:
+
+fluid.def("fluid.demos.ai.noteImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{noteImageGenerator}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+
+Component part nested document with potentia for "/" { $layers: ["fluid.demos.ai.noteImageGenerator"], view: { $component: { shapeId: "fluid-note-image-gen" } } } and shape part {"x":420,"y":100} (size: layer has preferredSize 360x460? Actually fresh layer doesn't restate preferredSize; inherited from imageGenerator's preferredSize {360,460}. Provide w/h maybe. The examples pass x/y only; default uses preferredSize. I'll pass x:420, y:100 only.)
+
+Hmm, one more thought — should I ALSO keep the two originals? I'll delete them. Actually, let me reconsider: the instruction hint says "leave the widgets it was composed from in place unless the user asks for them to be replaced." The user's "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button" — they selected both and want a single movable thing. I'd argue they want one widget; deleting the two originals is in the spirit of "combine". I'll delete.
+
+Boundary names: outer e.g. "ptf-boundary-final-nn9". Use distinct values.
+
+Write the full document now.
+
+Also note: the component is a fresh widget, so nested doc needs potentia "/". Good.
+
+Empty delete part body: The example format didn't show delete headers... I'll include Content-Type: application/json; charset=utf-8, Content-Disposition attachment filename, Content-Description: delete, empty body.

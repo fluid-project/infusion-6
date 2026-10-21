@@ -1,0 +1,61 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-ai-q7k2mx"
+
+--outer-ai-q7k2mx
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.noteImageGenerator"
+Content-Description: layer
+
+fluid.def("fluid.demos.ai.noteImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // Hidden supplier: keeps finding the closest sticky note from this widget's position,
+    // but renders nothing because it shares the view of this widget
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{noteImageGenerator}.view"
+        }
+    },
+    // The closest note's text becomes the image prompt
+    state: {
+        prompt: "{noteFinder}.noteText"
+    }
+});
+
+--outer-ai-q7k2mx
+Content-Type: multipart/mixed; boundary="inner-ai-1"
+Content-Disposition: attachment; filename="shape:noteimagegen"
+Content-Description: component
+
+--inner-ai-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.noteImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:noteimagegen"
+        }
+    }
+}
+--inner-ai-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 420, "y": 100, "w": 360, "h": 460}
+--inner-ai-1--
+--outer-ai-q7k2mx
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+--outer-ai-q7k2mx
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+--outer-ai-q7k2mx--

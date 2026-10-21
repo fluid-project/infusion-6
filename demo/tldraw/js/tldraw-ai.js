@@ -222,6 +222,12 @@ export const makeAIBridge = function (editor) {
         await wait(settleDelay);
         // Redefining a layer may have broken any widget using it, so all of them are checked
         diagnoseAll(constructedIds).filter(problem => !existingProblems.has(problem)).forEach(problem => problems.push(problem));
+        // A fresh widget may become available whilst some of its members have failed, e.g. a reference to its own value
+        constructedIds.forEach(shapeId => {
+            if (isWidgetAvailable(shapeId)) {
+                fluid.tldraw.ai.diagnose(infusionInstances.get(shapeId)).forEach(problem => problems.push(`The widget ${shapeId}: ${problem}`));
+            }
+        });
         return {summary, problems: [...new Set(problems)]};
     };
 

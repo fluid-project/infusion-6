@@ -1,0 +1,106 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-outer-9f8e7d6"
+
+--ptf-outer-9f8e7d6
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.closestNoteImageGenerator"
+Content-Description: layer
+
+<script>
+// Combines the closest-note finder and the image generator in one hosted widget.
+// The closest-note logic is inherited from fluid.demos.closestNoteFinder, so {self}.hostBounds
+// now refers to this combined widget's own shape. The image generator is a nested subcomponent.
+fluid.def("fluid.demos.closestNoteImageGenerator", {
+    $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+    preferredSize: {w: 420, h: 700},
+    imageGen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator"
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="cnig-root">
+        <div class="cnig-finder">
+            <h3 class="cnig-title">Closest Sticky Note</h3>
+            <div class="cnig-note-text">@{noteText}</div>
+            <div @id="distanceLine"></div>
+        </div>
+        <div class="cnig-imagegen">
+            <div @id="imageGen"></div>
+        </div>
+    </div>
+</template>
+
+<style>
+.cnig-root {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    background-color: #fffde7;
+    font-family: sans-serif;
+    padding: 12px;
+}
+
+.cnig-finder {
+    flex: 0 0 200px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-bottom: 12px;
+}
+
+.cnig-title {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #666;
+}
+
+.cnig-note-text {
+    font-size: 18px;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+.cnig-imagegen {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 12px;
+}
+</style>
+--ptf-outer-9f8e7d6
+Content-Type: multipart/mixed; boundary="ptf-inner-a1b2c3"
+Content-Disposition: attachment; filename="shape:noteimagegen"
+Content-Description: component
+
+--ptf-inner-a1b2c3
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{"$layers": ["fluid.demos.closestNoteImageGenerator"]}
+--ptf-inner-a1b2c3
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 400, "y": 640, "w": 420, "h": 700}
+--ptf-inner-a1b2c3--
+--ptf-outer-9f8e7d6
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+--ptf-outer-9f8e7d6
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+
+--ptf-outer-9f8e7d6--

@@ -336,6 +336,14 @@ const $fluidILScope = function (fluid) {
             }
             const ownScope = Object.getOwnPropertyNames(shadow.ownScope);
             const applyToParent = shadow.parentShadow && !childOfRoot;
+            // Withdraw any contexts which we applied previously but no longer hold, e.g. once our potentia is emptied
+            // on destruction, so that they do not continue to resolve to us
+            const withdrawn = (shadow.appliedContexts || []).filter(context => !ownScope.includes(context));
+            if (applyToParent) {
+                withdrawn.forEach(context => fluid.withdrawFromScope(shadow.parentShadow.childrenScope, context, shadow));
+            }
+            fluid.withdrawFromScopes(shadow, withdrawn);
+            shadow.appliedContexts = ownScope;
             ownScope.forEach(context => {
                 const rec = shadow.ownScope[context];
                 if (applyToParent) {
@@ -345,7 +353,6 @@ const $fluidILScope = function (fluid) {
                 if (shadow.resolveRoot && !shadow.inert) {
                     fluid.applyToScope(rootComponent[$m].childrenScope, context, rec.value, rec.priority);
                     rootComponent[$m].ownScopeTick.set(rootComponent[$m].ownScopeTick._value + 1);
-                    // TODO: Remember to delete these again when clearing
                 }
             });
             if (applyToParent) {
@@ -359,19 +366,49 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
-     * Remove any entries placing a child component into the scope of its parent's children
+     * Remove any entry for a context from a scope which resolves to the supplied component
+     * @param {Object<String, ScopeRecord>} scope - The scope from which the entry is to be removed
+     * @param {String} context - The context name of the entry
+     * @param {Shadow} shadow - The shadow of the component whose entry is to be removed
+     * @return {Boolean} `true` if an entry was removed
+     */
+    fluid.withdrawFromScope = function (scope, context, shadow) {
+        const holds = Object.prototype.hasOwnProperty.call(scope, context) && scope[context].value === shadow;
+        if (holds) {
+            delete scope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
+        }
+        return holds;
+    };
+
+    /**
+     * Remove the entries for the supplied contexts which a component with `fluid.resolveRoot` placed into the root
+     * scope, which are otherwise not removed when it is cleared from its parent's scope, since the root is not its parent
+     * @param {Shadow} shadow - The shadow of the component whose entries are to be removed
+     * @param {String[]} contexts - The context names of the entries
+     */
+    fluid.withdrawFromScopes = function (shadow, contexts) {
+        if (shadow.resolveRoot && contexts.length > 0) {
+            const rootShadow = shadow.instantiator.rootComponent[$m];
+            const removed = contexts.filter(context => fluid.withdrawFromScope(rootShadow.childrenScope, context, shadow));
+            if (removed.length > 0) {
+                rootShadow.ownScopeTick.set(rootShadow.ownScopeTick._value + 1);
+            }
+        }
+    };
+
+    /**
+     * Remove any entries placing a child component into the scope of its parent's children, and into the root scope
+     * if it has `fluid.resolveRoot`
      * @param {Shadow} parentShadow - The shadow of the parent from whose childrenScope entries are to be removed
      * @param {Shadow} childShadow - The shadow of the child whose entries are to be removed
      * @param {String} memberName - The member name at which the child is held in the parent, which may differ from its
      * own member name if it has been injected there
      */
     fluid.clearScope = function (parentShadow, childShadow, memberName) {
-        const contexts = [...Object.getOwnPropertyNames(childShadow.ownScope), memberName];
-        contexts.forEach(context => {
-            if (Object.prototype.hasOwnProperty.call(parentShadow.childrenScope, context) && parentShadow.childrenScope[context].value === childShadow) {
-                delete parentShadow.childrenScope[context]; // TODO: ambiguous resolution, and should just clear flags resulting from context
-            }
-        });
+        // Its own scope may already have been emptied, but the contexts it applied are recorded
+        const contexts = [...new Set([...Object.getOwnPropertyNames(childShadow.ownScope), ...childShadow.appliedContexts || [], memberName])];
+        contexts.forEach(context => fluid.withdrawFromScope(parentShadow.childrenScope, context, childShadow));
+        fluid.withdrawFromScopes(childShadow, contexts);
         childShadow.ownScopeTick.set(childShadow.ownScopeTick._value + 1);
         // Any context resolved at the parent to the child, e.g. from a sibling member, needs to be reevaluated
         parentShadow.ownScopeTick.set(parentShadow.ownScopeTick._value + 1);
@@ -1084,16 +1121,42 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
+     * Determine whether one path is a prefix of the other, or equal to it - so that a value at one includes the value at the other
+     * @param {String[]} segs1 - The segments of the first path
+     * @param {String[]} segs2 - The segments of the second path
+     * @return {Boolean} `true` if the paths overlap
+     */
+    fluid.segsOverlap = function (segs1, segs2) {
+        const length = Math.min(segs1.length, segs2.length);
+        return segs1.slice(0, length).every((seg, i) => String(seg) === String(segs2[i]));
+    };
+
+    /**
+     * Determine whether a reference to a path of a component designates its own site, or a value including or included by
+     * it - e.g. `hostBounds: "{self}.hostBounds"` - which could only be computed from itself
+     * @param {Shadow} targetShadow - The shadow of the component designated by the reference
+     * @param {String} path - The path within the component designated by the reference
+     * @param {Shadow} shadow - The shadow of the component holding the reference
+     * @param {String[]} [segs] - The path segments at which the reference is held, if known
+     * @return {Boolean} `true` if the reference designates its own site
+     */
+    fluid.isSelfReference = function (targetShadow, path, shadow, segs) {
+        return targetShadow === shadow && !!segs && segs.length > 0 && fluid.segsOverlap(segs, fluid.pathToSegs(path));
+    };
+
+    /**
      * Resolves a context reference into a signal that dynamically tracks the value located at a path within another component or context.
      *
      * @param {String|Object} ref - A context reference string or parsed reference object.
      *   If a String, it will be parsed via `fluid.parseContextReference`.
      * @param {Shadow} shadow - The shadow context of the component from which the reference is being resolved.
-     * @param {String[]} [segs] - Array of path segments where this reference appears in component configuration
+     * @param {String[]} [inSegs] - Array of path segments where this reference appears in component configuration
      * @param {Function} [resolver] - An optional custom resolver function used for resolving context names.
      * @return {Cell<any>} A signal representing the resolved reference value. It includes metadata: the parsed reference, the resolving site, and a `$variety` tag.
      */
-    fluid.fetchContextReference = function (ref, shadow, segs, resolver) {
+    fluid.fetchContextReference = function (ref, shadow, inSegs, resolver) {
+        // Copy the segments, since callers traversing configuration may reuse the array
+        const segs = inSegs && [...inSegs];
         const parsed = fluid.isPrimitive(ref) ? fluid.parseContextReference(ref) : ref;
         // Resolve the context outside the computed - a local value is captured here by value, and a context cell is
         // allocated once rather than on every reevaluation
@@ -1115,7 +1178,9 @@ const $fluidILScope = function (fluid) {
             bareValue.$variety = "$bareValue";
             return bareValue;
         } else {
-            const key = fluid.isPrimitive(ref) ? ref : fluid.renderContextReference(parsed);
+            const rendered = fluid.isPrimitive(ref) ? ref : fluid.renderContextReference(parsed);
+            // A reference which might designate its own site is cached per site, so that it is checked at each
+            const key = segs && fluid.segsOverlap(segs, fluid.pathToSegs(parsed.path)) ? rendered + " at " + segs.join(".") : rendered;
             const existing = shadow.contextReferenceMap[key];
             if (existing) {
                 return existing;
@@ -1130,7 +1195,13 @@ const $fluidILScope = function (fluid) {
                             path: shadow.path
                         }, target.variety), target);
                     } else if (fluid.isComponent(target)) {
-                        if (parsed.selector) {
+                        if (!parsed.selector && fluid.isSelfReference(target[$m], parsed.path, shadow, segs)) {
+                            return fluid.unavailable({
+                                message: `Reference ${fluid.isPrimitive(ref) ? ref : key} at path ${segs.join(".")} refers to its own value - note that `
+                                    + "within a $component record, {self} designates the subcomponent being defined rather than its parent",
+                                path: shadow.path
+                            });
+                        } else if (parsed.selector) {
                             const listSignal = fluid.liveQueryILSelector(target, parsed.selector);
                             if (parsed.path) {
                                 const mapper = fluid.cell(undefined, {name: `fetchContextReference mapper for ${JSON.stringify(ref)}`}.computed(
@@ -1181,7 +1252,8 @@ const $fluidILScope = function (fluid) {
 
     /**
      * Recursively transfer a shadow map structure based on a corresponding layer map. Currently only transfers reactiveRoot
-     * markers from layerMap into shadowMap.
+     * markers from layerMap into shadowMap, together with any links of each reactive root, which are mounted as effects
+     * at the paths of the members they link - see fluid.extractReactiveLinks.
      * @param {Object} shadowMap - The shadow map to be populated.
      * @param {Object} layerMap - The layer map providing the structure and reactive root indicators.
      */
@@ -1195,7 +1267,34 @@ const $fluidILScope = function (fluid) {
         if (layerMap?.[$m]?.reactiveRoot) {
             const rec = fluid.getRecInsist(shadowMap, [$m]);
             rec.reactiveRoot = true;
+            fluid.makeArray(layerMap[$m].reactiveLinks).forEach(link => {
+                const linkRec = fluid.getRecInsist(shadowMap, [...link.segs, $m]);
+                // The reference itself is the signal record, so that an unchanged link is recognised as such across
+                // turnover of its component, e.g. when its reactive root is first written into the live layer, and
+                // its effect is retained rather than allocated afresh
+                linkRec.signalRecord = link.ref;
+                linkRec.handlerRecord = fluid.reactiveLinkExpanderRecord;
+            });
         }
+    };
+
+    /**
+     * Expands a link of a member of a reactive root into an effect which writes the referenced value into the member
+     * whenever it changes - see fluid.extractReactiveLinks. These writes are derived rather than authored, and so are
+     * not recorded in the history.
+     * @param {String} ref - The context reference from which the member's value is drawn
+     * @param {Shadow} shadow - The shadow of the component holding the reactive root
+     * @param {String[]} segs - The path of the linked member within the component
+     * @return {Function} A disposer function for the created effect
+     */
+    fluid.expandReactiveLink = function (ref, shadow, segs) {
+        // Copied since the segments supplied by fluid.scheduleEffects are those of its traversal, which go on to change
+        const linkSegs = [...segs];
+        const record = {
+            func: value => fluid.withoutHistory(() => fluid.setForComponent(shadow.that, linkSegs, value)),
+            args: [ref]
+        };
+        return fluid.expandEffectRecord(record, shadow, linkSegs);
     };
 
     fluid.isMatForming = function (shadow, segs) {
@@ -1627,16 +1726,28 @@ const $fluidILScope = function (fluid) {
 
     /**
      * Expands a reactive record into a part of the component tree marked as reactive data.
-     * If `record` is a String, it is interpreted as a context reference.
+     * If its record is a String, it is interpreted as a context reference. Otherwise any members merged alongside the
+     * record override its initial value, other than links which are honoured by fluid.expandReactiveLink.
      *
-     * @param {any|String} record - The data to be made reactive, or a context reference String.
+     * @param {Object} element - The element holding the reactive record as its member `$reactiveRoot`, where the record
+     * is the data to be made reactive, or a context reference String.
      * @param {Shadow} shadow - The component's shadow record
      * @param {String[]} segs - The path where this record appears in its component
      * @return {Cell<any>} A computed signal representing the reactive data for the specified record.
      */
-    fluid.expandReactiveRecord = function (record, shadow, segs) {
+    fluid.expandReactiveRecord = function (element, shadow, segs) {
+        const record = element.$reactiveRoot;
+        let initial = record;
+        // Members merged alongside the record which are not links override its initial value, unless displaced by a
+        // stronger layer - see fluid.extractReactiveLinks. They are absent once the root has been written into the live layer.
+        const literals = fluid.get(shadow.layerMap, [...segs, $m, "reactiveLiterals"]) || [];
+        literals.forEach(literal => {
+            if (fluid.get(element, literal.segs) !== undefined) {
+                initial = fluid.setImmutable(initial, literal.segs, literal.value);
+            }
+        });
         const togo = typeof(record) === "string" ?
-            fluid.fetchContextReference(record, shadow, segs) : fluid.cell(record,
+            fluid.fetchContextReference(record, shadow, segs) : fluid.cell(initial,
                 {name: `expandReactiveRoot for record at path ${segs.join(".")} of component at path ${shadow.path}`});
         // This is otherwise a no-op since marking the shadowMap is done in fluid.transferShadowMap
         togo.$variety = "$reactiveRoot";
@@ -2035,12 +2146,22 @@ const $fluidILScope = function (fluid) {
         isEffect: true
     }, {
         key: "$reactiveRoot",
-        handler: fluid.expandReactiveRecord
+        handler: fluid.expandReactiveRecord,
+        // Supplied with the element as a whole, since members alongside its record also contribute to its value
+        wholeElement: true
     }, {
         key: "$component",
         handler: fluid.expandComponentRecord
         // TODO: Need to turn this record into an effect so that effect (potentia) can be withdrawn
     }].map(rec => Object.assign(Object.create(fluid.elementExpanderRecord.prototype), rec));
+
+    // Handler for the links of members of reactive roots, which are mounted by fluid.transferShadowMap rather than found
+    // in a component's merged material
+    fluid.reactiveLinkExpanderRecord = Object.assign(Object.create(fluid.elementExpanderRecord.prototype), {
+        key: "$reactiveLink",
+        handler: fluid.expandReactiveLink,
+        isEffect: true
+    });
 
     /**
      * @typedef {Object} Site
@@ -2139,7 +2260,7 @@ const $fluidILScope = function (fluid) {
         if (fluid.isPlainObject(element, true)) {
             const handlerRecord = fluid.expandElementTypes.find(record => element[record.key]);
             if (handlerRecord) {
-                return fluid.mountSignalRecord(handlerRecord, element[handlerRecord.key], shadow, segs);
+                return fluid.mountSignalRecord(handlerRecord, handlerRecord.wholeElement ? element : element[handlerRecord.key], shadow, segs);
             } else {
                 return element;
             }

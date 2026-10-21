@@ -1,0 +1,59 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-imgnear-1"
+
+This PTF document adds a widget combining the closest sticky note finder with the image generator.
+--ptf-boundary-imgnear-1
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.imageGenNearNote"
+Content-Description: layer
+
+// Combine the image generator (dominant - its template, state and methods are kept) with the
+// closest sticky note finder (hidden supplier - finds the note nearest to this widget's position
+// and offers its text as the prompt). Move the widget close to a sticky note and press "Find Image".
+fluid.def("fluid.demos.imageGenNearNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // Hidden supplier: finds the closest sticky note, computing from this widget's bounds and the
+    // page's notes. It shares this widget's view, so none of its own screen output is rendered,
+    // while all of its computation continues
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{fluid.demos.imageGenNearNote}.view",
+            tldrawHost: "{fluid.demos.imageGenNearNote}.tldrawHost",
+            hostBounds: "{fluid.demos.imageGenNearNote}.hostBounds"
+        }
+    },
+    // The closest note's text fills the prompt input, updating live as the widget is moved
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+--ptf-boundary-imgnear-1
+Content-Type: multipart/mixed; boundary="ptf-boundary-imgnear-2"
+Content-Disposition: attachment; filename="shape:noteimage"
+Content-Description: component
+
+--ptf-boundary-imgnear-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"layerName":"fluid.demos.imageGenNearNote","x":60,"y":380,"w":360,"h":460}
+--ptf-boundary-imgnear-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.imageGenNearNote"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:noteimage"
+        }
+    }
+}
+--ptf-boundary-imgnear-2--
+--ptf-boundary-imgnear-1--

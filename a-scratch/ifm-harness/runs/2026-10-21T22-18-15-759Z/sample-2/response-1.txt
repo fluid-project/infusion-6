@@ -1,0 +1,87 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-9f2k27"
+
+--outer-9f2k27
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+<script>
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 660, h: 480},
+    // The note finder finds the sticky note nearest THIS widget, so it must read the umbrella's bounds
+    // rather than host bounds of its own, which it no longer has as a subcomponent
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            hostBounds: "{noteImageGenerator}.hostBounds"
+        }
+    },
+    // The image generator searches for images of the nearest note's text, so moving this widget close to
+    // a sticky note fills the prompt and pressing its Find Image button generates an image of the note
+    imageGen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{noteImageGenerator}.promptText"
+            }
+        }
+    },
+    // Blank prompt while no note is in reach, so the button can't fire pointlessly
+    promptText: "$compute:fluid.demos.noteImageGenerator.promptText({noteFinder}.noteText, {noteFinder}.distance)"
+});
+
+fluid.demos.noteImageGenerator.promptText = (noteText, distance) => distance === null ? "" : noteText;
+</script>
+
+<template>
+    <div class="noteimagegen">
+        <div class="noteimagegen-finder" @id="noteFinder"></div>
+        <div class="noteimagegen-generator" @id="imageGen"></div>
+    </div>
+</template>
+
+<style>
+.noteimagegen {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+.noteimagegen-finder {
+    flex: 0 0 280px;
+    min-width: 0;
+}
+
+.noteimagegen-generator {
+    flex: 1;
+    min-width: 0;
+}
+</style>
+--outer-9f2k27
+Content-Type: multipart/mixed; boundary="inner-4mq71"
+Content-Disposition: attachment; filename="new-1"
+Content-Description: component
+
+--inner-4mq71
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGenerator"
+    ]
+}
+--inner-4mq71
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 420, "y": 600, "w": 660, "h": 480}
+--inner-4mq71--
+--outer-9f2k27--

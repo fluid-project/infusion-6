@@ -1,0 +1,55 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-ainote-x3p0r"
+
+This is a Potentia Transmission Format (PTF) document holding a fresh composition of the selected widgets.
+--ptf-boundary-ainote-x3p0r
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.imageFromClosestNote"
+Content-Description: layer
+
+// Image generator composed with the closest-note finder: this layer IS the image generator, with the finder
+// hidden inside it. The finder's computation runs against this shape's bounds (it shares the view, and so the
+// hosting shape), and the text of the nearest sticky note is supplied as the generator's prompt - so the user
+// drags the combined widget next to a note, watches the prompt update to that note's text, and presses the
+// existing Find Image button to search for it.
+fluid.def("fluid.demos.ai.imageFromClosestNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{imageFromClosestNote}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+--ptf-boundary-ainote-x3p0r
+Content-Type: multipart/mixed; boundary="ptf-boundary-ainote-inner-m7q"
+Content-Disposition: attachment; filename="shape:noteImage"
+Content-Description: component
+
+--ptf-boundary-ainote-inner-m7q
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.imageFromClosestNote"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:noteImage"
+        }
+    }
+}
+--ptf-boundary-ainote-inner-m7q
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"layerName":"fluid.demos.ai.imageFromClosestNote","x":820,"y":380,"w":360,"h":460}
+--ptf-boundary-ainote-inner-m7q--
+--ptf-boundary-ainote-x3p0r--

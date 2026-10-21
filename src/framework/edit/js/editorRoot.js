@@ -135,7 +135,8 @@ fluid.filterForSelfEditing = function (vTree, component, editorRoot, layerColour
     console.log("Filtering for selfEditing at path ", shadow.path);
     // The template is configured on the component's view, whose layer map records the layer in which it was written
     const viewShadow = fluid.viewShadowFor(shadow);
-    const templateLayer = fluid.hasLayer(component.view, "fluid.sfcTemplateViewComponent") ? component.view.templateLayer : viewShadow?.layerMap.template?.[$m]?.source;
+    const template = component.view.template;
+    const templateLayer = typeof(template) === "object" && template?.sfcLayer ? template.sfcLayer : viewShadow?.layerMap.template?.[$m]?.source;
     if (templateLayer && fluid.isUserLayer(templateLayer)) {
         const layerColour = layerColours[templateLayer];
         const liveColour = layerColours.$live;

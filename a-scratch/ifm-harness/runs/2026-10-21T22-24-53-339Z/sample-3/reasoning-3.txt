@@ -1,0 +1,391 @@
+Let me analyze the errors carefully.
+
+First error: "The JavaScript layer "fluid.demos.noteImageGenerator" at the top level has a syntax error: Unexpected token ')'"
+
+So the layer part I sent previously was NOT applied (despite "The changes which were applied have been kept" — apparently the layer part failed validation with a syntax error, so nothing from the layer was applied). Wait, but the first turn's response I only sent the layer part; the second turn I sent only the component part. In the second turn, the errors said the layer part was... hmm, actually in the second response errors, there was no syntax error mentioned about the layer. Now the syntax error appears. Interesting — maybe the checker re-validated the previously-sent layer part on this pass because it was retained? Actually "changes which were applied have been kept" — the component part from my last response wasn't applied (those errors), and the layer part... apparently the layer HAS a syntax error "Unexpected token ')'".
+
+Wait, now I see: in my last response (the one the user rejected), maybe I accidentally had a syntax error in the JS. Let me reconstruct my intended JS:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 360, h: 640},
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator"
+        }
+    },
+    nearestDistance: "{noteFinder}.closest.distance",
+    noNote: "$compute:fluid.demos.noteImageGenerator.hasNoNote({noteFinder}.closest.distance)",
+    findNoteImage: {
+        $method: {
+            func: "fluid.demos.noteImageGenerator.takeNoteImage",
+            args: ["{imageGenerator}", "{noteFinder}.closest.text", "{noteFinder}.closest.distance"]
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div ...>
+    ...
+</div>`
+        }
+    }
+});
+...
+```
+
+Template literal with backticks — inside the template there are double quotes and no backticks or `${`. That should parse. "Unexpected token ')'" — hmm. Where could that come from? Maybe the backslash-escaping of quotes in their parser? Or maybe the issue: my template literal spans multiple lines and contains `"` — fine. But maybe the error comes from `disabled="@{noNote}"`. Hmm, that's within a template literal, so fine.
+
+Wait — maybe the actual issue is the way the checker extracts the JS layer body. If it's not wrapped in `<script>` tags, maybe it parses... Actually PTF layer parts from JavaScript "is rendered as a fluid.def(...) call in JavaScript, with functions included by their source text". So bare JS is fine.
+
+Hmm, "Unexpected token ')'". Let me count parentheses in my JS very carefully. Maybe in my previous renditions, a parenthesis got mismatched. I can't see the exact sent text, but let me just be extremely careful this time and maybe avoid the template literal entirely — use a single-quoted string with escaped quotes? That risks JSON escaping issues. Actually better: avoid template literal; build the template as a normal string using double quotes... but the template contains lots of double quotes. Alternatively use `\n` joins? Simpler: keep template literal but make it simple.
+
+Actually, maybe the syntax error is in something like:
+
+`fluid.demos.noteImageGenerator.hasNoNote = distance => distance === null;`
+
+arrows fine. 
+
+`args: ["{imageGenerator}", "{noteFinder}.closest.text", "{noteFinder}.closest.distance"]` fine.
+
+`takeNoteImage = function (imageGenerator, noteText, distance) {...}` fine.
+
+Hmm "Unexpected token ')'" often occurs with `(w: 360, h: 640)`? No, that's object literal. With `preferredSize: {w: 360, h: 640}` fine.
+
+Maybe the problem: In my second response, I sent ONLY the component part (after being told changes applied were kept). But errors now include the layer syntax error — meaning the previously-sent layer part is being re-applied each time? "The changes which were applied have been kept, so send only what is still required." So from my first turn's message, the layer part... failed? No — first turn errors didn't include a syntax error. Hmm, first turn errors were about the component part only. The layer part might have been applied. But now the error says the layer has a syntax error at the top level. Maybe the checker re-reads the layer store? No...
+
+Actually wait — re-reading the first turn errors: the error list didn't include the syntax error; only component-part issues. So the layer was accepted then? But now it says syntax error. Odd. Perhaps the "layer" part from turn 1 was stored and the checker keeps it in a pending buffer that gets validated again. Or maybe my second response didn't include the layer part, so the checker re-evaluated the retained layer and found the syntax error now?
+
+Hmm, alternatively the layer still exists but has a syntax error — maybe because when applying the layer part in turn 1, it wrote the definition string, and somewhere the backtick template got mangled (e.g., the `@{` sequences or the em-dash). Possibly a parser choked on `📸`? Unlikely.
+
+Anyway, my response now needs to fix BOTH:
+1. The JS syntax error — send a corrected layer part (since the layer apparently isn't valid/available).
+2. The component part format issue — the nested multipart parsing problem.
+
+Now the second error is very revealing: "The component part 'shape:note-imagegen' does not name an existing widget, so it must hold a potentia part for '/' whose $layers names the layer from which to construct a fresh widget" — AND separately "The part with filename '/' has unrecognised kind 'potentia' in its Content-Description - expected layer, component or delete".
+
+Wait, see also: "The part with filename 'shape' has unrecognised kind 'shape'". And "The part with filename undefined has unrecognised kind ''".
+
+So the checker is treating EACH part of my document — including nested parts — as a top-level part. That means the checker does NOT support multipart nesting one level down?? But the workspace document itself has component parts with nested parts (potentia, shape)... Hmm, but those are given as STATE, not necessarily processed by the same checker.
+
+Look at the example in "How to respond": a component part is a nested multipart/mixed with parts filename="/" Content-Description potentia, and filename="shape" Content-Description shape. The example explicitly shows this as valid PTF for responses. So why does the checker reject? Because... the nested part kinds ARE potentia/live/shape — and the error says "expected layer, component or delete", implying the checker reads the whole answer as one-part multipart without recursion? That can't be, per the documented format...
+
+Wait, maybe the issue is different: maybe the checker validates the RESPONSE document (my whole MIME document) by decoding with `fluid.ptf.decode`, and then for each top-level part checks kind ∈ {layer, component, delete}. If decode doesn't nest, nested parts become siblings. But the doc says decode recurses nested multiparts. Hmm.
+
+Alternatively — maybe the problem is that my nested document needs an "MIME-Version: 1.0" header line inside each nested entity? No, that's not how multipart works.
+
+Let me re-read the exact expected structure from the docs:
+
+"component parts, each a nested multipart/mixed document whose filename is a shape id"
+
+Yes — nested multipart. My structure did exactly that. And in the first response (before user feedback), the same errors appeared: component part + unrecognized potentia/shape parts. So both my attempts used nesting, and both failed with the same interpretation: nested parts seen as top-level parts with unrecognised kinds.
+
+Hmm wait — actually maybe the checker splits the document purely by boundary lines with a SIMPLER parser that does not handle nesting: it finds every line that equals a registered boundary delimiter and treats content between consecutive delimiters as a part. Since my nested delimiters ("ptf-boundary-aigen-9k-inner") are DIFFERENT strings from the outer one, they... would each be recognized as separate parts: part 1 = layer; part 2 = headers of component (contentType multipart/mixed..., filename shape:note-imagegen, description component) — but the error says the component part was found (it complained the component part needs a potentia part for "/"); and then part 3 = "/" potentia (error: unrecognised kind), part 4 = "shape" (error), part 5 = preamble/epilogue "" (error). 
+
+So actually the checker DID find the component part, complained it lacks a potentia part for "/" — but simultaneously treated the nested "/" and "shape" parts as top-level parts with wrong kinds. That is inconsistent UNLESS the checker's logic is: for each part (flat list over all delimiter-delimited chunks, including nested delimiters): if kind == "component", then it parses the nested document to find potentia/live parts; but parse failed? No...
+
+Actually maybe: the checker's "component part must hold a potentia part" validation looks at the part's *body* by decoding nested multipart — and it FAILED to decode my nested document (why?), concluding there's no potentia part in it. Meanwhile, the outer document's part-scan (using ALL boundary lines, nested included) yielded these extra spurious top-level parts.
+
+Why would nested decode fail? Perhaps because of the missing "MIME preamble"?? Or because... hold on, let me look at my exact sent nested document headers:
+
+```
+--ptf-boundary-aigen-9k
+Content-Type: multipart/mixed; boundary="ptf-boundary-aigen-9k-inner"
+Content-Disposition: attachment; filename="shape:note-imagegen"
+Content-Description: component
+
+--ptf-boundary-aigen-9k-inner
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{...}
+--ptf-boundary-aigen-9k-inner
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{...}
+--ptf-boundary-aigen-9k-inner--
+--ptf-boundary-aigen-9k--
+```
+
+Hmm. This looks fine. Unless the inner boundary string appears inside the potentia JSON? `ptf-boundary-aigen-9k` no.
+
+One possibility: the checker expects the nested component document to ALSO be multipart but the parts within it get kinds potentia/live/shape — which is what I did. The error messages though say the checker expected {layer, component, delete} at that level. So the checker's validation of nested contents uses top-level expectations — meaning **the checker does not actually support nested multipart**. But the docs say it does and give examples...
+
+Hmm wait, actually let me reconsider: maybe the checker DOES support nesting, and the problem was my INNER boundary string contained the outer boundary string as a substring! "ptf-boundary-aigen-9k" is a substring of "ptf-boundary-aigen-9k-inner". If their parser (or a regex) splits on the outer boundary string as a substring match rather than full-line match, then the INNER delimiter lines start with `--ptf-boundary-aigen-9k`, which contains `ptf-boundary-aigen-9k`... A naive `split('--ptf-boundary-aigen-9k')` would split the inner document in half at every occurrence of the outer boundary string — including within the inner boundary tokens! That would mangle the nested document, producing garbage parts. The resulting flat parts could include "/" potentia and "shape" with unrecognised kinds (since the parts got sliced mid-headers perhaps), plus an empty kind-"" part. And the component part's own nested body would be mangled → "does not hold a potentia part for /".
+
+Compare with the workspace document: outer boundary is "ptf-boundary-ix9nejf4u2", inner boundaries are "ptf-boundary-yp6r1eiuby" — no shared substring! So the workspace doc's boundaries are all distinct full strings. My inner "ptf-boundary-aigen-9k-inner" shares prefix "ptf-boundary-aigen-9k" with the outer. **That's plausibly the bug.** My second attempt used outer "ptf-boundary-c9k" and inner "inner-c9k"... wait no, that was what I was ABOUT to send, but I actually sent outer "ptf-boundary-c9k2"? Let me check what I actually sent in my last response. I planned: outer "ptf-boundary-c9k", inner "inner-c9k". Hmm wait, but actually what did I send? Looking at my previous assistant message: outer boundary `ptf-boundary-c9k` and inner `inner-c9k`. Those don't share substrings. But the errors still occurred. Hmm.
+
+But ALSO in my last response, I included a preamble line: "This is a Potentia Transmission Format (PTF) document..." between Content-Type header and the first boundary. Wait — I wrote "Hmm, wait — I notice I began my last response with an intro paragraph." — did I actually include it? Yes, my previous response started with "Good hunch - and I realised my last message had a preamble line between the MIME header and the first boundary, which can produce the phantom empty part you describe. Stripping it entirely, and keeping the inner boundary free of the outer boundary string:" then the document. The preamble before "MIME-Version" is fine (the rules say document begins with MIME-Version on first line — anything before is ignored or causes error?). Hmm, actually my preamble text before the document might itself be parsed... "write nothing before or after it" — but my intro text before MIME-Version appeared to be tolerated in turn 1 (no error about preamble). 
+
+The new syntax error for the JS layer suggests the retained layer has an issue: "Unexpected token ')'". Let me re-examine my layer JS for a paren problem. 
+
+`template: `<div class="note-imagegen" style="...">
+    <div style="flex:0 0 auto;">
+        <button style="..."
+                @onclick="{self}.findNoteImage()" disabled="@{noNote}">📸 Generate from closest note</button>
+    </div>
+    ...
+`
+
+`{self}.findNoteImage()` — inside a template literal that's fine.
+
+Hmm wait — but the last response didn't include the layer at all! Only the component part. Yet the error now mentions the layer syntax error. So the layer from turn 1 must have been stored, and its definition (including the JS text) is re-examined... OR actually the first response's layer part had an error too but the errors list was truncated/reported differently. In turn 1, errors mentioned only component-part issues; the layer part might have failed silently or not been re-checked. It's stated the layer has a syntax error NOW — meaning at some point it got registered and then JS-evaluated → syntax error. So the layer body text may have been stored from turn 1. But the doc says a fresh layer must be defined and construction of the widget uses the layer def — so I DO need to send a fixed layer part now too.
+
+Where's the syntax error? Possibly in how the checker extracts JS: maybe it wraps the text, or the `@onclick`... no. "Unexpected token ')'" is a pure JS parse error. Let me mentally parse the whole JS as one script:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 360, h: 640},
+    noteFinder: { $component: { $layers: "fluid.demos.closestNoteFinder" } },
+    imageGenerator: { $component: { $layers: "fluid.demos.imageGenerator" } },
+    nearestDistance: "{noteFinder}.closest.distance",
+    noNote: "$compute:fluid.demos.noteImageGenerator.hasNoNote({noteFinder}.closest.distance)",
+    findNoteImage: { $method: { func: "fluid.demos.noteImageGenerator.takeNoteImage", args: ["{imageGenerator}", "{noteFinder}.closest.text", "{noteFinder}.closest.distance"] } },
+    view: { $component: { $layers: "fluid.templateViewComponent",
+        template: `<div ...>...</div>` } }
+});
+```
+
+Check parens balance in template literal: it's a template literal so parens inside don't matter... UNLESS the checker is applying some transformation or the text got altered. Hmm — could the backticks have been stripped/mangled by the sheet layer? If the template string lost its backticks, then `<div class="note-imagegen" style="...">` would be a syntax error of a different sort ("Unexpected token '<'"). 
+
+What if one of my closing `}`... `</div>`  … the tag `</div>` contains no parens. `disabled="@{noNote}"` no parens. OK.
+
+Wait — maybe the syntax error comes from a different fragment: did I perhaps include `"@{noNote}"` and the framework pre-processes `@{...}`?? probably not at JS parse level.
+
+Alternatively the syntax error might be real and from MY code after the fluid.def: 
+
+```js
+fluid.demos.noteImageGenerator.hasNoNote = distance => distance === null;
+
+fluid.demos.noteImageGenerator.takeNoteImage = function (imageGenerator, noteText, distance) {
+    if (distance === null) {
+        imageGenerator.state.error = "...";
+        return undefined;
+    }
+    imageGenerator.state.prompt = noteText;
+    return imageGenerator.generate();
+};
+```
+
+All fine as JS.
+
+Hmm, "Unexpected token ')'". Something like `}),` mismatch could produce that. Maybe in my turn-1 message, I made a typo like `};` vs `}`... I can't verify without the sent text, but the error is now confirmed on the STORED layer. Since "the changes which were applied have been kept" — but if the layer had a syntax error, was it "applied"? The checker said the layer exists at top level with a syntax error, so it was REGISTERED but invalid JS. So I must re-send a corrected layer part now.
+
+To be safe, I'll restructure the layer to minimize risky constructs:
+- Use a single-quoted multi-line string? No — I'll keep the template but use string concatenation? Overkill. 
+- Actually, avoid template literal entirely: use a regular string with escaped double quotes? That's error-prone too.
+- Better: build the template with an array join and line breaks using single-quoted strings with double quotes inside:
+
+```js
+var template = [
+    '<div class="note-imagegen" style="display:flex; flex-direction:column; gap:12px; padding:12px; box-sizing:border-box; background:#f0f4c3;">',
+    '    <div style="flex:0 0 auto;">',
+    '        <button style="width:100%; padding:10px 14px; font-size:14px; border:none; border-radius:6px; background:#4a90d9; color:#fff; cursor:pointer"',
+    '                @onclick="{self}.findNoteImage()" disabled="@{noNote}">📸 Generate from closest note</button>',
+    '    </div>',
+    '    <div style="flex:0 0 190px;" @id="noteFinder"></div>',
+    '    <div style="flex:1 1 auto; min-height:0;" @id="imageGenerator"></div>',
+    '</div>'
+].join("\n");
+```
+
+That avoids backticks and multi-line literals. Single-quoted strings containing double quotes are valid.
+
+Hmm, but wait — maybe THE syntax error came from the backtick template literal combined with the sheet transport: maybe the sheet passes the layer body through the Fluid framework's layer registry where text between `<script>` tags... The turn-1 layer part was Content-Type text/javascript. Maybe the checker reads the raw text and evals it. Either way, simpler JS is safer.
+
+Actually, hmm, wait. Let me reconsider: maybe the syntax error is in the CHECKER's processing: it might strip/replace some tokens (like `@{...}` references) before evaluation? No, it said syntax error, not reference error.
+
+Alternatively — maybe my turn-1 message actually contained the intro text and the preamble INSIDE the document, splitting headers... The preamble line inside a MIME doc is allowed (ignored by decoders). The JPEG... fine.
+
+I can't fully diagnose; best to send a much simpler, bulletproof layer plus the component with careful nesting:
+
+1. Outer boundary: pick names where the inner is NOT a superstring/substring of the outer and vice versa. E.g., outer = "ptf-boundary-9k", inner = "inner-aigen". Distinct strings entirely (not "ptf-boundary-aigen-9k-inner" which contains the outer).
+
+2. No preamble line inside the document.
+
+3. No prose before MIME-Version.
+
+4. JSON bodies on single lines, simple.
+
+5. The layer part: simpler JS using single-quoted string pieces.
+
+Also reconsider: the workspaces show nested component docs use boundary names like "ptf-boundary-yp6r1eiuby" for component parts at top level, and channels side documents nested with their own bounds. Since these were serialized BY the system, they must parse. The rule for nesting: each nested entity declares its own boundary. I did that. The substring theory remains plausible because my inner name contained the outer name prior; my second attempt inner "inner-c9k" vs outer "ptf-boundary-c9k2"? Wait in the second attempt I actually... let me recall what I sent. My last message doc used outer `ptf-boundary-c9k` and inner `ptf-boundary-c9k-inner`. DAMN. Yes — looking at my last message, I wrote: Content-Type: multipart/mixed; boundary="ptf-boundary-c9k" and the component nested Content-Type: multipart/mixed; boundary="ptf-boundary-c9k-inner"... 
+
+Hmm, wait, did I? In my last actual sent message I wrote inner boundary "ptf-boundary-c9k-inner"? Let me look at the message I sent: I see I described in thinking "use outer ptf-boundary-c9k, inner ptf-boundary-c9k-inner"? I was going to say I used outer "ptf-boundary-c9k" and inner "inner-c9k". Honestly I need to just look: the sent message shows:
+
+"Content-Type: multipart/mixed; boundary=\"ptf-boundary-aigen-9k\"" — no wait, that was turn 1. Turn 2... The visible sent text in the conversation for my last message is what I wrote after the preamble-y intro: I said I'm stripping the preamble and keeping inner boundary free of outer boundary string. The document shown begins with MIME-Version and boundary "ptf-boundary-c9k"... and the nested uses "ptf-boundary-c9k-inner"? 
+
+From the message: `Content-Type: multipart/mixed; boundary="ptf-boundary-c9k"` and nested `Content-Type: multipart/mixed; boundary="ptf-boundary-c9k-inner"`. Hmm — I believe I used outer "ptf-boundary-c9k" and inner "ptf-boundary-c9k-inner" in the FINAL sent version (I named them while thinking about the substring issue but actually the sent text used aigen?). The current errors include "filename undefined has unrecognised kind ''" — consistent with a stray preamble line being parsed as a part with no Content-Disposition/Description! My last message HAD an intro paragraph before MIME-Version, but also maybe residual preamble INSIDE the document after the header block? The errors didn't complain about intro before MIME-Version (it's ignored or the checker found MIME-Version anyway). But a part with undefined filename and empty kind suggests an empty part — could be the segment between MIME header block end and first boundary, or a duplicated boundary.
+
+Ugh, I can't see the exact sent bytes. Let me just make everything maximally clean:
+
+- No text before "MIME-Version: 1.0".
+- No preamble after the Content-Type header.
+- Outer boundary: "outer-1". Inner boundary: "inner-1". (Exact names from the documented example — proven parseable.)
+- Layer part: bulletproof JS without template literals.
+
+Another thought on the syntax error "Unexpected token ')'": maybe it's really in something like `border-radius:6px; background:#4a90d9;`?? No. Or the arrow function with template... nope.
+
+Hmm — actually! Maybe the syntax error comes from the template literal containing the sequence `{"x": 100...}`? no, that's the shape part.
+
+What if the body of the layer part was wrapped/escaped such that `{"self}.findNoteImage()"`... The `\n`? No \n in it.
+
+Wait, I want to reconsider: could the syntax error be from MY second response only — i.e., the checker is reporting errors for ALL accumulated parts? Turn 2 errors included ONLY the component-part family issues, no syntax error. Now turn 3 includes a syntax error. So during turn 2 processing, the layer was NOT yet flagged; during turn 3, it is. Maybe turn 2's document, when parsed, spilled text from the component part into the stored layer? Eh.
+
+OR maybe the checker re-validates the layer DEFINITION text currently in the layer store — i.e., the state from turn 1's layer part was applied, and when checking my component (which needs the layer to exist?), it tried to evaluate the layer again. Fine — send the corrected layer.
+
+Let me also simplify: do I even need `nearestDistance` and `noNote`/`hasNoNote`? Could reduce JS surface: keep them; they're simple.
+
+Also the `@class`... not used. OK.
+
+Now, the view $layers worry from before: fluid.templateViewComponent should suffice (mirroring fluid.demos widgets' subcomponent views). Fine.
+
+One more check on the component part: potentia user layer for "/" must name layers: ["fluid.demos.noteImageGenerator"]. That layer must exist AND have fluid.topLevelWidget in its hierarchy — it names it directly. Good.
+
+Also, since I'm resending the layer part, and the checker said "send only what is still required" — sending the layer (required, since current stored one is syntactically invalid) plus the component part is right.
+
+Now, the part ordering: layer first, then component. Boundary names per example. Also make sure NO line in the layer body equals a boundary delimiter, and no boundary string occurs in any body. The JS body will contain "outer-1"? No. It'll contain strings with "inner" etc. — irrelevant, only exact delimiter lines matter, and bodies must not contain the delimiter string at line start ≥2 hyphens. My bodies won't.
+
+Wait, actually to be really safe about "the inner boundary free of the outer boundary string": use completely different strings: outer "outer-A", inner "inner-B"? The documented example uses outer-1/inner-1/inner-2 and it's the canonical form. I'll reuse exactly "outer-1" and "inner-1"/"inner-2" style — proven from the prompt's example which presumably was parseable. I'll use outer-1 and inner-1.
+
+Let me also double check the JSON in potentia: {"@layers": ...} needs "$layers" key. Single-line JSON: {"$layers": ["fluid.demos.noteImageGenerator"], "view": {"$component": {"shapeId": "shape:note-imagegen"}}}.
+
+Hmm, do I include view.shapeId in the potentia? In the state doc, existing widgets' potentia include "view": {"$component": {"shapeId": ...}}. I'll omit it this time to keep things minimal? The rules for replacement parts say fresh widget constrained by $layers. The shape part carries geometry. Keeping shapeId in view likely links widget to shape. Prior attempts included it and didn't cause complaints. I'll keep it — consistent with state doc.
+
+Also the shape part: {"x":100,"y":580,"w":360,"h":640}.
+
+Now write the layer JS cleanly:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 360, h: 640},
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator"
+        }
+    },
+    nearestDistance: "{noteFinder}.closest.distance",
+    noNote: "$compute:fluid.demos.noteImageGenerator.hasNoNote({noteFinder}.closest.distance)",
+    findNoteImage: {
+        $method: {
+            func: "fluid.demos.noteImageGenerator.takeNoteImage",
+            args: ["{imageGenerator}", "{noteFinder}.closest.text", "{noteFinder}.closest.distance"]
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: ['<div class="note-imagegen" style="display:flex; flex-direction:column; gap:12px; padding:12px; box-sizing:border-box; background:#f0f4c3;">', '    <div style="flex:0 0 auto;">', '        <button style="width:100%; padding:10px 14px; font-size:14px; border:none; border-radius:6px; background:#4a90d9; color:#fff; cursor:pointer" @onclick="{self}.findNoteImage()" disabled="@{noNote}">📸 Generate from closest note</button>', '    </div>', '    <div style="flex:0 0 190px;" @id="noteFinder"></div>', '    <div style="flex:1 1 auto; min-height:0;" @id="imageGenerator"></div>', '</div>'].join("\n")
+        }
+    }
+});
+
+fluid.demos.noteImageGenerator.hasNoNote = distance => distance === null;
+
+fluid.demos.noteImageGenerator.takeNoteImage = function (imageGenerator, noteText, distance) {
+    if (distance === null) {
+        imageGenerator.state.error = "No sticky notes nearby - move this widget closer to a note";
+        return undefined;
+    }
+    imageGenerator.state.prompt = noteText;
+    return imageGenerator.generate();
+};
+```
+
+Wait — template as an ARRAY of strings joined... The view expects `template` to be an HTML string. An array works only in-place of evaluation? No! `template`'s VALUE must be the resulting string. In the JS source, I can just call the join: `template: ['...', ...].join("\n")` — evaluates to string. That's fine JS and keeps it one expression. Actually simpler: single string with escaped quotes is messy; the array+.join with single-quoted items is valid JS and evaluates to the string at runtime. 
+
+Hmm, but does the checker maybe serialize the layer differently... it just needs to eval the JS. Array join is safe.
+
+Actually, even simpler thought on the syntax error: what if the emoji 📸 broke a naive transport encoding? Unlikely.
+
+Wait, one more possible culprit: In turn 1, the layer part — did I write `$components` vs `$component`? The primary error now is "syntax error" so it's JS-level, not semantic. Let me just make sure balanced braces by writing carefully.
+
+Let me also reconsider whether the JOIN approach might trip the "adapting" checker... no, syntax sanity check only.
+
+Actually, you know what — let me reconsider whether `@onclick="{self}.findNoteImage()"` inside my template could cause the *template parser* of the workspace checker to protest... not in this turn's errors. Proceed.
+
+Also make sure the script doesn't accidentally include `$` at string starts etc. Fine.
+
+Now the document:
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-1"
+
+--outer-1
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+<JS>
+--outer-1
+Content-Type: multipart/mixed; boundary="inner-1"
+Content-Disposition: attachment; filename="shape:note-imagegen"
+Content-Description: component
+
+--inner-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{"$layers": ["fluid.demos.noteImageGenerator"], "view": {"$component": {"shapeId": "shape:note-imagegen"}}}
+--inner-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 100, "y": 580, "w": 360, "h": 640}
+--inner-1--
+--outer-1--
+```
+
+No preamble. No prose before MIME-Version. Blank line between each part's header block and body. 
+
+One more consideration — maybe the checker dislikes the "view" inside potentia for FRESH construction (unknown)? It was fine before; the errors never mentioned potentia contents, only that nested parts' kinds weren't recognized, which is a parsing issue, not content issue. Keep view for linking shapeId.
+
+Also: rather than `shape:note-imagegen"`, is a "fresh name" better as e.g. "new-1"? The rule says when filename is NOT an existing shape id, choose any fresh name. `shape:note-imagegen` qualifies. Keep.
+
+Let me also double-check braces in JS once more by simulating:
+
+fluid.def( "name", {                        (1 open paren, 1 open brace)
+  $layers: "...",                           ok
+  preferredSize: {w: 360, h: 640},          ok
+  noteFinder: { $component: { $layers: "..." } },   ok
+  imageGenerator: { $component: { $layers: "..." } }, ok
+  nearestDistance: "...",
+  noNote: "$compute:...", 
+  findNoteImage: { $method: { func: "...", args: ["{imageGenerator}", "{noteFinder}.closest.text", "{noteFinder}.closest.distance"] } },
+  view: { $component: { $layers: "...", template: [ ... ].join("\n") } }
+});   close 
+
+hasNoNote = distance => distance === null;
+
+takeNoteImage = function (imageGenerator, noteText, distance) {
+    if (distance === null) { ... }
+    imageGenerator.state.prompt = noteText;
+    return imageGenerator.generate();
+};
+
+Balanced. 
+
+One risk: single-quoted string containing an apostrophe? None. Contains `📸` fine.
+
+Also ensure no line starts with "--": not in JS.
+
+Final answer: the PTF only, nothing else.

@@ -1,0 +1,808 @@
+The user wants to combine the two selected widgets (fluid.demos.closestNoteFinder and fluid.demos.imageGenerator) so they can move the combined widget close to a sticky note and press a button to generate an image.
+
+Wait, let me re-read. "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image."
+
+Hmm, the closestNoteFinder finds the closest sticky note to the widget. The imageGenerator generates an image from a prompt via Pixabay. So the combination: the widget finds the closest note's text, and uses that text as the image prompt (probably prefilled/auto), and pressing a button generates an image based on the closest note's text.
+
+Actually, let me think: "move it close to a sticky note and press a button to generate an image". The closest note's text could serve as the prompt. Perhaps the widget shows the closest note, and the button generates an image for that note's text. Maybe we could even write the generated image info back... but the note is a tldraw shape; we could potentially update the note's text? The note bridge - how does a widget reach notes? Via `{tldrawHost}.notes`. Writing through might be possible if notes are sited references... but that may be complex.
+
+Simplest safe design: an umbrella layer that combines both widgets as subcomponents:
+- closestNoteFinder subcomponent shows the closest note's text.
+- imageGenerator subcomponent whose prompt input is prebound to the closest note text. Perhaps the search trigger: when pressing the button, it uses the prompt field. We could override `state.prompt` with a reference `"{closestNoteFinder}.noteText"` - but then the prompt field would be read-only-ish (it's a reference member, writing through... Actually a member holding a reference takes the referenced value whenever it changes, and may still be written as before, per the hints). Actually per the strategy hints: "A reference may equally override a single member of a widget's reactive state... `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before."
+
+So in the umbrella layer:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: ["fluid.topLevelWidget"],  // no wait - must be last
+    ...
+});
+```
+
+Actually for the umbrella we need preferredSize, and to compose both widgets. The two widgets have their own views. The umbrella needs to display both. Per strategy: "Choose the view of just one of them as the view of the umbrella with `view: "{first}.view"`". So the umbrella's view = closestNoteFinder's view? Or imageGenerator's view? We need both visible. Option A: umbrella has its own template with two @id elements, and each subcomponent contributes its own view (selfTemplateViewComponent? Actually a $component subcomponent with its own view renders into the @id element).
+
+Per Fluid View docs: "`@id="member"` marks the element as the container for the subcomponent at `member`... Its contents are taken as the subcomponent's template unless the subcomponent supplies its own." And "If `member` holds a component list... each list member is rendered in sequence inside the element."
+
+So the umbrella can have a template:
+
+```html
+<div class="note-imagegen">
+    <div @id="closestNoteFinder"></div>
+    <div @id="imageGenerator"></div>
+</div>
+```
+
+Then the umbrella layer:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 420, h: 560},
+    closestNoteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{closestNoteFinder}.noteText"
+            }
+        }
+    }
+});
+```
+
+Wait - but overriding `state` member of imageGenerator with a partial object containing `prompt` reference - the merge rules: `state` in fluid.demos.imageGenerator is `{$reactiveRoot: {...}}` — a signal record! "A key holding a signal record is replaced as a unit by a stronger layer's value at that key; the record is not merged into." So `state: {prompt: "..."}` in a stronger layer would REPLACE the whole reactiveRoot record. That breaks the reactive root.
+
+Hmm, but per the strategy hints example: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt = "{first}.text"}`". Hmm, that hint says member takes the referenced value whenever it changes and may still be written. But per merging rules, a signal record is replaced wholesale. So `state: {$reactiveRoot: {...}}` from the weaker layer would be replaced by the stronger layer's `state: {prompt: "..."}` plain object. Then the state would no longer be a reactive root — mutable in place, but writes wouldn't be immutable. Hmm, but would it work? The live-state write-back on the input for `value="@{state.prompt}"` would write to the plain object in place and notify? In Infusion, writing to a plain object member of a component through the proxy... The write goes into the live layer (immutable semantics at top level of live layer, in-place for nested objects?).
+
+Actually per docs: "Writes (that.count = 6, or mutating array methods such as that.items.push(x)) are recorded in the component's live layer" — writes through the proxy to plain values get recorded. For a whole plain object, `that.state = {...}` is a live write. Nested `that.state.prompt = "x"` — hmm, how are nested writes handled for non-reactiveRoot values? Typically the IL treats plain nested object writes as in-place mutation of the merged value, which may not notify dependents... Actually Infusion components proxy arbitrary paths; writing `that.state.prompt = x` mutates the object in place, and fluid.cell-based proxies... I believe the framework handles nested writes by... hmm.
+
+The hint explicitly says this override pattern works: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before."
+
+But that contradicts the wholesale-replacement rule unless the reference inside a plain object member overrides just that key. Hmm wait — the reference `"{closestNoteFinder}.noteText"` as the value of `state.prompt`: when merged, `state` from stronger layer replaces signal record `$reactiveRoot`... Actually do references participate in merging? A reference is a string value. The merge rule says "Any other value (primitive, array, function, signal record) from a stronger layer replaces that from a weaker one wholesale." So `state` would become `{prompt: "{closestNoteFinder}.noteText"}` — a plain object where prompt is a reference to the closest finder's noteText.
+
+Then `@{state.prompt}` resolves the reference -> tracks closestNoteFinder.noteText. And write-back `state.prompt = x` would write through the reference to the closestNoteFinder's noteText site — sited references write to the original site. noteText is "{self}.closest.text" — hmm, noteText member is itself a reference to closest.text. Writing through the chain to closest.text... closest is a $compute producing an object; writing to a computed value? Probably fails or is ignored ("Read-only sources. If the site holds a computed value ($compute), it is not written. The attribute is re-materialised from the element's state").
+
+Hmm, that's messy. Let me reconsider.
+
+Alternative: don't wire the prompt to note text automatically. The user wants: move widget near a sticky note, press a button to generate an image. What should the image be about? Likely the closest note's text. The imageGenerator already has a text input with placeholder "Describe the image you want...". The combined widget could prefill the prompt from the closest note.
+
+Option: Give the umbrella its own simpler generation logic instead of reusing imageGenerator's state? But the instruction says reuse existing layers maximally and compose.
+
+Better approach: the umbrella holds both widgets; the imageGenerator's `state.prompt` override via reference works for reading (pre-fills and updates as the widget moves), and the write-back... Hmm. When the user types in the input, write-back writes to the reference site (closestNoteFinder.noteText), which is a read-only computed -> not written; the input keeps its own DOM state and re-materializes. That means the user couldn't edit the prompt. Is that acceptable? The user's flow: "move it close to a sticky note and press a button to generate an image" — they don't want to type; the prompt comes from the note. Auto-suggest from the closest note seems exactly right.
+
+But wait — writing to `state.prompt` reference... Actually, is the override even needed? If we don't override prompt, the user would have to type. The combination's value is that the prompt auto-fills from the nearby note.
+
+Hmm, but actually maybe better: wire the generate method to use the closest note's text directly? We can't easily override the `generate` method's args... Actually we can: `generate: {$method: {func: "fluid.demos.imageGenerator.generate", args: ["{self}.state"]}}` is in the imageGenerator layer; the umbrella could replace generate's func with its own that patches state.prompt from closest note before calling generate? But state.prompt is the override reference...
+
+Let me think about how "state member override with reference" actually behaves in Infusion. Actually wait — maybe I'm wrong about the wholesale replacement. Let me re-read the merge rules:
+
+"Plain objects contributed by more than one layer merge recursively, key by key. Any other value (primitive, array, function, signal record) from a stronger layer replaces that from a weaker one wholesale."
+
+`state` is a key whose weaker value is a signal record (`$reactiveRoot`). Stronger layer contributes `state` as a plain object `{prompt: "..."}` — not a signal record. Rule 2: "Any other value (primitive, array, function, signal record) from a stronger layer replaces that from a weaker one wholesale." So yes, wholesale replacement: imageGenerator's `state` becomes `{prompt: ref}`.
+
+Hmm, but the hint says exactly this pattern "the member then takes the referenced value whenever that changes, and may still be written as before". This is from the harness authors, presumably accurate for this framework implementation. "May still be written as before" — perhaps writes to `state.prompt` (in-place mutation of the plain object) notify through the framework's write tracking? In Infusion 6, component proxies support deep writes; writing nested property on a plain object sets the property on the underlying plain data, and the framework may treat it as a write to the live layer... Actually I recall Infusion's component proxy handles writes by recording at the topmost component-level path. In the IL, "Writes at or beneath the root through the component proxy produce a fresh immutable value of the whole root" — that's for reactiveRoot. For plain nested objects... 
+
+Honestly, the hint is authoritative here: it says member takes referenced value on change and may still be written. So the pattern works as described in this framework (it's the harness's own strategy hint). I'll trust it.
+
+So design:
+
+Layer `fluid.demos.noteImageGen` (fresh umbrella):
+- $layers: ["fluid.topLevelWidget"] — must be last. If it's the only layer, fine: `$layers: "fluid.topLevelWidget"`.
+- preferredSize: {w: 420, h: 640}? The two widgets: finder 260x200, imageGen 360x460. Stack vertically: 360 wide, 680 tall. Set preferredSize {w: 360, h: 700}.
+- closestNoteFinder: $component { $layers: "fluid.demos.closestNoteFinder" }
+- imageGenerator: $component { $layers: "fluid.demos.imageGenerator", state: { prompt: "{closestNoteFinder}.noteText" } }
+
+Wait, but there's a subtlety: overriding `state` replaces the `$reactiveRoot`, so `isGenerating` false initial etc. remain? state would only have `prompt` then. But imageGenerator's state is referenced everywhere as `{self}.state.prompt`, `{self}.state.isGenerating`, `{self}.state.error`, `{self}.state.images`, `{self}.state.index`, `{self}.state.refreshedId`. If state becomes just `{prompt: ref}`, then `{self}.state.isGenerating` -> path runs off plain data -> undefined -> OK-ish: `disabled="@{isGenerating}"` -> undefined -> attribute removed (good). `cannotGenerate` compute: isGenerating || !prompt.trim() — undefined || ... -> prompt might be "" -> "Please enter a prompt" error when empty... `state.error = "..."` writes — state is plain object now; writes mutate in place; effect? errorMessage $if: "{imageGenerator}.error" — error is reference to state.error; writes through proxy notify? 
+
+Hmm, this is getting risky. The wholesale replacement of the reactiveRoot really breaks state management.
+
+Alternative cleaner approach: Instead of overriding `state`, override only the default prompt value... but prompt is inside $reactiveRoot which is a signal record — replaced as a unit by stronger layer value. Same problem.
+
+Hmm wait, actually is that true? Can a stronger layer's key merge INTO a signal record? The docs say no.
+
+OK so let me reconsider: maybe a better composition is: the umbrella has its own generation method wired so the prompt comes from the closest note at click time, leaving imageGenerator's state intact. But `generate` with args ["{self}.state"] calls pixabay.search(state.prompt...). If we override `state`... same problem.
+
+What about overriding the `generate` $method entirely in the umbrella subcomponent record? The subcomponent record for imageGenerator is at `subcomponent` precedence — can hold any member including `generate` and `keyDown` and even `state.prompt`... no, state replacement.
+
+If we override `generate` with a new method that takes the imageGenerator subcomponent's state and the closest note text:
+
+```js
+imageGenerator: {
+    $component: {
+        $layers: "fluid.demos.imageGenerator",
+        generate: {
+            $method: {
+                func: "fluid.demos.noteImageGen.generateFromNote",
+                args: ["{imageGenerator}.state", "{closestNoteFinder}.noteText"]
+            }
+        }
+    }
+}
+```
+
+And the template's button calls `{self}.generate()` on the imageGenerator subcomponent — that resolves to the overridden method. Then:
+
+```js
+fluid.demos.noteImageGen.generateFromNote = function(state, noteText) {
+    const prompt = noteText && /^(Not placed|No sticky)/.test(noteText) ? "" : noteText;
+    ...
+};
+```
+
+Hmm, but if noteText is "Not placed on a canvas", we shouldn't search. We can set state.error or just guard.
+
+But wait — the input field still shows `state.prompt` which is "" (default). The user moves near the note and presses the button; generation uses the note's text. That satisfies: "move it close to a sticky note and press a button to generate an image". Should the button be disabled when no note nearby? `cannotGenerate` computes from prompt — prompt stays empty, so button disabled... we'd need to override buttonLabel/cannotGenerate too. Overriding those computed members in the subcomponent record is fine (they're plain keys, no signal-record nesting issue — `cannotGenerate` is a `$compute` signal record; overlaying our own `$compute` replaces as unit — fine).
+
+So override in subcomponent record:
+- generate: custom method that uses closest note text.
+- cannotGenerate: "$compute:fluid.demos.noteImageGen.hasNearbyNote({closestNoteFinder}.distance)" — distance !== null.
+- maybe buttonLabel stays "Find Image".
+
+Hmm, wait. Actually simpler: could we override `state.prompt` via the reference pattern and accept that isGenerating/errors live on the replaced plain object? The risk is whether in-place writes notify. The hint says "may still be written as before", implying the reference site... but writing through a reference writes to the referenced site (closestNoteFinder's nearest note text path), not to state. Typing in the input would attempt to write to the note's text — bad!
+
+Wait, no. Let me re-read: "the member then takes the referenced value whenever that changes, and may still be written as before." Hmm. If prompt is a mere reference value, a write to `that.state.prompt` in the proxy... In Infusion, writing through a reference that's sited writes to the original site. The reference `"{closestNoteFinder}.noteText"` resolves to noteText which itself is "{self}.closest.text" — a reference to a computed product... writing there is a no-op (computed, read-only). So typing would do nothing, input keeps DOM value, re-materialized from itself (write-back rules: "If the site holds a computed value ($compute), it is not written. The attribute is re-materialised from the element's state"). Actually noteText is a reference, not computed directly... noteText member = "{self}.closest.text" reference. closest is a $compute. So the site holds computed -> not written.
+
+So with the state-prompt-override approach, the input becomes read-only display of the closest note's text. Actually that might be a *feature*: the widget shows "closest note says X" in the prompt field, and the button searches using state.prompt which takes the referenced value. And since the reference updates live, moving the widget near a note updates the prompt automatically!
+
+But the wholesale state replacement concern remains for isGenerating/error/images/index/refreshedId. Those would be undefined:
+- state.isGenerating -> undefined. `disabled="@{isGenerating}"` -> removed (ok).
+- `generate` method (original) args ["{self}.state"] -> state object is {prompt}. generate sets state.isGenerating = true -> in-place add property. Does it notify? state.prompt binding unaffected. errorMessage $if on state.error etc. And `isGenerating` member = "{self}.state.isGenerating" reference -> undefined until set. The button's disabled binding `@{cannotGenerate}`: cannotGenerate = compute isGenerating(undefined)|| !prompt.trim(). During generate, prompt unchanged... isGenerating true but prompt still the note text, so cannotGenerate stays false; the "Another" button: cannotShowAnother = images.length < 2 — images undefined -> error? `images[index]` — undefined[0] throws? currentImage: images[index] || null — images undefined -> TypeError! Hmm: `fluid.demos.imageGenerator.currentImage = (images, index) => images[index] || null;` — images undefined -> TypeError: Cannot read properties of undefined. That would make image compute unavailable or throw. If state lacks images key entirely (undefined), images[index] throws during stabilize — likely produces unavailable or an error. Bad.
+
+So wholesale override of `state` is dangerous. We must preserve the full $reactiveRoot. Therefore: don't override state. Instead override `generate` (and maybe prompt display).
+
+But then the input shows nothing about the closest note. Maybe add display of the closest note near the button? The finder widget above already shows the closest note's text ("Closest Sticky Note" / text). So the combined widget: top part shows closest note, bottom part the generator whose button, when pressed, generates an image *for the closest note's text*.
+
+Implementation plan:
+
+New layer `fluid.demos.noteImageGen`:
+
+```js
+fluid.def("fluid.demos.noteImageGen", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 360, h: 700},
+    closestNoteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            generate: {
+                $method: {
+                    func: "fluid.demos.noteImageGen.generateFromNote",
+                    args: ["{imageGenerator}.state", "{closestNoteFinder}.noteText", "{closestNoteFinder}.distance"]
+                }
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="noteimagegen">
+                <div @id="closestNoteFinder"></div>
+                <div @id="imageGenerator"></div>
+            </div>`
+        }
+    }
+});
+```
+
+Wait — the umbrellaWidget requires... The two subcomponents each have their own views (SFC-based). The `@id` element containers: "Its contents are taken as the subcomponent's template unless the subcomponent supplies its own." Since each subcomponent supplies its own SFC view, the @id elements are containers; with elideParent default true, their markup merges into the container. Good.
+
+But hold on: subcomponents closestNoteFinder and imageGenerator — their template roots are the outermost divs (.notefinder, .imagegen). With elideParent true, the root merges with container. The container divs are empty (no contents) so the subcomponent root replaces them? "elideParent: Defaults to true, meaning the template's root element is merged with the container rather than nested inside it." Merging root element with container: attributes merge, children... container has no children; the root's children presumably go in. I think this works — this is the standard pattern from storyTime where segmentList and imageGen subcomponents render into @id divs.
+
+Actually in storyTime, `fluid.demos.storySegment` and `fluid.demos.storyImageGen` are separate SFC layers rendered into @id="segmentList" and @id="imageGen" divs. So yes, this exact pattern works.
+
+Also styling: the container divs will be plain divs inside .noteimagegen flex column. The subcomponent root styles (width/height 100%) — since elided into container, the container gets the subcomponent's classes? Merge of root element with container: container attributes retained and root's added? If root has class="notefinder", merged container gets class plus... container's own classes? Probably union. The finder .notefinder has height:100% — inside a flex column with fixed shape height, ok.
+
+Alternatively give the umbrella a template where each @id div has class matching... Not needed; keep simple.
+
+Now `generateFromNote(state, noteText, distance)`:
+
+```js
+fluid.demos.noteImageGen.generateFromNote = async function (state, noteText, distance) {
+    if (!distance) {
+        state.error = "Move the widget next to a sticky note first";
+        return;
+    }
+    state.prompt = noteText;  // prefill prompt field with the note's text
+    return fluid.demos.imageGenerator.generate(state);
+};
+```
+
+Setting state.prompt writes into the reactive root (immutable), then calling the original generate re-trims and searches. 
+
+But wait: `keyDown` also calls self.generate() on Enter — keyDown references `self.generate` where self is the imageGenerator subcomponent; self.generate would be the overridden method? The $method member `generate` is overridden at subcomponent precedence; `{self}.generate()` in template/keyDown resolves to the current merged member — the override. OK consistent.
+
+Also `cannotGenerate` currently: isGenerating || !prompt.trim() — prompt is "" until user/this writes it. The button would be disabled because prompt empty — user can't press it! So we must override cannotGenerate to check distance !== null:
+
+```js
+cannotGenerate: {
+    $compute: {
+        func: (isGenerating, distance) => isGenerating || distance === null || distance === undefined,
+        args: ["{imageGenerator}.isGenerating", "{closestNoteFinder}.distance"]
+    }
+}
+```
+
+Note: distance is null when no note. `distance !== null` — also undefined cases: findClosest returns {text, distance: null} when no notes/bounds; distance line shows when distance !== null. So cannotGenerate = isGenerating || distance === null.
+
+And maybe override buttonLabel? "Find Image" is fine.
+
+Also `isGenerating` reference member: isGenerating = "{self}.state.isGenerating" — state is the imageGenerator's reactiveRoot, intact. Good.
+
+What about `image` compute etc. — all intact since we didn't touch state.
+
+The `noteText` member of closestNoteFinder: "{self}.closest.text" — good.
+
+Template details:
+
+```html
+<template>
+    <div class="noteimagegen">
+        <div class="noteimagegen-finder" @id="closestNoteFinder"></div>
+        <div class="noteimagegen-generator" @id="imageGenerator"></div>
+    </div>
+</template>
+```
+
+Styles:
+
+```css
+.noteimagegen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.noteimagegen-finder { flex: 0 0 auto; width: 100%; }
+.noteimagegen-generator { flex: 1 1 auto; min-height: 0; }
+```
+
+The finder is fixed 200px tall content; with flex 0 0 auto it takes natural height. The generator is 460 tall. Total ~660-700. preferredSize w 360 h 700.
+
+Hmm wait, the finder's .notefinder has padding 16 and background #fffde7 — fine.
+
+One issue: `.notefinder` height: 100% inside flex child — ok.
+
+Now, `$layers` for the umbrella: `"fluid.topLevelWidget"` alone is fine (name it, last & only). But do we want to also inherit something like fluid.component? fluid.topLevelWidget presumably extends fluid.component. Fine.
+
+preferredSize: {w: 360, h: 700}.
+
+Now, how is the combined widget created? The user selected shape:finder and shape:imagegen. The instruction: "Combine the functionality of the two selected widgets" — I should replace the two selected widgets with a single new combined widget, placed somewhere sensible (e.g., where the finder was, using the shape positions). I think: create a fresh component with a new shape id (or reuse one of the selected ones?). The guidance: "If the filename is not the id of an existing shape (choose any fresh name, e.g. 'new-1'), a fresh widget is created". To "combine", probably best to replace both with one. I could create the combined widget at shape:finder's position (100,100) and delete shape:finder and shape:imagegen. Or keep both and add combined — but user said combine, so replacing both with one seems intended.
+
+Let me structure the response PTF:
+
+1. A `layer` part defining `fluid.demos.noteImageGen` (SFC text/x-vue).
+2. A `component` part for a fresh shape, say "shape:note-imagegen", with potentia `{"$layers": ["fluid.demos.noteImageGen"], "view": ...}` — wait, potentia needs view shapeId? Looking at existing widgets: potentia includes `"view": {"$component": {"shapeId": "shape:finder"}}`. That's how the widget's container element ties to the tldraw shape. So include the same: `"view": {"$component": {"shapeId": "shape:note-imagegen"}}`.
+3. shape part placing at... let's use (100, 100) — the finder position — with w 360 h 700.
+4. `delete` parts for shape:finder and shape:imagegen.
+
+Wait, but should I keep the finder? The user said combine into one widget so they can move *it* (singular) near a note and press a button. Yes, one combined widget.
+
+Let me now write the layer carefully.
+
+```js
+fluid.def("fluid.demos.noteImageGen", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 360,
+        h: 700
+    },
+    closestNoteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            generate: {
+                $method: {
+                    func: "fluid.demos.noteImageGen.generateFromNote",
+                    args: ["{imageGenerator}.state", "{closestNoteFinder}.noteText", "{closestNoteFinder}.distance"]
+                }
+            },
+            cannotGenerate: {
+                $compute: {
+                    func: (isGenerating, distance) => isGenerating || distance === null,
+                    args: ["{imageGenerator}.isGenerating", "{closestNoteFinder}.distance"]
+                }
+            }
+        }
+    }
+});
+
+fluid.demos.noteImageGen.generateFromNote = async function (state, noteText, distance) {
+    if (distance === null || distance === undefined) {
+        state.error = "Move this widget next to a sticky note first";
+        return;
+    }
+    state.prompt = noteText;
+    return fluid.demos.imageGenerator.generate(state);
+};
+```
+
+Wait — one problem: `cannotGenerate`'s compute args `{imageGenerator}.isGenerating`: isGenerating member of imageGenerator = "{self}.state.isGenerating" — resolves through. Fine.
+
+Also `keyDown` in original imageGenerator: `e.key === "Enter" && !self.isGenerating ? self.generate() : undefined` — self.generate() is the overridden one — fine, also requires a nearby note, otherwise error set. Hmm, Enter with no note sets error — slightly odd but consistent.
+
+Also, the error message when no note nearby: pressing the button with no note — but the button is disabled when distance === null, so they can't press it. Good. They must move near a note; distance line appears under the finder ("Distance Npx") confirming.
+
+Edge: distance === null exactly — when bounds null ("Not placed on a canvas") and no notes. findClosest returns distance null. Good.
+
+Now the template and the view. The umbrella needs a view — its own templateViewComponent. Let me write the SFC fully.
+
+Also consider: does `fluid.demos.imageGenerator`'s input placeholder "Describe the image you want..." still make sense? The prompt gets set by generateFromNote; before pressing, prompt empty. Maybe prefill prompt from closest note automatically via an effect? E.g., an $effect in the umbrella that keeps imageGenerator.state.prompt in sync with noteText (but only when the user hasn't typed?). Simpler: after generation, prompt shows the note text. During moving, prompt stays at last generated note. That's fine UX.
+
+Alternatively, auto-sync: in the umbrella:
+
+```js
+syncPrompt: "$effect:fluid.demos.noteImageGen.syncPrompt({imageGenerator}.state, {closestNoteFinder}.noteText)"
+```
+
+with syncPrompt writing state.prompt = noteText whenever it changes. But that fights the user's manual edits to prompt. And generateFromNote already sets prompt at generation time. Keep it simple: only set prompt on generate. Hmm, but then the visible prompt field during initial placement is empty — fine, button disabled until near a note, pressing fills prompt and generates. Actually wait — pressing fills and immediately generates; the prompt field will then show the note text. 
+
+Now, one more check on `$compute` with anonymous function in the layer — PTF regenerates JS for layers loaded as .vue; functions in $compute full form with `func:` an inline function — fine, included by source text.
+
+The `$if` in distanceLine uses `func`/`args` — fine.
+
+Potential issue: the umbrella's `view` uses templateViewComponent — but fluid.demos.closestNoteFinder's layer `$layers: "fluid.topLevelWidget"` and SFC loader adds view with sfcTemplateViewComponent. The subcomponent record for closestNoteFinder is `{$layers: "fluid.demos.closestNoteFinder"}` — SFC layer -> loads .vue, adds its SFC view. When this umbrella is created from my PTF text (text/x-vue part), the layer is registered via loadSFCText presumably by the PTF loader? Per PTF docs: "Reconstruction uses it for SFC parts" — `fluid.loadSFCText(layerName, text)` — instantiation loads SFC text. Since the workspace document delivered it as text/x-vue layer, the layer must already be loaded/known when the widget is created through the tldraw clipboard mechanism. Existing widgets in the workspace were created this way with `$layers: ["fluid.demos.closestNoteFinder"]`. Good — mirror that pattern exactly.
+
+Now, the shapeId in potentia: existing pattern `"view": {"$component": {"shapeId": "shape:finder"}}`. I'll use "shape:note-imagegen".
+
+Position: finder at (100,100). Put combined at (100,100) with w 360 h 700. imagegen at (420,100) — delete it.
+
+Wait — should the combined widget be placed at (100,100)? The user can move it; fine. Or keep nearer to the selection. Use (100,100).
+
+Now the SFC content. Note: SFC loader adds `$layers: ["fluid.component", "fluid.sfcLayer"]` default? For layers defining $layers as fluid.topLevelWidget, the loader... hmm, the loader defaults $layers to ["fluid.component", "fluid.sfcLayer"] — for SFCs that don't specify. Our layer specifies `fluid.topLevelWidget`. OK as with other SFCs in workspace.
+
+Let me write template:
+
+```html
+<template>
+    <div class="noteimagegen">
+        <div @id="closestNoteFinder"></div>
+        <div @id="imageGenerator"></div>
+    </div>
+</template>
+```
+
+Hmm — will the elided subcomponent roots inherit width/height styling? The container div gets merged with .notefinder root. Actually what exactly does elideParent do — merges root element with container: I believe the container becomes the root node carrying both sets of attributes. The .notefinder CSS applies via class. Should be OK.
+
+But heights: .noteimagegen is flex column, height 100%. Children: finder natural height (~200+), generator needs to fill remaining (~460+). .notefinder has height:100% — in a flex column with default align stretch, item height is natural (auto) -> its height:100% computes against flex container... percentage height against flex item cross... Actually simplest: give the two container divs classes with flex properties; subcomponent content flows inside.
+
+Actually with elideParent, does the subcomponent root *replace* the container entirely or nest? Docs: "elideParent: Defaults to true, meaning the template's root element is merged with the container rather than nested inside it." Merged. So classes from root merge onto container.
+
+Let me add minimal CSS:
+
+```css
+.noteimagegen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-sizing: border-box;
+}
+```
+
+gap between finder and generator. The generator (.imagegen) has padding 16 and background — fine.
+
+Hmm, .imagegen has `flex: 1 1 auto; min-height: 0` on result figure etc. The generator root .imagegen itself: height 100% — in flex column with align-items stretch (default), its height style 100% maybe ignored/overridden; flex:1 1 auto lets it grow to fill. I'd like the generator to take remaining space so image area is full. .imagegen has `height: 100%` and flex item default `align-self: stretch` — height 100% on flex item... In a column flex container, the item's main axis is vertical; `height: 100%` against a definite container height works if the flex-basis/auto used... `flex: 1 1 auto` sets flex-basis auto; height 100% plus flex-grow — browsers compute used flex-basis from height when basis is auto? flex-basis: auto uses the height property. So main size = height 100% then grow distributes free space. Since container is exactly 700 and finder ~210, generator: basis 100% (700?) Hmm that overfills and shrink factor 1... height 100% of 700 = 700, total 910 > 700, shrink proportionally — generator shrinks. Result: finder natural, generator fills rest. That's roughly what we want anyway.
+
+Alternatively set explicit flex classes on the container divs: give the second container `style="flex: 1 1 auto; min-height: 0"`. Let me do that:
+
+```html
+<div class="noteimagegen">
+    <div @id="closestNoteFinder"></div>
+    <div class="noteimagegen-generator" @id="imageGenerator"></div>
+</div>
+```
+
+CSS:
+```css
+.noteimagegen { display: flex; flex-direction: column; height: 100%; width: 100%; box-sizing: border-box; }
+.noteimagegen-generator { flex: 1 1 auto; min-height: 0; }
+```
+
+Good enough.
+
+One more consideration: the finder shows "Distance 0px" line when on top of a note (distance 0 still shows). cannotGenerate uses `distance === null`. When the widget is placed on the canvas but notes exist, distance is a number → button enabled. 
+
+Also when bounds null (unpinned?), distance null → disabled with no feedback to user... The finder top area shows "Not placed on a canvas". Acceptable.
+
+Hmm — actually wait. Is there a subtlety with `{closestNoteFinder}.distance` reference from within imageGenerator subcomponent? Scope: searching outwards from imageGenerator: its own names (imageGenerator layer names: fluid.demos.imageGenerator, nickname imageGenerator), its parent (the umbrella) — umbrella's children include closestNoteFinder. Scope resolution: "its own names, then its direct children's, then its parent's, then its siblings'". Siblings include closestNoteFinder — context name "closestNoteFinder" matches nickname of the sibling component (its layer fluid.demos.closestNoteFinder nickname "closestNoteFinder"). The existing closestNoteFinder layer itself uses `{closestNoteFinder}.distance` from a nested subcomponent (distanceLine) — same sibling pattern works. And imageGenerator existing code uses `{imageGenerator}.error` from nested errorMessage subcomponent. So yes, this exact pattern is used in the wild here. 
+
+Also, in the umbrella layer the reference `"{closestNoteFinder}.noteText"` in generate's args — inside the $component record for imageGenerator. NoteText = closest.text. Fine.
+
+But wait — args are resolved from where the record appears? Args resolved "from the point of view of the component in which it appears" — the $method record appears within imageGenerator subcomponent's layers (subcomponent precedence), so its references resolve in imageGenerator's context. `{closestNoteFinder}` found via umbrella scope. Good. The existing `generate` in imageGenerator uses args ["{self}.state"] — self = imageGenerator. In my override, `"{imageGenerator}.state"` — also resolves to itself; consistent. Actually I could keep `{self}.state` — but self here is imageGenerator subcomponent. Either works; use `{imageGenerator}.state` for clarity. Actually simpler: since the record appears in imageGenerator's context, `{self}.state` is fine and matches original. Use "{self}.state".
+
+Hmm wait, one nuance: the override `generate` replaces the original within imageGenerator's merged layers (subcomponent precedence beats def). The original `generate` remains but is shadowed — but original also still referenced by... nothing else. keyDown calls self.generate() → the override. Good.
+
+`generateFromNote` calling original `fluid.demos.imageGenerator.generate(state)` — sets state.prompt already done. Inside, `state.prompt.trim()` — we set prompt = noteText which came from findClosest: either note.text || "Empty note", or messages. If noteText is "No sticky notes found"? That occurs only when bounds exist but no notes — but then distance is null → we set error instead. If bounds null: "Not placed on a canvas", distance null → error. So when distance is a number, noteText is the note's text or "Empty note". Searching "Empty note" is harmless.
+
+Edge: what if distance is a number but... fine.
+
+Also write `state.error = "Move this widget next to a sticky note first"` — but button disabled in that case, so mostly unreachable; harmless.
+
+Hmm, actually, wait: I want to double check `cannotGenerate` override: original is `"$compute:fluid.demos.imageGenerator.cannotGenerate({self}.state.prompt, {self}.state.isGenerating)"` at def precedence. Our subcomponent precedence `$compute` replaces wholesale — good. My compute: `(isGenerating, distance) => isGenerating || distance === null` with args `["{self}.isGenerating", "{closestNoteFinder}.distance"]`. self.isGenerating → state.isGenerating. Good. When distance undefined? distance member = "{self}.closest.distance"; closest always returns object with distance (number or null) once available. While unavailable → args unavailable → compute unavailable → button disabled attr removed. Fine.
+
+Now the file. Also include `preferredSize` so default creation sizes correctly; we pass explicit shape anyway.
+
+Let me also double check the `$layers: "fluid.topLevelWidget"` requirement: "name fluid.topLevelWidget explicitly - even if it is already inherited - and as the LAST of its layers". Single layer entry → both only and last. Good.
+
+Now the PTF document structure:
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-notectux9"
+
+--ptf-boundary-notectux9
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGen"
+Content-Description: layer
+
+<script>...</script>
+
+<template>...</template>
+
+<style>...</style>
+--ptf-boundary-notectux9
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteinn1"
+Content-Disposition: attachment; filename="shape:note-imagegen"
+Content-Description: component
+
+--ptf-boundary-noteinn1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": ["fluid.demos.noteImageGen"],
+    "view": {"$component": {"shapeId": "shape:note-imagegen"}}
+}
+--ptf-boundary-noteinn1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 100, "y": 100, "w": 360, "h": 700}
+--ptf-boundary-noteinn1--
+--ptf-boundary-notectux9
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+--ptf-boundary-notectux9
+... shape:imagegen delete ...
+--ptf-boundary-notectux9--
+```
+
+Delete parts: "each with an empty body, whose filename is the id of a shape to be removed." Content-Description presumably "delete". Let me check: "`delete` parts, each with an empty body, whose filename is the id of a shape to be removed." So Content-Description: delete, empty body.
+
+Now write the layer SFC. Careful with CSS class uniqueness and about the `<img>` etc. Also the `generateFromNote` function defined on global fluid.demos.noteImageGen.
+
+One thing: In the compact `$method` full form: `func: "fluid.demos.noteImageGen.generateFromNote"` — global function name. Good.
+
+Let me also think again about whether overriding `generate` on the *subcomponent record* works, since `generate` is a signal record ($method). Subcomponent precedence beats def → replaced as unit. Yes.
+
+Also the `distanceLine`'s `$if` uses long form with func distance => ... args "{closestNoteFinder}.distance" — resolves within distanceLine subcomponent context: sibling closestNoteFinder — works as in original.
+
+Also should the combined widget display the closest note big like the finder does — yes, it's included as the finder subcomponent at top.
+
+Potential pitfall: two SFC widgets nested — the finder's view layer is fluid.sfcTemplateViewComponent added by the loader when the SFC text is loaded. When the umbrella layer is loaded as an SFC text via loadSFCText and then the umbrella's subcomponents request fluid.demos.closestNoteFinder — the workspace's layer store already has it loaded (it's in the workspace doc). The tldraw-clipboard loader presumably loads all layer parts when the workspace doc is applied, so the layers are present. Good. If the closestNoteFinder SFC was loaded from a URL, its definition exists globally. Fine either way.
+
+Now — the input's `disabled="@{isGenerating}"` etc. all untouched. The "Another" button: cannotShowAnother unchanged: isGenerating || images.length < 2. Fine.
+
+The placeholder remains "Describe the image you want..." — prompt auto-set on generate. Good.
+
+Let me also consider making the button label reflect "for the note"? Keep simple.
+
+Let me write out everything now.
+
+Script:
+
+```js
+// Composes the closest-note finder with the Pixabay image generator: the generator's prompt is that of the
+// sticky note nearest the widget, so the user can move the widget beside a note and press "Find Image"
+
+fluid.def("fluid.demos.noteImageGen", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 360,
+        h: 700
+    },
+    // Shows which sticky note is nearest, with the distance beneath
+    closestNoteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    // The same generator, but its Search button seeks an image of (and is labelled for) the nearest note
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            // Enabled once the widget is beside a note (distance is a number, not null), instead of demanding
+            // a typed prompt
+            cannotGenerate: {
+                $compute: {
+                    func: (isGenerating, distance) => isGenerating || distance === null,
+                    args: ["{self}.isGenerating", "{closestNoteFinder}.distance"]
+                }
+            },
+            // Pressing the button generates from the nearest note's text, pre-filling the prompt field
+            generate: {
+                $method: {
+                    func: "fluid.demos.noteImageGen.generateFromNote",
+                    args: ["{self}.state", "{closestNoteFinder}.noteText", "{closestNoteFinder}.distance"]
+                }
+            }
+        }
+    }
+});
+
+/**
+ * Generate an image of the sticky note nearest the widget, using its text as the prompt
+ * @param {Object} state - The image generator subcomponent's reactive state
+ * @param {String} noteText - The text of the closest note
+ * @param {Number|null} distance - Distance to the closest note, or null if there is none
+ * @return {Promise} The search's promise, so that everything it causes is a single undoable step
+ */
+fluid.demos.noteImageGen.generateFromNote = function (state, noteText, distance) {
+    if (distance === null) {
+        state.error = "Move the widget next to a sticky note first";
+        return undefined;
+    }
+    state.prompt = noteText;
+    return fluid.demos.imageGenerator.generate(state);
+};
+```
+
+Wait — one important check on `$method` args with `func` as global name string and `args` containing references — fine.
+
+But hold on: `generate` override — the original `generate` is invoked via `fluid.demos.imageGenerator.generate(state)` — it reads/writes state.prompt etc. We passed `{self}.state` — same reactive root object reference? References resolve to the live value; passing the whole state (reactiveRoot's current value object) — original generate mutates that object: `state.isGenerating = true` etc. Writing into the passed-in plain object from within a global function... How do writes register back into the component? Hmm! In my generateFromNote (global function), writes like `state.error = ...` where state is the resolved nested plain object — the proxy doesn't intervene; mutating the plain object in place doesn't notify the reactive root!
+
+Wait — but this is exactly how the original generate works: `fluid.demos.imageGenerator.generate(state)` with `state` = args `["{self}.state"]` — the arg resolution yields... the value of the reactiveRoot member. For `$reactiveRoot`, `{self}.state` reference resolves to the root's current value — is it a plain object (snapshot) or a live proxy? If it's a plain snapshot, then `state.isGenerating = true` inside the global function would mutate the snapshot, not the root — the UI would never update. That can't be how the original works, since the demo presumably works. So `$reactiveRoot` values must resolve to something writable that propagates — the docs say "Writes at or beneath the root through the component proxy produce a fresh immutable value of the whole root". The component proxy intercepts writes — but `state` obtained as `{self}.state` inside a method is the resolved plain value... unless the framework returns a special object/tracking handle.
+
+Hmm — maybe arg materialization of a $reactiveRoot member produces a proxy that records writes back. The docs: "the value is either literal data, or a string reference, in which case the root is bound to the referenced site". And in templates `@{state.text}` on an input writes back to state.text immutably. For `$method` args, references resolve to values; whether the resolved value is a writable handle for reactiveRoot... In the demo imageGenerator, `generate` args `["{self}.state"]` and the global function sets `state.isGenerating = true` — presumably the framework makes this work by resolving $reactiveRoot members to special reactive handles (or the compute/arg system resolves to the live proxy of the root). Since the existing widget works this way, my overriding method passing `{self}.state` through to the original generate works identically. And my direct writes `state.prompt = noteText`, `state.error = ...` behave the same as writes inside original generate. 
+
+Also keyDown passes `{self}` (the component proxy itself): `func: (self, e) => e.key === "Enter" && !self.isGenerating ? self.generate() : undefined` — proxy writes. Fine, untouched.
+
+Now check: in my override, `args: ["{self}.state", ...]` — self is imageGenerator subcomponent (the method appears in its merged layers). Good.
+
+Edge: original generate returns promise; we return it. The note says "The search's promise is returned so that everything it causes is a single undoable step". I keep that comment. But my function isn't async; returning the promise is fine.
+
+Template:
+
+```html
+<template>
+    <div class="noteimagegen">
+        <div @id="closestNoteFinder"></div>
+        <div class="noteimagegen-generator" @id="imageGenerator"></div>
+    </div>
+</template>
+```
+
+Style:
+
+```css
+.noteimagegen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-sizing: border-box;
+    font-family: system-ui, -apple-ui, sans-serif;
+}
+
+/* The generator gets the remaining height so its result area is as tall as possible */
+.noteimagegen-generator {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+```
+
+Hmm — the finder .notefinder has height:100% — as elided into its container div (which is a flex item), height:100% relative to the flex container... .noteimagegen has definite height (the shape). The container div for finder is a flex item in column layout; default align-stretch; its height:100% — the merged element's computed height: percentage of containing block height (the flex container's content box). With default `align-items: stretch`, height is still auto unless set... flex items with height:100% — the percentage resolves against the flex container main size. It's a flex item with flex-basis auto → base size = height = 100%? flex-basis: auto → uses height property → 100% of container → then grow 0 shrink 1 → total = finder 100% + generator basis(auto height?) → shrink. The finder would try to be full height. Hmm, that may squeeze. To be safe, add `.noteimagegen > div { flex-shrink: 0 }`? That would prevent shrink below basis... finder basis 100% (700px) + generator basis (height:100% → 700). Total > 700 → overflow since no shrink. Ugh.
+
+Simpler: constrain the finder container: give the first @id div a class `noteimagegen-finder` with `flex: 0 1 auto; height: auto; min-height: 0` — overriding inherited height? The elided root's class is `.notefinder` with height:100%. If our container has class noteimagegen-finder and the root merges its attrs, both classes apply; CSS specificity equal, order matters globally (SFC styles injected globally in document order). Fragile.
+
+Alternative: don't worry — is .notefinder's height:100% really an issue? The .notefinder height:100%: containing block = body of... its parent in the final DOM. With elideParent, the root (.notefinder div with the finder's children) IS the container div we authored. Its parent = .noteimagegen (display flex). Percentage heights in flex items: resolves against the flex container? Per CSS, a percentage height on a flex item resolves against the flex container's content-box height only in cases... For non-replaced flex items, percentage height resolves against the flex container's inner height. So yes, .notefinder height = 100% of .noteimagegen's height = 700px (minus padding? box-sizing: border-box on .noteimagegen; the item's containing block is content box of .noteimagegen... anyway ~700).
+
+Then finder basis 700, shrink... its flex-shrink default 1 → it shrinks to make room for generator basis. Generator .imagegen also height:100% → basis 700. Both shrink proportionally to fit 700: each ~350. That's ugly: finder gets 350 tall.
+
+Fix: make the finder's height not percentage. Can't easily edit .notefinder (it's in closestNoteFinder's SFC; I shouldn't edit existing layers... well, I *could* but instructions say only redefine when user asks every widget from it to change; the finder widget keeps existing? The user is replacing it with the combined one. But keep minimal: avoid editing).
+
+Better:our own CSS with higher specificity for the elided finder container:
+
+```css
+.noteimagegen > div:first-child {
+    height: auto !important;  /* avoid !important */
+}
+```
+
+Hmm. Use specificity: `.noteimagegen div.noteimagegen-finder` (0,1,1) vs `.notefinder` (0,1,0) — ours wins if present on the element. But elideParent merge: root attrs merged onto container → container will have class "notefinder" (from root). Does it keep our class "noteimagegen-finder"? The container div we wrote has that class in the template; merging root into container keeps container's attrs, adding root's. So final element: class="noteimagegen-finder notefinder" presumably. Then our rule `.noteimagegen > .noteimagegen-finder { height: auto; flex: 0 1 auto; }` beats .notefinder's height:100% (specificity 0,0,2 if using `.noteimagegen .noteimagegen-finder` (0,0,2) = two classes → 0,0,2 which beats 0,1,0? Specificity: (inline, id, class+attr+pseudo, type). Two classes (0,0,2) vs one class (0,0,1)? Wait `.notefinder` is one class → (0,0,1). Our selector two classes → (0,0,2) wins. 
+
+Similarly, generator container: classes "noteimagegen-generator imagegen"; our rule for it: `.noteimagegen .noteimagegen-generator { flex: 1 1 auto; min-height: 0; height: auto; }` — beats `.imagegen { height: 100%; ... }` (0,0,1). Then generator basis = auto (content height ~ 16*2 padding + title + input + buttons + messages ≈ 260?), grows to fill. Finder natural ~210. Total ≈ fits 700. 
+
+Simpler alternative: keep container divs without classes and just style children by order... `.noteimagegen > div:first-child` (0,0,2 counting pseudo-class as class) also beats .notefinder (0,0,1). Either fine. I'll use classes, more readable.
+
+Also, both subcomponents set their own background colors (#fffde7 finder, #f5f5f5 generator) — nice visual separation.
+
+Font family on .noteimagegen not necessary; children set their own.
+
+Now — does the umbrella's own view layer need `$layers` listed in subcomponent record? For the umbrella SFC, "In an SFC this record needs no $layers, since the loader supplies them." Right — the SFC loader adds `view: {$component: {$layers: fluid.sfcTemplateViewComponent, template: ...}}`. But here my SFC's <template> is the umbrella's template — so the loader-supplied view renders my template. 
+
+But careful: I'm not adding a `view` member myself; the loader adds it from the <template>. Good.
+
+One more check: `container` passed via potentia view shapeId — the loader's added view is a $component record; the top-level widget creation passes view: {$component: {shapeId: ...}} at user precedence, merging into the loader-added view record. Matches existing widgets. Good.
+
+Also — will `fluid.demos.closestNoteFinder`'s `distanceLine` `$if` referencing `{closestNoteFinder}.distance` still work inside the umbrella? Scope from distanceLine (child of closestNoteFinder): its own names (closestNoteFinder layers), its parent's (closestNoteFinder's) names — context "closestNoteFinder" resolves to the parent itself (nickname). Same as standalone. Good.
+
+Let me also double-check the top-level creation: `$layers: ["fluid.demos.noteImageGen"]` — the umbrella layer has `$layers: "fluid.topLevelWidget"` so hierarchy includes topLevelWidget. Required: "must have fluid.topLevelWidget amongst its layers, directly or through a parent layer". Good.
+
+Shape size: 360x700. Notes are 200x200. The user will drag it near a note.
+
+Now the delete parts and ordering. Also should I keep shape:finder and shape:imagegen instead? The user said "combine" — singular widget "it". Replace both with one. I'll do that.
+
+Response format: single PTF document only (no commentary).
+
+Let me assemble the boundary names (must be distinct): outer "ptf-boundary-noteimg1", inner "ptf-boundary-noteimg2". Ensure the layer source contains no line starting with the boundary strings.
+
+Let me carefully write the SFC:
+
+<script>
+// Combines the closest-note finder with the Pixabay image generator: the generator seeks an image of the
+// sticky note nearest the widget, so the user can move the widget next to a note and press "Find Image"
+
+fluid.def("fluid.demos.noteImageGen", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 360,
+        h: 700
+    },
+    // Which sticky note is nearest the widget, with the distance beneath
+    closestNoteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    // The same generator, but its button is armed by the nearest note rather than a typed prompt
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            // Enabled while a search isn't running and the widget is beside a note (a distance of 0 still is)
+            cannotGenerate: {
+                $compute: {
+                    func: (isGenerating, distance) => isGenerating || distance === null,
+                    args: ["{self}.isGenerating", "{closestNoteFinder}.distance"]
+                }
+            },
+            // Pressing the button seeks an image for the nearest note's text, and pre-fills the prompt
+            generate: {
+                $method: {
+                    func: "fluid.demos.noteImageGen.generateFromNote",
+                    args: ["{self}.state", "{closestNoteFinder}.noteText", "{closestNoteFinder}.distance"]
+                }
+            }
+        }
+    }
+});
+
+/**
+ * Seek an image of the sticky note nearest the widget, using the note's text as the prompt
+ * @param {Object} state - The image generator subcomponent's reactive state
+ * @param {String} noteText - The text of the closest note
+ * @param {Number|null} distance - The distance to the closest note, or `null` if there is none
+ * @return {Promise|undefined} The search's promise, so that everything it causes is a single undoable step
+ */
+fluid.demos.noteImageGen.generateFromNote = function (state, noteText, distance) {
+    if (distance === null) {
+        state.error = "Move the widget next to a sticky note first";
+        return undefined;
+    }
+    state.prompt = noteText;
+    return fluid.demos.imageGenerator.generate(state);
+};
+</script>
+
+<template>
+    <div class="noteimagegen">
+        <div class="noteimagegen-finder" @id="closestNoteFinder"></div>
+        <div class="noteimagegen-generator" @id="imageGenerator"></div>
+    </div>
+</template>
+
+<style>
+.noteimagegen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+}
+
+/* These rules must outweigh the 100% heights set by the two subcomponents' own styles, and they do -
+   each container carries its own class and that of the subcomponent root merged in on top of it */
+.noteimagegen-finder {
+    flex: 0 1 auto;
+    height: auto;
+    min-height: 0;
+}
+
+.noteimagegen-generator {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+}
+</style>
+```
+
+Wait, specificity: `.noteimagegen-finder` (0,0,1) vs `.notefinder` (0,0,1) — equal! Tie broken by document order: SFC styles injected in order loaded. The finder's SFC might load after mine → its height:100% would win. Risky. Use a more specific selector: `.noteimagegen > .noteimagegen-finder` → (0,0,2) wins regardless of order. Do that for both. Also add `flex` etc.
+
+Hmm, also `height: auto` — but wait: is it height:100% that even matters given shrink? With our (0,0,2) selectors, both containers controlled: finder flex 0 1 auto height auto → natural height ~ (16*2 + title + text + distance) ≈ 210. generator height auto, flex 1 1 auto, min-height 0 → basis natural (~250+padding), grows to remaining ~470. 
+
+`.noteimagegen has height:100% — the shape's height 700; container fills. Fine.
+
+Also consider the elided merge might *replace* the container's class with root's class rather than union? If it replaced, our specificity trick fails and .notefinder height:100% applies to container. Hmm. What does the framework do exactly? For storyTime, the container is `<div class="story-highlight" @id="segmentList"></div>` and segment subcomponents render inside — presumably union keeps both classes. I'll trust union. And even if finder were 100% height with shrink, both shrink/grow... eh, acceptable risk either way; likely union.
+
+Also the finder's noteText could be long — the finder design handles overflow? .notefinder-text white-space normal, flex 1 — fine.
+
+Now the component part:
+
+--ptf-boundary-noteimg2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGen"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:note-imagegen"
+        }
+    }
+}
+--ptf-boundary-noteimg2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 100, "y": 100, "w": 360, "h": 700}
+--ptf-boundary-noteimg2--
+
+Then deletes:
+
+--ptf-boundary-noteimg1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+
+--ptf-boundary-noteimg1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+--ptf-boundary-noteimg1--
+
+The last line `--ptf-boundary-noteimg1--`.
+
+Also should the whole response be PTF only? The instruction says my response must take exactly one of two forms. The user gave a direction (create/modify), so respond with the PTF document alone — no prose.
+
+Let me double-check the nested component part — the example in the docs omits the layer part header inside nested, fine. My nested doc: opener `--ptf-boundary-noteimg2` right after headers, parts, close `--ptf-boundary-noteimg2--`, then continue outer. Correct.
+
+One more design consideration: The "Another" button and credit remain. The generation uses note text as prompt. Also, could there be double-space: when generateFromNote sets state.prompt then calls generate which trims. Good.
+
+Also think about whether `keyDown` (Enter) — overridden generate used; requires note nearby else sets error. Acceptable.
+
+Also `distance === null` vs `!= null`: findClosest returns null exactly. If bounds exists but notes empty → null → error path; button disabled anyway since distance null. Good.
+
+I think this is solid. Write it out.

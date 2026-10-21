@@ -180,7 +180,7 @@ fluid.def("fluid.tests.ptf.derived", {
     assert.equal(derived.extra, 3, "Own member of derived SFC layer");
     derived.destroy();
 
-    // An empty definition with a template requires $layers, and its view's $layers and templateLayer, to be patched in
+    // An empty definition with a template requires $layers, and its view's $layers and template, to be patched in
     const emptySFC = `<script>
 fluid.def("fluid.tests.ptf.empty", {});
 </script>
@@ -192,12 +192,12 @@ fluid.def("fluid.tests.ptf.empty", {});
         view: {
             $component: {
                 $layers: ["fluid.sfcTemplateViewComponent"],
-                templateLayer: "fluid.tests.ptf.empty"
+                template: {sfcLayer: "fluid.tests.ptf.empty"}
             }
         }
-    }, "Empty definition patched with $layers and its view's $layers and templateLayer");
+    }, "Empty definition patched with $layers and its view's $layers and template");
 
-    // A definition which already configures its view has its templateLayer patched in alongside its own members
+    // A definition which already configures its view has its template patched in alongside its own members
     const viewSFC = `<script>
 fluid.def("fluid.tests.ptf.ownView", {
     view: {
@@ -213,8 +213,8 @@ fluid.def("fluid.tests.ptf.ownView", {
     assert.deepEqual(fluid.def("fluid.tests.ptf.ownView").view.$component, {
         $layers: ["fluid.sfcTemplateViewComponent"],
         elideParent: false,
-        templateLayer: "fluid.tests.ptf.ownView"
-    }, "Existing view configuration patched with its $layers and templateLayer");
+        template: {sfcLayer: "fluid.tests.ptf.ownView"}
+    }, "Existing view configuration patched with its $layers and template");
 
     const counterLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.counter", fluid.tests.ptf.counterSFC);
     assert.ok(counterLoaded, "Counter SFC loaded");

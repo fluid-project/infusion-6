@@ -1,0 +1,82 @@
+{
+  "verdict": "WORKS - fit 4/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 155.977,
+      "usage": {
+        "inputTokens": 22971,
+        "outputTokens": 11178,
+        "reasoningTokens": 0
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.noteDrivenImageGenerator": "<script>\n// Combines fluflu.demos.closestNoteFinder with fluid.demos.imageGenerator: the text of the sticky note\n// closest to the widget becomes the prompt for the image search, so the widget can be dragged near a\n// note and its \"Find Image\" button pressed.\nfluid.def(\"fluid.demos.noteDrivenImageGenerator\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {\n        w: 360,\n        h: 640\n    },\n    // Reports on the note nearest to this widget's own tldraw shape - the finder's topLevelWidget-issued\n    // hostBounds cannot see our shape, so it is bound to ours\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            hostBounds: \"{noteDrivenImageGenerator}.hostBounds\"\n        }\n    },\n    generator: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\"\n        }\n    },\n    // The closest note's text becomes the image search prompt, kept in step as the widget is moved\n    syncImagePrompt: {\n        $effect: {\n            func: (state, prompt) => {\n                state.prompt = prompt;\n            },\n            args: [\"{generator}.state\", \"{finder}.closest.text\"]\n        }\n    }\n});\n</script>\n\n<template>\n    <div class=\"noteimage\">\n        <div @id=\"finder\" class=\"noteimage-finder\"></div>\n        <div @id=\"generator\" class=\"noteimage-generator\"></div>\n    </div>\n</template>\n\n<style>\n.noteimage {\n    width: 100%;\n    height: 100%;\n    box-sizing: border-box;\n    display: flex;\n    flex-direction: column;\n}\n\n.noteimage-finder {\n    flex: 0 0 auto;\n}\n\n.noteimage-generator {\n    flex: 1 1 auto;\n    min-height: 0;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:finder"
+  ],
+  "replaced": [
+    "shape:imagegen"
+  ],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:imagegen",
+      "layerName": "fluid.demos.noteDrivenImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A lighthouse at dusk"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<div id=\"fl-id-noteDrivenImageGenerator-34.finder\" class=\"notefinder\"><h3 class=\"notefinder-title\">Closest Sticky Note</h3><div class=\"notefinder-text\">A lighthouse at dusk</div><div id=\"fl-id-noteDrivenImageGenerator-34.finder.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><div id=\"fl-id-noteDrivenImageGenerator-34.generator\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"A lighthouse at dusk\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-noteDrivenImageGenerator-34.generator.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

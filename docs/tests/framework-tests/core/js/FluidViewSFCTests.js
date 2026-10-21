@@ -50,7 +50,7 @@ QUnit.test("SFC parse produces injection records", async function (assert) {
     assert.deepEqual(Object.keys(injRecs).sort(), [scriptId, styleId].sort(), "One script and one style injection record");
     assert.equal(injRecs[scriptId].variety, "script", "Script record has script variety");
     assert.equal(injRecs[styleId].variety, "style", "Style record has style variety");
-    assert.ok(injRecs[scriptId].text.includes("templateLayer"), "Script text patched with templateLayer");
+    assert.ok(injRecs[scriptId].text.includes("sfcLayer"), "Script text patched with reference to its template");
     assert.ok(injRecs[scriptId].text.includes("fluid.sfcTemplateViewComponent"), "Script text patched with template layer");
     assert.ok(fluid.templateStore[layerName], "Parsed template written to template store");
 });

@@ -1,0 +1,117 @@
+The user wants to combine two widgets: the closestNoteFinder and the imageGenerator. The result: a widget placed near a sticky note can press a button to generate an image. Based on the strategy hints, the imageGenerator is the dominant widget (it shows the result - the image), and closestNoteFinder is the supplier (it finds text of the closest note). 
+
+So I want a fresh layer that extends fluid.demos.imageGenerator with fluid.topLevelWidget, and mixes in the closestNoteFinder as a hidden subcomponent (view bound to the composition's view), wiring from the supplier's output (noteText) into the dominant's input (state.prompt). Also presumably wire the closest note text into the prompt so pressing "Find Image" generates an image from the closest note's text.
+
+The supplier: fluid.demos.closestNoteFinder, which has noteText member (its own read of closest). The dominant: fluid.demos.imageGenerator with state.prompt.
+
+The wiring: state.prompt should be... hmm, careful. If I write `state: {prompt: "{finder}.noteText"}` then the prompt becomes computed from the reference. But then the input is bound two-way to state.prompt; writing back from the DOM would attempt to write to the site which holds a reference... Writing to a member that is a reference: the write is applied to the referenced site (siting). Actually references are "sited": writing through it writes to the original site. Here, the reference would point at the finder's noteText, which is itself a reference chain to closest.text. Writing would try to write to that. That's not ideal. Hmm.
+
+The strategy hint says: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt = "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before." So per the hint, this is fine. OK, follow the hint.
+
+Also should the prompt clear when there is no closest note? The finder's noteText is a string text (never missing since it contains messages like "Not placed on a canvas"). That's fine.
+
+Let me define:
+
+```js
+fluid.def("fluid.demos.ai.closestNoteImage", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {w: 360, h: 460},
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{closestNoteImage}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+```
+
+Wait - but the composition's view reference: the view context name is the nickname of the layer, last segment: "closestNoteImage". The fresh layer name is fluid.demos.ai.closestNoteImage, nickname closestNoteImage.
+
+Also the finder as subcomponent will render into the umbrella's view. With view: "{closestNoteImage}.view" the supplier shares the dominant's view, meaning no markup. But hmm — with the closestNoteFinder having `distanceLine` subcomponent etc. Those subcomponents have views; if parent view is shared... Actually the hint says the supplier then has no view of its own, so neither it nor any of its subcomponents renders anything. That's the documented behavior in the hint. Wait, but does sharing the view mean the supplier's subcomponents also render into the same container? Hmm, the hint explicitly says "so neither it nor any of its subcomponents renders anything". OK, trust it.
+
+Hmm, but actually there's a subtlety: the dominant widget's template has @id elements for errorMessage, loadingMessage, etc. The finder's components (distanceLine) would... The hint says nothing renders. Fine, follow the hint since it's documented as the pattern.
+
+Now, the button press: The imageGenerator's button is "Find Image" with the prompt being the closest note's text. Generate on Enter or button click. Good.
+
+The user says "move it close to a sticky note and press a button" — the two canvas notes are "shape:note-fox" ("A red fox in the snow") and "shape:note-lighthouse" ("A lighthouse at dusk").
+
+Should I create a fresh widget? The user wants a single combined widget replacing the two selected ones? "Combine the functionality of the two selected widgets" — I think create one new widget combining them, and likely remove the two originals? The instruction says "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image". I'd create the combined widget; deleting originals is optional. The hint: "Construct a single fresh widget from it, and leave the widgets it was composed from in place unless the user asks for them to be replaced." The user didn't explicitly ask to replace the originals. Hmm, "combine" might imply replace. But the safest minimal move: create fresh combined widget and leave originals. Actually, leaving the two originals means visual clutter but is fine. I'll create fresh "shape:noteImage" — hmm, naming: fresh shape id, e.g. "shape:story"... let's pick something like "shape:notegen"? Use "new-1"-style: e.g. "shape:finderGen"? Let me choose "shape:notegen" or simply "new-1". Example uses "new-1". I'll use "shape:imagegen-near" or something descriptive like "shape:notefinder-image". Keep simple: "shape:noteImageGen".
+
+Position: place it near a note? The user will move it themselves ("so I can move it close to a sticky note"). Place the new widget somewhere sensible, maybe below or near the finder, or near the notes. Maybe place it beside selection at preferredSize. The finder is at (100,100) size 260x200, imagegen at (420,100) 360x460. The notes at (120,420) and (960,140). Maybe place the new combined widget near the fox note so it's demonstrably close: e.g. x=380, y=380. preferredSize is inherited from imageGenerator (360x460). I'll give a shape part: {"x": 380, "y": 380, "w": 360, "h": 460}.
+
+Also update layer: text/javascript part named fluid.demos.ai.closestNoteImage.
+
+Check the layer definitions for topLevelWidget requirement: $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"]. Good — last.
+
+Also note the finder's subcomponents include conditional distanceLine; fine.
+
+The wiring "state: {prompt: "{finder}.noteText"}" — as a member override in the umbrella layer merged at def precedence. state is a plain object from the imageGenerator layer (its state). Member overrides merge recursively: state.prompt replaced. Good.
+
+One concern: prompt bound two-way to textarea; user may edit. With prompt being a reference to finder's noteText which is sited at... noteText is "{self}.closest.text" → chain of references ultimately into closest computed's .text? closest is a $compute product; writing to it writes to original site? "A reference to a path holding mutable configuration is sited: writing through it writes to the original site." The computed product is not mutable configuration... whatever — per docs suggestion, fine.
+
+Now PTF document format. Response must be a single PTF document with:
+
+- layer part (text/javascript) defining fluid.demos.ai.closestNoteImage
+- component part nested multipart, filename "shape:noteImageGen", with potentia part for "/" with $layers ["fluid.demos.ai.closestNoteImage"], plus shape part.
+
+Should I also delete the two original shapes? User says combine so *I* can move it close to a note and press button. I think creating new widget suffices. I'll leave the originals in place per strategy hint.
+
+Boundaries: distinct, e.g. "ptf-out-1" outer, "ptf-in-1" inner.
+
+Include Content-Disposition with filename, Content-Description headers.
+
+Write the layer source:
+
+```js
+fluid.def("fluid.demos.ai.closestNoteImage", {
+    // Combines the closest-note finder (hidden) with the image generator so that pressing "Find Image"
+    // generates an image of the text of the sticky note nearest to the widget
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{closestNoteImage}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+```
+
+Wait — the context name: layer nickname "closestNoteImage". Reference inside the same layer: "{closestNoteImage}.view" refers to the component bearing that layer name. When merged into a component instance, the component's layer names are in scope. Yes — per scope rules, "A layer name or its nickname (last segment)". The fresh layer's nickname is "closestNoteImage". Good.
+
+However, note: `{closestNoteImage}.view` — the view member of the umbrella component. The finder's view member is set to that. Good.
+
+Also, the finder when given view referencing umbrella's view — the umbrella's view is a subcomponent that the umbrella's $layers don't directly define (the sfc loader added view for SFC-based imageGenerator). So view exists as subcomponent. Good.
+
+Shape placement: maybe overlapping a note? Place at x: 400, y: 380 (near fox note at 120,420). Finder bounds measure to top-left corners; place new widget at (340, 380)? Distance small but not zero (no zero-distance issue: distanceLine shows if not null, fine either way). Let's put it at x=380, y=360.
+
+Actually also maybe position w/h: preferredSize 360x460; give shape.
+
+Final document:
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-outer-1"
+
+preamble line.
+
+Part 1: layer text/javascript, filename "fluid.demos.ai.closestNoteImage", Content-Description: layer.
+
+Part 2: nested multipart boundary "ptf-inner-1", filename "shape:noteImageGen", Content-Description: component, itself multipart/mixed with boundary ptf-inner-1:
+
+- potentia part for "/" {$layers: ["fluid.demos.ai.closestNoteImage"]}
+- shape part {"x": 380, "y": 360, "w": 360, "h": 460}
+
+Close delimiters.
+
+No live parts needed.
+
+Also should the combined widget include the distance line display? The finder is hidden; fine.
+
+One thing: layer's $layers: does fluid.demos.imageGenerator list fluid.topLevelWidget as its last layer? Yes: $layers: "fluid.topLevelWidget". And we list it again as last. Hierarchy: A=[imageGenerator, topLevelWidget]; imageGenerator's $layers=["fluid.topLevelWidget"]... wait, C3 MRO consistency: our list [imageGenerator, topLevelWidget], imageGenerator inherits [topLevelWidget]. MRO linearization: imageGenerator must come before its parent; adding topLevelWidget explicitly after is consistent. Docs example: "$layers: ["fluid.demos.counter", "fluid.topLevelWidget"] for one adapting the counter" — wait that's a bit odd given counter already has topLevelWidget as the only layer. But the rule says name it explicitly at the end; example does so. Fine.
+
+Write the response as exactly the PTF document.

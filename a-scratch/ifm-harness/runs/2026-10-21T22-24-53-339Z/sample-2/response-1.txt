@@ -1,0 +1,62 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-r1q9hx4szk"
+
+--ptf-boundary-r1q9hx4szk
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.closestNoteImageGen"
+Content-Description: layer
+
+fluid.def("fluid.demos.closestNoteImageGen", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // The finder supplies the prompt - the text of the nearest sticky note. Its view is redirected to
+    // this widget's own, so it renders nothing while it keeps tracking the canvas position we share
+    closestNoteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{closestNoteImageGen}.view"
+        }
+    },
+    // The image generator's prompt follows the nearest note, staying blank while none is found
+    closestNotePrompt: {
+        $compute: {
+            func: (noteText, distance) => distance === null ? "" : noteText,
+            args: ["{closestNoteFinder}.noteText", "{closestNoteFinder}.distance"]
+        }
+    },
+    state: {
+        prompt: "{self}.closestNotePrompt"
+    }
+});
+
+--ptf-boundary-r1q9hx4szk
+Content-Type: multipart/mixed; boundary="ptf-boundary-9k2mq0vrxw"
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: component
+
+--ptf-boundary-9k2mq0vrxw
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 420, "y": 100, "w": 360, "h": 460}
+--ptf-boundary-9k2mq0vrxw
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": ["fluid.demos.closestNoteImageGen"],
+    "view": {
+        "$component": {
+            "shapeId": "shape:imagegen"
+        }
+    }
+}
+--ptf-boundary-9k2mq0vrxw--
+--ptf-boundary-r1q9hx4szk
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+--ptf-boundary-r1q9hx4szk--

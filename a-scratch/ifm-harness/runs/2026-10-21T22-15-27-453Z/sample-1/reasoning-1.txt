@@ -1,0 +1,303 @@
+The user wants to combine the two selected widgets: shape:finder (fluid.demos.closestNoteFinder) and shape:imagegen (fluid.demos.imageGenerator). They want to move the combined widget close to a sticky note and press a button to generate an image — presumably based on the closest note's text as the prompt.
+
+Looking at the strategy hints, the "dominant + supplier" pattern fits perfectly here:
+
+- The **supplier**: `fluid.demos.closestNoteFinder` — finds the closest sticky note's text and distance. It computes `closest` with `.text`.
+- The **dominant**: `fluid.demos.imageGenerator` — takes a prompt from state, generates an image.
+
+We want: move the combined widget close to a sticky note, press the button, and the image is generated for the closest note's text.
+
+So the composition: extend the dominant widget (imageGenerator), mix in closestNoteFinder as a hidden subcomponent sharing the view, and wire the finder's output text into the generator's prompt.
+
+Design:
+
+```js
+fluid.def("fluid.demos.ai.imageByClosestNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {w: 360, h: 460},  // maybe same as imagegen
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{imageByClosestNote}.view"  // hide its rendering, share bounds
+        }
+    },
+    state: {
+        prompt: "{finder}.closest.text"
+    }
+});
+```
+
+Wait — wiring details. The finder computes `closest` = {text, distance} and also `noteText: "{self}.closest.text"`. Actually we can reference `{finder}.closest.text` directly. But there is subtlety: before the finder has a closest... Looking at the finder code: if bounds exist but no notes, `closest` = {text: "No sticky notes found", distance: null}. If not placed on canvas, `closest` = {text: "Not placed on a canvas", distance: null}. Actually `closest` always yields a record when bounds is available (text with a message). Note `closest` compute: `findClosest(notes, bounds)` always returns an object. So `{finder}.closest.text` is a string always (well, when hostBounds is available). Hmm, but `closest` could be unavailable if tldrawHost.notes is unavailable... Probably fine.
+
+Then `prompt: "{finder}.closest.text"` — writes at `state` member override. The precedence: `variables`? No. Actually member-level overrides in the fresh layer are at `def` precedence, merged over the imageGenerator layer. `state: {$reactiveRoot: {...}}` in imageGenerator is a `$reactiveRoot` record — a value that replaces weaker layers wholesale. Our override `state: {prompt: ...}` — hmm, careful.
+
+In the imageGenerator layer, `state` is `{$reactiveRoot: {prompt: "", ...}}`. If our fresh layer writes `state: {prompt: "{finder}.closest.text"}`, that record has key `prompt`, not `$reactiveRoot`. Deep merging rule: "A key holding a signal record is replaced as a unit by a stronger layer's value at that key; the record is not merged into." Our fresh layer is *stronger* than imageGenerator, but does a plain object merge with a `$reactiveRoot` record? Merging is recursive for plain objects; `{$reactiveRoot: ...}` — is that a plain object? The rule says "Plain objects contributed by more than one layer merge recursively, key by key. Any other value (primitive, array, function, signal record) from a stronger layer replaces that from a weaker one wholesale." So if our stronger layer's `state` value is a plain object `{prompt: ...}` and the weaker layer's is a signal record `{$reactiveRoot: ...}`, which behavior? The merge: plain objects merge recursively; a signal record from the weaker layer... The stronger layer's value at `state` is a plain object, weaker's is `{$reactiveRoot: ...}`. I think the recursive merge would apply since the stronger value is a plain object — its key `prompt` would be added to the merged object. But then the merged `state` would be `{$reactiveRoot: {...}, prompt: "..."}` — binding prompt outside the reactive root while the reactive root also holds a prompt. That would break reactivity — the `{$reactiveRoot}` record picks up the root array/object literal at that key... Actually `$reactiveRoot` record wraps the value so that key holds the root. If the merged record became `{$reactiveRoot: {...}, prompt: "..."}`, that's malformed — "Must be the only key in its record."
+
+Hmm. Is the merge treating `$reactiveRoot` record as non-plain? The docs say signal records are objects with a single key starting with `$`. In merging, "A key holding a signal record is replaced as a unit by a stronger layer's value at that key; the record is not merged into." That means if stronger layer's value at key `state` is NOT a signal record but a plain object, does the plain object merge into the weaker signal record? The stated rule covers "signal record at key replaced by stronger value". The general rule "plain objects merge recursively" suggests that when the stronger layer has a plain object, recursive merging happens — but the weaker is a signal record. I think the safest, documented approach used in the strategy hint example:
+
+```js
+state: {
+    query: "{first}.output"
+}
+```
+
+In the hint's example, the dominant widget holds `state: {$reactiveRoot: {query: "", ...}}` and the wiring is:
+
+```js
+state: {
+    query: "{first}.foundText"
+}
+```
+
+Interesting — the hint claims this works: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before." So the framework handles plain-object `state` overriding a key inside a `$reactiveRoot` — presumably the merge descends into the reactive root's value because `{$reactiveRoot: [...]}` is treated as a plain object wrapping a root, and overrides at its value's keys take effect (perhaps as sited references that write through...). So I can trust the hint and use:
+
+```js
+state: {
+    prompt: "{finder}.closest.text"
+}
+```
+
+That sets prompt to the finder's closest note text. Should I also signal whether the note has text etc.? The imageGenerator's generate() already validates non-empty prompt.
+
+Now — the button. The flow: user moves widget close to a note, clicks "Find Image", which generates an image matching the note text (e.g. "A red fox in the snow" → Pixabay search). The prompt is automatically the closest note's text. 
+
+But wait — after the generator loads, should the prompt be overwritable? `state` may "still be written as before" per the hint. However, there's a subtlety: the reference `prompt: "{finder}.closest.text"` — once the widget is placed near a note, the prompt updates as the widget moves. Fine.
+
+One concern: the distance line of the finder shows nothing since view is shared. Actually the finder subcomponent has view pointed to the umbrella's view — meaning finder's view renders its template into... hmm. "view: '{showsResult}.view'" — the supplier shares the dominant's view: no separate container, and its sub-computations continue. Does the finder's own view subcomponent get rendered into the shared view element? The note says "The supplier then has no view of its own, so neither it nor any of its subcomponents renders anything". Hmm, but the finder layer defines `distanceLine` as a subcomponent with its own view (templateViewComponent) and it's rendered via `@id="distanceLine"` in the finder's template. If we share the umbrella's view for the finder, the finder's view IS the umbrella's view — would `@id="distanceLine"` in the finder's SFC template exist? The view subcomponent comes from fluid.sfcTemplateViewComponent with template from the SFC. Sharing the view means `{finder}.view` refers to the umbrella's view component instance? Wait, no — the wiring `view: "{imageByClosestNote}.view"` in the subcomponent's `$component` record — this overrides the finder subcomponent's `view` member to reference the umbrella's view. So finder.view is the same view instance. The finder's view subcomponent template (its own SFC template with @id="distanceLine") is not rendered since view is shared and already renders the umbrella's (imageGenerator's) template. The imageGenerator's own template won't have a `distanceLine` @id, so the finder's `distanceLine` subcomponent has no container — presumably renders nothing or is orphaned. The strategy hint says exactly this is fine.
+
+Actually, hold on: `@id="distanceLine"` in the finder's own template belongs to the finder's view structure which never gets used. The umbrella's view is from `fluid.demos.imageGenerator` (financially, via SFC template view layer) — it has its own @id placeholders (errorMessage, loadingMessage, result). The finder's subcomponents `distanceLine` expects `@id="distanceLine"` in its view's template — not present — the subcomponent just doesn't render. OK.
+
+Also should the umbrella itself perhaps be the finder as dominant and imagegen as supplier? No — the user wants to "press a button to generate an image" — the imageGenerator is dominant. And closestNoteFinder is the supplier providing the prompt text.
+
+Now, should we delete the two old widgets and create a fresh combined one? The user says "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image". The user selected both widgets. I think the intent: replace them with one combined widget. The hint says "Construct a single fresh widget from it, and leave the widgets it was composed from in place unless the user asks for them to be replaced." Hmm — "unless the user asks for them to be replaced". The user asks to "combine" them; they selected both. I'd say combining implies replacing the two with one. But careful: replacing widgets destroys them (live state lost). Their live state is minimal: finder has none, imagegen possibly none (no state in workspace doc — potentia only has $layers and view). So replacing loses nothing.
+
+Actually the examples in "How to respond" describe:
+- Applying live/potentia to existing widget in place.
+- Replacing with fresh widget constructed from nested document (when potentia for "/" is present).
+- Creating fresh widget.
+
+Plan: define a new layer `fluid.demos.ai.imageByClosestNote` as text/javascript, then:
+1. Create a fresh widget `new-1` (or some fresh id, e.g. "combined-1") with shape positioned to replace them (maybe centered where the two were, e.g. x=200, y=100, same preferredSize as imagegen).
+2. Delete shape:finder and shape:imagegen.
+
+The potentia for the fresh widget: `{"$layers": ["fluid.demos.ai.imageByClosestNote"], "view": {"$component": {"shapeId": "shape:combined"}}}` — I need to include view.shapeId so it's hosted on canvas (looking at existing potentia parts, they pass `view.$component.shapeId`). Also layerName in the shape part.
+
+Layer source (text/javascript since it's JS, not SFC):
+
+```js
+fluid.def("fluid.demos.ai.imageByClosestNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 360,
+        h: 460
+    },
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{imageByClosestNote}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.closest.text"
+    }
+});
+```
+
+Wait: `view: "{imageByClosestNote}.view"` — context name from the layer name. The hint example: `view: "{showsResult}.view"` for a fresh layer named `my.ai.showsResult`. So for `fluid.demos.ai.imageByClosestNote`, nickname is `${demos}`? No — nickname is the last segment: `imageByClosestNote`. Hmm, wait — context names use layer name or nickname (last segment). "A layer name or its nickname (last segment), e.g. {my.app.panel} or {panel}". So `{imageByClosestNote}` refers to a component bearing that layer, in scope. But careful: the finder subcomponent within our component — would `{imageByClosestNote}` resolve to the root component (itself, bearing that layer)? Scope search starts at the referring component (the finder subcomponent), then its own names, then its direct children's, then parent's... The parent is our component which bears fluid.demos.ai.imageByClosestNote. Its member name? The new widget's member name would be its shape id-ish? When created from JS/creator, the root component... The potentia names view shapeId. Hmm, root component member name might be undefined. But bearing layer `fluid.demos.ai.imageByClosestNote` — in scope found at parent level. Good — matches the hint's pattern exactly.
+
+But hold on: within the finder subcomponent, `{imageByClosestNote}` — when finder looks in scope, it first checks its own names (finder bears fluid.demos.closestNoteFinder) then children's, then up to our component which bears fluid.demos.ai.imageByClosestNote. Good.
+
+Alternatively use `{self}.parent`? Not documented. Use the hint pattern.
+
+One more consideration: `state.prompt` — wiring as `prompt: "{finder}.closest.text"`. But finder's `closest` is a compute: `{tldrawHost}.notes` and `{self}.hostBounds`. If the widget is placed (hostBounds present) there's always a record. `closest.text` then is text of closest note, or "No sticky notes found"/"Not placed on a canvas". Hmm — in the "not placed" case prompt would become that message; but for a widget on the canvas it's "No sticky notes found" until notes appear. That's acceptable and even informative. Clicking the button with prompt "No sticky notes found" would search that... Mildly imperfect but consistent with the port's behavior. Actually should I wire only the text, and let generate() run? The user's ask: "move it close to a sticky note and press a button to generate an image" — with closest-note text as prompt. So yes.
+
+Alternative wiring: `prompt: "{finder}.noteText"` — noteText is itself `{self}.closest.text` — same thing, more readable. I'll use `{finder}.noteText`.
+
+Hmm, wait — one more subtlety for the `state` override pattern: the hint says the member "takes the referenced value whenever that changes, and may still be written as before". There might be a concern that since prompt is a reference into the reactive root's prompt key, the bound input `value="@{state.prompt}"` remains editable. OK.
+
+Also the keyDown handler and disabled logic all work unchanged.
+
+Now the state write-back: `value="@{state.prompt}"` on the input is a two-way binding to `state.prompt`. If a user typed in the prompt, it writes to the live layer at state.prompt — but our layer already defines `state.prompt` as a reference. Which wins? Live layer (highest precedence). The SFC binding writes via component proxy into the live layer. Hmm, then would the reference update? The live layer at state.prompt would hold... the typed string? Possibly creating conflict. But again the hint explicitly presents this pattern as fine ("may still be written as before"). Actually let me think — when the write-back writes `state.prompt = "typed text"`, it writes at path state.prompt in the live layer. Does that shadow the def? Live beats def. But then prompt wouldn't track the finder anymore. That's standard config-override behavior; acceptable. Not going to over-engineer.
+
+Position: place the combined widget near where the user's widgets were. The two selected: finder at (100,100), imagegen at (420,100). I'll place combined at maybe (260, 100) with size 360x460 (imagegen's preferredSize). Or center it: x=160, y=100? The old finder spans 100–360, imagegen spans 420–780. Gap between 360 and 420. Place at x=190, y=100? Eh, put it where the imagegen was: x=420, y=100, w=360, h=460. That keeps canvas tidy. Hmm, or center across both: (100 + 780)/2 - 180 = 250. I'll do x=250, y=100. w=360 h=460.
+
+The shape part in nested doc: `{"layerName": "fluid.demos.ai.imageByClosestNote", "x": 250, "y": 100}`.
+
+Potentia must include the view shapeId wiring like existing widgets: 
+```json
+{
+    "$layers": ["fluid.demos.ai.imageByClosestNote"],
+    "view": {"$component": {"shapeId": "shape:combined-1"}}
+}
+```
+
+Note the rule: "Every widget you synthesize must apply fluid.topLevelWidget at its top level" — yes, in the layer's $layers as last: `["fluid.demos.imageGenerator", "fluid.topLevelWidget"]`. And the fresh widget's potentia $layers names the new layer.
+
+Delete parts for shape:finder and shape:imagegen.
+
+Layer part: text/javascript, filename `fluid.demos.ai.imageByClosestNote`.
+
+Let me write the layer JS:
+
+```js
+fluid.def("fluid.demos.ai.imageByClosestNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 360,
+        h: 460
+    },
+    // The closest sticky note supplies the prompt for the image searched by the dominant widget above.
+    // The finder shares this widget's view and so neither renders itself, but its computation of the closest
+    // note carries on, including updates as this widget moves close to a sticky note.
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{imageByClosestNote}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+```
+
+Hmm — one issue: `view: "{imageByClosestNote}.view"` — resolving member `view` of the root component. The finder subcomponent's `view` record overrides the view layer that fluid.demos.closestNoteFinder's SFC... Actually closestNoteFinder is an SFC: its loader adds a `view` subcomponent with sfcTemplateViewComponent. Our override `view: "{imageByClosestNote}.view"` in the subcomponent layer replaces it at def precedence (subcomponent precedence > def). Good — the finder's view points at the umbrella's view instance, so no extra rendering; the fusion works as in the hint.
+
+Wait, but do I need `view: "{imageByClosestNote}.view"` or does the finder subcomponent's view matter at all if I simply don't override it? If I don't override, the finder renders its own SFC template into... its container. Since finder is created inside the umbrella root component (a top-level widget), its view needs a container. The umbrella's template (imageGenerator's) has no @id="finder", so the finder's view might not render anywhere — which also achieves hiding. But the hint says the pattern uses shared view and importantly notes: "all of its computation continues - including any which depends on where the widget is placed, since it shares the bounds of the fresh widget's shape." That's the key point! The finder binds `hostBounds` via `{self}.hostBounds` — hostBounds of its own shape. If the finder is a plain subcomponent (not hosted), `hostBounds` is null → "Not placed on a canvas", and proximity tracking fails. By sharing the root's view (same view component + same shapeId), the finder sees the widget's bounds. Actually wait — hostBounds comes from fluid.topLevelWidget receiving from tldraw view... The finder subcomponent, even being a subcomponent of the root, — hostBounds is a member presumably set by the tldraw integration for the hosted component. Hmm, how does hostBounds get in? The potentia passes view.$component.shapeId... presumably fluid.topLevelWidget wires shapeId → tldraw and provides hostBounds to the root component. Does a nested subcomponent also get hostBounds? Probably the integration sets `hostBounds` at the top level only. The hint says with shared view "it shares the bounds of the fresh widget's shape" — implying that merely being a subcomponent would NOT share bounds, but sharing the view does. So use `view: "{imageByClosestNote}.view"`. 
+
+Hmm, actually wait. Let me reconsider: maybe the umbrella root's hostBounds is its own member; the finder's `{self}.hostBounds` would look up its own member `hostBounds`... it's a subcomponent of root; scope lookup: finder's own names → not found → children → parent root: root has hostBounds member! Member names are in scope: "A member name beats a layer name at the same level." So `{self}.hostBounds` from finder — a reference of form `{self}.hostBounds` — resolves `self.hostBounds`: the finder component's own member. Does scope fall back? `{self}.hostBounds` is self-referential, not a bare context name. It resolves self.hostBounds directly — the finder's hostBounds member, which exists if inherited from fluid.topLevelWidget... The finder is NOT a topLevelWidget; it's `fluid.demos.closestNoteFinder` whose $layers is "fluid.topLevelWidget" actually! Look: fluid.demos.closestNoteFinder has `$layers: "fluid.topLevelWidget"` as its own top level. But when used as a subcomponent (`$component: {$layers: "fluid.demos.closestNoteFinder"}`), it becomes a component whose layers include topLevelWidget — hmm, that means hostBounds etc. For a subcomponent the host/tldraw wiring: the shared view with shapeId makes the finder's view the same as root's. If finder retained its own view (from SFC), its view would need its own container/shapeId — unavailable, so it can't render; plus bounds: topLevelWidget's bound sync is per shape instance... With shared view the finder's view IS root's view, whose coordinates are the widget's bounds. Does the finder then receive hostBounds? We don't actually need finder.hostBounds to be the same as root's if hostBounds syncs to the finder component from... hmm.
+
+Careful: In the finder layer, `closest: "$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.notes, {self}.hostBounds)"` inside the finder subcomponent — `{tldrawHost}.notes` resolves via scope from root probably, `{self}.hostBounds` — self. If the shared-view wiring makes the finder's `view` member be the root's view component, does the finder's `hostBounds` member exist? topLevelWidget likely defines hostBounds as a member and wires it from the view: probably `hostBounds: "{self}.view.hostBounds"` or similar. If the finder's view is shared → finder.hostBounds = view.hostBounds = the widget bounds. That yields correct per-shape coordinates. If instead the finder kept its own (unrendered) view, hostBounds would be null/unavailable → "Not placed on a canvas" forever. So the shared-view wiring is essential, exactly as the hint says. 
+
+Also `view: "{imageByClosestNote}.view"` — but could the finder reach it simply as `{imageByClosestNote}`? The layer name fluid.demos.ai.imageByClosestNote — could use nickname. Fine as written.
+
+Should I also worry that the finder's `hostBounds` isn't available because... When finder's view is replaced by the shared view, topLevelWidget's wiring of hostBounds (if any, e.g. an effect listening to view signals) still exists for the finder's own `view` member — which now IS root's view. OK good.
+
+One more: the finder computes `noteText: "{self}.closest.text"` = note text. Our prompt wiring: `state.prompt: "{finder}.noteText"`.
+
+Now potential weirdness: prompt becomes "No sticky notes found" if there are no notes; button would search that string on Pixabay → likely finds something funny or nothing. Could disable the button when no notes. There's `cannotGenerate = isGenerating || !prompt.trim()`. Could add to the umbrella: override `cannotGenerate` with a compute that also excludes prompts that are the placeholder messages? That's more code and less faithful. Keep it simple and minimal: the hint's 3-ingredient pattern. I'll keep it minimal. Actually, maybe wire distances too — display the note text preview? The dominant imageGenerator's UI shows an input with the prompt — which will visibly display the closest note's text. That's exactly good UX: move near note, see prompt change, press button.
+
+Also should I preserve imagegen live state? The workspace doc's imagegen component part has no live part → no user changes. Fine.
+
+Potentia of the fresh widget — the new widget is fresh, must contain potentia "/" with $layers. Compose:
+
+Outer document:
+- layer part (text/javascript)
+- component part for new widget `shape:imageByNote` (fresh filename; choose e.g. "shape:imagebyclosestnote"? "choose any fresh name, e.g. 'new-1'"). Shape ids in canvas data: "shape:finder" etc. Filenames in component parts use "shape:finder". I'll use `shape:imagebyclosestnote`? Simpler: "new-1"? Existing names use shape:*. I'll use "shape:image-by-note" — but the shape part includes `layerName` and geometry. Also nested potentia view shapeId wiring with the same id.
+- delete parts for shape:finder and shape:imagegen.
+
+Shape position/size: x: 250, y: 100, and include w/h via preferredSize anyway; but shape part may omit w/h (falls back to preferredSize). I'll include x,y only — keep w/h default from preferredSize (360x460).
+
+Now write the document. Multipart boundaries: outer-1, inner-1 (new component nested document).
+
+Layer JavaScript content — must be careful: plain JS. Names: give distinctive name "fluid.demos.ai.imageByClosestNote" (hint suggests fluid.demos.ai.* prefix). Good.
+
+Let me double check the PTF structure rules for nested component documents: every part within nested has Content-Type, Content-Disposition (filename), Content-Description headers. The nested multipart itself has Content-Disposition (filename = shape id) and Content-Description: component — per the examples, yes.
+
+Also `delete` parts: Content-Type... need a content type for delete, e.g. text/plain; empty body. Filename = shape id, Content-Description: delete.
+
+Final document:
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-1"
+
+--outer-1
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.imageByClosestNote"
+Content-Description: layer
+
+fluid.def("fluid.demos.ai.imageByClosestNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 360,
+        h: 460
+    },
+    // The closest sticky note supplies the prompt for the image the dominant widget above searches for.
+    // The finder shares the root view - so neither it nor its descendants render - but its computation of the
+    // closest note carries on, tracking the widget's bounds and every note on the canvas.
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{imageByClosestNote}.view"
+        }
+    },
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+--outer-1
+Content-Type: multipart/mixed; boundary="inner-1"
+Content-Disposition: attachment; filename="shape:imageByClosestNote"
+Content-Description: component
+
+--inner-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.imageByClosestNote"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:imageByClosestNote"
+        }
+    }
+}
+--inner-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"layerName": "fluid.demos.ai.imageByClosestNote", "x": 250, "y": 100}
+--inner-1--
+--outer-1
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+--outer-1
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+
+--outer-1--
+```
+
+Wait — can a shape part live inside a fresh widget's nested document and include layerName? Yes, from workspace doc example: `{"layerName": "fluid.demos.closestNoteFinder", "x": 100, ...}`.
+
+Also need to consider: should the old widgets remain? The hint: "Construct a single fresh widget from it, and leave the widgets it was composed from in place unless the user asks for them to be replaced." The user says "Combine the functionality of the two selected widgets so I can move it close to a sticky note..." — singular "it" (one widget). I believe the user wants one combined widget instead of the two. Deleting them both and creating the composite is the faithful interpretation of "combine ... so I can move it [the single widget]". I'll do that. The two widgets have no user state to preserve.
+
+One more check on the framework rule for the deletion IDs: `shape:finder` and `shape:imagegen`.
+
+Also the danger: the fresh layer overrides `state` — merging `{$reactiveRoot: {prompt, isGenerating, error, images, index, refreshedId}}` with `{prompt: ref}`. Per the hint, this works. But my `state` override merges only `prompt`. According to IL merging rules for objects, recursive merge applies; the hint explicitly blesses `state: {query: "{first}.query"}` — same. 
+
+One risk: does overriding `prompt` inside `$reactiveRoot` work, given `$reactiveRoot` is a signal record and should be "replaced as a unit"? The hint says yes for this pattern. Trust it.
+
+Also note that with the prompt reference wired, if the user types into the input, their keystrokes write through to live layer... whatever; acceptable.
+
+Another check: limit on `preferredSize` in layer — imageGenerator already has preferredSize 360x460 inherited. Adding again is harmless; keep for explicitness? It's redundant — minimize. But it doesn't hurt; the strategy says shep minimal change though. I'll drop preferredSize since inherited. Actually keep the layer minimal:
+
+```js
+fluid.def("fluid.demos.ai.imageByClosestNote", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    finder: {...},
+    state: {prompt: "{finder}.noteText"}
+});
+```
+
+I'll add comments for clarity.
+
+Also, hmm: should the combined widget be created before deletions in doc order — irrelevant.
+
+Potential subtlety — `{imageByClosestNote}.view` resolution at the time the finder subcomponent merges: scope search from finder: own names → members? The finder subcomponent is member `finder` bearing layer fluid.demos.closestNoteFinder (nickname closestNoteFinder). Then direct children of finder. Then parent (root) names: root bears fluid.demos.ai.imageByClosestNote → nickname imageByClosestNote matches → found. Then `.view` member: view subcomponent. 
+
+Edge: lookup of `{imageByClosestNote}` also possibly matches the umbrella itself — yes that's what we want.
+
+Also: is `fluid.topLevelWidget` required for finder as subcomponent? The finder layer itself has `$layers: "fluid.topLevelWidget"` inherited through `$layers: "fluid.demos.closestNoteFinder"` → chain: finder → topLevelWidget → ... As a subcomponent it will carry topLevelWidget behaviors (like hostBounds wiring). Hmm — could that cause the finder's own view wiring to create extra hosting? The finder's view is overridden to the root's view; its shapeId wiring... topLevelWidget might install effects per component instance requiring view/shapedcontainers. If the finder had its own container-less view... messy but presumably manifestable. The hint's own example uses "my.textFinder" as supplier without discussion of it being topLevelWidget, and workspace examples mirror the pattern with real widgets (storyTime embeds fluid.demos.storySegment and fluid.demos.storyImageGen subcomponents). I'll trust the pattern.
+
+The widget placement: I'll place at x=250 (middle of gap between old widgets) y=100. Good.
+
+Everything checks. The response must be ONLY the PTF document (no surrounding text), beginning with `MIME-Version: 1.0`.

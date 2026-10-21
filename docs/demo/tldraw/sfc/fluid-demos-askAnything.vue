@@ -189,8 +189,9 @@ fluid.demos.askAnything.addEntry = function (state, entry) {
  * @property {Number} startedAt - When the request was sent, in milliseconds since the epoch
  * @property {Number|null} finishedAt - When the reply was received or the request failed, or `null` whilst it is pending
  * @property {Number} inputTokens - The number of tokens sent
- * @property {Number} cachedTokens - The number of the tokens sent which lie in the prefix of the prompt common to every
- * request, and so are assumed to be cached by the endpoint - see fluid.tldraw.ai.cachedTokens
+ * @property {Number} cachedTokens - The number of the tokens sent which the endpoint served from its cache, as it
+ * reported, or else those which lie in the prefix of the prompt common to every request, and so are assumed to be
+ * cached by the endpoint - see fluid.tldraw.ai.cachedTokens
  * @property {Number|null} outputTokens - The number of tokens received, or `null` whilst the request is pending
  * @property {Number|null} reasoningTokens - The number of the tokens received which were spent on reasoning, if reported
  * @property {Boolean} estimated - `true` if the numbers of tokens are estimated, since the endpoint did not report them
@@ -232,7 +233,7 @@ fluid.demos.askAnything.measureCall = async function (state, messages, invoke) {
         const usage = reply.usage;
         complete({
             inputTokens: usage ? usage.inputTokens : state.entries[index].inputTokens,
-            cachedTokens: fluid.tldraw.ai.cachedTokens(messages, usage?.inputTokens),
+            cachedTokens: usage?.cachedTokens ?? fluid.tldraw.ai.cachedTokens(messages, usage?.inputTokens),
             outputTokens: usage ? usage.outputTokens : fluid.tldraw.ai.estimateTokens([reply.content, reply.reasoning]),
             reasoningTokens: usage?.reasoningTokens ?? null,
             estimated: !usage,

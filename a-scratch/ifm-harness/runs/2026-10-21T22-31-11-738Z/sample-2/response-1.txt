@@ -1,0 +1,46 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteimg1"
+
+--ptf-boundary-noteimg1
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.closestNoteImageGen"
+Content-Description: layer
+
+fluid.def("fluid.demos.ai.closestNoteImageGen", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // Hidden supplier: finds the sticky note closest to this widget and reports its text. Its view is this
+    // widget's own view, so neither it nor its distance line renders anything, but its computation - which
+    // depends on the shape's bounds - all runs.
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{closestNoteImageGen}.view"
+        }
+    },
+    // The closest note's text becomes the image search prompt. Typing in the input still works as before.
+    state: {
+        prompt: "{finder}.noteText"
+    }
+});
+--ptf-boundary-noteimg1
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteimg2"
+Content-Disposition: attachment; filename="shape:noteimagegen"
+Content-Description: component
+
+--ptf-boundary-noteimg2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": ["fluid.demos.ai.closestNoteImageGen"]
+}
+--ptf-boundary-noteimg2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 800, "y": 100, "w": 360, "h": 460}
+--ptf-boundary-noteimg2--
+--ptf-boundary-noteimg1--

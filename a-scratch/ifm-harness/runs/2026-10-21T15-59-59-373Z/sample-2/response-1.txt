@@ -1,0 +1,101 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-9zxwqv4jrt"
+
+--ptf-boundary-9zxwqv4jrt
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteDrivenImageGenerator"
+Content-Description: layer
+
+<script>
+// Combines fluflu.demos.closestNoteFinder with fluid.demos.imageGenerator: the text of the sticky note
+// closest to the widget becomes the prompt for the image search, so the widget can be dragged near a
+// note and its "Find Image" button pressed.
+fluid.def("fluid.demos.noteDrivenImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 360,
+        h: 640
+    },
+    // Reports on the note nearest to this widget's own tldraw shape - the finder's topLevelWidget-issued
+    // hostBounds cannot see our shape, so it is bound to ours
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            hostBounds: "{noteDrivenImageGenerator}.hostBounds"
+        }
+    },
+    generator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator"
+        }
+    },
+    // The closest note's text becomes the image search prompt, kept in step as the widget is moved
+    syncImagePrompt: {
+        $effect: {
+            func: (state, prompt) => {
+                state.prompt = prompt;
+            },
+            args: ["{generator}.state", "{finder}.closest.text"]
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="noteimage">
+        <div @id="finder" class="noteimage-finder"></div>
+        <div @id="generator" class="noteimage-generator"></div>
+    </div>
+</template>
+
+<style>
+.noteimage {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+
+.noteimage-finder {
+    flex: 0 0 auto;
+}
+
+.noteimage-generator {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+</style>
+--ptf-boundary-9zxwqv4jrt
+Content-Type: multipart/mixed; boundary="ptf-boundary-3kf8hqn0mb"
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: component
+
+--ptf-boundary-3kf8hqn0mb
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteDrivenImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:imagegen"
+        }
+    }
+}
+--ptf-boundary-3kf8hqn0mb
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 420, "y": 100, "w": 360, "h": 640}
+--ptf-boundary-3kf8hqn0mb--
+--ptf-boundary-9zxwqv4jrt
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+--ptf-boundary-9zxwqv4jrt--

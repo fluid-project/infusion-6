@@ -1,0 +1,78 @@
+{
+  "verdict": "WORKS - fit 4/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 373.543,
+      "usage": {
+        "inputTokens": 22974,
+        "outputTokens": 26570,
+        "reasoningTokens": 0
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.noteImageGenerator": "<script>\n// Composition of the closest-note finder and the Pixabay image generator. The finder's closest-note machinery is\n// inherited at `{self}.closest`, the generator's search machinery at `{self}.state`; a button joins them, seeding\n// the prompt with the closest sticky note's text and starting the search when pressed.\n\nfluid.def(\"fluid.demos.noteImageGenerator\", {\n    $layers: [\"fluid.demos.closestNoteFinder\", \"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    preferredSize: {\n        w: 420,\n        h: 680\n    },\n    // Invoked by the button: take the closest note's text as the prompt and start the search\n    generateFromNote: {\n        $method: {\n            func: \"fluid.demos.noteImageGenerator.generateFromNote\",\n            args: [\"{self}.closest\", \"{self}.state\"]\n        }\n    }\n});\n\n/**\n * Seed the image generator's prompt with the closest sticky note's text and start searching for it\n * @param {ClosestNoteRec} closest - Description of the closest sticky note, or an unavailable value\n * @param {Object} state - The component's reactive generator state\n * @return {Promise|undefined} The search promise once it has started\n */\nfluid.demos.noteImageGenerator.generateFromNote = function (closest, state) {\n    if (closest && closest.distance !== null) {\n        state.prompt = closest.text;\n        return fluid.demos.imageGenerator.generate(state);\n    }\n    state.error = \"Move the widget next to a sticky note to use its words as a prompt\";\n    state.images = [];\n    state.index = 0;\n    state.isGenerating = false;\n};\n</script>\n\n<template>\n    <div class=\"note-imagegen\">\n        <div class=\"note-imagegen-finder\">\n            <h3 class=\"note-imagegen-title\">Closest Sticky Note</h3>\n            <div class=\"note-imagegen-text\">@{noteText}</div>\n            <div @id=\"distanceLine\"></div>\n        </div>\n        <div class=\"note-imagegen-divider\"></div>\n        <div class=\"note-imagegen-generator\">\n            <p class=\"note-imagegen-prompt\">Prompt: “@{state.prompt}”</p>\n            <div class=\"note-imagegen-buttons\">\n                <button class=\"note-imagegen-button\" disabled=\"@{isGenerating}\"\n                        @onclick=\"{self}.generateFromNote()\">Image from this note</button>\n                <button class=\"note-imagegen-button note-imagegen-another\" disabled=\"@{cannotShowAnother}\"\n                        @onclick=\"{self}.showAnother()\">Another</button>\n            </div>\n            <div @id=\"errorMessage\"></div>\n            <div @id=\"loadingMessage\"></div>\n            <div @id=\"result\"></div>\n        </div>\n    </div>\n</template>\n\n<style>\n.note-imagegen {\n    width: 100%;\n    height: 100%;\n    box-sizing: border-box;\n    display: flex;\n    flex-direction: column;\n    padding: 16px;\n    background-color: #fffde7;\n    font-family: sans-serif;\n    overflow: hidden;\n}\n\n.note-imagegen-finder {\n    flex: 0 0 auto;\n}\n\n.note-imagegen-title {\n    margin: 0 0 12px 0;\n    font-size: 14px;\n    color: #666;\n}\n\n.note-imagegen-text {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    font-size: 18px;\n    font-weight: bold;\n    color: #333;\n    text-align: center;\n    min-height: 52px;\n}\n\n.note-imagegen-divider {\n    height: 1px;\n    background: #e3ddb0;\n    margin: 16px 0;\n}\n\n.note-imagegen-generator {\n    flex: 1 1 auto;\n    min-height: 0;\n    display: flex;\n    flex-direction: column;\n    background-color: #f5f5f5;\n    padding: 16px;\n    box-sizing: border-box;\n    border-radius: 6px;\n}\n\n.note-imagegen-prompt {\n    margin: 0 0 12px 0;\n    font-size: 13px;\n    color: #555;\n}\n\n.note-imagegen-buttons {\n    display: flex;\n    gap: 10px;\n    margin-bottom: 12px;\n}\n\n.note-imagegen-button {\n    flex: 1 1 auto;\n    padding: 10px 12px;\n    font-size: 14px;\n    font-weight: 500;\n    font-family: inherit;\n    color: #fff;\n    border: none;\n    border-radius: 4px;\n    background-color: #4a90d9;\n    cursor: pointer;\n}\n\n.note-imagegen-button:disabled {\n    background-color: #aaa;\n    cursor: not-allowed;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:imagegen"
+  ],
+  "replaced": [
+    "shape:finder"
+  ],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:finder",
+      "layerName": "fluid.demos.noteImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": true,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": false,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [],
+          "buttons": [
+            "Image from this note",
+            "Another"
+          ],
+          "pressed": "Image from this note",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [],
+          "buttons": [
+            "Image from this note",
+            "Another"
+          ],
+          "pressed": "Image from this note",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<div class=\"note-imagegen-finder\"><h3 class=\"note-imagegen-title\">Closest Sticky Note</h3><div class=\"note-imagegen-text\">A lighthouse at dusk</div><div id=\"fl-id-noteImageGenerator-34.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><div class=\"note-imagegen-divider\"></div><div class=\"note-imagegen-generator\"><p class=\"note-imagegen-prompt\">Prompt: “A lighthouse at dusk”</p><div class=\"note-imagegen-buttons\"><button class=\"note-imagegen-button\">Image from this note</button><button disabled class=\"note-imagegen-button note-imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-noteImageGenerator-34.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

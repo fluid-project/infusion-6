@@ -1,0 +1,777 @@
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidCore.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidSignals.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/Fluid.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidModules.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidIL.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidView.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidPTF.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/FluidView-node.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/lib/lezer/lezer-javascript-browser.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/sfc-parser.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/template-parser.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/tests/lib/qunit/js/qunit.js
+fluid.loadInContext loading path /mnt/outer-source/gits/fluid-infusion-6/tests/test-core/qunit/js/qunit-fluid.js
+QUnit.load is deprecated and will be removed in QUnit 3.0. https://qunitjs.com/api/QUnit/load/
+23:38:39.526:   fq:  Running HTML test driver /mnt/outer-source/gits/fluid-infusion-6/a-scratch/ifm-harness/ifm-harness.html
+Allocated instanceId 0 at site globalDismissal-11
+Disposing unallocated effects for path globalDismissal-11 at end of computeInstance
+Allocated instanceId 0 at site globalDismissal-11.view
+Disposing unallocated effects for path globalDismissal-11.view at end of computeInstance
+sfcToInjRecs for layer  fluid.demos.counter
+Parsed defMaps  {
+  'fluid.demos.counter': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    count: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    increment: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 34, to: 345 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.counter': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    count: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    increment: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 34, to: 419 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.counter': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    count: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    increment: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 34, to: 468 }
+  }
+}
+Injections for fluid.demos.counter committed
+sfcToInjRecs for layer  fluid.demos.helloWorld
+Parsed defMaps  {
+  'fluid.demos.helloWorld': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    [Symbol(fluid.metadata)]: { from: 37, to: 76 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.helloWorld': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 37, to: 153 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.helloWorld': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 37, to: 202 }
+  }
+}
+Injections for fluid.demos.helloWorld committed
+sfcToInjRecs for layer  fluid.demos.imageGenerator
+Parsed defMaps  {
+  'fluid.demos.imageGenerator': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    isGenerating: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    error: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    image: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    cannotGenerate: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    cannotShowAnother: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    buttonLabel: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    errorMessage: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    loadingMessage: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    result: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    keyDown: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    generate: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    showAnother: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    refresh: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 430, to: 3966 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.imageGenerator': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    isGenerating: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    error: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    image: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    cannotGenerate: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    cannotShowAnother: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    buttonLabel: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    errorMessage: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    loadingMessage: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    result: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    keyDown: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    generate: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    showAnother: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    refresh: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 430, to: 4047 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.imageGenerator': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    isGenerating: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    error: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    image: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    cannotGenerate: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    cannotShowAnother: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    buttonLabel: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    errorMessage: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    loadingMessage: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    result: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    keyDown: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    generate: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    showAnother: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    refresh: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 430, to: 4096 }
+  }
+}
+Injections for fluid.demos.imageGenerator committed
+sfcToInjRecs for layer  fluid.demos.closestNoteFinder
+Parsed defMaps  {
+  'fluid.demos.closestNoteFinder': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    closest: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    noteText: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    distance: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    distanceLine: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 105, to: 1284 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.closestNoteFinder': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    closest: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    noteText: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    distance: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    distanceLine: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 105, to: 1368 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.closestNoteFinder': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    closest: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    noteText: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    distance: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    distanceLine: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 105, to: 1417 }
+  }
+}
+Injections for fluid.demos.closestNoteFinder committed
+sfcToInjRecs for layer  fluid.demos.storyTime
+Parsed defMaps  {
+  'fluid.demos.storyTime': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    text: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    analysis: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    smiley: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    totalCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    longCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    goodCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    hasLong: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    allShort: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    segments: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    segmentList: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    imageGen: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 91, to: 1434 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.storyTime': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    text: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    analysis: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    smiley: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    totalCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    longCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    goodCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    hasLong: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    allShort: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    segments: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    segmentList: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    imageGen: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 91, to: 1510 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.storyTime': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    state: [Object: null prototype] {
+      '$reactiveRoot': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    text: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    analysis: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    smiley: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    totalCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    longCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    goodCount: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    hasLong: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    allShort: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    segments: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    segmentList: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    imageGen: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 91, to: 1559 }
+  }
+}
+Injections for fluid.demos.storyTime committed
+sfcToInjRecs for layer  fluid.demos.storySegment
+Parsed defMaps  {
+  'fluid.demos.storySegment': [Object: null prototype] {
+    segment: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    [Symbol(fluid.metadata)]: { from: 136, to: 190 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.storySegment': [Object: null prototype] {
+    segment: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 136, to: 269 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.storySegment': [Object: null prototype] {
+    segment: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 136, to: 318 }
+  }
+}
+Injections for fluid.demos.storySegment committed
+sfcToInjRecs for layer  fluid.demos.storyImageGen
+Parsed defMaps  {
+  'fluid.demos.storyImageGen': [Object: null prototype] {
+    state: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    isGenerating: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    imageError: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    buttonLabel: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    error: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    keyDown: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    generate: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 146, to: 1283 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.storyImageGen': [Object: null prototype] {
+    state: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    isGenerating: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    imageError: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    buttonLabel: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    error: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    keyDown: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    generate: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 146, to: 1363 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.storyImageGen': [Object: null prototype] {
+    state: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    isGenerating: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    imageError: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    buttonLabel: [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    error: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    keyDown: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    generate: [Object: null prototype] {
+      '$method': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 146, to: 1412 }
+  }
+}
+Injections for fluid.demos.storyImageGen committed
+Allocated instanceId 0 at site tldrawHost-13
+Disposing unallocated effects for path tldrawHost-13 at end of computeInstance
+Allocated instanceId 0 at site closestNoteFinder-15
+Disposing unallocated effects for path closestNoteFinder-15 at end of computeInstance
+Allocated instanceId 0 at site imageGenerator-16
+Disposing unallocated effects for path imageGenerator-16 at end of computeInstance
+Allocated instanceId 1 at site tldrawHost-13
+Disposing unallocated effects for path tldrawHost-13 at end of computeInstance
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteFinder
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteFinder at end of computeInstance
+Allocated instanceId 0 at site closestNoteFinder-15.view
+Disposing unallocated effects for path closestNoteFinder-15.view at end of computeInstance
+Disposing old templateEffects for closestNoteFinder-15
+Allocated instanceId 0 at site avatars.fluid\.demos\.imageGenerator
+Disposing unallocated effects for path avatars.fluid\.demos\.imageGenerator at end of computeInstance
+Allocated instanceId 0 at site imageGenerator-16.view
+Disposing unallocated effects for path imageGenerator-16.view at end of computeInstance
+Disposing old templateEffects for imageGenerator-16
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteFinder.view
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteFinder.view at end of computeInstance
+Allocated instanceId 1 at site closestNoteFinder-15.view
+Disposing unallocated effects for path closestNoteFinder-15.view at end of computeInstance
+Allocated instanceId 0 at site closestNoteFinder-15.distanceLine
+Disposing unallocated effects for path closestNoteFinder-15.distanceLine at end of computeInstance
+renderView beginning for closestNoteFinder-15.view with vTree 1 container  1
+Allocated instanceId 0 at site avatars.fluid\.demos\.imageGenerator.view
+Disposing unallocated effects for path avatars.fluid\.demos\.imageGenerator.view at end of computeInstance
+Allocated instanceId 0 at site imageGenerator-16.errorMessage
+Disposing unallocated effects for path imageGenerator-16.errorMessage at end of computeInstance
+Allocated instanceId 0 at site imageGenerator-16.loadingMessage
+Disposing unallocated effects for path imageGenerator-16.loadingMessage at end of computeInstance
+Allocated instanceId 0 at site imageGenerator-16.result
+Disposing unallocated effects for path imageGenerator-16.result at end of computeInstance
+Allocated instanceId 1 at site imageGenerator-16.view
+Disposing unallocated effects for path imageGenerator-16.view at end of computeInstance
+renderView beginning for imageGenerator-16.view with vTree 7 container  2
+Allocated instanceId 1 at site closestNoteFinder-15.distanceLine
+Disposing unallocated effects for path closestNoteFinder-15.distanceLine at end of computeInstance
+Allocated instanceId 0 at site closestNoteFinder-15.distanceLine.view
+Disposing unallocated effects for path closestNoteFinder-15.distanceLine.view at end of computeInstance
+Disposing old templateEffects for closestNoteFinder-15.distanceLine
+Allocated instanceId 0 at site imageGenerator-16.errorMessage.view
+Disposing unallocated effects for path imageGenerator-16.errorMessage.view at end of computeInstance
+Disposing old templateEffects for imageGenerator-16.errorMessage
+Allocated instanceId 0 at site imageGenerator-16.loadingMessage.view
+Disposing unallocated effects for path imageGenerator-16.loadingMessage.view at end of computeInstance
+Disposing old templateEffects for imageGenerator-16.loadingMessage
+Allocated instanceId 0 at site imageGenerator-16.result.view
+Disposing unallocated effects for path imageGenerator-16.result.view at end of computeInstance
+Disposing old templateEffects for imageGenerator-16.result
+renderView beginning for closestNoteFinder-15.distanceLine.view with vTree 19 container  6
+renderView beginning for imageGenerator-16.errorMessage.view with vTree 21 container  7
+renderView beginning for imageGenerator-16.loadingMessage.view with vTree 22 container  8
+renderView beginning for imageGenerator-16.result.view with vTree 23 container  9
+sfcToInjRecs for layer  fluid.demos.closestNoteImageGen
+Parsed defMaps  {
+  'fluid.demos.closestNoteImageGen': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    noteFinder: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    imageGenerator: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 333, to: 973 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.closestNoteImageGen': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    noteFinder: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    imageGenerator: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 333, to: 1059 }
+  }
+}
+Parsed defMaps  {
+  'fluid.demos.closestNoteImageGen': [Object: null prototype] {
+    '$layers': [Object: null prototype] { [Symbol(fluid.metadata)]: [Object] },
+    preferredSize: [Object: null prototype] {
+      w: [Object: null prototype],
+      h: [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    noteFinder: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    imageGenerator: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    view: [Object: null prototype] {
+      '$component': [Object: null prototype],
+      [Symbol(fluid.metadata)]: [Object]
+    },
+    [Symbol(fluid.metadata)]: { from: 333, to: 1108 }
+  }
+}
+Allocated instanceId 1 at site closestNoteFinder-15
+Disposing unallocated effects for path closestNoteFinder-15 at end of computeInstance
+Allocated instanceId 1 at site imageGenerator-16
+Disposing unallocated effects for path imageGenerator-16 at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34
+Disposing unallocated effects for path closestNoteImageGen-34 at end of computeInstance
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteImageGen
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.view
+Disposing unallocated effects for path closestNoteImageGen-34.view at end of computeInstance
+Injections for fluid.demos.closestNoteImageGen committed
+Allocated instanceId 1 at site closestNoteImageGen-34
+Disposing unallocated effects for path closestNoteImageGen-34 at end of computeInstance
+Allocated instanceId 1 at site closestNoteImageGen-34.view
+Disposing unallocated effects for path closestNoteImageGen-34.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34
+Allocated instanceId 1 at site avatars.fluid\.demos\.closestNoteImageGen
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.noteFinder
+Disposing unallocated effects for path closestNoteImageGen-34.noteFinder at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator at end of computeInstance
+renderView beginning for closestNoteImageGen-34.view with vTree 24 container  10
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteImageGen.view
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen.view at end of computeInstance
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteImageGen.noteFinder
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen.noteFinder at end of computeInstance
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteImageGen.imageGenerator
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen.imageGenerator at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.noteFinder.view
+Disposing unallocated effects for path closestNoteImageGen-34.noteFinder.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.noteFinder
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator at end of computeInstance
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteImageGen.noteFinder.view
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen.noteFinder.view at end of computeInstance
+Allocated instanceId 0 at site avatars.fluid\.demos\.closestNoteImageGen.imageGenerator.view
+Disposing unallocated effects for path avatars.fluid\.demos\.closestNoteImageGen.imageGenerator.view at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.noteFinder.distanceLine
+Disposing unallocated effects for path closestNoteImageGen-34.noteFinder.distanceLine at end of computeInstance
+renderView beginning for closestNoteImageGen-34.noteFinder.view with vTree 28 container  11
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.errorMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.loadingMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.result
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator
+renderView beginning for closestNoteImageGen-34.imageGenerator.view with vTree 46 container  12
+Allocated instanceId 0 at site closestNoteImageGen-34.noteFinder.distanceLine.view
+Disposing unallocated effects for path closestNoteImageGen-34.noteFinder.distanceLine.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.noteFinder.distanceLine
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator.errorMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.errorMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.errorMessage
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator.loadingMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.loadingMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.loadingMessage
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator.result
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result at end of computeInstance
+Allocated instanceId 0 at site closestNoteImageGen-34.imageGenerator.result.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.result
+renderView beginning for closestNoteImageGen-34.noteFinder.distanceLine.view with vTree 58 container  16
+renderView beginning for closestNoteImageGen-34.imageGenerator.errorMessage.view with vTree 60 container  17
+renderView beginning for closestNoteImageGen-34.imageGenerator.loadingMessage.view with vTree 61 container  18
+renderView beginning for closestNoteImageGen-34.imageGenerator.result.view with vTree 62 container  19
+Allocated instanceId 2 at site closestNoteImageGen-34.imageGenerator.loadingMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage at end of computeInstance
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator.loadingMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.loadingMessage
+renderView beginning for closestNoteImageGen-34.imageGenerator.loadingMessage.view with vTree 63 container  18
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator
+renderView beginning for closestNoteImageGen-34.imageGenerator.view with vTree 65 container  12
+Allocated instanceId 3 at site closestNoteImageGen-34.imageGenerator.loadingMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage at end of computeInstance
+Allocated instanceId 2 at site closestNoteImageGen-34.imageGenerator.loadingMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.loadingMessage
+renderView beginning for closestNoteImageGen-34.imageGenerator.loadingMessage.view with vTree 77 container  18
+Allocated instanceId 2 at site closestNoteImageGen-34.imageGenerator.result
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result at end of computeInstance
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator.result.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.result
+renderView beginning for closestNoteImageGen-34.imageGenerator.result.view with vTree 78 container  19
+Allocated instanceId 2 at site closestNoteImageGen-34.imageGenerator.errorMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage at end of computeInstance
+Allocated instanceId 1 at site closestNoteImageGen-34.imageGenerator.errorMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.errorMessage
+renderView beginning for closestNoteImageGen-34.imageGenerator.errorMessage.view with vTree 87 container  17
+Allocated instanceId 4 at site closestNoteImageGen-34.imageGenerator.loadingMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage at end of computeInstance
+Allocated instanceId 3 at site closestNoteImageGen-34.imageGenerator.loadingMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.loadingMessage
+renderView beginning for closestNoteImageGen-34.imageGenerator.loadingMessage.view with vTree 88 container  18
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator
+renderView beginning for closestNoteImageGen-34.imageGenerator.view with vTree 90 container  12
+Allocated instanceId 5 at site closestNoteImageGen-34.imageGenerator.loadingMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage at end of computeInstance
+Allocated instanceId 4 at site closestNoteImageGen-34.imageGenerator.loadingMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.loadingMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.loadingMessage
+renderView beginning for closestNoteImageGen-34.imageGenerator.loadingMessage.view with vTree 102 container  18
+Allocated instanceId 3 at site closestNoteImageGen-34.imageGenerator.result
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result at end of computeInstance
+Allocated instanceId 2 at site closestNoteImageGen-34.imageGenerator.result.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.result.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.result
+renderView beginning for closestNoteImageGen-34.imageGenerator.result.view with vTree 103 container  19
+Allocated instanceId 3 at site closestNoteImageGen-34.imageGenerator.errorMessage
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage at end of computeInstance
+Allocated instanceId 2 at site closestNoteImageGen-34.imageGenerator.errorMessage.view
+Disposing unallocated effects for path closestNoteImageGen-34.imageGenerator.errorMessage.view at end of computeInstance
+Disposing old templateEffects for closestNoteImageGen-34.imageGenerator.errorMessage
+renderView beginning for closestNoteImageGen-34.imageGenerator.errorMessage.view with vTree 112 container  17
+23:38:42.055:   fq:  Test concluded - Module "IFM widget composition harness" Test name "Compose the selected widgets via the IFM - fluid-project/infusion-6#25": 1/1 passed - PASS

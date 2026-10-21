@@ -1,0 +1,57 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-zk9fqmw2xv"
+
+This is a Potentia Transmission Format (PTF) document combining the closest note finder with the image generator.
+--ptf-boundary-zk9fqmw2xv
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.noteFinderImageGenerator"
+Content-Description: layer
+
+// Combines the image generator with the closest note finder. The image generator is dominant - this widget is it,
+// with all of its template, state and methods - while a hidden note finder keeps computing which sticky note is
+// nearest and feeds its text to the generator's prompt, so moving the widget near a note pre-fills the search
+fluid.def("fluid.demos.ai.noteFinderImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // The finder shares this widget's view, so neither it nor its subcomponents renders anything, whilst its
+    // computation continues - its reading of the widget's position uses the same shape bounds as the widget itself
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{noteFinderImageGenerator}.view"
+        }
+    },
+    // The prompt bound to the input, and so the search run by the button, is the nearest note's text, updated
+    // as the widget is moved
+    state: {
+        prompt: "{finder}.closest.text"
+    }
+});
+--ptf-boundary-zk9fqmw2xv
+Content-Type: multipart/mixed; boundary="ptf-boundary-qm4xvzn8d2"
+Content-Disposition: attachment; filename="shape:noteFinderImageGenerator"
+Content-Description: component
+
+--ptf-boundary-qm4xvzn8d2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.noteFinderImageGenerator"
+    ]
+}
+--ptf-boundary-qm4xvzn8d2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{
+    "x": 400,
+    "y": 640,
+    "w": 360,
+    "h": 460
+}
+--ptf-boundary-qm4xvzn8d2--
+--ptf-boundary-zk9fqmw2xv--

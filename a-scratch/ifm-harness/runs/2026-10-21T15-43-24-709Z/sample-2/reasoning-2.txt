@@ -1,0 +1,80 @@
+The error: "Component at path noteImageFinder-34 is still pending: Injection in progress for layer fluid.demos.noteImageFinder".
+
+The widget shape:finder did not become available. The issue: injection in progress for layer fluid.demos.noteImageFinder. The layer part was applied? It says "The changes which were applied have been kept, so send only what is still required." So the layer def was applied but the component is pending — meaning the layer registration happened but the widget couldn't instantiate, possibly because the layer was defined but the component replacement happened... hmm.
+
+Actually maybe the problem: my layer references `{tldrawHost}.notes` etc. — but that's at compute time, would cause unavailable not "injection in progress".
+
+"Injection in progress" suggests a dynamic layer name or a missing layer that the component waits for. The $layers of my layer: "fluid.topLevelWidget" — is fluid.topLevelWidget defined in the workspace document? It's referenced by existing widgets. It should be available in the framework.
+
+Wait — the SFC part: the loader patches the script: $layers defaults... no, I gave $layers explicitly.
+
+Hmm. "Injection in progress" — maybe the issue is the circular reference: my layer references fluid.demos.closestNoteFinder.findClosest function at $method func: "fluid.demos.closestNoteFinder.findClosest" — that's fine since that layer exists.
+
+Actually maybe the issue: the component was created before the layer finished loading? The SFC part should register the layer. But the error says the component is still pending, injection in progress for the layer itself. Perhaps the layer name used in potentia is fluid.demos.noteImageFinder but the SFC loader names the layer from the file name only if layer option not given... I named the def fluid.demos.noteImageFinder in the script, fine.
+
+Another thought: maybe the PTF layer part for an SFC defines the layer but the component instantiation tried to inject dependencies that are pending — e.g. the SFC part content-type text/x-vue with filename "fluid.demos.noteImageFinder" — during reconstruction, fluid.ptf.instantiate processes layer parts, and for SFC parts it calls fluid.loadSFCText(layerName, text) presumably, then the component is created. Possibly the layer part was applied (the def happened) but creation is still pending because something is unavailable — e.g. `{tldrawHost}`? References don't block instantiation availability... Actually a component is unavailable "while any of its layers is undefined, loading, or circular". "Injection in progress" is the status when a layer is pending definition — meaning the def didn't happen?
+
+Wait — maybe the problem: the layer part was applied, but the shape's component replacement occurred and the new component's $layers include fluid.demos.noteImageFinder — but ALSO the old view potentia? Hmm.
+
+Or maybe the real issue: my layer references `{self}.hostBounds` and `{tldrawHost}.notes` — unresolved references make the component unavailable (pending?) with "injection in progress"? The message pattern "Injection in progress for layer X" is what Fluid reports when a layer is pending. So the layer fluid.demos.noteImageFinder is still pending — i.e., its definition still not fully registered. Perhaps because the SFC text references, at load time... The loader may itself inject the template from the SFC — the view layer fluid.sfcTemplateViewComponent requires templateLayer. Loading the SFC defs the layer and marks template pending until load.
+
+Actually — maybe the issue is a subtle one: the layer part's script defines the layer, but the SFC also got a `live` part? No.
+
+Let me think about what "send only what is still required" means: keep applied changes, send only what's still required. Possibly the layer part applied fine, and the component part is what failed because at the moment of construction, injection was in progress — and now that layer is ready, re-sending the component part would work. The error says "The widget shape:finder did not become available" — maybe the widget was replaced and is still pending due to timing; re-sending the component part (potentia) would reconstruct it.
+
+But also possible: the layer name mismatch. Hmm, "Injection in progress for layer fluid.demos.noteImageFinder" — injection = dynamic layer names. Did I use dynamic layer? No.
+
+Wait, maybe the SFC loader processes the layer part, and fluid.loadSFCText registers the script asynchronously; pending until executed. When the response was applied, the component was attempted immediately while the SFC was still registering. Then the SFC finished but component stayed pending? The message says component is STILL pending. So something about the layer remains unresolved.
+
+One real possibility: In the SFC script, I call `fluid.def("fluid.demos.noteImageFinder", {...})` and the loader adds `fluid.sfcLayer`... that's fine.
+
+Another possibility: my script references `fluid.demos.closestNoteFinder.findClosest` only as strings ("$compute:fluid.demos.closestNoteFinder.findClosest(...)") — resolved lazily; fine. `func: fluid.demos.noteImageFinder.generate` — a direct JS reference! In the script, at parse/execution time, `fluid.demos.noteImageFinder.generate` must exist when the def executes. I define it AFTER the def call — the `$method` `func` is evaluated when the layer is executed... Actually `fluid.def(...)` executes the script; the record literal `func: fluid.demos.noteImageFinder.generate` is evaluated during the def call — at that point `fluid.demos.noteImageFinder.generate` is undefined! That would throw... unless fluid.def handles function references by name lazily.
+
+Hmm, but the example in the docs: `func: self => self.count++` — plain function values in the record. If func is evaluated immediately, a bare undefined reference would throw at load, leaving the layer pending/injection in progress!
+
+That could be the bug: `func: fluid.demos.noteImageFinder.generate` — undefined at evaluation time. But wait, the greeter example in the workspace doc used plain functions with `func: state => {...}` — fine.
+
+But is `func` in a $method record evaluated lazily? "func - A global function name, a reference to a function (e.g. "{self}.helper"), or a function value." If it's a function value, it must be usable value at def time. Undefined is still a value... The layer would be defined; at resolve time, func = undefined → might cause the component to pend waiting for function to become available!
+
+That matches: "Injection in progress" = waiting. Because fluid treats a missing function like a pending layer: the method references an undefined function, and the component waits. Actually I'm not 100% sure, but it's suspicious.
+
+Fix: use the string form `func: "fluid.demos.noteImageFinder.generate"`. That's the documented way: global function name as string.
+
+Let me change:
+
+```js
+    generate: {
+        $method: {
+            func: "fluid.demos.noteImageFinder.generate",
+            args: "{self}"
+        }
+    },
+```
+
+Everything else same.
+
+So resend: layer part with corrected func, and the component part (since the widget did not become available, sending only the component replacement? But "changes which were applied have been kept, so send only what is still required" — the layer part was applied (kept). But I need to correct the layer — sending a corrected layer part replaces the definition, fine. And also re-send component replacement potentia for shape:finder (with "/" potentia, replacing again) plus keep shape dims? The shape dims were applied already? It says changes applied were kept. The shape part with {"w":360,"h":480} — was it applied? The failure was only the availability of the widget. Likely the shape changed too. But "send only what is still required": the corrected layer + a component part for shape:finder replacing the widget as fresh. Since the current widget is pending/broken, replace it with fresh construction. Actually maybe the current pending widget would become available once the layer is fixed (the component re-merges when the layer re-defines). Since "Signal products whose defining record is unchanged are retained" — redefining the layer re-merges and the pending function resolves. So maybe just re-sending the corrected layer part suffices.
+
+Hmm. The component is at path "noteImageFinder-34" — interesting path, suggesting it's a fresh subcomponent... Actually path may indicate the component's tree path. "noteImageFinder-34" — the component was named. It's pending. Re-defining the layer with fix should let it resolve.
+
+I'll send: corrected layer part only, and also a component part for shape:finder with potentia replacing it fresh (to be safe), plus keep shape. But safer minimal: since layer replacement re-merges everything, the existing pending widget becomes available. The component part would reset state — harmless since fresh.
+
+The instruction "send only what is still required" suggests not resending the delete (already applied — wait, was delete applied? The changes applied have been kept; the error came after processing the whole doc; the delete part might have been applied already since it came after the component part. Possibly the failure prevented later parts? The doc stops at the failure. The delete part was after the component part in my document. Since the error mentions only the widget availability, maybe the delete was processed or not. "The changes which were applied have been kept" — ambiguous whether delete applied. To be safe: resend layer correction + component replacement for shape:finder + delete for shape:imagegen again? Sending a delete for an already-deleted shape — probably harmless, but "send only what is still required" warns against resending applied things. But if delete wasn't applied, not sending it leaves the old imagegen widget around — not fatal but contradicts the intent.
+
+Hmm. Given uncertainty, lean: The error says the changes which were applied have been kept — likely everything up to the failure was applied, and the failure was about the final state. I'll resend the corrected layer part and the component part for shape:finder (fresh replacement). If delete was applied, it's kept; if not... risk. I think the failure message is produced at the end of applying, meaning all parts were applied but the widget didn't become available. Actually "did not become available" — applied yes. The delete part likely applied too. I'll send layer + component potentia replacement.
+
+Actually wait — let me reconsider the root cause more carefully. "Component at path noteImageFinder-34" — the component id. "Injection in progress for layer fluid.demos.noteImageFinder" — the layer itself is pending injection. Hmm, could also be due to the $method func undefined making the whole layer record's method resolution wait. In Fluid, unresolved function names become pending... Actually in Fluid signals, a function name string resolves at call time as an "unavailable" that later resolvable... I believe unresolved named functions make values unavailable but the component stays pending? There's a known concept: "function injection in progress" when the def's func field is undefined.
+
+The safest fix: use string form. Also ensure every global function I reference exists as a string-resolvable name at definition: fluid.demos.noteImageFinder.generate defined after def — with string func, resolution happens lazily at call/instantiation — it resolves once defined (which happens immediately after in the same script). Should be fine.
+
+Also check other func fields: "fluid.demos.imageGenerator.showAnother", "fluid.demos.imageGenerator.refresh", "$compute:fluid.demos.closestNoteFinder.findClosest(...)" — all strings, fine. The $if funcs are inline arrow functions, fine.
+
+So corrected layer part with func: "fluid.demos.noteImageFinder.generate".
+
+And since the widget is pending, replacing shape:finder fresh with potentia ensures reconstruction. I'll include component part with potentia + shape (in case shape wasn't updated, include w/h again — it's allowed).
+
+Let me write the response: layer part (corrected) + component part for shape:finder (potentia "/" fresh + shape dims). No delete part (assumed applied).
+
+Actually, hmm, regarding the path name "noteImageFinder-34": each component gets a path/id. Fine.
+
+Write the document.

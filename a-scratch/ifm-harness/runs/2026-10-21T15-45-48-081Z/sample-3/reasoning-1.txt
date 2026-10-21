@@ -1,0 +1,676 @@
+The user wants to combine the functionality of the two selected widgets:
+1. `shape:finder` - the Closest Note Finder widget (`fluid.demos.closestNoteFinder`), which shows the text and distance of the closest sticky note to the widget
+2. `shape:imagegen` - the Image Generator widget (`fluid.demos.imageGenerator`), which searches Pixabay for images matching a prompt
+
+The goal: "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image"
+
+So the combined widget should:
+1. Be movable around the canvas (it's a topLevelWidget hosted on a shape)
+2. When moved near a sticky note, show the closest sticky note (from the finder widget)
+3. Show a button to generate an image (from the image generator widget) - presumably using the note's text as the prompt automatically?
+
+The intended workflow: move the widget close to a sticky note → the widget shows the closest note's text → press "generate image" button → generates an image based on the note's text.
+
+Let me think about the design. The strategy hints say:
+
+"To compose two widgets, define a fresh "umbrella" layer with `fluid.topLevelWidget` as the last of its `$layers`, holding each of them as a subcomponent by means of a `$component` record naming its existing layer. Choose the view of just one of them as the view of the umbrella with `view: "{first}.view"`, and cross-inject between them with references, e.g. `second: {$component: {$layers: "my.second", input: "{first}.output"}}`. A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt = "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before. If the second should share the view of the first rather than render its own, give it `view: "{first}.view"` too. Add to the existing layers only through overrides or composition directives in fresh layers. If both widgets must remain visible, the umbrella may instead have a template of its own holding an `@id` element for each subcomponent."
+
+So there are two options:
+
+Option A: Umbrella with each as subcomponent, sharing the view of one of them. But if the second shares the view of the first, it doesn't render its own view. That doesn't work here because we want BOTH the finder display AND the image generator UI visible.
+
+Option B: Umbrella with its own template holding `@id` elements for each subcomponent:
+- `finder` subcomponent at `@id="finder"`
+- `imageGen` subcomponent at `@id="imageGen"`
+
+This is exactly the case "If both widgets must remain visible, the umbrella may instead have a template of its own holding an `@id` element for each subcomponent."
+
+Cross-injection: The image generator's `state.prompt` should be set from the finder's closest note text. Per the example: `state: {prompt = "{first}.text"}` — "the member then takes the referenced value whenever that changes, and may still be written as before."
+
+Hmm, but there's a subtlety: `state` is a `$reactiveRoot` in the image generator. A subcomponent's record body is merged at `subcomponent` precedence. The image generator layer defines `state: {$reactiveRoot: {...}}`. If we override `state` with `{prompt: "{finder}.closest.text"}`, the merge rules say: "A key holding a signal record is replaced as a unit by a stronger layer's value at that key; the record is not merged into." So `state` in the imageGen subcomponent would be replaced entirely by `{prompt: "{finder}.closest.text"}` — losing `images`, `index`, `isGenerating`, `error`, `refreshedId`, AND the `$reactiveRoot` marker!
+
+That's bad. `state.prompt` alone wouldn't be reactive root. Writing `state.prompt` would... hmm, actually the member `prompt` would just be a plain value in the subcomponent's merged layers. Writes would go to the live layer. But `state.isGenerating`, `state.images` etc. would be missing, breaking `generate` which writes `state.isGenerating = true; state.error = ""; state.images = images`.
+
+The strategy hint says "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before." Hmm, so the claimed behavior is that this works — the member takes the referenced value whenever it changes and may still be written. So Infusion apparently handles partial override of a reactive root: the `$reactiveRoot` marker... wait, but merge rules say a signal record key is replaced as a unit. `state: {$reactiveRoot: [...]}` is a signal record (single `$` key). Overriding `state` with `{prompt: ...}` (plain object, no `$` key) — is a plain object stronger and replaces the signal record as a unit? Merge precedence: subcomponent beats user. The existing layer says: "A key holding a signal record is replaced as a unit by a stronger layer's value at that key; the record is not merged into." The subcomponent layer is stronger than the def layer, so yes, `state` would be replaced as a unit with `{prompt: "{finder}.closest.text"}` — losing the reactive root and all other state fields.
+
+But the strategy hint explicitly gives this as an example pattern... Let me re-read: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before."
+
+Hmm, this might reflect actual Infusion behavior where the reactive root... Actually maybe when the original defines `$reactiveRoot`, and the subcomponent overrides with a partial plain object, the framework reconstructs the reactive root merging? I can't be sure. This is risky.
+
+Let me think about alternatives:
+
+1. Override `state` with the full structure including `$reactiveRoot`, only replacing `prompt`'s default. E.g.:
+
+```js
+state: {
+    $reactiveRoot: {
+        prompt: "",
+        isGenerating: false,
+        error: "",
+        images: [],
+        index: 0,
+        refreshedId: null
+    }
+},
+```
+
+But that duplicates the whole structure — if the image generator layer changes, the override is stale. Also it doesn't cross-inject the prompt at all.
+
+2. Use a `$linkage` to adapt — no, overkill.
+
+3. Bind the prompt differently: The image generator's `generate` method takes the whole `state` object as an argument (`fluid.demos.imageGenerator.generate` receives `state`). We can't easily override just the prompt used for search because the text is read from `state.prompt` inside the global function.
+
+4. Simplest robust approach: give the umbrella its own layer that:
+   - Includes the finder as a subcomponent
+   - Includes the image generator as a subcomponent, with an overridden `state` that copies the full `$reactiveRoot` structure and sets `prompt` to a reference to the finder's closest note text.
+
+Actually, wait. Let me reconsider the merge semantics with reactive roots. The `$reactiveRoot` record is a directive — "Must be the only key in its record." If the subcomponent overrides `state` with a plain object `{prompt: "{finder}.closest.text"}`, does the framework special-case it? The merge rules say plainly: "Plain objects contributed by more than one layer merge recursively, key by key. Any other value (primitive, array, function, signal record) from a stronger layer replaces that from a weaker one wholesale." And "A key holding a signal record is replaced as a unit by a stronger layer's value at that key."
+
+A plain object is not a signal record, so a plain object from a stronger layer replacing a signal record from a weaker one — "Any other value (... signal record) from a stronger layer replaces that from a weaker one wholesale." This covers either direction: any value from a stronger layer replaces from a weaker one wholesale. So `state` becomes `{prompt: "{finder}.closest.text"}`. Then `generate` writing `state.isGenerating = true` would add new keys live — but wait, without `$reactiveRoot`, the component member `state` would be just a plain object in the merged layer. Writing `state.isGenerating = true` — writes to nested paths of plain objects in layers... Hmm, the doc says writes through the component proxy are recorded in the live layer. Deep writes replace the whole object? "A write beneath a `$reactiveRoot` is applied immutably to the root's value." Without reactive root, deep writes may behave as plain object mutation through the proxy... Actually, how does the proxy handle `state.isGenerating = true`? The proxy records writes recursively, replacing the path in the live layer. I think deep writes get recorded as nested objects in the live layer and merge with lower precedence layers. Possibly.
+
+But the strategy hint explicitly endorses the partial override pattern: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before." So presumably the Infusion 6 framework does handle this: when a stronger layer supplies a partial plain object at a key whose weaker layer had a `$reactiveRoot` record, it overrides recursively within the reactive root. OR maybe the hint means that when merging a plain object against a signal record... hmm.
+
+Given the strategy hint is provided as authoritative guidance for this environment, I'll trust it: overriding `state: {prompt: "{finder}.closest.text"}` works as described.
+
+Hmm, wait. Let me re-read once more: "A member then takes the referenced value whenever that changes, and may still be written as before." OK so the claim is solid within this environment.
+
+But hold on — there's a subtlety with "and may still be written as before". In our combined widget, the user types over the prompt? The image generator input has `value="@{state.prompt}"` which is two-way bound; the user can edit it. But in our combined workflow, we want the prompt to follow the closest note automatically. If the user types, the write-back would override the reference. That's acceptable — "may still be written as before."
+
+Actually, let me think about what UX we want:
+
+The combined widget should:
+1. Show the closest note's text and distance (finder UI)
+2. Have an input pre-filled/updated with the note's text, and a "Find Image" button, plus image display (image generator UI)
+
+Workflow: move the widget near a sticky note → the note text appears in the input (via the prompt reference) → press the button → image appears.
+
+Hmm, but the finder UI shows "Closest Sticky Note" with the text. The image generator UI has its own title "Image Generator" with input and buttons. Both visible stacked. That satisfies "combine the functionality": moving near a note shows which note is closest; pressing generate creates an image from it.
+
+Option: make the button directly generate. The image generator already has that: `@{buttonLabel}` on click `{self}.generate()`.
+
+Now, the design per the umbrella pattern:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 360,
+        h: 660  // needs to hold both widgets
+    },
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{finder}.closest.text"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `
+<div class="note-image-gen">
+    <div @id="finder"></div>
+    <div @id="imageGen"></div>
+</div>`
+        }
+    }
+});
+```
+
+Wait — issue: the finder's `distanceLine` subcomponent has `$if` referencing `{closestNoteFinder}.distance` — context name resolution searches scope: its own names, then children, then parent's... The subcomponent is named `finder`. Its `$if` refers to `{closestNoteFinder}.distance` — a layer name/nickname. The finder component itself bears layer `fluid.demos.closestNoteFinder`, whose nickname is `closestNoteFinder`. Does scope find the parent as "closestNoteFinder"? The finder's direct parent is the umbrella. The umbrella's names: member name (root - no name), layer names `fluid.demos.noteImageGenerator` nickname `noteImageGenerator`, and `fluid.topLevelWidget` (framework, excluded from scope per `$variety`). So from `distanceLine`'s perspective, searching outwards: own names → children of distanceLine → parent (finder) names: member name `finder` beats... wait, "A member name beats a layer name at the same level." The finder's member name is `finder` (or whatever member we place it at). Layer name `closestNoteFinder` — nickname of `fluid.demos.closestNoteFinder`. Is `closestNoteFinder` resolvable from distanceLine? Scope search: "its own names, then its direct children's, then its parent's, then its siblings', and so on up through each ancestor and that ancestor's direct children."
+
+So from `distanceLine`, first level it checks: distanceLine's own names, distanceLine's direct children's names. Then the parent's (finder's) names and... hmm, actually "searching outwards from the referring component: its own names, then its direct children's, then its parent's, then its siblings', and so on up through each ancestor and that ancestor's direct children."
+
+Hmm, this is breadth-wise? Its own names, children's names, parent's names, siblings' names, grandparents' names, their children's names... So at the "parent's" level (finder), the names of finder: member name `finder` and layer nickname `closestNoteFinder`. So `{closestNoteFinder}` should resolve from `distanceLine` via its parent, even if we place the finder at a different member name. Good — the finder works when embedded as a subcomponent, as long as it carries its layer. Wait, but one catch: "A member name beats a layer name at the same level." If we name the member `finder`, member name `finder` and nickname `closestNoteFinder` are both names at that level — no conflict since they differ. Fine.
+
+Hmm wait, actually there's another subtlety: the template of the finder SFC also references `{closestNoteFinder}` within its own view (`@{{closestNoteFinder}.distance}`). The finder's view is a subcomponent of finder. From the view, scope: its own names (member name `view`), children's names, parent's names (finder: member `finder`, nickname `closestNoteFinder`). Fine too — and it already works standalone.
+
+Now the cross-reference `{finder}.closest.text`: The `finder` subcomponent's `closest` member is a `$compute` producing `{text, distance}`. So `{finder}.closest.text` resolves to the note text. 
+
+But wait — the finder's `closest` when not on a canvas: `findClosest(null, undefined)` → `{text: "Not placed on a canvas", distance: null}`. But our widget IS on a canvas (it's a shape host). `hostBounds` comes from `fluid.topLevelWidget` via the tldraw view. So when placed, `{finder}.closest.text` will be e.g. "A red fox in the snow".
+
+Hmm, but note the "No sticky notes found" case: `distance` is null but text is "No sticky notes found". The prompt would briefly have that text until... eh, edge case, fine.
+
+Now the image generator's `state.prompt` override. When the widget is placed/updated, `state.prompt` follows the closest note. The button is disabled while `isGenerating` or `!prompt.trim()`.
+
+Also, should we show the finder UI at all, or just use its closest text to drive the image generator? The user said "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image." The finder functionality: moving closes to a note identifies it. The distance display tells the user which note is picked. Keeping both UIs visible makes the combination evident and functional. The umbrella template with `@id` elements for each is the direct pattern "If both widgets must remain visible, the umbrella may instead have a template of its own holding an `@id` element for each subcomponent."
+
+Now `elideParent`: The umbrella's view template root `<div class="note-image-gen">` — default `elideParent: true`, meaning the root element merges with the container rather than nested inside it. The container is the shape's DOM element. The finder SFC's own root is `<div class="notefinder">` rendered into the `@id="finder"` div. With elideParent true on our umbrella view, our root div's attributes merge onto the container. Fine either way.
+
+Now, will the finder subcomponent render correctly within the `@id="finder"` div? The finder's SFC: `<div class="notefinder">...` with elideParent default true — its root merges with the `@id` container element. Yes, that's how `@id` is meant to work.
+
+Similarly the image generator renders into `@id="imageGen"`.
+
+Styling: The finder has its own styles injected. The image generator has its own. Good.
+
+Now, layout: stack finder on top of image generator. Heights: finder preferredSize h:200, imageGenerator h:460. Umbrella preferredSize w:360 (wider of 260 and 360), h: 200+460=660. Actually the finder widget is 260 wide but our umbrella is 360 — the finder renders full width, fine.
+
+Actually, wait. Should the distance line still show? Yes, fine.
+
+Now let me also consider: do we even need the finder's UI, or could we hide the distance line? Keep as is.
+
+Also should we keep both widgets on the canvas or replace them? The user says "Combine the functionality of the two selected widgets" — I think we should:
+1. Create a new umbrella layer `fluid.demos.noteImageGenerator`.
+2. Create a new widget `shape:finderImageGen` (or similar fresh id) constructed from it, placed near the selection.
+3. Delete the two old widgets.
+
+Deleting: the old widgets are at shape:finder and shape:imagegen. The combined widget replaces them. Given the small canvas and the direction "Combine the functionality", replacing the two with one combined widget seems right — that's the usual interpretation of "combine". The response format supports `delete` parts.
+
+Let me now settle the exact structure.
+
+Layer (SFC? or JavaScript?). The umbrella layer definition is JavaScript (fluid.def). But could be an SFC too, so that the template travels nicely and styles get scoped. An SFC layer definition requires `fluid.def("fluid.demos.noteImageGenerator", {...})` in the script and a `<template>`. The loader defaults `$layers` to `["fluid.component", "fluid.sfcLayer"]`, but we need `fluid.topLevelWidget`. In an SFC we can explicitly write `$layers: "fluid.topLevelWidget"` in the def. The loader defaults it only if absent. Actually re-reading: "When the SFC is loaded, its script is patched before execution: `$layers` defaults to `["fluid.component", "fluid.sfcLayer"]`." So if we specify `$layers: "fluid.topLevelWidget"`, we lose `fluid.sfcLayer` and `fluid.component`. Hmm, that would break things? The SFC loader needs `fluid.sfcLayer` so that the layer is recognised as an SFC for PTF export (`SFC layers are recognised by the tag layer fluid.sfcLayer, which the SFC loader adds to every layer it loads`). The docs for PTF show SFC examples with explicit `$layers` not mentioned... In the docs' counter example, the SFC's script has no `$layers` at all; the default supplies it. But that example isn't used as a topLevelWidget directly? Actually the counter SFC (`fluid.demos.counter`) in the templates has `$layers: "fluid.topLevelWidget"` explicitly, inside an SFC with no default? Hmm, wait, look at the "fluid.demos.counter" SFC from the workspace docs: its script is:
+
+```html
+<script>
+fluid.def("fluid.demos.counter", {
+    $layers: "fluid.topLevelWidget",
+    ...
+});
+</script>
+```
+
+And the loader defaults `$layers` to `["fluid.component", "fluid.sfcLayer"]` — "defaults to" suggests that's used when not specified? But then these demo SFCs would lack both. Hmm, probably the default is applied or unioned... The PTF example counter (`my.counter` in the view docs) has no `$layers` and is used directly as a widget on an element via `fluid-layers="my.counter"`. So SFCs without explicit `$layers` get the default which evidently works as a top-level widget too (there must be more framework magic; maybe the default patch actually sets `$layers` including `fluid.component` and the widget-hosting aspects come from elsewhere...).
+
+Hmm wait, but the doc also says that topLevelWidget must be included in `$layers` for widgets synthesized in MY documents: "Whenever you define a layer in your document and construct a fresh or replacement widget from it, the top-level `$layers` of that layer's `fluid.def` must name `fluid.topLevelWidget` explicitly". So if I write my layer as an SFC without `$layers`, it'd be rejected? The rejection is presumably enforced on the outer `fluid.def` layer content. To be safe, I should explicitly name `fluid.topLevelWidget`.
+
+Given the existing demo SFC `fluid.demos.imageGenerator` explicitly has `$layers: "fluid.topLevelWidget"` and works (it's instantiated in the workspace), the patching must handle the union appropriately, or explicit spec overrides default. Since imageGenerator is an SFC with explicit `$layers: "fluid.topLevelWidget"` and is used fine in the workspace as a shape widget, I can follow the same pattern: write my umbrella as an SFC with `$layers: "fluid.topLevelWidget"` explicitly and a `<script>` + `<template>` and `<style>`.
+
+That keeps consistency with the existing widgets and gives us styles + template in one SFC file. Layer name: `fluid.demos.noteImageGenerator`.
+
+The SFC:
+
+```html
+<script>
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 380, h: 680},
+    finder: {
+        $component: {
+            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            state: {
+                prompt: "{finder}.closest.text"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `
+        <div class="note-image-gen">
+            <div class="note-image-gen-finder" @id="finder"></div>
+            <div class="note-image-gen-imagegen" @id="imageGen"></div>
+        </div>`
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="note-image-gen">
+        <div class="note-image-gen-sep" @id="finder"></div>
+        <div class="note-image-gen-sep" @id="imageGen"></div>
+    </div>
+</template>
+```
+
+Wait — if it's an SFC, do I want the view template in the SFC `<template>` block AND override view? The SFC loader adds a `view` subcomponent with layer `fluid.sfcTemplateViewComponent` whose template is the SFC's `<template>` block. But if my script explicitly adds a `view` subcomponent via `view: {$component: {...}}`, that merges with the loader-added one. Merge: plain objects merge recursively; the `view` record from my layer... wait, `view` in my def vs `view` added by the loader patch to the layer. The loader "adds a `view` subcomponent, with layer `fluid.sfcTemplateViewComponent`, whose template is the SFC's `<template>` block". If my def also defines `view`, merge rules apply between the loader's patch and my def's contents... The loader patch is applied to the layer definition — this is like a parent def. Both contribute `view` with `$component` records; plain-object merge key by key: `$layers` gets overwritten? `$layers: "fluid.templateViewComponent"` replaces `fluid.sfcTemplateViewComponent`... "Any other value (primitive, ...) from a stronger layer replaces that from a weaker one wholesale." Which is stronger? Ambiguous. Both define template; `template` conflicts → one replaces the other.
+
+Rather than fight the loader, simpler: put the whole configuration in the SFC's template via `@id` and DON'T define its own `view` in the script... but then I need `finder` and `imageGen` `$component` records defined — those can only be in the script. And cross-links only in script. That's fine — the SFC's template IS the umbrella template:
+
+```html
+<script>
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 380, h: 680},
+    finder: {
+        $component: {
+            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            state: {
+                prompt: "{finder}.closest.text"
+            }
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="note-image-gen">
+        <div class="note-image-gen-finder" @id="finder"></div>
+        <div class="note-image-gen-imagegen" @id="imageGen"></div>
+    </div>
+</template>
+
+<style>
+.note-image-gen {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    box-sizing: border-box;
+}
+</style>
+```
+
+This is clean: the loader supplies view with the SFC template; the subcomponents render into the `@id` divs. The SFC styles are global (prefix with note-image-).
+
+Wait, one problem: `@id="finder"` renders the finder WITH elideParent (root div.notefinder merges with the @id container). The container .note-image-gen-finder gets class notefinder merged in. Fine.
+
+Also `{finder}.closest.text`: `closest` is defined as `$compute`. Subcomponents created by `$component`... each subcomponent proxy — `{finder}` resolves to the finder component; `.closest` is a member computed value. Then `.text` is a plain-object path step. Per references: "A path which runs off the end of plain data yields `undefined`". So `closest.text` → the text string. 
+
+But hold on: is `closest` a member of the finder *component* or only resolvable through the proxy? Reads through the proxy resolve signals transparently. Yes, `that.closest` returns the computed record value `{text, distance}`.
+
+Edge: When widget not placed (no hostBounds). New widgets ARE placed on the canvas, so hostBounds exists. While moving, bounds update → closest updates → prompt follows.
+
+One concern: `{finder}.closest.text` when there are no notes: text = "No sticky notes found" → prompt becomes that; clicking find image would search it. Acceptable.
+
+The "Not placed on a canvas" case → prompt = "Not placed on a canvas". Not our case.
+
+Another approach for prompt binding: instead of overriding `state.prompt`, maybe better UX: keep `state.prompt` free for user edits. The strategy hint endorses the override, and the described use case is exactly this: "I can move it close to a sticky note and press a button to generate an image". Pressing the button generates from the note's text. If the user types something, that overwrites the sync — fine.
+
+Hmm wait, but one more consideration: the image generator's `state` is a `$reactiveRoot`. Per the merge rule "A key holding a signal record is replaced as a unit by a stronger layer's value at that key" — if the framework follows this strictly, `state` becomes plain `{prompt: ...}` and `generate`'s writes to `state.isGenerating` etc. would create those keys on the proxy writes. The `generate` method receives `{self}.state` resolved at call time. If the merged `state` is just `{prompt}` plus live-added keys, `isGenerating: true` write would add the key. Reactive root immutability is lost for that member... but does anything depend on reactive root semantics of state? Template binds `value="@{state.prompt}"` — two-way to the site. `isGenerating`, `error`, `images`, `index`, `refreshedId` are referenced as `@{isGenerating}` etc. — these are computed references to `{self}.state.isGenerating`. Works with live-added keys? When `generate` sets `state.isGenerating = true`, it goes through the proxy write to the live layer at path `state` — actually deep writes: "writes beneath a $reactiveRoot" get immutably applied to root. Without root... the framework may still handle deep writes via the proxy by recording nested structure in the live layer and re-merging. I believe deep proxy writes produce nested objects in the live layer which merge into the def's `state` object — wait, but `state` was REPLACED wholesale by subcomponent's plain object. So merged `state` = `{prompt: "{finder}.closest.text"}` + live writes nested. Since live is highest precedence, `{state: {isGenerating: true, error: ""}}` merges with prompt staying from subcomponent layer. That would work.
+
+But the strategy hint explicitly says "A reference may equally override a single member of a widget's reactive state... the member then takes the referenced value whenever that changes, and may still be written as before." I'll trust that this is a supported, tested pattern in this environment. The hint was surely written for cases exactly like this.
+
+Hmm, although — "may still be written as before": the two-way input binding writes `state.prompt` from user typing. After user typing, prompt stops following the finder (live write wins). And when the widget moves to a new note, would the reference reassert? Only if the live write is cleared. This means "press button after moving close to a sticky note" works on first typing? No wait — before any typing, prompt follows the note text automatically. User moves near note, press button → generates from the note. Perfect for the described flow.
+
+Now, the `state.prompt` note: also `isGenerating` is bound/disabled. Everything from the source layer carries over via inheritance except `state` wholesale (as discussed) and the cross-linked `prompt`.
+
+Wait, actually, let me reconsider whether to also override `state` with the full reactive root to be safe about reactivity. If the plain-object override doesn't retain `$reactiveRoot`:
+
+- `state.prompt = X` (user types) → recorded in live layer.
+- Finder's closest.text changes (widget moves) → the reference in subcomponent layer updates prompt — but only if live hasn't written prompt. The doc for reactivity: signals products transferred intact; value comes from strongest layer. Live wins over subcomponent. OK.
+- `generate()` sets `state.isGenerating = true`: deep write through proxy. How are deep writes recorded without reactive root? Presumably same proxy mechanism: nested merge into live layer's `state`. Then `isGenerating` becomes true and effects run. Two-way binding `value="@{state.prompt}"` writes back on input events.
+
+The reactive root matters for immutable nested updates like `state.images[0] = fresh` — `refresh` does `state.images[state.index] = fresh`. Without reactive root, that's a deep write into a plain array inside the live layer (or inside merged layer?). The proxy: `that.state.images` returns... wait, `that.state` is the proxy member resolving the merged object, but nested proxies? The proxy likely only proxies the top component; `that.state.images[0] = fresh` — hmm, `that.state` would be the plain JS object `{prompt}`? A "write through the component proxy" — for deep paths the proxy can't track unless it returns nested proxies. The doc: "Writes (that.count = 6, or mutating array methods such as that.items.push(x)) are recorded in the component's live layer." So `push` works — nested proxies must exist. OK, deep writes work generally; the reactive root just adds immutable notifications. Effects recompute on the affected paths regardless? With plain nested mutation recorded in live layer, dependents on `{self}.state.images` re-evaluate. I think it works either way. Trust the hint.
+
+Alternatively — hedge: make the umbrella OVERRIDE state with full structure but reactive root marker:
+
+```js
+state: {
+    $reactiveRoot: {
+        prompt: "{finder}.closest.text",
+    }
+}
+```
+
+No — `$reactiveRoot: "{finder}.closest.text"` would bind the ROOT to the referenced site (string form). Not what we want.
+
+Could do `$reactiveRoot` as an array like `{$reactiveRoot: [...]}`? The doc shows `$reactiveRoot: [array literal]` for the todo list — the root's value is the array. And `{$reactiveRoot: {literal data}}` for objects. So the record form `{$reactiveRoot: {...}}` where the value is an object literal that gets merged/computed. Merging plain objects against it key-by-key! "Plain objects contributed by more than one layer merge recursively" — if the subcomponent's `state` is `{$reactiveRoot: {...something...}}`, does `{prompt: ...}` inside merge with the layer's `$reactiveRoot` object? A signal record's BODY may be a plain object; two plain objects in signal records from different layers — merge within the directive? The rule says signal records are replaced as a unit, so bodies do NOT merge... except the `fluid.demos.counter` example has `state: {$reactiveRoot: {count: 0}}` in an SFC with the loader's patch merging. Ugh, unknowable details.
+
+Decision: follow the strategy hint literally. `state: {prompt: "{finder}.closest.text"}` as a partial plain-object override of the reactive root member. The hint explicitly models this ("A reference may equally override a single member of a widget's reactive state"), so the framework must handle partial override of reactive roots.
+
+Now the component part. Widget creation:
+
+- New shape id: something fresh like `shape:nota-gent`? Let's pick a descriptive id: `shape:finder-imagegen`? The format for components — filename is shape id. Choose `shape:finderImageGen`. Any fresh name works; must not collide with existing ids. Existing ids: shape:finder, shape:imagegen, and notes shape:note-fox, shape:note-lighthouse. I'll use `shape:note-gendemo`... hmm keep simple: "shape:finderImageGen".
+
+Placement: beside the user's selection: selection at finder (100,100,260x200) and imagegen (420,100,360x460). Place the new combined widget beside them, e.g., x=420, y=620 or x=820, y=100. The images gen widget occupies (420..780, 100..560). Notes at y=420..620. Free space: right side x>800. Let's place at x=800? Actually imagegen is at 420..780 wide. Space from 780 to maybe 1000+: place at x=800, y=100, size 380x680 → 800..1180 wide, height 100..780. That might overlap notes region but notes at x 960..1160, y 420..620 — overlap with widget is fine on a canvas (widgets are shapes on top). Better to avoid overlap: place at y=640+ e.g. x=820, y=100? Hmm y=100..780 overlapping notes vertically is fine as it's a movable shape. I'll go x=800, y=120.
+
+preferredSize: w=380, h=680.
+
+Also include a `shape` part: {"x":800,"y":120,"w":380,"h":680}.
+
+Delete the old two widgets: delete parts for shape:finder and shape:imagegen.
+
+Delete parts: "each with an empty body, whose filename is the id of a shape to be removed." Kind/desc: presumably `Content-Description: delete`. From the spec: "`delete` parts, each with an empty body, whose filename is the id of a shape to be removed." So Content-Description: delete.
+
+Now assemble the PTF response:
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-ni..." 
+
+--boundary
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+<script>...</script>
+
+<template>...</template>
+
+<style>...</style>
+--boundary
+Content-Type: multipart/mixed; boundary="inner-..."
+Content-Disposition: attachment; filename="shape:finderImageGen"
+Content-Description: component
+
+--inner...
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{"$layers": ["fluid.demos.noteImageGenerator"]}
+--inner
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 800, "y": 120, "w": 380, "h": 680}
+--inner--
+--boundary
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+--boundary
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+
+--boundary--
+```
+
+Wait — for delete parts, what Content-Type? The doc says "delete parts, each with an empty body, whose filename is the id of a shape to be removed." It doesn't give a Content-Type explicitly. I'll use `application/json; charset=utf-8` with empty body, or maybe text/plain? Hmm. The canvas dump in the workspace doc shows a canvas part with Content-Type application/json. For deletes, I'll use text/plain; charset=utf-8? Risky either way. Let me pick Content-Type: text/plain; charset=utf-8 — no wait. Hmm. The delete part per spec: "each with an empty body". Common MIME for empty is application/json or text/plain. Since bodies like potentia are application/json and empty-ish, text/plain seems fine for a no-body part... Actually, I'll go with `application/json; charset=utf-8` — consistent with other empty/no-content parts. Hmm, but an empty body with json content type is like null JSON. I'll just do it.
+
+Hmm, actually let me reconsider: maybe Content-Type for delete should be "application/json" since PTF decoders route on Content-Description ("delete"), the type hardly matters. Go with application/json.
+
+Now the layer SFC script. Let me write it carefully.
+
+```html
+<script>
+// Combines the closest-note finder with the image generator: move this widget next to a sticky note and its
+// text becomes the image search prompt, then press the button to generate an image of it
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 380,
+        h: 680
+    },
+    finder: {
+        $component: {
+            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            // The prompt follows the closest note's text; typing in the box still overwrites it
+            state: {
+                prompt: "{finder}.closest.text"
+            }
+        }
+    }
+});
+</script]
+```
+
+Wait, typo: `</script]`. Careful.
+
+Also do the subcomponent layers need `fluid.component` in `$layers` in addition to the named widget layer? The rule: "To be instantiable as a component, its layer hierarchy must somewhere include `fluid.component`." `fluid.demos.closestNoteFinder` has `$layers: "fluid.topLevelWidget"`, and `$layers` default in SFC patch... For the SFC loader: `fluid.demos.closestNoteFinder` is defined in an SFC; its `$layers` explicitly is "fluid.topLevelWidget" only. Does `fluid.topLevelWidget` derive from `fluid.component`? Presumably yes (must, since these SFCs instantiate as components when placed via `$component` records... wait, actually in the current workspace, the finder widget itself hosts the shape. Its internal `distanceLine` subcomponent has `$layers: "fluid.component"`. The finder component itself is instantiated by the shape host from its layer — so being rooted at fluid.topLevelWidget must be instantiable. For embedding as a subcomponent, `$component` body "must name `$layers`". The body may be just `{$layers: "fluid.demos.closestNoteFinder"}` — but is that sufficient? It must include fluid.component somewhere in its resolved hierarchy. If `fluid.topLevelWidget` extends `fluid.component`, then the derived-from layer chain includes it... unless the SFC patch also added `fluid.sfcLayer` and `fluid.component`? In the workspace dump, the finder layer def is `$layers: "fluid.topLevelWidget"`. And the host instantiates it as a component (it is one). So rooted at topLevelWidget ⟹ instantiable⟹. Then `{$layers: "fluid.demos.closestNoteFinder"}` for the subcomponent should be sufficient. Adding `fluid.component` explicitly is also harmless? If topLevelWidget already includes component, adding again would create an inconsistent hierarchy? "naming it before a parent which already has it is an inconsistent hierarchy" — that's about name ORDER (C3 linearisation requires child before parent). Adding "fluid.component" after "fluid.demos.closestNoteFinder" in the array: the derived layer must beat the parent. If closestNoteFinder already inherits component, then listing component explicitly after is redundant but consistent (C3 handles duplicates fine). I could add it for safety: `$layers: ["fluid.demos.closestNoteFinder", "fluid.component"]`. That mirrors `fluid.component` being explicitly named in the demo `$component` records in the docs: e.g., `{$layers: "my.header"}` in the `$component` example — docs example uses `$layers: "my.toolbar"` alone. And `fluid.UISelectView` has `$layers: "fluid.viewComponent"`. So plain single-layer naming in `$component` is the documented pattern. For safety on the instantiation constraint, since closestNoteFinder is already used directly as a shape-hosted component in this very workspace, it resolves topLevelWidget which includes component. I'll name both for robustness... Hmm, but if `$variety: framework` layers are excluded from scope names and `fluid.component` is framework — naming it adds no scoping issues. I'll include it.
+
+Actually wait, there's a scoping concern with the finder's internals re: nickname `closestNoteFinder`. Inside the finder, references like `{closestNoteFinder}.distance` resolve by nickname from the finder component itself (self). When embedded as subcomponent `finder`, the finder's own names include member name `finder` and its layer nickname `closestNoteFinder` — unchanged. From inside finder (view, distanceLine): scope lookup finds finder itself at the parent level via member name `finder` or nickname. `{closestNoteFinder}` — nickname matches. Good.
+
+And `{imageGenerator}.error` inside imageGen: nickname of `fluid.demos.imageGenerator`; embedded component keeps its own names. Good.
+
+Now the umbrella's `@{smiley}`... not relevant.
+
+One more check — `state: {prompt: "{finder}.closest.text"}`: `{finder}` — finder is a subcomponent member of the umbrella. The reference `{finder}.closest.text` appears inside the `state` object within the `imageGen` `$component` record, which is in the umbrella's merged layers. Resolved from "the component in which it appears" — the umbrella. Context `finder`: member name in scope at the umbrella's level — the umbrella's own member `finder`. The scope search from umbrella: its own names... "its own names, then its direct children's" — direct children include the `finder` component itself and `imageGen`. `{finder}` resolves to the child. Good.
+
+But hold on — `state.prompt` lives in the subcomponent's merged layers, but the reference is interpreted where it APPEARS — in the umbrella's layer (the `$component` body which was authored by the umbrella). References in config are resolved from the referring component's perspective — the doc says "resolved from the point of view of the component in which it appears" and "from the configuration". The `imageGen` `$component` record is authored in the umbrella layer but becomes subcomponent's layer contents via subcomponent precedence. For references inside a `$component` body — e.g. the finder's original records like `{closestNoteFinder}.distance` inside finder resolve to finder (self scope). For MY override `{finder}.closest.text` inside the imageGen $component body: which component does it "appear" in? The merged layers for imageGen include my record (from umbrella def, subcomponent precedence). References resolve from the component the config belongs to — imageGen? Then context `finder`: imageGen's parent is the umbrella; scope from imageGen: its own names, its children's, its parent's (umbrella 's) names, and... "up through each ancestor and that ancestor's direct children." So from imageGen: parent umbrella's names, umbrella's siblings (none), ancestors and their children. The umbrella's direct children include `finder` and `imageGen`. So `{finder}` resolves to imageGen's sibling component `finder`. 
+
+Also `{finder}`'s nearest match might be... imageGen is a child of umbrella named `imageGen`; `finder` — imageGen's own children? imageGen's members: state, isGenerating, error, image, errorMessage..., view. No `finder`. Then umbrella's children: finder ✓. So resolves correctly.
+
+Hmm wait, subtle: scope rule "its own names, then its direct children's, then its parent's, then its siblings'". From imageGen: own names (imageGen), own children's names, parent's names (umbrella's names: root has no member name; layer nickname noteImageGenerator), siblings' names (nothing at umbrella level)... then grandparents & their children. Does the search include the parent's OTHER children? The description: "a component bearing that layer, in scope" — searching outwards: own names, direct children, parent's, siblings, and "so on up through each ancestor and that ancestor's direct children." Each ancestor and that ancestor's direct children — so at umbrella level (the ancestor), its direct children (finder, imageGen, view) get examined. Yes, finder found.
+
+OK. And if instead references in a `$component` body resolve from the PARENT (umbrella) context: `{finder}` → umbrella's child finder. Either way, resolves.
+
+Alright.
+
+Now — `$reactiveRoot` interplay, again deciding. Also is there an issue that overriding `state` with a partial object means `prompt` no longer gets the `{finder}`-driven behaviour if the user types? Already handled (live write wins).
+
+Alternatively I could bind via `$compute`: `prompt: {"$compute": ...}`? No, hint approach is fine.
+
+Now, template:
+
+```html
+<template>
+    <div class="note-imagegen">
+        <div class="note-imagegen-panel note-imagegen-finder" @id="finder"></div>
+        <div class="note-imagegen-panel note-imagegen-imagegen" @id="imageGen"></div>
+    </div>
+</template>
+```
+
+`elideParent` default true → root div merges with the shape container. The container for a hosted widget — the shape's inner div presumably. Merged root gets classes. Padding? The finder/imagegen styles set width/height 100% on their roots. Our wrapper: flex column; panels stretch full width; gaps 0; the finder takes 200px? Both inner widgets size-agnostic (finder has height 100%!). Finder's `.notefinder { height: 100% }` — in the current standalone shape at 200px height. In our wrapper, if no explicit heights on panels, finder height collapses (content-based) — `.notefinder` is flex column with `height: 100%`; `100%` of the @id container, whose height is auto → collapses. So give the finder panel a fixed height: 200px (its preferredSize.h). And the imagegen panel flex:1.
+
+Template:
+
+```html
+<template>
+    <div class="note-imagegen">
+        <div class="note-imagegen-finder" @id="finder"></div>
+        <div class="note-imagegen-imagegen" @id="imageGen"></div>
+    </div>
+</template>
+```
+
+Style:
+
+```css
+.note-imagegen {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.note-imagegen-finder {
+    flex: 0 0 200px;
+    width: 100%;
+}
+
+.note-imagegen-imagegen {
+    flex: 1;
+    min-height: 0;
+}
+
+.note-imagegen-finder::after,
+.note-imagegen-imagegen::after {} 
+```
+
+Hmm, unnecessary. Keep simple. Also a gap between panels? A vertical divider maybe: `border-bottom: 1px dashed #ddd` on finder panel? Minor cosmetics — add small margin-bottom on finder: margin-bottom: 4px. Eh.
+
+Finder at 200px tall looks right, and imagegen below.
+
+preferredSize in umbrella layer: w 380, h 680 (200+460+16=676, round to 680). Wait the wrapper itself is the shape content; the shape also has chrome? The tldraw hosted widgets: the shape at 260x200 hosts the 200px-tall finder fully. So shape h = widget content height roughly. 680 fine.
+
+Actually, let me double check the finder's SFC root: `@id` rendering with elideParent — `.notefinder` merges with our `.note-imagegen-finder` div: classes merged (class attrs merge? elideParent means the template's root element is merged with the container — attributes merge; class both present). `.notefinder` has flex column, height 100%, padding 16, bg #fffde7. Our panel has fixed height 200, width 100%. Finder content then lays out in 200px. 
+
+The image generator: `.imagegen` root flex column; fills remaining (flex:1, min-height 0). Height 460-ish. Good.
+
+Button flow: user moves widget near a note → `{finder}.closest.text` updates → `state.prompt` updates → button enabled (prompt non-blank) → press → image appears. The finder header shows the closest note's text and distance line. Exactly "move it close to a sticky note and press a button to generate an image."
+
+Potential UX issue: the input box shows the prompt, and the user can't retype manually after moving? They can (write wins). Good.
+
+One more consideration — the `distanceLine` subcomponent in the finder has `$if` referencing `{closestNoteFinder}.distance`. The finder when embedded: `distance` is null when no bounds → line hidden; 0 shows ("distance !== null"). Fine.
+
+Also `noteText: "{self}.closest.text"` — within finder self. Fine.
+
+Now think about whether the umbrella SFC script's `state` override inside `imageGen`'s `$component` could break the image generator's template bindings. `@{state.prompt}` — prompt now reference-driven. `isGenerating`, `error` short refs `@{isGenerating}` → `{self}.state.isGenerating`. As analyzed, works if partial override merges with reactive root semantics (per hint). Trust it.
+
+Also `keyDown` method args `["{self}", "{0}:event"]` unaffected.
+
+`generate` args `["{self}.state"]` → passes merged state object; the global function mutates state (isGenerating, error, images...). Works if proxy deep-writes... These writes happen in the global fn invoked via $method; `that.generate()` → func(self, ...) resolves `{self}.state` at call time — the resolved value is the merged plain object (proxy-resolved). Mutating it — is it a reactive proxy or plain? `that.state` from the proxy read resolves signals transparently → returns the underlying plain object value of the merged signal. Deep-write mutation on a plain object obtained this way isn't recorded, EXCEPT the framework must give proxy semantics for deep writes: "mutating array methods such as that.items.push(x) are recorded in the component's live layer" — that implies nested proxies exist; `that.state.images` would itself be a proxy/marked path, so pushes/writes record. The docs say `fluid.demos.imageGenerator.generate = async function (state)` writes `state.isGenerating = true` — for the standalone widget this works because state is a reactive root (proxy deep paths). With my override... risk!
+
+Hmm. To minimize risk, maybe DON'T override `state` at all in the subcomponent. Alternative: leave imageGen's state fully intact, and instead:
+
+- The umbrella has its own `state` with prompt following the finder, and cross-injects. But generate reads `{self}.state.prompt` inside the global function — it operates on the component's state. `generate` args `["{self}.state"]` resolved from imageGen → imageGen's state. Can't redirect without overriding state.
+
+- Use `$linkage`? Overkill.
+
+- Override the `generate` method in the subcomponent to fetch note text and inject: e.g. replace `generate` with `$method: {func: ..., args ["{self}.state", "{finder}.closest.text"]}`... but the underlying implementation reads prompt from state; a wrapped method could set state.prompt = currentClosestText then call... can't call the original within config without a function reference (JS layer could define a wrapper global but that's adding code anyway).
+
+Honestly, the strategy hint explicitly gives `state: {prompt: "{first}.text"}` as the sanctioned cross-injection. I'll go with it. The environment is designed for this.
+
+Actually — wait. Let me reconsider what happens with `state` under the hint semantics. The hint says "the member then takes the referenced value whenever that changes, and may still be written as before." So `state` remains the reactive root, with `prompt` overridden to track the reference. This implies the framework merges the partial plain object INTO the reactive root member-wise (prompt replaced; other members inherited). That is precisely what I need: reactive-root deep-writable state, with the prompt synced to the finder. This is clearly the designed pattern. 
+
+Now `prefer preferredSize` and the widget placement and deletions. Also: should the umbrella delete old shapes, or keep them? "Combine the functionality of the two selected widgets" — I'll replace them with the single combined widget (delete both old, create one new). I'll explain in case they'd rather keep originals — mention they're deleted and how to restore (the originals still live in layer defs, so user can re-create; but deletion loses state — none worth keeping).
+
+Placement: choose x=800, y=120, w=380, h=680. Right of imagegen with a small gap.
+
+Hmm, also should I include `live` for the new widget? No state yet — the prompt follows the finder automatically; no live needed.
+
+Now Content-Description kinds for parts: `layer`, `component`, `shape` inside component, `potentia` for "/", `delete` for deletes.
+
+Boundaries: outer: something like "ptf-boundary-noteimagegen1". Nested: "ptf-boundary-noteimagegen-inner1".
+
+Let me draft the full response:
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-w6e3x7g0h1"
+
+This is a Potentia Transmission Format (PTF) document combining the closest note finder and image generator widgets.
+
+--ptf-boundary-w6e3x7g0h1
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+<script>
+// Combines the closest note finder with the image generator: move this widget next to a sticky note and the note's
+// text becomes the search prompt; press the button to generate an image of it
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 380,
+        h: 680
+    },
+    finder: {
+        $component: {
+            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            // The prompt follows the closest note's text; typing in the box still overwrites it
+            state: {
+                prompt: "{finder}.closest.text"
+            }
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="note-imagegen">
+        <div class="note-imagegen-finder" @id="finder"></div>
+        <div class="note-imagegen-imagegen" @id="imageGen"></div>
+    </div>
+</template>
+
+<style>
+.note-imagegen {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    flex: 1;
+    min-height: 0;
+}
+
+.note-imagegen-finder {
+    flex: 0 0 200px;
+    width: 100%;
+}
+
+.note-imagegen-imagegen {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+</style>
+--ptf-boundary-w6e3x7g0h1
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteimagegen-inner1"
+Content-Disposition: attachment; filename="shape:finderImageGen"
+Content-Description: component
+
+--ptf-boundary-noteimagegen-inner1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGenerator"
+    ]
+}
+--ptf-boundary-noteimagegen-inner1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 800, "y": 120, "w": 380, "h": 680}
+--ptf-boundary-noteimagegen-inner1--
+--ptf-boundary-w6e3x7g0h1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+
+--ptf-boundary-w6e3x7g0h1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+
+
+--ptf-boundary-w6e3x7g0h1--
+```
+
+Hmm — delete parts: empty body. With MIME, an empty part body is just blank lines then the next boundary. OK.
+
+Wait — is it right to delete the originals immediately? Alternatively keep both originals and add the new combined one. User direction: "Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image". The emphasis is the combined widget. Having five widgets (2 originals + combined + 2 notes) would duplicate. Canvas has room, but the cleaner interpretation of "combine" is replace. I'll replace and say so; originals can be re-instantiated from layers if wanted.
+
+Also should I worry that the umbrella widget on creation will, before being moved, pick nearest note already? hostBounds exists immediately on shape creation → closest computed from (800,120) → nearest note: fox at (120,420) dist ~ sqrt(680²+300²)≈744; lighthouse at (960,140) dist ~ sqrt(160²+20²)≈161 → lighthouse. So prompt = "A lighthouse at dusk" initially, and distance line shows ~161px. Moving closer updates. Fine and actually demonstrates the combined behavior immediately.
+
+One more check on `preferredSize` — used when creating without shape part; we include shape part anyway. Keep it consistent (380x680).
+
+Also the shape part: for a fresh widget. Good.
+
+Escape audit: In the layer parts, strings starting with `{`, `$`, `\` — we have none at config-string starts. CSS fine. `@{state.prompt}`? Not in our SFC template. Our template has none of the special chars. Script has `fluid.def(...)`. Good.
+
+`@id="finder"` — the finder subcomponent's SFC will elide-merge root into the div. OK.
+
+Now the response must be PURELY the PTF document (form 2), since we're altering the workspace. But should I explain? The rules: form 2 means "Your entire response is then the document ... write nothing before or after it, no commentary". So no explanatory text. OK — respond with only the PTF document.
+
+Double-check nested document structure follows the worked examples: delimiter lines within nested doc use nested boundary; nested doc closed with its own close delimiter before outer resumes. ✓
+
+Header ordering per examples: Content-Type, Content-Disposition, Content-Description. ✓ The workspace dump has all three for every part. ✓ For outer, only MIME-Version and Content-Type. ✓ Preamble optional; I'll include one short line for legibility (ignored by decoders). Actually the example responses in "How to respond" include no preamble. The workspace doc has one. Preamble is allowed ("ignored by decoders, but tells a human reader"). I'll include one; it must come before the first boundary. Keep it a single line.
+
+Let me finalize strings. Careful with the script content — no `</` sequences causing HTML script parsing issues in SFC? SFC `<script>` blocks are plain JS; `</script>` appears only as the closer. Templates use `@...` syntax not JS. All good.
+
+One more: `$layers: "fluid.topLevelWidget"` in SFC — loader patch default adds `fluid.sfcLayer`... if explicit `$layers` replaces default, our layer may lose `fluid.sfcLayer` and become a "JS" layer for PTF? But note imageGenerator itself is defined in an SFC with explicit `$layers: "fluid.topLevelWidget"` and in the workspace dump it's transmitted as `text/x-vue` with `Content-Description: layer` — so SFC-ness is preserved (by the tag layer `fluid.sfcLayer` which the loader adds to every layer it loads — from the layer store, it was stored as vue; presumably tag layer is added by the loader patch regardless, or the mime comes from how it was defined). Either way, following the exact precedent of `fluid.demos.imageGenerator` (explicit `$layers: "fluid.topLevelWidget"` in an SFC) guarantees compatibility. ✓
+
+Also `preferredSize` — note topLevelWidget presumably reads it for creation default; fine.
+
+I think the design is solid. One last look at potential issue: the finder subcomponent at member `finder` — its `distanceLine` `$if` references `{closestNoteFinder}.distance` — the nickname `closestNoteFinder` is searched in scope from `distanceLine`: distanceLine's own names: member name `distanceLine`, and its $layers nickname? distanceLine's layers: `fluid.component` only (framework, excluded from scope names per `$variety`). So own names: `distanceLine`. Children's: view. Parent's (finder's) names: member `finder`, nickname `closestNoteFinder`. At the parent's level, `closestNoteFinder` matches before looking further up. ✓. But wait — "A member name beats a layer name at the same level." — irrelevant, distinct names.
+
+And the finder's own `$if`? The finder has `$if`? No, that's imageGen's error components.
+
+imageGen's members `errorMessage` have `$if: "{imageGenerator}.error"` — nickname `imageGenerator`; member name is `imageGen` — distinct; internal nickname matches from its components. ✓
+
+`{finder}.closest.text` as `prompt` — `closest` is a `$compute`, resolved value `{text, distance}`; `.text` path into plain data. When `closest` is unavailable (pending), prompt unavailable — propagates, fine.
+
+Also — hmm — `value="@{state.prompt}"` two-way binding, with the prompt site holding a REFERENCE (my override). "If the site holds a computed value (`$compute`), it is not written." A reference-driven value is probably also not writable (it's sited from finder! "A reference to a path holding mutable configuration is sited: writing through it writes to the original site."). So typing in the box would attempt to write through to... `{finder}.closest.text` — closest is a compute (computed, not writable → silently not written? or error?). The hint says "may still be written as before" — presumably the framework decides per case; for a compute site, no write. Minor: user typing might not stick to overwrite. That's an edge; the primary flow (move → press button) works. Acceptable.
+
+Actually, hmm, maybe I should make the umbrella a LITTLE nicer: bind the finder's input? No — the finder has no input. Keep simple.
+
+Final boundary strings: outer "ptf-boundary-9qkz2r1m4t", inner "ptf-boundary-noteimg-7s2a9l8p".
+
+Write it out.

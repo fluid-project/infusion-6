@@ -1,0 +1,104 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteimagegen1"
+
+--ptf-boundary-noteimagegen1
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+// Combines the closest-note finder with the Pixabay image generator. Position this widget next
+// to a sticky note and press Find Image to illustrate it - the search prompt is the note's text.
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 360,
+        h: 640
+    },
+    imageGen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            // The Find Image button searches for the closest note's text; it is enabled only while
+            // the widget is hosted beside a note and not already searching
+            cannotGenerate: {
+                $compute: {
+                    func: "fluid.demos.noteImageGenerator.canGenerate",
+                    args: ["{closestNoteFinder}.distance", "{self}.state.isGenerating"]
+                }
+            },
+            generate: {
+                $method: {
+                    func: "fluid.demos.noteImageGenerator.generate",
+                    args: ["{self}.state", "{closestNoteFinder}.noteText", "{closestNoteFinder}.distance"]
+                }
+            }
+        }
+    },
+    // This view replaces the finder SFC's own view. The finder layer still supplies closest,
+    // noteText, distance and the conditionally shown distanceLine; the generator renders beneath.
+    view: {
+        $component: {
+            $layers: ["fluid.templateViewComponent", "fluid.harness.hostView"],
+            template: `<div style="height: 100%; display: flex; flex-direction: column; font-family: sans-serif;">
+    <div style="flex: 0 0 auto; background-color: #fffde7; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 4px;">
+        <h3 style="margin: 0; font-size: 14px; color: #666;">Closest sticky note</h3>
+        <div style="font-size: 18px; font-weight: bold; color: #333; text-align: center;">@{noteText}</div>
+    </div>
+    <div @id="distanceLine" style="flex: 0 0 auto;"></div>
+    <div @id="imageGen" style="flex: 1 1 auto; min-height: 0;"></div>
+</div>`
+        }
+    }
+});
+
+fluid.demos.noteImageGenerator.canGenerate = (distance, isGenerating) => distance !== null && !isGenerating;
+
+fluid.demos.noteImageGenerator.generate = async function (state, noteText, distance) {
+    if (distance === null) {
+        state.error = "Move this widget next to a sticky note, then press Find Image";
+        state.images = [];
+        state.index = 0;
+    } else {
+        // Show what is being searched for in the prompt field, then run the generator's search
+        state.prompt = noteText;
+        return fluid.demos.imageGenerator.generate(state);
+    }
+};
+--ptf-boundary-noteimagegen1
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteimagegen-inner1"
+Content-Disposition: attachment; filename="shape:note-imagegen"
+Content-Description: component
+
+--ptf-boundary-noteimagegen-inner1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:note-imagegen"
+        }
+    }
+}
+--ptf-boundary-noteimagegen-inner1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"layerName": "fluid.demos.noteImageGenerator", "x": 420, "y": 100, "w": 360, "h": 640}
+--ptf-boundary-noteimagegen-inner1--
+--ptf-boundary-noteimagegen1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+--ptf-boundary-noteimagegen1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+
+--ptf-boundary-noteimagegen1--

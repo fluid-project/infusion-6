@@ -1,0 +1,39 @@
+{
+  "verdict": "NO WIDGET CONSTRUCTED - fit 0, 3 exchange(s), ended with unrepaired problems",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 24.749,
+      "usage": {
+        "inputTokens": 23477,
+        "outputTokens": 18550,
+        "reasoningTokens": 17658
+      }
+    },
+    {
+      "index": 2,
+      "seconds": 81.76,
+      "usage": {
+        "inputTokens": 42717,
+        "outputTokens": 8192
+      }
+    },
+    {
+      "index": 3,
+      "seconds": 83.247,
+      "usage": {
+        "inputTokens": 51079,
+        "outputTokens": 8192
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.noteImageGenerator": "fluid.def(\"fluid.demos.noteImageGenerator\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {w: 360, h: 640},\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\"\n        }\n    },\n    imageGenerator: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\"\n        }\n    },\n    nearestDistance: \"{noteFinder}.closest.distance\",\n    noNote: \"$compute:fluid.demos.noteImageGenerator.hasNoNote({noteFinder}.closest.distance)\",\n    findNoteImage: {\n        $method: {\n            func: \"fluid.demos.noteImageGenerator.takeNoteImage\",\n            args: [\"{imageGenerator}\", \"{noteFinder}.closest.text\", \"{noteFinder}.closest.distance\"]\n        }\n    },\n    view: {\n        $component: {\n            $layers: \"fluid.templateViewComponent\",\n            template: ['<div class=\"note-imagegen\" style=\"display:flex; flex-direction:column; gap:12px; padding:12px; box-sizing:border-box; background:#f0f4c3;\">', '    <div style=\"flex:0 0 auto;\">', '        <button style=\"width:100%; padding:10px 14px; font-size:14px; border:none; border-radius:6px; background:#4a90d9; color:#fff; cursor:pointer\" @onclick=\"{self}.findNoteImage()\" disabled=\"@{noNote}\">📸 Generate from closest note</button>', '    </div>', '    <div style=\"flex:0 0 190px;\" @id=\"noteFinder\"></div>', '    <div style=\"flex:1 1 auto; min-height:0;\" @id=\"imageGenerator\"></div>', '</div>'].join(\"\\n\")\n        }\n    }\n});\n\nfluid.demos.noteImageGenerator.hasNoNote = distance => distance === null;\n\nfluid.demos.noteImageGenerator.takeNoteImage = function (imageGenerator, noteText, distance) {\n    if (distance === null) {\n        imageGenerator.state.error = \"No sticky notes nearby - move this widget closer to a note\";\n        return undefined;\n    }\n    imageGenerator.state.prompt = noteText;\n    return imageGenerator.generate();\n};"
+  },
+  "deletions": [],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

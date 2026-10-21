@@ -1,0 +1,82 @@
+{
+  "verdict": "WORKS - fit 6/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 17.949,
+      "usage": {
+        "inputTokens": 22993,
+        "outputTokens": 14232,
+        "reasoningTokens": 13133
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.stickyNoteImageGen": "// A wrapper combining the closest-note finder and the image generator: it shows the sticky note nearest\n// to the widget on the canvas, and generates an image from that note's text when asked. Move the widget\n// close to a note to load the note's text into the prompt, then press \"Find Image\", or edit the prompt\n// first.\n\nfluid.def(\"fluid.demos.stickyNoteImageGen\", {\n    $layers: [\"fluid.demos.closestNoteFinder\", \"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    preferredSize: {\n        w: 420,\n        h: 560\n    },\n    // As the closest note changes, put its text into the generator's prompt so it can be searched as-is.\n    // The prompt may still be edited: updates sourced from the DOM are ignored until the closest note\n    // changes again. The guard keeps the write converge, since writing the prompt re-notifies this effect.\n    syncPrompt: {\n        $effect: {\n            func: (state, text, distance) => {\n                if (distance !== null && state.prompt !== text) {\n                    state.prompt = text;\n                }\n            },\n            args: [\"{self}.state\", \"{self}.noteText\", \"{self}.distance\"],\n            excludeSource: \"dom\"\n        }\n    },\n    view: {\n        $component: {\n            $layers: \"fluid.templateViewComponent\",\n            template: `<div style=\"width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;padding:16px;background:#fffde7;font-family:sans-serif;color:#333\">\n    <div style=\"display:flex;flex-direction:column;flex:none;margin-bottom:12px\">\n        <h3 style=\"margin:0 0 8px 0;font-size:14px;color:#666\">Closest Sticky Note</h3>\n        <div style=\"flex:1;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-align:center\">@{noteText}</div>\n        <div @id=\"distanceLine\"></div>\n    </div>\n    <div style=\"display:flex;flex:none;gap:8px;margin-bottom:12px\">\n        <input type=\"text\" style=\"flex:1;padding:10px 12px;font:inherit;border:1px solid #ccc;box-sizing:border-box\" placeholder=\"Describe the image you want...\" value=\"@{state.prompt}\" disabled=\"@{isGenerating}\" @onkeydown=\"{self}.keyDown({0})\">\n    </div>\n    <div style=\"display:flex;flex:none;gap:8px;margin-bottom:12px\">\n        <button style=\"flex:1;padding:10px 16px;font:inherit;font-weight:500;color:#fff;border:none;background:#4a90d9;cursor:pointer\" disabled=\"@{cannotGenerate}\" @onclick=\"{self}.generate()\">@{buttonLabel}</button>\n        <button style=\"padding:10px 16px;font:inherit;font-weight:500;color:#fff;border:none;background:#607d8b;cursor:pointer\" disabled=\"@{cannotShowAnother}\" @onclick=\"{self}.showAnother()\">Another</button>\n    </div>\n    <div @id=\"errorMessage\"></div>\n    <div @id=\"loadingMessage\"></div>\n    <div @id=\"result\" style=\"flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin-top:12px\"></div>\n</div>`\n        }\n    }\n});\n"
+  },
+  "deletions": [
+    "shape:imagegen"
+  ],
+  "replaced": [
+    "shape:finder"
+  ],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:finder",
+      "layerName": "fluid.demos.stickyNoteImageGen",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": true,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": true,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A lighthouse at dusk"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<div style=\"display:flex;flex-direction:column;flex:none;margin-bottom:12px\"><h3 style=\"margin:0 0 8px 0;font-size:14px;color:#666\">Closest Sticky Note</h3><div style=\"flex:1;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-align:center\">A lighthouse at dusk</div><div id=\"fl-id-stickyNoteImageGen-34.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><div style=\"display:flex;flex:none;gap:8px;margin-bottom:12px\"><input value=\"A lighthouse at dusk\" placeholder=\"Describe the image you want...\" style=\"flex:1;padding:10px 12px;font:inherit;border:1px solid #ccc;box-sizing:border-box\" type=\"text\"></div><div style=\"display:flex;flex:none;gap:8px;margin-bottom:12px\"><button style=\"flex:1;padding:10px 16px;font:inherit;font-weight:500;color:#fff;border:none;background:#4a90d9;cursor:pointer\">Find Image</button><button disabled style=\"padding:10px 16px;font:inherit;font-weight:500;color:#fff;border:none;background:#607d8b;cursor:pointer\">Another</button></div><div></div><div></div><div id=\"fl-id-stickyNoteImageGen-34.result\" class=\"imagegen-result\" style=\"flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin-top:12px\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

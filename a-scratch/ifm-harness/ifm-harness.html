@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title>IFM widget composition harness</title>
+
+        <fluid-module id="infusion-6" src="../../"></fluid-module>
+
+        <script src="../../src/lib/lezer/lezer-javascript-browser.js"></script>
+
+        <script src="../../src/framework/core/js/FluidCore.js"></script>
+        <script src="../../src/framework/core/js/FluidSignals.js"></script>
+        <script src="../../src/framework/core/js/Fluid.js"></script>
+        <script src="../../src/framework/core/js/FluidModules.js"></script>
+        <script src="../../src/framework/core/js/FluidIL.js"></script>
+        <script src="../../src/framework/core/js/FluidView.js"></script>
+        <script src="../../src/framework/core/js/FluidPTF.js"></script>
+        <script src="../../src/framework/core/js/FluidView-browser.js"></script>
+        <script src="../../src/framework/core/js/template-parser.js"></script>
+        <script src="../../src/framework/core/js/sfc-parser.js"></script>
+        <script src="../../src/lib/snarkdown/snarkdown.umd.js"></script>
+
+        <!-- The same widget SFCs as demo/tldraw/index.html, so that the library of layers offered to the AI agrees -->
+        <fluid-module id="tldrawDemo" src="../../demo/tldraw/"></fluid-module>
+
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyTime.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-storySegment.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyImageGen.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerator.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-closestNoteFinder.vue"></fluid-import>
+
+        <script src="../../demo/tldraw/js/agents-stubs.js"></script>
+        <script src="../../demo/tldraw/js/tldraw-hosting.js"></script>
+        <script src="../../demo/tldraw/js/ai-protocol.js"></script>
+        <script src="../../demo/tldraw/js/markdown-block.js"></script>
+        <script src="../../demo/tldraw/js/pixabay.js"></script>
+
+        <script src="../../tests/lib/qunit/js/qunit.js"></script>
+        <script src="../../tests/test-core/qunit/js/qunit-fluid.js"></script>
+
+        <script src="ifm-harness.js"></script>
+    </head>
+    <body>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+    </body>
+</html>

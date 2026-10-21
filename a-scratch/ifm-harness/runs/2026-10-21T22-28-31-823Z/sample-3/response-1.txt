@@ -1,0 +1,112 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-noteimg-9f21"
+
+--outer-noteimg-9f21
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGen"
+Content-Description: layer
+
+<script>
+// Composes fluid.demos.closestNoteFinder with fluid.demos.imageGenerator: the widget watches
+// the closest sticky note on the canvas, and pressing the button runs an image search for that
+// note's text.
+
+fluid.def("fluid.demos.noteImageGen", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 400,
+        h: 700
+    },
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator"
+        }
+    },
+    generateFromClosest: {
+        $method: {
+            func: "fluid.demos.noteImageGen.generateFromClosest",
+            args: ["{self}.noteFinder", "{self}.imageGen"]
+        }
+    }
+});
+
+/**
+ * Set the image generator's prompt to the closest note's text, and run the search for it.
+ * The search's promise is returned so the whole operation is a single undoable step.
+ * @param {Component} noteFinder - The closest-note finder subcomponent
+ * @param {Component} imageGen - The image generator subcomponent
+ */
+fluid.demos.noteImageGen.generateFromClosest = function (noteFinder, imageGen) {
+    const record = noteFinder.closest;
+    if (record.distance === null) {
+        imageGen.state.error = "Move this widget next to a sticky note, then press Generate again";
+        return;
+    }
+    imageGen.state.prompt = record.text;
+    return imageGen.generate();
+};
+</script>
+
+<template>
+    <div class="noteimg">
+        <!-- The closest-note finder renders its own summary and distance line -->
+        <div @id="noteFinder"></div>
+        <!-- One press takes the closest note's text straight to the image generator -->
+        <button class="noteimg-generate" @onclick="{self}.generateFromClosest()">Generate an image for this note</button>
+        <!-- The full image generator (prompt, results and credits) -->
+        <div @id="imageGen"></div>
+    </div>
+</template>
+
+<style>
+.noteimg {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    box-sizing: border-box;
+    font-family: sans-serif;
+    background-color: #fff8e1;
+}
+
+.noteimg-generate {
+    flex: 0 0 auto;
+    align-self: center;
+    font: inherit;
+    font-weight: 600;
+    font-size: 16px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    background-color: #4a90d9;
+    color: #fff;
+    cursor: pointer;
+}
+</style>
+--outer-noteimg-9f21
+Content-Type: multipart/mixed; boundary="inner-noteimg-9f21"
+Content-Disposition: attachment; filename="shape:noteImageGen"
+Content-Description: component
+
+--inner-noteimg-9f21
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{"$layers": ["fluid.demos.noteImageGen"]}
+--inner-noteimg-9f21
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 100, "y": 700, "w": 400, "h": 700}
+--inner-noteimg-9f21--
+--outer-noteimg-9f21--

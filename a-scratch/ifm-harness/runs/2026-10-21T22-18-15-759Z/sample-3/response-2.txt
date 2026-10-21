@@ -1,0 +1,33 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-x7q2w"
+
+This is a Potentia Transmission Format (PTF) document creating the combined closest-note/image-generator widget.
+--ptf-boundary-x7q2w
+Content-Type: multipart/mixed; boundary="ptf-inner-f4s6a"
+Content-Disposition: attachment; filename="shape:closest-imagegen"
+Content-Description: component
+
+--ptf-inner-f4s6a
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"layerName":"fluid.demos.closestImageGenerator","x":360,"y":600,"w":380,"h":720}
+--ptf-inner-f4s6a
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.closestImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:closest-imagegen"
+        }
+    }
+}
+--ptf-inner-f4s6a--
+--ptf-boundary-x7q2w--

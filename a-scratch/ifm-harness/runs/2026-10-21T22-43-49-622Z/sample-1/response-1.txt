@@ -1,0 +1,34 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-p78npmvk9m"
+
+This is a Potentia Transmission Format (PTF) document holding the layers and potentia of an Infusion component.
+--ptf-boundary-p78npmvk9m
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.closestNoteImageGenerator"
+Content-Description: layer
+
+fluid.def("fluid.demos.ai.closestNoteImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{closestNoteImageGenerator}.view"
+        }
+    },
+    state: {
+        prompt: "{noteFinder}.noteText"
+    }
+});
+--ptf-boundary-p78npmvk9m
+Content-Type: multipart/mixed; boundary="ptf-boundary-o0qz6z5mkk"
+Content-Disposition: attachment; filename="new-1"
+Content-Description: component
+
+--ptf-boundary-o0qz6z5mkk
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{"$layers":["fluid.demos.ai.closestNoteImageGenerator"]}
+--ptf-boundary-o0qz6z5mkk--
+--ptf-boundary-p78npmvk9m--

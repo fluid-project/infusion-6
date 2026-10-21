@@ -1,0 +1,79 @@
+{
+  "verdict": "DOES NOT WORK - fit 5/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 0,
+      "usage": null
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.closestNoteImageGen": "<script>\n// Combines the closest-note finder with the image generator: the finder (top) watches the notes on the canvas and\n// its closest note's text feeds the generator's prompt (bottom), so moving the widget next to a sticky note and\n// pressing its button generates an image from that note.\n\nfluid.def(\"fluid.demos.closestNoteImageGen\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {\n        w: 360,\n        h: 680\n    },\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            // Forward the hosting context from this umbrella widget down into the nested finder\n            hostBounds: \"{self}.hostBounds\",\n            tldrawHost: \"{tldrawHost}\"\n        }\n    },\n    imageGenerator: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\",\n            // The generator's prompt now tracks the closest note; it can still be edited by typing\n            state: {\n                prompt: \"{noteFinder}.noteText\"\n            }\n        }\n    }\n});\n</script>\n\n<template>\n    <div class=\"noteimg\">\n        <div @id=\"noteFinder\" class=\"noteimg-finder\"></div>\n        <div class=\"noteimg-gap\"></div>\n        <div @id=\"imageGenerator\" class=\"noteimg-generator\"></div>\n    </div>\n</template>\n\n<style>\n.noteimg {\n    width: 100%;\n    height: 100%;\n    box-sizing: border-box;\n    display: flex;\n    flex-direction: column;\n    background-color: #fffbea;\n    border: 1px solid #f0e4c0;\n    border-radius: 6px;\n    overflow: hidden;\n}\n\n.noteimg-finder {\n    flex: 0 0 200px;\n}\n\n.noteimg-gap {\n    flex: 0 0 8px;\n}\n\n.noteimg-generator {\n    flex: 1 1 auto;\n    min-height: 0;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:finder"
+  ],
+  "replaced": [
+    "shape:imagegen"
+  ],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:imagegen",
+      "layerName": "fluid.demos.closestNoteImageGen",
+      "available": true,
+      "problems": [
+        "Member hostBounds of component at path closestNoteImageGen-34.noteFinder failed: Reference {self}.hostBounds at path hostBounds refers to its own value - note that within a $component record, {self} designates the subcomponent being defined rather than its parent",
+        "Member closest of component at path closestNoteImageGen-34.noteFinder failed: Reference {self}.hostBounds at path hostBounds refers to its own value - note that within a $component record, {self} designates the subcomponent being defined rather than its parent",
+        "Member noteText of component at path closestNoteImageGen-34.noteFinder failed: Reference {self}.hostBounds at path hostBounds refers to its own value - note that within a $component record, {self} designates the subcomponent being defined rather than its parent",
+        "Member distance of component at path closestNoteImageGen-34.noteFinder failed: Reference {self}.hostBounds at path hostBounds refers to its own value - note that within a $component record, {self} designates the subcomponent being defined rather than its parent"
+      ],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": true,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": true,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": true,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        }
+      ],
+      "markup": "<div id=\"fl-id-closestNoteImageGen-34.noteFinder\" class=\"notefinder\"><h3 class=\"notefinder-title\">Closest Sticky Note</h3><div class=\"notefinder-text\"></div><div></div></div><div class=\"noteimg-gap\"></div><div id=\"fl-id-closestNoteImageGen-34.imageGenerator\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button disabled class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div id=\"fl-id-closestNoteImageGen-34.imageGenerator.errorMessage\" class=\"imagegen-error\">Please enter a prompt</div><div></div><div></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

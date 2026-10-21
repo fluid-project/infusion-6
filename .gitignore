@@ -4,3 +4,6 @@ node_modules
 
 # Local copy of the Pixabay API key, which is embedded in demo/tldraw/js/pixabay.js
 pixabay-api-key.txt
+
+# Password for the IFM proxy, read by a-scratch/ifm-harness
+ifm-password.txt

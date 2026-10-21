@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "change",
+    "text": "Defined layer fluid.demos.closestNoteImageGen\nCreated widget \"new-1\" as shape shape:created-1 from layer fluid.demos.closestNoteImageGen",
+    "detail": "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"ptf-boundary-outer-9vk2mqz4\"\n\n--ptf-boundary-outer-9vk2mqz4\nContent-Type: text/javascript; charset=utf-8\nContent-Disposition: attachment; filename=\"fluid.demos.closestNoteImageGen\"\nContent-Description: layer\n\nfluid.def(\"fluid.demos.closestNoteImageGen\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGen}.view\"\n        }\n    },\n    state: {\n        prompt: \"{finder}.closest.text\"\n    }\n});\n\n--ptf-boundary-outer-9vk2mqz4\nContent-Type: multipart/mixed; boundary=\"ptf-boundary-inner-4j7xq9nm\"\nContent-Disposition: attachment; filename=\"new-1\"\nContent-Description: component\n\n--ptf-boundary-inner-4j7xq9nm\nContent-Type: application/json; charset=utf-8\nContent-Disposition: attachment; filename=\"/\"\nContent-Description: potentia\n\n{\n    \"$layers\": [\n        \"fluid.demos.closestNoteImageGen\"\n    ]\n}\n--ptf-boundary-inner-4j7xq9nm\nContent-Type: application/json; charset=utf-8\nContent-Disposition: attachment; filename=\"shape\"\nContent-Description: shape\n\n{\"x\": 120, \"y\": 660, \"w\": 360, \"h\": 460}\n--ptf-boundary-inner-4j7xq9nm--\n--ptf-boundary-outer-9vk2mqz4--"
+  }
+]

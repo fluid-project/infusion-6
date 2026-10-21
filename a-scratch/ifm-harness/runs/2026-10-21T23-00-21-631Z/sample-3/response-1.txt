@@ -1,0 +1,118 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ai-boundary-1"
+
+This is a Potentia Transmission Format (PTF) document combining the closest-note-finder and image-generator widgets.
+--ai-boundary-1
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.notesToImages"
+Content-Description: layer
+
+<script>
+fluid.def("fluid.demos.ai.notesToImages", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 380,
+        h: 520
+    },
+    // The supplier: a hidden finder whose computation keeps running and whose noteText/distance feed the button.
+    // It shares this widget's view, so it and its subcomponents render nothing.
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{notesToImages}.view"
+        }
+    },
+    // What the nearest note says and how far away it is, for the summary line
+    nearestLabel: "$compute:fluid.demos.ai.notesToImages.nearestLabel({finder}.noteText, {finder}.distance)",
+    cannotUseClosest: "$compute:fluid.demos.ai.notesToImages.cannotUseClosest({finder}.distance, {self}.isGenerating)",
+    // Fill the prompt with the nearest note's text and kick off a search for it
+    useClosestNote: {
+        $method: {
+            func: function (self, state, text, distance) {
+                if (distance === null || text === "Empty note") {
+                    state.error = "Move me near a sticky note with some words on it first";
+                    return;
+                }
+                state.prompt = text;
+                state.error = "";
+                return self.generate();
+            },
+            args: ["{self}", "{self}.state", "{finder}.noteText", "{finder}.distance"]
+        }
+    }
+});
+
+fluid.demos.ai.notesToImages.nearestLabel = function (text, distance) {
+    return distance === null ? "no sticky note close by yet" : `"${text}" - ${distance}px away`;
+};
+
+fluid.demos.ai.notesToImages.cannotUseClosest = function (distance, isGenerating) {
+    return isGenerating || distance === null;
+};
+</script>
+
+<template>
+    <div class="imagegen imagegen-notes">
+        <h3 class="imagegen-title">👋 Image from Nearest Note</h3>
+        <div class="notes-nearest">Nearest note: @{nearestLabel}</div>
+        <!-- The bound value is written back to state.prompt as the user types -->
+        <input type="text" class="imagegen-input" placeholder="Describe the image you want..."
+               value="@{state.prompt}" disabled="@{isGenerating}" @onkeydown="{self}.keyDown({0})">
+        <div class="imagegen-buttons">
+            <button class="imagegen-button notes-button" disabled="@{cannotUseClosest}"
+                    @onclick="{self}.useClosestNote()">Image of nearest note</button>
+            <button class="imagegen-button" disabled="@{cannotGenerate}"
+                    @onclick="{self}.generate()">@{buttonLabel}</button>
+            <button class="imagegen-button imagegen-another" disabled="@{cannotShowAnother}"
+                    @onclick="{self}.showAnother()">Another</button>
+        </div>
+        <div @id="errorMessage"></div>
+        <div @id="loadingMessage"></div>
+        <div @id="result"></div>
+    </div>
+</template>
+
+<style>
+/* SFC styles are injected globally, hence the imagegen-notes- prefix */
+.imagegen-notes .notes-nearest {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.imagegen-notes .notes-button {
+    flex: 2;
+}
+</style>
+--ai-boundary-1
+Content-Type: multipart/mixed; boundary="ai-boundary-2"
+Content-Disposition: attachment; filename="new-1"
+Content-Description: component
+
+--ai-boundary-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.notesToImages"
+    ]
+}
+--ai-boundary-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 240, "y": 100, "w": 380, "h": 520}
+--ai-boundary-2--
+--ai-boundary-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+--ai-boundary-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+--ai-boundary-1--

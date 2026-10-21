@@ -1,0 +1,79 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-nimg-1"
+
+This is a Potentia Transmission Format (PTF) document combining the closest-note finder and the image generator into a single widget.
+--ptf-boundary-nimg-1
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+<script>
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 680,
+        h: 500
+    },
+    // Left column: which sticky note is closest to this widget
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            // Bound to this widget's own hosting shape, so hostBounds reports this widget's bounds
+            view: {
+                $component: {
+                    shapeId: "{view}.shapeId"
+                }
+            }
+        }
+    },
+    // Right column: generate an image whose prompt is the closest note's text
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{noteFinder}.noteText"
+            }
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="note-imagegen" style="box-sizing: border-box; height: 100%; padding: 12px; display: flex; gap: 12px;">
+        <div class="note-imagegen-finder" @id="noteFinder" style="flex: 0 0 270px;"></div>
+        <div class="note-imagegen-imagegen" @id="imageGenerator" style="flex: 1 1 auto; min-width: 0;"></div>
+    </div>
+</template>
+--ptf-boundary-nimg-1
+Content-Type: multipart/mixed; boundary="ptf-boundary-nimg-2"
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: component
+
+--ptf-boundary-nimg-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:finder"
+        }
+    }
+}
+--ptf-boundary-nimg-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 360, "y": 420, "w": 680, "h": 500}
+--ptf-boundary-nimg-2--
+--ptf-boundary-nimg-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+--ptf-boundary-nimg-1--

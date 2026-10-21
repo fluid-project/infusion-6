@@ -1,0 +1,76 @@
+{
+  "verdict": "DOES NOT WORK - fit 3/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 0,
+      "usage": null
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.ai.noteToImage": "<script>\n// Umbrella widget combining fluid.demos.closestNoteFinder and fluid.demos.imageGenerator.\n// The note finder is embedded as a subcomponent whose own view shows the closest sticky note and its distance;\n// its host bounds are mirrored from this hosted widget so it keeps tracking the canvas as the whole card moves.\n// The image generator is embedded below it, and its \"Generate image from note\" button seeds the prompt with the\n// closest note's text and starts the search. The user may still type their own prompt and use the image\n// generator's own button.\n\nfluid.def(\"fluid.demos.ai.noteToImage\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {\n        w: 400,\n        h: 700\n    },\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            hostBounds: \"{self}.hostBounds\"\n        }\n    },\n    imageGen: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\"\n        }\n    },\n    // True while the widget is away from any canvas note, so the generate-from-note button is disabled\n    noNearbyNote: \"$compute:fluid.demos.ai.noteToImage.hasNoNote({finder}.closest)\",\n    generateFromNote: {\n        $method: {\n            func: \"fluid.demos.ai.noteToImage.generateFromNote\",\n            args: [\"{imageGen}\", \"{finder}.closest\"]\n        }\n    }\n});\n\nfluid.demos.ai.noteToImage.hasNoNote = closest => !(closest && closest.distance !== null);\n\nfluid.demos.ai.noteToImage.generateFromNote = function (imageGen, closest) {\n    if (closest && closest.distance !== null) {\n        // Seed the prompt with the note's text (\"sticky note\" for an empty note) and search Pixabay for it\n        imageGen.state.prompt = closest.text || \"sticky note\";\n        return imageGen.generate();\n    } else {\n        imageGen.state.prompt = \"\";\n        imageGen.state.error = \"Move me next to a sticky note first\";\n        return undefined;\n    }\n};\n</script>\n\n<template>\n    <div class=\"noteToImage\">\n        <div class=\"noteToImage-finderWrap\" @id=\"finder\"></div>\n        <div class=\"noteToImage-actions\">\n            <button class=\"noteToImage-button\" disabled=\"@{noNearbyNote}\"\n                    @onclick=\"{self}.generateFromNote()\">Generate image from note</button>\n            <span class=\"noteToImage-hint\">Move me next to a sticky note, then press the button</span>\n        </div>\n        <div class=\"noteToImage-imagegenWrap\" @id=\"imageGen\"></div>\n    </div>\n</template>\n\n<style>\n.noteToImage {\n    width: 100%;\n    height: 100%;\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n    box-sizing: border-box;\n    font-family: sans-serif;\n}\n\n.noteToImage-finderWrap {\n    flex: 0 0 180px;\n    min-height: 0;\n}\n\n.noteToImage-imagegenWrap {\n    flex: 1 1 auto;\n    min-height: 0;\n}\n\n.noteToImage-actions {\n    display: flex;\n    flex-direction: column;\n    align-items: stretch;\n    gap: 6px;\n    padding: 10px 12px;\n    background-color: #eceff1;\n    border-radius: 6px;\n}\n\n.noteToImage-button {\n    padding: 10px 12px;\n    font-size: 14px;\n    font-weight: 600;\n    border: none;\n    border-radius: 6px;\n    background-color: #2e7d32;\n    color: #fff;\n    cursor: pointer;\n}\n\n.noteToImage-button:disabled {\n    background-color: #999;\n    cursor: not-allowed;\n}\n\n.noteToImage-hint {\n    font-size: 12px;\n    color: #666;\n    text-align: center;\n}\n</style>\n"
+  },
+  "deletions": [
+    "shape:imagegen"
+  ],
+  "replaced": [
+    "shape:finder"
+  ],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:finder",
+      "layerName": "fluid.demos.ai.noteToImage",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": false,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Generate image from note",
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Generate image from note",
+          "disabled": false,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Generate image from note",
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Generate image from note",
+          "disabled": false,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        }
+      ],
+      "markup": "<div id=\"fl-id-noteToImage-34.finder\" class=\"notefinder\"><h3 class=\"notefinder-title\">Closest Sticky Note</h3><div class=\"notefinder-text\"></div><div></div></div><div class=\"noteToImage-actions\"><button class=\"noteToImage-button\">Generate image from note</button><span class=\"noteToImage-hint\">Move me next to a sticky note, then press the button</span></div><div id=\"fl-id-noteToImage-34.imageGen\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button disabled class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div id=\"fl-id-noteToImage-34.imageGen.errorMessage\" class=\"imagegen-error\">Move me next to a sticky note first</div><div></div><div></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

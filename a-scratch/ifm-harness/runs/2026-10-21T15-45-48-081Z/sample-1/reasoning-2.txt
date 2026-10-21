@@ -1,0 +1,5 @@
+The layer was declared as `text/javascript` but I put the code inside `<script>...</script>` tags — that's content for `text/x-vue`, not plain JavaScript. The layer part needs to be raw JS without the script tags. Fix: remove `<script>` and `</script>`, keep Content-Type text/javascript.
+
+Only resend what's still required: the layer definition and re-create the widget (its shape was removed). Fresh id fine, or reuse shape:noteImageGen — it says the shape has been removed, and prior id "now shape shape:created-1" — odd, but safest to use a new id.
+
+Also note I had `Content-description: component` (lowercase b) on the component part in the failed document — fix to `Content-Description`. That may have been part of the problem too, though the listed errors were only the syntax error. Keep headers correct anyway.

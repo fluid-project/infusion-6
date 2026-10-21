@@ -1,0 +1,84 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-note2img-1"
+
+--ptf-note2img-1
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteToImage"
+Content-Description: layer
+
+fluid.def("fluid.demos.noteToImage", {
+    $layers: ["fluid.demos.closestNoteFinder", "fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 400,
+        h: 640
+    },
+    // As well as the inherited conditions, generation is impossible while no note is within reach
+    cannotGenerate: "$compute:fluid.demos.noteToImage.cannotGenerate({self}.distance, {self}.state.prompt, {self}.state.isGenerating)",
+    // Keep the generator's prompt in step with the closest note. Writes from the (read-only) input never occur,
+    // but excluding the "dom" source would let any direct write to the prompt survive until the note changes
+    syncPrompt: {
+        $effect: {
+            func: "fluid.demos.noteToImage.setPromptFromNote",
+            args: ["{self}.state", "{self}.noteText"],
+            excludeSource: "dom"
+        }
+    },
+    // A single view placing the finder's read-out and the generator's controls and subcomponents
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div style="height:100%; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:12px; padding:12px; font-family: system-ui, -apple-system, sans-serif;">
+    <div class="notefinder" style="flex:0 0 auto; padding:12px;">
+        <h3 class="notefinder-title">Closest Sticky Note</h3>
+        <div class="notefinder-text">@{noteText}</div>
+        <div @id="distanceLine"></div>
+    </div>
+    <div class="imagegen" style="flex:1 1 auto; min-height:0;">
+        <input type="text" class="imagegen-input" value="@{state.prompt}" readonly
+               disabled="@{cannotGenerate}" placeholder="Searching Pixabay for the closest note's text">
+        <div class="imagegen-buttons">
+            <button class="imagegen-button" disabled="@{cannotGenerate}" @onclick="{self}.generate()">@{buttonLabel}</button>
+            <button class="imagegen-button imagegen-another" disabled="@{cannotShowAnother}" @onclick="{self}.showAnother()">Another</button>
+        </div>
+        <div @id="errorMessage"></div>
+        <div @id="loadingMessage"></div>
+        <div @id="result"></div>
+    </div>
+</div>`
+        }
+    }
+});
+
+fluid.demos.noteToImage.cannotGenerate = function (distance, prompt, isGenerating) {
+    return isGenerating || distance === null || !prompt.trim();
+};
+
+fluid.demos.noteToImage.setPromptFromNote = function (state, noteText) {
+    if (state.prompt !== noteText) {
+        state.prompt = noteText;
+    }
+};
+--ptf-note2img-1
+Content-Type: multipart/mixed; boundary="ptf-note2img-shape-1"
+Content-Disposition: attachment; filename="shape:noteImageGen2"
+Content-Description: component
+
+--ptf-note2img-shape-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteToImage"
+    ]
+}
+--ptf-note2img-shape-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 120, "y": 660, "w": 400, "h": 640}
+--ptf-note2img-shape-1--
+--ptf-note2img-1--

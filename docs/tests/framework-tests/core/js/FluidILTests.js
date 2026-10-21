@@ -812,6 +812,189 @@ QUnit.test("Only writes beneath reactive roots recorded in the history", functio
     that.destroy();
 });
 
+// Members merged alongside a $reactiveRoot, which may be links to referenced values - fluid-project/infusion-6#25
+
+fluid.def("fluid.tests.reactiveSource", {
+    $layers: "fluid.component",
+    text: "From source"
+});
+
+fluid.def("fluid.tests.reactiveBase", {
+    $layers: "fluid.component",
+    state: {
+        $reactiveRoot: {
+            prompt: "",
+            colour: "red",
+            nested: {
+                size: 1,
+                weight: 2
+            },
+            data: "{not}.aReference"
+        }
+    }
+});
+
+// A mixin overriding single members of the base's reactive root with a link and a literal
+fluid.def("fluid.tests.reactiveMixin", {
+    $layers: "fluid.tests.reactiveBase",
+    source: {
+        $component: {
+            $layers: "fluid.tests.reactiveSource"
+        }
+    },
+    state: {
+        prompt: "{source}.text",
+        nested: {
+            size: 5
+        }
+    }
+});
+
+QUnit.test("Reactive root members overridden by links and literals from another layer", function (assert) {
+    const that = fluid.tests.reactiveMixin();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.state), {
+        prompt: "From source", colour: "red", nested: {size: 5, weight: 2}, data: "{not}.aReference"
+    }, "Linked member drawn from its source, literal overrides initial value, and data within the root is not a link");
+
+    const start = fluid.layerHistory.get().length;
+    that.source.text = "Changed at source";
+    fluid.cell.stabilize();
+    assert.equal(that.state.prompt, "Changed at source", "Linked member follows its source");
+    assert.equal(fluid.layerHistory.get().length, start, "Write through link not recorded in the history");
+
+    that.state.colour = "blue";
+    fluid.cell.stabilize();
+    that.source.text = "Changed again";
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.state), {
+        prompt: "Changed again", colour: "blue", nested: {size: 5, weight: 2}, data: "{not}.aReference"
+    }, "Link still honoured once the reactive root has been written into the live layer");
+
+    that.state.prompt = "Written locally";
+    fluid.cell.stabilize();
+    assert.equal(that.state.prompt, "Written locally", "Linked member may be written");
+    assert.equal(that.source.text, "Changed again", "Write to linked member does not reach its source");
+    assert.equal(fluid.layerHistory.get().length, start + 2, "Writes to the reactive root recorded in the history");
+    that.source.text = "Changed once more";
+    fluid.cell.stabilize();
+    assert.equal(that.state.prompt, "Changed once more", "Linked member follows its source again once it changes");
+    that.destroy();
+});
+
+// Members alongside the $reactiveRoot record in a single layer are equally honoured
+fluid.def("fluid.tests.reactiveSingleLayer", {
+    $layers: "fluid.component",
+    source: {
+        $component: {
+            $layers: "fluid.tests.reactiveSource"
+        }
+    },
+    state: {
+        $reactiveRoot: {
+            prompt: "",
+            count: 0
+        },
+        prompt: "{source}.text",
+        count: 3
+    }
+});
+
+// A stronger layer supplying a member within its own $reactiveRoot record displaces a weaker link
+fluid.def("fluid.tests.reactiveUnlinked", {
+    $layers: "fluid.tests.reactiveMixin",
+    state: {
+        $reactiveRoot: {
+            prompt: "Fixed"
+        }
+    }
+});
+
+// Members supplied by a middle layer, partly displaced by a stronger layer's $reactiveRoot record
+fluid.def("fluid.tests.reactiveLayered.base", {
+    $layers: "fluid.component",
+    state: {$reactiveRoot: {a: 1, b: 2, c: 3}},
+    other: "x"
+});
+
+fluid.def("fluid.tests.reactiveLayered.mid", {
+    $layers: "fluid.tests.reactiveLayered.base",
+    state: {a: 10, b: "{self}.other"}
+});
+
+fluid.def("fluid.tests.reactiveLayered.top", {
+    $layers: "fluid.tests.reactiveLayered.mid",
+    state: {$reactiveRoot: {a: 100}}
+});
+
+QUnit.test("Reactive root links within a single layer, and displaced by a stronger layer", function (assert) {
+    const single = fluid.tests.reactiveSingleLayer();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(single.state), {prompt: "From source", count: 3}, "Link and literal alongside record in a single layer");
+    single.source.text = "Changed";
+    fluid.cell.stabilize();
+    assert.equal(single.state.prompt, "Changed", "Link within a single layer follows its source");
+    single.destroy();
+
+    const unlinked = fluid.tests.reactiveUnlinked();
+    fluid.cell.stabilize();
+    assert.equal(unlinked.state.prompt, "Fixed", "Stronger layer's record displaces weaker link");
+    unlinked.source.text = "Changed";
+    fluid.cell.stabilize();
+    assert.equal(unlinked.state.prompt, "Fixed", "Displaced link not honoured");
+    unlinked.destroy();
+
+    const layered = fluid.tests.reactiveLayered.top();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(layered.state), {a: 100, b: "x", c: 3},
+        "Stronger record displaces weaker literal at its member only, leaving other members and links in place");
+    layered.destroy();
+});
+
+QUnit.test("Directive merged alongside a reactive root is reported, but may replace it as a whole", function (assert) {
+    const that = fluid.tests.reactiveBase({state: {colour: "$compute:fluid.tests.countEntries({self}.state)"}});
+    assert.ok(fluid.isUnavailable(that), "Component holding directive within reactive root is unavailable");
+    const message = fluid.deSignal(that[fluid.proxySymbol].shadow.flatMerged).message;
+    assert.ok(message.includes("Cannot override member colour of the reactive root at path state"), "Error identifies the member and its reactive root");
+
+    // As for the todo list's selects, whose options are computed in place of an empty reactive root
+    const replaced = fluid.tests.reactiveBase({state: "$compute:fluid.tests.countEntries({self}.list)", list: ["a", "b"]});
+    fluid.cell.stabilize();
+    assert.equal(replaced.state, 2, "Reactive root replaced as a whole by a directive");
+    replaced.destroy();
+});
+
+// A fresh resolveRoot component resolves in place of one which has been destroyed
+
+fluid.def("fluid.tests.rootResolved", {
+    $layers: ["fluid.resolveRoot", "fluid.component"],
+    notes: []
+});
+
+fluid.def("fluid.tests.rootReader", {
+    $layers: "fluid.component",
+    read: "{rootResolved}.notes"
+});
+
+QUnit.test("Destroyed resolveRoot component withdrawn from root scope", function (assert) {
+    const first = fluid.tests.rootResolved({notes: ["first"]});
+    const reader = fluid.tests.rootReader();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(reader.read), ["first"], "Root-resolved component resolved");
+    first.destroy();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(reader.read), "Reference unavailable once root-resolved component is destroyed");
+    const second = fluid.tests.rootResolved({notes: ["second"]});
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(reader.read), ["second"], "Existing reference resolves to fresh root-resolved component");
+    const freshReader = fluid.tests.rootReader();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(freshReader.read), ["second"], "Fresh reference resolves to fresh root-resolved component");
+    freshReader.destroy();
+    reader.destroy();
+    second.destroy();
+});
+
 // Higher-order reference tracking. A $contextRef's *value* is a $sitedRef cell.
 // These probe whether that indirection is represented in the graph, or merely
 // re-derived by each consumer through flattenSignals.
@@ -1804,5 +1987,45 @@ QUnit.test("Unavailable components are tracked until available or destroyed - fl
     fluid.destroyComponent(other);
     fluid.cell.stabilize();
     assert.undefined(fluid.unavailableComponentMap.get()[otherPath], "Destroyed component is no longer tracked");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.selfReference.inner", {
+    $layers: "fluid.component",
+    seed: 1,
+    bounds: "$compute:fluid.identity({self}.seed)",
+    doubled: "$compute:fluid.tests.selfReference.double({self}.bounds)"
+});
+
+fluid.tests.selfReference.double = x => 2 * x;
+
+fluid.def("fluid.tests.selfReference.outer", {
+    $layers: "fluid.component",
+    bounds: 5,
+    inner: {
+        $component: {
+            $layers: "fluid.tests.selfReference.inner",
+            // A mistake made by the AI, intending {outer}.bounds
+            bounds: "{self}.bounds"
+        }
+    },
+    // A reference to a value including its own site
+    whole: {
+        part: "{self}.whole"
+    }
+});
+
+QUnit.test("Reference designating its own value is unavailable rather than cycling", function (assert) {
+    const that = fluid.tests.selfReference.outer();
+    fluid.cell.stabilize();
+    const bounds = fluid.deSignal(that.inner.bounds);
+    assert.ok(fluid.isUnavailable(bounds), "Self-reference is unavailable");
+    assert.ok(fluid.unavailableToCauses(fluid.unProxy(bounds))[0].message.includes("Reference {self}.bounds at path bounds refers to its own value"),
+        "Self-reference described");
+    assert.ok(fluid.isUnavailable(fluid.deSignal(that.inner.doubled)), "Unavailability propagates to dependents");
+    assert.ok(fluid.isUnavailable(fluid.deSignal(that.whole.part)), "Reference to a value including its own site is unavailable");
+    assert.equal(fluid.deSignal(that.bounds), 5, "Outer member unaffected");
+    assert.ok(fluid.segsOverlap(["a", "b"], ["a"]) && fluid.segsOverlap(["a"], ["a", "b"]) && !fluid.segsOverlap(["a", "b"], ["a", "c"]),
+        "Overlapping paths detected");
     that.destroy();
 });

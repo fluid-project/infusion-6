@@ -2189,7 +2189,8 @@ const $fluidScope = function (fluid) {
     /**
      * Extract policy information (currently just any $reactiveRoot markers) from a merging layer structure and populate the corresponding layer map.
      * This needs to happen before merging since a $reactiveRoot marker which is merged over by a live or other layer will still
-     * need to be honoured.
+     * need to be honoured. A $reactiveRoot marker may be accompanied by other members, as may arise from merging it with
+     * other layers - these are applied over the reactive root's value, as interpreted by fluid.extractReactiveLinks.
      * @param {Object|Array<any>} layer - The layer to traverse for policy markers.
      * @param {Object} layerMap - The layer map to populate with extracted policy information.
      * @param {String[]} [segs=[]] - The current path segments during recursive traversal.
@@ -2201,18 +2202,131 @@ const $fluidScope = function (fluid) {
             segs.pop();
         };
         if (fluid.isPlainObject(layer, true)) {
-            const allKeys = Object.keys(layer);
             if ("$reactiveRoot" in layer) {
                 fluid.set(layerMap, [...segs, $m, "reactiveRoot"], true);
-                if (allKeys.length !== 1) {
-                    fluid.fail("Unexpected extra keys together with $reactiveRoot: " + allKeys.join(", "));
-                }
             } else {
                 fluid.transform(layer, recurse);
             }
         } else if (Array.isArray(layer)) {
             layer.forEach(recurse);
         }
+    };
+
+    /**
+     * Determine whether a leaf of a layer's material is a directive which is expanded into a signal product, e.g. a
+     * compact record such as "$compute:..." or a record such as `{$compute: ...}`
+     * @param {any} value - The value to be tested
+     * @return {Boolean} `true` if the value is a directive
+     */
+    fluid.isDirectiveMaterial = function (value) {
+        return typeof(value) === "string" && /^\$\w+:/.test(value) ||
+            fluid.isPlainObject(value, true) && Object.keys(value).some(key => key.startsWith("$"));
+    };
+
+    /**
+     * Visit each leaf of a layer's material, that is, each value which is not a plain object, together with its path.
+     * A plain object holding a directive such as `$compute` is visited as a leaf.
+     * @param {any} value - The material to be traversed
+     * @param {Function} visitor - Called as `visitor(leaf, segs)` for each leaf
+     * @param {String[]} [segs=[]] - The path of `value` within the material originally supplied
+     */
+    fluid.forEachLeaf = function (value, visitor, segs = []) {
+        if (fluid.isPlainObject(value, true) && !fluid.isDirectiveMaterial(value)) {
+            fluid.each(value, (member, key) => fluid.forEachLeaf(member, visitor, [...segs, key]));
+        } else {
+            visitor(value, segs);
+        }
+    };
+
+    /**
+     * @typedef {Object} ReactiveLink
+     * @property {String[]} segs - The path of the linked member, relative to its reactive root
+     * @property {String} ref - The context reference from which the member's value is drawn
+     */
+
+    /**
+     * Determine the links of each reactive root of a merging layer structure. A layer may supply members at the path of
+     * a reactive root alongside, or instead of, its $reactiveRoot record, e.g. a mixin overriding `state.prompt` of a
+     * layer holding `state: {$reactiveRoot: {...}}`. Such members which are context references are links - the value
+     * of a linked member is drawn from the referenced value whenever that changes, and may otherwise be written as any
+     * other member of the reactive root. Other members simply override the reactive root's initial value, and are stored
+     * as `reactiveLiterals` - a member supplied by a stronger layer, including within its $reactiveRoot record,
+     * displaces a weaker link or literal at the same path. Links are
+     * collected from all layers other than the live layer, since once a reactive root has been written, its value held
+     * in the live layer merges over all of these - its links must nonetheless continue to be honoured. They are stored
+     * in the layer map as `reactiveLinks` alongside the root's `reactiveRoot` marker.
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @param {LayerMap} layerMap - The layer map, already populated with `reactiveRoot` markers by fluid.extractPolicy
+     */
+    fluid.extractReactiveLinks = function (layers, mergeRecords, layerMap) {
+        const definedLayers = layers.filter((layer, i) => mergeRecords[i].mergeRecordType !== "live");
+        const linksAt = function (rootSegs) {
+            // Map of path within the reactive root, rendered as a string, to the strongest member supplied there
+            let members = {};
+            const setMember = function (segs, value) {
+                if (segs.length === 0) {
+                    // A value for the reactive root as a whole, e.g. an array, displaces all weaker members
+                    members = {};
+                } else {
+                    const key = fluid.composeSegments(segs);
+                    // A member displaces any weaker member beneath or above it
+                    members = fluid.filterKeys(members, Object.keys(members).filter(
+                        existing => existing !== key && !existing.startsWith(key + ".") && !key.startsWith(existing + ".")));
+                    members[key] = {segs, value};
+                }
+            };
+            const checkMember = function (segs, value) {
+                if (fluid.isDirectiveMaterial(value)) {
+                    fluid.fail(`Cannot override member ${fluid.composeSegments(segs)} of the reactive root at path `
+                        + `${fluid.composeSegments(rootSegs)} with ${JSON.stringify(value)} - only literal values and context `
+                        + "references may be merged alongside a $reactiveRoot");
+                } else {
+                    setMember(segs, value);
+                }
+            };
+            definedLayers.forEach(layer => {
+                const value = rootSegs.reduce((parent, seg) => fluid.isPlainObject(parent, true) ? parent[seg] : undefined, layer);
+                if (fluid.isPlainObject(value, true) && Object.keys(value).some(key => key !== "$reactiveRoot" && key.startsWith("$"))) {
+                    // A record such as $compute replaces the reactive root as a whole
+                    members = {};
+                } else if (fluid.isPlainObject(value, true)) {
+                    // Within a single layer, members alongside its $reactiveRoot record override its contents
+                    if ("$reactiveRoot" in value) {
+                        // The contents of a $reactiveRoot record are plain data, which displace links but are never links
+                        fluid.forEachLeaf(value.$reactiveRoot, (leaf, segs) => setMember(segs, undefined));
+                    }
+                    fluid.each(value, (member, key) => {
+                        if (key !== "$reactiveRoot") {
+                            fluid.forEachLeaf(member, (leaf, segs) => checkMember([key, ...segs], leaf));
+                        }
+                    });
+                } else if (value !== undefined) {
+                    members = {};
+                }
+            });
+            return Object.values(members).filter(member => member.value !== undefined);
+        };
+        const visit = function (mapNode, segs) {
+            if (mapNode[$m]?.reactiveRoot) {
+                const members = linksAt(segs);
+                const links = members.filter(member => fluid.isILReference(member.value)).map(member => ({segs: member.segs, ref: member.value}));
+                const literals = members.filter(member => !fluid.isILReference(member.value));
+                if (links.length > 0) {
+                    mapNode[$m].reactiveLinks = links;
+                }
+                if (literals.length > 0) {
+                    mapNode[$m].reactiveLiterals = literals;
+                }
+            } else {
+                fluid.each(mapNode, (child, key) => {
+                    if (key !== $m) {
+                        visit(child, [...segs, key]);
+                    }
+                });
+            }
+        };
+        visit(layerMap, []);
     };
 
     /**
@@ -2232,6 +2346,7 @@ const $fluidScope = function (fluid) {
         mergeRecords.sort((a, b) => b.priority - a.priority);
         const layers = mergeRecords.map(mergeRecord => mergeRecord.layer);
         layers.forEach(layer => fluid.extractPolicy(layer, layerMap));
+        fluid.extractReactiveLinks(layers, mergeRecords, layerMap);
 
         fluid.mergeLayers(root, segs, layerMap, layers, mergeRecords);
 

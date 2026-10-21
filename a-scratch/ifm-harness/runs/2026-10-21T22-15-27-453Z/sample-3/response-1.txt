@@ -1,0 +1,48 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="bnd-ai-01"
+
+--bnd-ai-01
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.noteImageGenerator"
+Content-Description: layer
+
+fluid.def("fluid.demos.ai.noteImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // The closest note finder is the supplier: a hidden subcomponent sharing this widget's view, its output
+    // wired into the image generator's prompt, so moving the widget near a sticky note fills the prompt
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{noteImageGenerator}.view",
+            // Read the host bounds from the top-level widget, not from this subcomponent
+            closest: "$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.notes, {noteImageGenerator}.hostBounds)"
+        }
+    },
+    state: {
+        prompt: "{finder}.closest.text"
+    }
+});
+--bnd-ai-01
+Content-Type: multipart/mixed; boundary="bnd-ai-02"
+Content-Disposition: attachment; filename="new-1"
+Content-Description: component
+
+--bnd-ai-02
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.noteImageGenerator"
+    ]
+}
+--bnd-ai-02
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 360, "y": 420, "w": 360, "h": 460}
+--bnd-ai-02--
+--bnd-ai-01--

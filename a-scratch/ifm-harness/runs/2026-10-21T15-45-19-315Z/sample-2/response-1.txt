@@ -1,0 +1,59 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-nimg-01"
+
+This is a Potentia Transmission Format (PTF) document combining the closest-note finder and image generator.
+--ptf-boundary-nimg-01
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.ai.noteImageGen"
+Content-Description: layer
+
+// Combines the closest-note finder with the image generator: the finder supplies the prompt -
+// the text of the sticky note nearest this widget - and the image generator renders the result
+fluid.def("fluid.demos.ai.noteImageGen", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    // Locates the nearest sticky note without rendering anything of its own
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{noteImageGen}.view"
+        }
+    },
+    // The closest note's text becomes the image prompt; nothing is offered while no note is near
+    promptText: "$compute:fluid.demos.ai.noteImageGen.promptText({noteFinder}.closest.text, {noteFinder}.closest.distance)",
+    // The prompt member of the image generator's reactive state tracks the closest note, and may still be typed in
+    state: {
+        prompt: "{self}.promptText"
+    }
+});
+
+/**
+ * Offer the closest note's text as the image prompt while a note is actually in reach
+ * @param {String} text - The closest note's text, or a message when there is none
+ * @param {Number|null} distance - Its distance from this widget, or `null` when there is no note
+ * @return {String} The prompt to offer the image generator
+ */
+fluid.demos.ai.noteImageGen.promptText = (text, distance) => distance === null ? "" : text;
+--ptf-boundary-nimg-01
+Content-Type: multipart/mixed; boundary="ptf-boundary-nimg-02"
+Content-Disposition: attachment; filename="shape:note-imagegen"
+Content-Description: component
+
+--ptf-boundary-nimg-02
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.ai.noteImageGen"
+    ]
+}
+--ptf-boundary-nimg-02
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 120, "y": 700, "w": 360, "h": 460}
+--ptf-boundary-nimg-02--
+--ptf-boundary-nimg-01--

@@ -1050,3 +1050,65 @@ QUnit.test("Host machinery is broadcast onto the views of top-level widgets - fl
     assert.equal(that.hostBounds, null, "Widget's bounds revert to the placeholder");
     that.destroy();
 });
+
+// A host which, as it should, reports no bounds for a view which it does not itself host
+fluid.def("fluid.tests.nestingHostView", {
+    $layers: "fluid.topLevelWidgetView",
+    hostId: null,
+    hostBounds: "$compute:fluid.tests.nestingHostBounds({self}.hostId)"
+});
+
+fluid.tests.nestingHostBounds = hostId => hostId === null ? null : {x: hostId * 10, y: 0, w: 1, h: 1};
+
+fluid.def("fluid.tests.nestingHost", {
+    $layers: "fluid.component",
+    hostLinkage: {
+        $linkage: {
+            inputLayers: ["fluid.topLevelWidgetView"],
+            outputLayers: ["fluid.tests.nestingHostView"]
+        }
+    }
+});
+
+// An umbrella widget rendering another top-level widget into its own template, via an intermediate component
+fluid.def("fluid.tests.umbrellaWidget", {
+    $layers: "fluid.topLevelWidget",
+    group: {
+        $component: {
+            $layers: "fluid.component",
+            inner: {
+                $component: {
+                    $layers: "fluid.tests.widget"
+                }
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<div class="group"><div @id="inner"></div></div>`
+                }
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="umbrella"><div @id="group"></div></div>`
+        }
+    }
+});
+
+QUnit.test("Widget nested within another takes the bounds of the widget enclosing it - fluid-project/infusion-6#25", function (assert) {
+    const container = qs(".container");
+    const host = fluid.tests.nestingHost();
+    const that = fluid.tests.umbrellaWidget({container, view: {$component: {hostId: 4}}});
+    fluid.cell.stabilize();
+    const inner = that.group.inner;
+    assert.equal(container.textContent, "Widget", "Nested widget rendered within the umbrella's template");
+    assert.equal(fluid.unwrapProxy(inner.view.hostBounds), null, "Host reports no bounds for the nested widget's own view");
+    assert.deepEqual({...that.hostBounds}, {x: 40, y: 0, w: 1, h: 1}, "Umbrella receives bounds reported by its host");
+    assert.deepEqual({...inner.hostBounds}, {x: 40, y: 0, w: 1, h: 1}, "Nested widget takes the bounds of the umbrella enclosing it");
+    host.destroy();
+    fluid.cell.stabilize();
+    assert.equal(inner.hostBounds, null, "Nested widget's bounds revert to the placeholder once its enclosing widget is unhosted");
+    that.destroy();
+});

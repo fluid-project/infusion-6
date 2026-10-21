@@ -25,7 +25,8 @@ fluid.tldraw.ai.tokenDerivation = {
 fluid.tldraw.ai.docUrls = [
     "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-integration-language.md",
     "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-view.md",
-    "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-ptf.md"
+    "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-ptf.md",
+    "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-tldraw.md"
 ];
 
 // The number of times a response which could not be applied is reported back to the AI for it to correct
@@ -37,6 +38,10 @@ fluid.tldraw.ai.hostLayers = ["fluid.tldrawViewComponent"];
 
 // The number of earlier messages of the conversation which are sent along with each fresh direction
 fluid.tldraw.ai.maxHistory = 8;
+
+// The number of tokens, including reasoning, which the AI may produce in one reply. Without this, the endpoint cuts off
+// replies at 8192 tokens, which a reply reasoning at length about a composition may exceed before it begins its document
+fluid.tldraw.ai.maxOutputTokens = 32768;
 
 /**
  * Derive the token presented to the proxy from a typed password, as lowercase hex of PBKDF2-HMAC-SHA256
@@ -185,7 +190,8 @@ widgets. Each widget is a live component of Fluid Infusion 6, a framework in whi
 named layers of declarative configuration which any party may add to or override. Besides answering the user's \
 questions, you can reflect on the widgets in the workspace and alter them - adapting them, composing them and \
 creating new ones - by replying with a document in Infusion's Potentia Transmission Format (PTF), which is applied \
-directly to the canvas. The documentation of the framework follows, and after it the current state of the workspace.`;
+directly to the canvas. The documentation of the framework follows, then the rules for your response and some \
+strategy hints, and finally the current state of the workspace and the user's selection.`;
 
 fluid.tldraw.ai.responseRules = `## How to respond
 
@@ -196,7 +202,7 @@ their direction is ambiguous. Plain text or light markdown, containing no PTF do
 2. **A single PTF document altering the workspace.** Your entire response is then the document, beginning with the \
 line \`MIME-Version: 1.0\` - write nothing before or after it, no commentary and no code fences.
 
-A PTF document altering the workspace has the same form as the workspace document above. Its top-level parts may be:
+A PTF document altering the workspace has the same form as the workspace document at the end of this prompt. Its top-level parts may be:
 
 * \`layer\` parts, each holding a layer definition whose filename is the layer name, with Content-Type \`text/x-vue\` \
 for a Single File Component or \`text/javascript\` for a \`fluid.def(...)\` call. This replaces any existing \
@@ -363,12 +369,54 @@ every widget made from it to change.
 * To compose two widgets, define a fresh "umbrella" layer with \`fluid.topLevelWidget\` as the last of its \`$layers\`, \
 holding each of them as a subcomponent by means of a \`$component\` record naming its existing layer. Choose the view of \
 just one of them as the view of the umbrella with \`view: "{first}.view"\`, and cross-inject between them with \
-references, e.g. \`second: {$component: {$layers: "my.second", input: "{first}.output"}}\`. If the second should share \
+references, e.g. \`second: {$component: {$layers: "my.second", input: "{first}.output"}}\`. A reference may equally \
+override a single member of a widget's reactive state, e.g. \`state: {prompt: "{first}.text"}\`, even though the \
+existing layer holds \`state: {$reactiveRoot: {...}}\`: the reference merges alongside that record, the member then \
+takes the referenced value whenever that changes, and may still be written as before, whilst the other members of \
+the state are retained. If the second should share \
 the view of the first rather than render its own, give it \`view: "{first}.view"\` too. Add to the existing layers \
 only through overrides or composition directives in fresh layers. If both widgets must remain visible, the umbrella \
 may instead have a template of its own holding an \`@id\` element for each subcomponent.
+* Often one widget of a composition is **dominant** - it shows the result which the user wants to see and act on - \
+whilst the other only **supplies** a value to it, e.g. a widget finding some text which the dominant widget should \
+act on. The most economical geometry is then a fresh layer which extends the dominant widget's layer directly and \
+mixes in the supplier as a hidden subcomponent, with three ingredients and nothing else:
+    1. \`$layers\` naming the dominant widget's existing layer followed by \`fluid.topLevelWidget\`, so that the fresh \
+widget IS the dominant widget, with all of its template, state and methods.
+    2. A subcomponent constructed from the supplier's existing layer, whose \`view\` is a reference to the fresh \
+widget's own view, e.g. \`view: "{showsResult}.view"\` for a fresh layer named \`my.ai.showsResult\` - a layer's \
+context name is the last segment of its name. The supplier then has no view of its own, so neither it nor any of its \
+subcomponents renders anything, whilst all of its computation continues - including any which depends on where the \
+widget is placed, since it automatically takes the \`hostBounds\` and \`tldrawHost\` of the widget enclosing it. \
+Never wire these yourself.
+    3. Wiring from the supplier's output to the dominant widget's input, as a reference written at the path of that \
+input - which may be a member of its reactive state.
+
+  For example, where \`my.resultShower\` holds \`state: {$reactiveRoot: {query: "", ...}}\`, whose \`query\` is \
+bound to an input and acted on by its button, and \`my.textFinder\` computes a member \`foundText\`:
+
+        fluid.def("my.ai.showsFoundResult", {
+            $layers: ["my.resultShower", "fluid.topLevelWidget"],
+            finder: {
+                $component: {
+                    $layers: "my.textFinder",
+                    view: "{showsFoundResult}.view"
+                }
+            },
+            state: {
+                query: "{finder}.foundText"
+            }
+        });
+
+  Such a layer has no template, style or functions of its own - copying any of these from the existing layers, or \
+writing an \`$effect\` or \`$method\` to shuttle values between them, is never necessary. Its source is sent as a \
+\`text/javascript\` layer part. Construct a single fresh widget from it, and leave the widgets it was composed from \
+in place unless the user asks for them to be replaced.
 * A widget may reach the tldraw editor as \`{tldrawHost}.editor\`, and the bounds of its own shape as \
-\`{self}.hostBounds\`. A widget layer may advertise the size at which it would like to be created as \
+\`{self}.hostBounds\`. A subcomponent built from another widget's layer takes both from the widget enclosing it. \
+Within a \`$component\` record, \`{self}\` designates the subcomponent itself, not the widget holding the record - \
+refer to that by its context name instead, e.g. \`{showsFoundResult}\`, and never write a member as a reference to \
+itself such as \`hostBounds: "{self}.hostBounds"\`. A widget layer may advertise the size at which it would like to be created as \
 \`preferredSize: {w, h}\`.
 * Give fresh layers distinctive dotted names, e.g. \`fluid.demos.ai.counterWithDoubler\`, and fresh SFC styles \
 distinctive class names, since styles apply globally.`;
@@ -389,8 +437,9 @@ fluid.tldraw.ai.layersToPTF = function (layerNames) {
  * @param {Workspace} workspace - The current state of the workspace
  * @return {String} The system prompt
  */
-// The heading of the section of the system prompt describing the workspace. All that precedes it - the introduction
-// and the documentation - is the same for every request, and so may be assumed to be cached by the endpoint
+// The heading of the section of the system prompt describing the workspace. All that precedes it - the introduction,
+// the documentation, the response rules and the strategy hints - is the same for every request, and so may be assumed
+// to be cached by the endpoint. The workspace and the selection, which vary, are placed last for this reason.
 fluid.tldraw.ai.workspaceHeading = "# The workspace";
 
 fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
@@ -402,12 +451,12 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
     return [
         fluid.tldraw.ai.introduction,
         "# Documentation\n\n" + docs.join("\n\n"),
+        fluid.tldraw.ai.responseRules,
+        fluid.tldraw.ai.strategyHints,
         fluid.tldraw.ai.workspaceHeading + "\n\nThe following PTF document holds every Infusion widget in the workspace, with the definitions of "
             + "the layers they use, where each is hosted on the canvas, and the native tldraw shapes alongside them:\n\n"
             + fluid.tldraw.ai.workspaceToPTF(workspace) + library,
-        "# The user's selection\n\n" + fluid.tldraw.ai.describeSelection(workspace),
-        fluid.tldraw.ai.responseRules,
-        fluid.tldraw.ai.strategyHints
+        "# The user's selection\n\n" + fluid.tldraw.ai.describeSelection(workspace)
     ].join("\n\n");
 };
 
@@ -425,6 +474,8 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
  * @property {String} [reasoning] - Any reasoning which the model reported separately from its content
  * @property {TokenUsage} [usage] - The numbers of tokens consumed by the request, if the endpoint reported them. This
  * is not part of the conversation, and is not retained in its history
+ * @property {Boolean} [truncated] - `true` if the reply was cut off on reaching `fluid.tldraw.ai.maxOutputTokens`. Like
+ * `usage`, this is not retained in the conversation's history
  */
 
 /**
@@ -432,6 +483,7 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
  * @property {Number} inputTokens - The number of tokens in the request's messages
  * @property {Number} outputTokens - The number of tokens in the reply, including any reasoning
  * @property {Number} [reasoningTokens] - The number of the output tokens spent on reasoning, if reported
+ * @property {Number} [cachedTokens] - The number of the input tokens which the endpoint served from its cache, if reported
  */
 
 /**
@@ -442,10 +494,12 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
 fluid.tldraw.ai.usageFromPayload = function (payload) {
     const usage = payload.usage;
     const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens;
+    const cachedTokens = usage?.prompt_tokens_details?.cached_tokens;
     return typeof(usage?.prompt_tokens) === "number" && typeof(usage.completion_tokens) === "number" ? {
         inputTokens: usage.prompt_tokens,
         outputTokens: usage.completion_tokens,
-        ...(typeof(reasoningTokens) === "number" ? {reasoningTokens} : {})
+        ...(typeof(reasoningTokens) === "number" ? {reasoningTokens} : {}),
+        ...(typeof(cachedTokens) === "number" ? {cachedTokens} : {})
     } : undefined;
 };
 
@@ -528,18 +582,20 @@ fluid.tldraw.ai.callEndpoint = async function ({token, model, messages}) {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token
         },
-        body: JSON.stringify({model, messages, stream: false})
+        body: JSON.stringify({model, messages, stream: false, max_tokens: fluid.tldraw.ai.maxOutputTokens})
     });
     let togo;
     if (response.ok) {
         const payload = await response.json();
-        const message = payload.choices?.[0]?.message;
+        const choice = payload.choices?.[0];
+        const message = choice?.message;
         const usage = fluid.tldraw.ai.usageFromPayload(payload);
         if (typeof(message?.content) === "string") {
             togo = {
                 content: message.content,
                 ...(typeof(message.reasoning) === "string" ? {reasoning: message.reasoning} : {}),
-                ...(usage ? {usage} : {})
+                ...(usage ? {usage} : {}),
+                ...(choice.finish_reason === "length" ? {truncated: true} : {})
             };
         } else {
             throw new Error("The AI endpoint returned no message: " + JSON.stringify(payload).substring(0, 500));
@@ -821,9 +877,12 @@ fluid.tldraw.ai.planShapeChange = function (part, widgetIds, shapeIds, problems)
  */
 fluid.tldraw.ai.diagnose = function (component, includePending) {
     const problems = [];
+    // Each cause is reported once, at the first place it is found, rather than at every value it propagates to
+    const reportedCauses = new Set();
     const reportable = value => fluid.isUnavailable(value) && (includePending || fluid.unProxy(value).variety !== "pending");
     const report = function (shadow, unavailable, what) {
-        fluid.unavailableToCauses(fluid.unProxy(unavailable)).forEach(cause => {
+        fluid.unavailableToCauses(fluid.unProxy(unavailable)).filter(cause => !reportedCauses.has(cause.message)).forEach(cause => {
+            reportedCauses.add(cause.message);
             const site = cause.site && !Array.isArray(cause.site) && cause.site.shadow ? cause.site : null;
             const siteText = site ? ` at ${fluid.renderSite(site)}` : "";
             const layer = site && fluid.layerForSite(site);
@@ -831,30 +890,55 @@ fluid.tldraw.ai.diagnose = function (component, includePending) {
                 + `${cause.message}${siteText}${layer ? " in layer " + layer : ""}`);
         });
     };
-    const visit = function (shadow) {
-        const instance = shadow.availableInstance.get();
-        if (reportable(instance)) {
+    // A component whose view is cross-injected from another, e.g. by `view: "{first}.view"`, has its own template
+    // hidden - so that any view beneath it which would have rendered into that template has no container, which is
+    // not a problem. This holds until some view beneath it is supplied with a container from elsewhere.
+    const visit = function (shadow, hidden) {
+        // The component's signal is dispensed when it has no unavailable layers, but its value may still have failed,
+        // e.g. when its layers could not be merged
+        const instance = fluid.deSignal(shadow.availableInstance.get());
+        // A failure to merge the component's layers explains any consequent failure of the component itself
+        const merged = fluid.deSignal(shadow.flatMerged);
+        if (reportable(merged)) {
+            report(shadow, merged, "Merging the layers of component");
+        } else if (reportable(instance)) {
             report(shadow, instance, "Component");
         } else if (!fluid.isUnavailable(instance)) {
             const that = shadow.that;
+            // Any member whose value has failed outright, e.g. a reference which designates its own value, which would
+            // otherwise go unnoticed until something reads it. The container and rendering of a view are judged below.
+            Object.keys(fluid.deSignal(merged)).forEach(memberName => {
+                if (!memberName.startsWith("$") && !shadow.childComponents?.[memberName] && !["container", "vTree"].includes(memberName)) {
+                    const value = fluid.deSignal(fluid.getForComponent(shadow, memberName));
+                    if (fluid.isUnavailable(value) && fluid.unProxy(value).variety === "error") {
+                        report(shadow, value, `Member ${memberName} of component`);
+                    }
+                }
+            });
+            let childHidden = hidden;
             if (fluid.deSignal(that.$layers).includes("fluid.viewComponent")) {
                 const container = fluid.deSignal(that.container);
                 const vTree = fluid.deSignal(that.vTree);
-                if (reportable(container)) {
+                if (reportable(container) && !hidden) {
                     report(shadow, container, "Container of view");
                 } else if (reportable(vTree)) {
                     report(shadow, vTree, "Rendering of view");
                 }
+                childHidden = hidden && fluid.isUnavailable(container);
+            }
+            const viewShadow = shadow.childComponents?.view;
+            if (viewShadow && viewShadow.path !== fluid.composeSegment(shadow.path, "view")) {
+                childHidden = true;
             }
             fluid.each(shadow.childComponents, (childShadow, memberName) => {
                 // As for PTF, only visit components created in place rather than injected
                 if (childShadow.path === fluid.composeSegment(shadow.path, memberName)) {
-                    visit(childShadow);
+                    visit(childShadow, childHidden);
                 }
             });
         }
     };
-    visit(fluid.ptf.componentToShadow(component));
+    visit(fluid.ptf.componentToShadow(component), false);
     return problems;
 };
 
@@ -892,6 +976,10 @@ fluid.tldraw.ai.listProblems = function (problems) {
     return problems.map(problem => "\u2022 " + problem).join("\n");
 };
 
+// The problem reported to the AI when its reply was cut off on reaching fluid.tldraw.ai.maxOutputTokens
+fluid.tldraw.ai.truncationProblem = `Your response was cut off on reaching the limit of ${fluid.tldraw.ai.maxOutputTokens} \
+output tokens, before it was complete. Reason more briefly, and send only the parts which are required.`;
+
 /**
  * Carry out one exchange with the AI on the user's direction. If the AI responds with text, it is reported to the
  * user. If it responds with a PTF document, the document is applied to the workspace, and any problems in decoding
@@ -919,8 +1007,10 @@ fluid.tldraw.ai.converse = async function ({direction, history, bridge, call, re
         const received = await call(messages);
         // Any token usage is not part of the conversation, and is reported by the caller - see measureCall
         // eslint-disable-next-line no-unused-vars
-        const {usage, ...reply} = typeof(received) === "string" ? {content: received} : received;
-        const response = fluid.tldraw.ai.parseResponse(reply.content);
+        const {usage, truncated, ...reply} = typeof(received) === "string" ? {content: received} : received;
+        // A reply which was cut off is neither a complete answer nor a complete document, and may hold nothing but the
+        // AI's reasoning, so it is never shown to the user as an answer
+        const response = truncated ? {type: "invalid", error: fluid.tldraw.ai.truncationProblem} : fluid.tldraw.ai.parseResponse(reply.content);
         // The reply is retained verbatim, together with any reasoning, since some models reject a history in which
         // their earlier turns have been altered
         messages.push({role: "assistant", ...reply});

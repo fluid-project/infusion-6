@@ -1,0 +1,91 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-aigen-9k"
+
+This is a Potentia Transmission Format (PTF) document combining the closest-note finder and image generator into one movable widget.
+--ptf-boundary-aigen-9k
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 360, h: 640},
+    // The closest sticky note to the widget, always on screen so its text can be checked as the widget moves
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    // The image search widget: its prompt input may still be refined by typing
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator"
+        }
+    },
+    nearestDistance: "{noteFinder}.closest.distance",
+    noNote: "$compute:fluid.demos.noteImageGenerator.hasNoNote({noteFinder}.closest.distance)",
+    findNoteImage: {
+        $method: {
+            func: "fluid.demos.noteImageGenerator.takeNoteImage",
+            args: ["{imageGenerator}", "{noteFinder}.closest.text", "{noteFinder}.closest.distance"]
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="note-imagegen" style="display:flex; flex-direction:column; gap:12px; padding:12px; box-sizing:border-box; background:#f0f4c3;">
+    <div style="flex:0 0 auto;">
+        <button style="width:100%; padding:10px 14px; font-size:14px; border:none; border-radius:6px; background:#4a90d9; color:#fff; cursor:pointer"
+                @onclick="{self}.findNoteImage()" disabled="@{noNote}">📸 Generate from closest note</button>
+    </div>
+    <div style="flex:0 0 190px;" @id="noteFinder"></div>
+    <div style="flex:1 1 auto; min-height:0;" @id="imageGenerator"></div>
+</div>`
+        }
+    }
+});
+
+/**
+ * True when the widget is not near any sticky note, so its generate button stays disabled
+ */
+fluid.demos.noteImageGenerator.hasNoNote = distance => distance === null;
+
+/**
+ * Photograph the sticky note closest to the widget: use its text as the image search prompt and
+ * start the search, so that the whole result appears as a single undoable step
+ */
+fluid.demos.noteImageGenerator.takeNoteImage = function (imageGenerator, noteText, distance) {
+    if (distance === null) {
+        imageGenerator.state.error = "No sticky notes nearby - move this widget closer to a note";
+        return undefined;
+    }
+    imageGenerator.state.prompt = noteText;
+    return imageGenerator.generate();
+};
+--ptf-boundary-aigen-9k
+Content-Type: multipart/mixed; boundary="ptf-boundary-aigen-9k-inner"
+Content-Disposition: attachment; filename="shape:note-imagegen"
+Content-Description: component
+
+--ptf-boundary-aigen-9k-inner
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": ["fluid.demos.noteImageGenerator"],
+    "view": {
+        "$component": {
+            "shapeId": "shape:note-imagegen"
+        }
+    }
+}
+--ptf-boundary-aigen-9k-inner
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 100, "y": 580, "w": 360, "h": 640}
+--ptf-boundary-aigen-9k-inner--
+--ptf-boundary-aigen-9k--

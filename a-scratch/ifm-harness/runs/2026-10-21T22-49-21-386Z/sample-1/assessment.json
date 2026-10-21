@@ -1,0 +1,78 @@
+{
+  "verdict": "WORKS - fit 9/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 95.401,
+      "usage": {
+        "inputTokens": 23542,
+        "outputTokens": 9393
+      },
+      "truncated": false
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.imageFromClosestNote": "// Combines the image generator with the closest-note finder: the text of the sticky note nearest to the widget\n// becomes the image prompt, so moving the widget next to a note and pressing the button generates an image of it\nfluid.def(\"fluid.demos.imageFromClosestNote\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    // Finds the closest note silently: it renders nothing, borrowing this widget's own view\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{imageFromClosestNote}.view\"\n        }\n    },\n    // The closest note's text is the prompt, re-read whenever the widget moves\n    state: {\n        prompt: \"{finder}.noteText\"\n    },\n    buttonLabel: {\n        $compute: {\n            func: \"fluid.demos.imageFromClosestNote.buttonLabel\",\n            args: [\"{self}.isGenerating\"]\n        }\n    }\n});\n\nfluid.demos.imageFromClosestNote.buttonLabel = isGenerating =>\n    isGenerating ? \"Finding...\" : \"Generate image of closest note\";"
+  },
+  "deletions": [],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.imageFromClosestNote",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": true,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": true,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": true,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": true,
+        "noExistingLayerRedefined": true,
+        "originalsKept": true
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Generate image of closest note",
+            "Another"
+          ],
+          "pressed": "Generate image of closest note",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A lighthouse at dusk"
+          ],
+          "buttons": [
+            "Generate image of closest note",
+            "Another"
+          ],
+          "pressed": "Generate image of closest note",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<h3 class=\"imagegen-title\">Image Generator</h3><input value=\"A lighthouse at dusk\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button\">Generate image of closest note</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-imageFromClosestNote-37.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

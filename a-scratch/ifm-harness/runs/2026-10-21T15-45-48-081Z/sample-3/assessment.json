@@ -1,0 +1,79 @@
+{
+  "verdict": "DOES NOT WORK - fit 5/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 18.645,
+      "usage": {
+        "inputTokens": 22965,
+        "outputTokens": 15266,
+        "reasoningTokens": 14500
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.noteImageGenerator": "<script>\n// Combines the closest note finder with the image generator: move this widget next to a sticky note and the note's\n// text becomes the search prompt; press the button to generate an image of it\nfluid.def(\"fluid.demos.noteImageGenerator\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {\n        w: 380,\n        h: 680\n    },\n    finder: {\n        $component: {\n            $layers: [\"fluid.demos.closestNoteFinder\", \"fluid.component\"]\n        }\n    },\n    imageGen: {\n        $component: {\n            $layers: [\"fluid.demos.imageGenerator\", \"fluid.component\"],\n            // The prompt follows the closest note's text; typing in the box can still overwrite it\n            state: {\n                prompt: \"{finder}.closest.text\"\n            }\n        }\n    }\n});\n</script>\n\n<template>\n    <div class=\"note-imagegen\">\n        <div class=\"note-imagegen-finder\" @id=\"finder\"></div>\n        <div class=\"note-imagegen-imagegen\" @id=\"imageGen\"></div>\n    </div>\n</template>\n\n<style>\n.note-imagegen {\n    display: flex;\n    flex-direction: column;\n    width: 100%;\n    height: 100%;\n    box-sizing: border-box;\n    flex: 1;\n    min-height: 0;\n}\n\n.note-imagegen-finder {\n    flex: 0 0 200px;\n    width: 100%;\n}\n\n.note-imagegen-imagegen {\n    flex: 1 1 auto;\n    min-height: 0;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:finder",
+    "shape:imagegen"
+  ],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.noteImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": true,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            "Not placed on a canvas"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "Not placed on a canvas"
+          ],
+          "imageShown": true,
+          "succeeded": false
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "Not placed on a canvas"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [],
+          "imageShown": true,
+          "succeeded": false
+        }
+      ],
+      "markup": "<div id=\"fl-id-noteImageGenerator-35.finder\" class=\"notefinder\"><h3 class=\"notefinder-title\">Closest Sticky Note</h3><div class=\"notefinder-text\">Not placed on a canvas</div><div></div></div><div id=\"fl-id-noteImageGenerator-35.imageGen\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"Not placed on a canvas\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-noteImageGenerator-35.imageGen.result\" class=\"imagegen-result\"><img alt=\"Not placed on a canvas\" src=\"https://pixabay.com/get/1.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

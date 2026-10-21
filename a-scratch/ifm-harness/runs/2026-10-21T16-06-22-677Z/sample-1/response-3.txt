@@ -1,0 +1,8 @@
+
+The combination has been applied. The corrected document contained everything that was still needed, and the two complaints were only that `shape:finder` and `shape:imagegen` were already gone — the delete parts from my earlier (mis-nested) attempt had in fact been applied in the first round. So no further changes are required:
+
+- A single combined widget now sits on the canvas as **shape:noteImageGenerator**, built from a fresh layer `fluid.demos.ai.noteImageGenerator` which extends the image generator and hides the closest-note finder inside it (sharing the shape's view and bounds).
+- As you drag the widget around, the finder tracks which sticky note is nearest and feeds its text into the generator's prompt field.
+- When it's close to the note you want, just press **Find Image** to generate an image from that note's text.
+
+Try it: move it next to the "A red fox in the snow" note at the bottom-left and click the button — the prompt updates live and the image appears from Pixabay with its credit. Dragging it over to the lighthouse note switches the prompt to "A lighthouse at dusk".

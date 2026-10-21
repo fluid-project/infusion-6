@@ -1,4 +1,4 @@
-/* global QUnit */
+/* global QUnit, my */
 
 "use strict";
 
@@ -89,8 +89,9 @@ QUnit.test("Workspace encoded as PTF document", async function (assert) {
         "Empty selection described");
 
     const prompt = fluid.tldraw.ai.systemPrompt(["DOC ONE", "DOC TWO"], workspace);
-    const order = ["You are an assistant", "DOC ONE", "DOC TWO", text.substring(0, 40), "fluid.demos.helloWorld", "shape:b - an Infusion widget",
-        "## How to respond", "## Strategy hints"].map(fragment => prompt.indexOf(fragment));
+    // All the invariant material precedes the workspace and selection, so that it may be cached as a common prefix
+    const order = ["You are an assistant", "DOC ONE", "DOC TWO", "## How to respond", "## Strategy hints", fluid.tldraw.ai.workspaceHeading,
+        "filename=\"shape:a\"", "filename=\"fluid.demos.helloWorld\"", "shape:b - an Infusion widget"].map(fragment => prompt.indexOf(fragment));
     assert.notOk(order.includes(-1), "System prompt holds all its sections");
     assert.deepEqual([...order].sort((a, b) => a - b), order, "System prompt sections in order");
     assert.ok(prompt.includes("filename=\"fluid.demos.helloWorld\""), "Library layer not in workspace is included");
@@ -342,6 +343,27 @@ QUnit.test("Exchanges with the AI, including repair of failed responses", async 
     assert.equal(fluid.peek(failingEntries).kind, "error", "Exchange ends with error");
     assert.equal(fluid.peek(failingEntries).text, "The AI's response could not be fully applied:\n\u2022 Still broken",
         "Final problems listed to user");
+
+    // A reply cut off on reaching the limit of output tokens, which may hold nothing but reasoning, is not shown to the
+    // user as an answer but reported back to the AI
+    const truncatedEntries = [];
+    const truncatedCalls = [];
+    const truncatedReplies = [{content: "I am still thinking about", truncated: true, usage: {inputTokens: 10, outputTokens: 8192}}, {content: "Done"}];
+    const truncatedHistory = await fluid.tldraw.ai.converse({
+        direction: "Think hard",
+        history: [],
+        bridge: fluid.tests.tldrawAI.makeFakeBridge(workspace, []),
+        call: messages => {
+            truncatedCalls.push(fluid.copy(messages));
+            return Promise.resolve(truncatedReplies[truncatedCalls.length - 1]);
+        },
+        report: entry => truncatedEntries.push(entry),
+        getDocs
+    });
+    assert.deepEqual(truncatedEntries.map(entry => entry.kind), ["problem", "assistant"], "Truncated reply reported as a problem");
+    assert.ok(fluid.peek(truncatedCalls[1]).content.includes(fluid.tldraw.ai.truncationProblem), "Truncation reported back to AI");
+    assert.deepEqual(truncatedHistory[1], {role: "assistant", content: "I am still thinking about"},
+        "Truncated reply retained in history without its usage or truncation");
     assert.ok(failingEntries.find(entry => entry.kind === "problem").text.endsWith(":\n\u2022 Still broken"), "Problems being repaired listed to user");
 
     // Any reasoning reported separately by the model is retained verbatim in the history
@@ -423,6 +445,8 @@ QUnit.test("Host potentia routed to a cross-injected view", async function (asse
     host.destroy();
 });
 
+fluid.tests.tldrawAI.widthOf = bounds => bounds?.w;
+
 QUnit.test("Problems diagnosed in widgets", async function (assert) {
     fluid.def("fluid.tests.tldrawAI.broken", {
         $layers: "fluid.topLevelWidget",
@@ -468,6 +492,43 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     assert.ok(uncontainedProblems[0].includes("Container of view at path"), "Missing container described");
     uncontained.destroy();
     assert.equal(fluid.tldraw.ai.describeError(fluid.unavailable("Gone wrong")), "Gone wrong", "Unavailable described");
+
+    // A layer whose definitions cannot be merged, as the AI wrote in trying to suppress a subcomponent of a parent layer
+    await fluid.tests.tldrawAI.loadImports();
+    fluid.def("fluid.tests.tldrawAI.unmergeable", {
+        $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+        distanceLine: false
+    });
+    const unmergeable = fluid.tests.tldrawAI.unmergeable();
+    fluid.cell.stabilize();
+    const mergeProblems = fluid.tldraw.ai.diagnose(unmergeable, true);
+    assert.equal(mergeProblems.length, 1, "Failure to merge diagnosed rather than throwing");
+    assert.ok(mergeProblems[0].includes("Cannot merge value false at path distanceLine"), "Merge failure described");
+
+    // A subcomponent's member referring to its own value, as the AI wrote intending the umbrella's member - reported
+    // once, at the member, rather than at every value it propagates to
+    fluid.def("fluid.tests.tldrawAI.boundsUser", {
+        $layers: "fluid.component",
+        hostBounds: null,
+        width: "$compute:fluid.tests.tldrawAI.widthOf({self}.hostBounds)"
+    });
+    fluid.def("fluid.tests.tldrawAI.selfReferring", {
+        $layers: "fluid.component",
+        hostBounds: {x: 0, y: 0, w: 100, h: 100},
+        finder: {
+            $component: {
+                $layers: "fluid.tests.tldrawAI.boundsUser",
+                hostBounds: "{self}.hostBounds"
+            }
+        }
+    });
+    const selfReferring = fluid.tests.tldrawAI.selfReferring();
+    fluid.cell.stabilize();
+    const selfProblems = fluid.tldraw.ai.diagnose(selfReferring);
+    assert.equal(selfProblems.length, 1, "Self-reference diagnosed once");
+    assert.ok(selfProblems[0].includes("Member hostBounds of component at path") && selfProblems[0].includes("refers to its own value"),
+        "Self-reference described");
+    selfReferring.destroy();
     assert.equal(fluid.tldraw.ai.describeError(new Error("Thrown")), "Thrown", "Error described");
     that.destroy();
 });
@@ -492,7 +553,12 @@ QUnit.test("Tokens in common prompt prefix assumed cached", function (assert) {
     const workspace = fluid.tests.tldrawAI.makeWorkspace([]);
     const system = fluid.tldraw.ai.systemPrompt(["DOCS"], workspace);
     const prefixLength = system.indexOf(fluid.tldraw.ai.workspaceHeading);
-    assert.ok(prefixLength > 0 && system.substring(0, prefixLength).includes("DOCS"), "Prefix holds the introduction and documentation");
+    const prefix = system.substring(0, prefixLength);
+    assert.ok(prefixLength > 0 && ["DOCS", "## How to respond", "## Strategy hints"].every(fragment => prefix.includes(fragment)),
+        "Prefix holds the introduction, documentation, response rules and strategy hints");
+    assert.deepEqual(fluid.tldraw.ai.usageFromPayload({usage: {prompt_tokens: 100, completion_tokens: 20,
+        prompt_tokens_details: {cached_tokens: 80}, completion_tokens_details: {reasoning_tokens: 5}}}),
+    {inputTokens: 100, outputTokens: 20, reasoningTokens: 5, cachedTokens: 80}, "Cached tokens read where reported");
     const messages = fluid.tldraw.ai.buildMessages(system, [], "Do something");
     const totalLength = messages.reduce((total, message) => total + message.content.length, 0);
     assert.equal(fluid.tldraw.ai.cachedTokens(messages), Math.floor(prefixLength / 4), "Cached tokens estimated from prefix");
@@ -831,4 +897,236 @@ QUnit.test("Widget layers listed from the layer store, and deleted", async funct
     assert.notOk(listed().includes("fluid.demos.ai.colourChanger"), "Deleted layer no longer listed");
     fluid.deleteLayer("fluid.demos.ai.sfcWidget");
     assert.notOk(listed().includes("fluid.demos.ai.sfcWidget"), "Deleted SFC layer no longer listed");
+});
+
+// Slop-free composition of the closest note finder with the image generator - fluid-project/infusion-6#25
+
+// Stands in for fluid.demos.tldrawHost, bridging the notes on the canvas and the bounds of each widget's shape
+fluid.def("fluid.tests.tldrawAI.tldrawHost", {
+    $layers: ["fluid.resolveRoot", "fluid.component"],
+    notes: [],
+    viewLinkage: {
+        $linkage: {
+            inputLayers: ["fluid.topLevelWidgetView"],
+            outputLayers: ["fluid.tests.tldrawAI.boundsView"]
+        }
+    }
+});
+
+// As for fluid.tldrawViewComponent, no bounds are reported for a view which is not hosted in a shape of its own
+fluid.def("fluid.tests.tldrawAI.boundsView", {
+    $layers: "fluid.topLevelWidgetView",
+    shapeId: null,
+    hostBounds: "$compute:fluid.tests.tldrawAI.boundsForShape({self}.shapeId)"
+});
+
+fluid.tests.tldrawAI.boundsForShape = shapeId => shapeId === null ? null : {x: 100, y: 100, w: 360, h: 460};
+
+// The layer which the AI is expected to synthesize: the image generator is dominant, and the note finder is mixed in
+// as a subcomponent sharing its view, so that only the image generator renders. The prompt held in the image
+// generator's reactive state is linked to the closest note's text
+fluid.def("fluid.demos.ai.closestNoteImageGenerator", {
+    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{closestNoteImageGenerator}.view"
+        }
+    },
+    state: {
+        prompt: "{noteFinder}.noteText"
+    }
+});
+
+fluid.def("fluid.tests.tldrawAI.noteImageUmbrella", {
+    $layers: "fluid.topLevelWidget",
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{noteFinder}.noteText"
+            }
+        }
+    },
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: "{imageGenerator}.view"
+        }
+    },
+    view: "{imageGenerator}.view"
+});
+
+// An umbrella with a template of its own rendering both widgets, as the AI chose in the absence of the strategy hint
+// describing a dominant widget composed with a supplier - the nested note finder takes the umbrella's bounds
+fluid.def("fluid.tests.tldrawAI.visibleUmbrella", {
+    $layers: "fluid.topLevelWidget",
+    finder: {
+        $component: {
+            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            state: {
+                prompt: "{finder}.closest.text"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="visible-umbrella"><div @id="finder"></div><div @id="imageGen"></div></div>`
+        }
+    }
+});
+
+// A layer derived from an SFC layer supplying a template of its own, which overrides the SFC's
+fluid.def("fluid.tests.tldrawAI.retemplatedFinder", {
+    $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="retemplated">Nearest: @{noteText}</div>`
+        }
+    }
+});
+
+QUnit.test("Further compositions chosen by the AI - fluid-project/infusion-6#25", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const container = qs(".container");
+    const host = fluid.tests.tldrawAI.tldrawHost({notes: [{id: "shape:near", x: 120, y: 90, text: "A red fox"}]});
+
+    const umbrella = fluid.tests.tldrawAI.visibleUmbrella(fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.visibleUmbrella", container, "shape:visible"));
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tldraw.ai.diagnose(umbrella, true), [], "No problems diagnosed in umbrella with a template of its own");
+    assert.deepEqual({...umbrella.finder.hostBounds}, {x: 100, y: 100, w: 360, h: 460}, "Nested note finder takes the umbrella's bounds");
+    assert.equal(qs(".notefinder-text", container).textContent, "A red fox", "Nested note finder shows the closest note");
+    assert.equal(qs(".imagegen-input", container).value, "A red fox", "Nested image generator's prompt follows it");
+    umbrella.destroy();
+
+    const retemplated = fluid.tests.tldrawAI.retemplatedFinder(fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.retemplatedFinder", container, "shape:retemplated"));
+    fluid.cell.stabilize();
+    assert.equal(container.textContent, "Nearest: A red fox", "Template of derived layer overrides that of its SFC parent layer");
+    assert.equal(qsa(".notefinder", container).length, 0, "SFC parent layer's template not rendered");
+    retemplated.destroy();
+    host.destroy();
+});
+
+// Stand-ins for the layers named in the strategy hints' example of a dominant widget with a supplier mixed in
+fluid.def("my.resultShower", {
+    $layers: "fluid.topLevelWidget",
+    state: {
+        $reactiveRoot: {
+            query: "",
+            result: ""
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="shower"><input value="@{state.query}"><span>@{state.result}</span></div>`
+        }
+    }
+});
+
+fluid.def("my.textFinder", {
+    $layers: "fluid.topLevelWidget",
+    foundText: "$compute:fluid.tests.tldrawAI.findText({self}.hostBounds)",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="finder">@{foundText}<div @id="detail"></div></div>`
+        }
+    },
+    detail: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<span class="finder-detail">Detail</span>`
+                }
+            }
+        }
+    }
+});
+
+fluid.tests.tldrawAI.findText = bounds => `Found at ${bounds.x}`;
+
+QUnit.test("Worked example of composition in the strategy hints is valid", function (assert) {
+    const match = /\n( +)(fluid\.def\("my\.ai\.showsFoundResult"[\s\S]*?\n\1\}\);)/.exec(fluid.tldraw.ai.strategyHints);
+    assert.ok(match, "Example layer found in the hints");
+    // eslint-disable-next-line no-new-func
+    new Function(match[2])();
+    const container = qs(".container");
+    const host = fluid.tests.tldrawAI.tldrawHost();
+    const that = my.ai.showsFoundResult(fluid.tldraw.hostPotentiaFor("my.ai.showsFoundResult", container, "shape:example"));
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tldraw.ai.diagnose(that, true), [], "No problems diagnosed in the example");
+    assert.equal(qs(".shower input", container).value, "Found at 100", "Dominant widget's input drawn from supplier's output, which follows the widget's bounds");
+    assert.equal(qsa(".finder, .finder-detail", container).length, 0, "Neither the supplier nor its subcomponents render");
+    that.destroy();
+    host.destroy();
+});
+
+QUnit.test("Closest note composed with image generator - fluid-project/infusion-6#25", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const originalFetch = fluid.demos.pixabay.fetch;
+    const requests = fluid.tests.tldrawAI.fakePixabay(() => [fluid.tests.tldrawAI.pixabayHit(1, "https://pixabay.com/get/one.jpg")]);
+    const container = qs(".container");
+    try {
+        const host = fluid.tests.tldrawAI.tldrawHost({
+            notes: [{id: "shape:far", x: 900, y: 900, text: "A lighthouse"}, {id: "shape:near", x: 120, y: 90, text: "A red fox"}]
+        });
+        const potentia = fluid.tldraw.hostPotentiaFor("fluid.demos.ai.closestNoteImageGenerator", container, "shape:combined");
+        const that = fluid.demos.ai.closestNoteImageGenerator(potentia);
+        fluid.cell.stabilize();
+        assert.deepEqual(fluid.tldraw.ai.diagnose(that, true), [], "No problems diagnosed in composed widget");
+        assert.equal(that.noteFinder.view, that.view, "Note finder shares the image generator's view");
+        assert.deepEqual({...that.noteFinder.hostBounds}, {x: 100, y: 100, w: 360, h: 460}, "Note finder receives the composed widget's bounds");
+        assert.equal(that.noteFinder.noteText, "A red fox", "Closest note found");
+        assert.equal(qsa(".notefinder", container).length, 0, "Note finder's template not rendered");
+        assert.equal(qs(".imagegen-input", container).value, "A red fox", "Prompt follows the closest note");
+        await that.generate();
+        fluid.cell.stabilize();
+        assert.equal(requests[0].q, "A red fox", "Image searched for the closest note's text");
+        assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/one.jpg", "Image shown");
+        host.notes = [{id: "shape:near", x: 120, y: 90, text: "A grey wolf"}];
+        fluid.cell.stabilize();
+        assert.equal(qs(".imagegen-input", container).value, "A grey wolf", "Prompt follows edit to the closest note");
+        const input = qs(".imagegen-input", container);
+        input.value = "A grey wolf howling";
+        input.dispatchEvent(new Event("input"));
+        fluid.cell.stabilize();
+        assert.equal(that.state.prompt, "A grey wolf howling", "Prompt linked to the closest note may still be typed into");
+
+        // The composed widget is transmitted, e.g. to the AI or the arena's persistence, and reconstructed
+        const text = fluid.ptf.componentToPTF(that);
+        that.destroy();
+        const {that: copy, unresolved} = await fluid.ptf.instantiate(text, {potentia: potentia});
+        fluid.cell.stabilize();
+        assert.deepEqual(unresolved, [], "Composed widget reconstructed from its PTF document");
+        assert.deepEqual(fluid.tldraw.ai.diagnose(copy, true), [], "No problems diagnosed in reconstructed widget");
+        assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/one.jpg", "Reconstructed widget shows its image");
+        assert.equal(qs(".imagegen-input", container).value, "A grey wolf howling", "Reconstructed widget's typed prompt restored");
+        host.notes = [{id: "shape:near", x: 120, y: 90, text: "A white owl"}];
+        fluid.cell.stabilize();
+        assert.equal(qs(".imagegen-input", container).value, "A white owl", "Reconstructed widget's prompt follows the closest note");
+        copy.destroy();
+
+        // The same composition as an umbrella holding both widgets, as the strategy hints describe
+        const umbrellaPotentia = fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.noteImageUmbrella", container, "shape:umbrella");
+        const umbrella = fluid.tests.tldrawAI.noteImageUmbrella(umbrellaPotentia);
+        fluid.cell.stabilize();
+        assert.deepEqual(fluid.tldraw.ai.diagnose(umbrella, true), [], "No problems diagnosed in umbrella");
+        assert.equal(qs(".imagegen-input", container).value, "A white owl", "Umbrella's prompt follows the closest note");
+        assert.equal(qsa(".notefinder", container).length, 0, "Note finder's template not rendered in umbrella");
+        umbrella.destroy();
+        host.destroy();
+    } finally {
+        fluid.demos.pixabay.fetch = originalFetch;
+        fluid.demos.pixabay.cache.clear();
+    }
 });

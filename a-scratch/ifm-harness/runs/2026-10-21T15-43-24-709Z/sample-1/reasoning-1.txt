@@ -1,0 +1,813 @@
+The user wants to combine the two selected widgets (shape:finder - the closestNoteFinder, and shape:imagegen - the imageGenerator) so that they can move the widget close to a sticky note and press a button to generate an image.
+
+So the idea: An umbrella widget that contains the closestNoteFinder (which shows the closest sticky note text) and the imageGenerator. Pressing a button generates an image based on... the closest note's text? Let me think.
+
+"Combine the functionality of the two selected widgets so I can move it close to a sticky note and press a button to generate an image"
+
+So the workflow: move the combined widget near a sticky note; it finds the closest note (noteText); press a button to generate an image - presumably based on the closest note's text as the prompt.
+
+The cleanest way per the strategy hints: define a fresh "umbrella" layer with `fluid.topLevelWidget` as the last of its `$layers`, holding each of the existing widgets as subcomponents via `$component` records naming their existing layers, cross-injecting with references, e.g. override the imageGenerator's prompt from the finder's noteText.
+
+The imageGenerator has `state: {$reactiveRoot: {prompt: "", ...}}`. To inject the prompt from the finder: `prompt: "{finder}.noteText"`. But wait - the input field in imageGenerator has live-state binding: `value="@{state.prompt}"` writes back to `state.prompt` as the user types. If we override `prompt` in the subcomponent record... Hmm, how does overriding a `$reactiveRoot` member from a `$component` body work?
+
+A `$component` record body is a layer merged at `subcomponent` precedence. The subcomponent's merged layers include `def` (static layers), `subcomponent` (the record body), `user`, `dynamicLayers`, `variables`, `live`. So the `subcomponent` record body can override members of the def layers. If the parent layer has `state: {$reactiveRoot: {prompt: "", ...}}` and the subcomponent record has `state: {prompt: "{finder}.noteText"}` - the deep merge: `state` is a `$reactiveRoot` record in def. In the subcomponent body, `state.prompt` would merge... How are `$reactiveRoot` records merged? The doc says plain objects from more than one layer merge recursively, key by key. But `$reactiveRoot` marks a value as an independently writable unit. Merging `{prompt: ...}` into `{$reactiveRoot: {...}}`... Actually the `$reactiveRoot` record has a single key `$reactiveRoot` whose value is the data. If the subcomponent body provides `state: {prompt: "..."}` without `$reactiveRoot`, the deep merge of `state` would merge `{$reactiveRoot: {prompt: "", ...}}` with `{prompt: "..."}`? That seems murky - `$reactiveRoot` must be the only key in its record.
+
+Alternative approach from the hint: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before."
+
+OK so the hint explicitly says this pattern works. The member takes the referenced value whenever it changes, and may still be written as before (live writes override).
+
+But wait - the imageGenerator template has an input bound two-way to `state.prompt`. If the user types in the input, the write-back would set the prompt to whatever they typed. With the override from the parent, every time the note text changes, the prompt is overwritten by the reference. Typing would be re-set on the next finder update... Actually the finder only updates when notes move or the shape moves. Anyway, the intended UX: the widget shows the closest note's text; there's a "Generate" button that uses the prompt. To make the prompt automatically be the note text, we inject `prompt` from the finder's `noteText`.
+
+But should the button be the finder's own button? The phrase "press a button to generate an image" - the imageGenerator already has a generate button. So combined widget: finder shows closest note, imageGen generates an image from the prompt which by default is the closest note's text.
+
+Options:
+1. Umbrella layer with two subcomponents: finder and imageGen, with prompt override. Give the umbrella its own template? The hint says: "Choose the view of just one of them as the view of the umbrella with `view: "{first}.view"`" - if one of them shares the other's view, or "If both widgets must remain visible, the umbrella may instead have a template of its own holding an `@id` element for each subcomponent."
+
+Both widgets must remain visible (finder shows the closest note, imageGen shows the image). So the umbrella needs its own template with `@id="finder"` and `@id="imagegen"` (or whatever member names) elements... Actually `@id="member"` marks the element as the container for the subcomponent at `member`. What size/arrangement? The finder is 260x200, imagegen is 360x460. The combined widget might be e.g. 620 wide x 500 tall, with finder on top and imagegen below? Or side by side? Let's think: find closest note display is small. Image generator is 360x460. A combined: width 640, height 520: finder on top (200 h) and imagegen below (flex column). Or side by side: 640 wide, 460+... hmm.
+
+Alternatively, simpler: the umbrella's view template just has a container for each. Let me draft:
+
+```js
+fluid.def("fluid.demos.noteImageMaker", {
+    $layers: ["fluid.topLevelWidget"],
+    preferredSize: {w: 660, h: 720},
+    state: {$reactiveRoot: {}},  // maybe not needed
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imagegen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{finder}.noteText"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `
+<div class="note-image-maker">
+  <div @id="finder"></div>
+  <div @id="imagegen"></div>
+</div>`
+        }
+    }
+});
+```
+
+Wait, but there's a subtlety: `@id="finder"` elements are containers for subcomponents. The subcomponents render into those elements. Each subcomponent has its own view (each is an SFC with its own template view). So the template elements just need sizing? tldraw shapes have fixed bounds; the widget's root element gets sized by the shape bounds presumably. The inner divs need flex layout.
+
+Also, the `@id` mechanism: "Its contents are taken as the subcomponent's template unless the subcomponent supplies its own." Since both subcomponents supply their own templates (SFCs), their views render into those divs.
+
+Sizing: finder preferred 260x200; imagegen 360x460. Umbrella template: 
+
+```
+.note-image-maker {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.note-image-maker :global(.finder-div) {...}
+```
+
+Hmm, need class names to size the two columns. Give the divs classes: `class="nimm-finder"` and `class="nimm-imagegen"` with flex sizes. Finder 260 wide, imagegen 360 wide → total 620 + gap 12. Height: imagegen 460 + padding.
+
+```
+.note-image-maker { display: flex; gap: 12px; padding: 12px; box-sizing: border-box; height: 100%; }
+.nimm-finder { flex: 0 0 280px; }
+.nimm-imagegen { flex: 1 1 auto; min-width: 0; }
+```
+
+preferredSize: {w: 660, h: 500}? Imagegen is 360x460, finder 260x200. Side by side: width ~ 280+12+360 = 652+padding 24 = 676. Height 460+24 = 484. Let's set preferredSize {w: 680, h: 500}.
+
+Wait — do the subcomponent views render into the @id elements with the full shape bounds, or with the element's box? The `@id` element is the container for the subcomponent's view. The subcomponent's view component gets `container` set to that element. How big is the container? The template's root div gets sized by CSS from the host shape bounds. Actually how does the widget get sized into the tldraw shape? Presumably fluid.topLevelWidget renders its view into the shape's element sized to the shape (w/h). The widget CSS should handle 100% height etc. For nested, our template div should be height: 100% and children sized accordingly.
+
+Now, the injection: `state: {prompt: "{finder}.noteText"}`. Concern: does overriding `state.prompt` inside a `$component` subcomponent body work with `$reactiveRoot`? The hint says yes: "the member then takes the referenced value whenever that changes, and may still be written as before."
+
+Hmm, but careful: `noteText` is derived: `noteText: "{self}.closest.text"` where closest is a compute. Initially (before placed on canvas or before any note), noteText is "Not placed on a canvas" or "No sticky notes found". So the prompt would start as that text. Fine - pressing the button then generates something odd, but the user asked: move near a note and press button to generate image. The note text becomes the prompt automatically. 
+
+But there's the two-way input binding: `value="@{state.prompt}"` in imagegen writes user input back to `state.prompt`. With the injected override at subcomponent precedence... A live write through the input has `source: "dom"`. The injected reference writes when noteText changes. The input binding reads state.prompt; if user types "cat" and then the shape moves updating noteText... Actually noteText changes only when the closest note changes. The finder listens to shape moves and note changes. If the user moves the widget near a note, noteText becomes the note's text, overwriting prompt. Then pressing generate uses that. 
+
+But should the text field still be editable? The user said "press a button to generate an image" after moving "close to a sticky note". I think the desired behavior: the prompt is the note's text (that's the point of combining). Editing is possible until it gets overwritten, or... The hint says "may still be written as before" - so the write-back from the input still works. The reference re-asserts when the note changes. That's acceptable and matches the documented pattern.
+
+Alternatively, to make it less surprising, we could leave prompt writable and the default injection only... there's no "default only" semantics; a reference tracks. Fine.
+
+Now, another wrinkle: the generate button's `disabled="@{cannotGenerate}"` where cannotGenerate = isGenerating || !prompt.trim(). Initially prompt is noteText which is non-empty ("Not placed on a canvas"), so the button is enabled. Hmm. And error message on generate with that prompt would be a pixabay search with a bad prompt. But that's inherent.
+
+Actually wait - should we think about whether the finder should even be visible? "Combine the functionality" - the finder part is mainly about displaying which note is closest and its distance. Hmm, actually re-reading: "so I can move it close to a sticky note and press a button to generate an image". The essential combined behavior: find closest note (its text becomes the prompt), generate image from it. The finder UI could stay visible showing which note was used. I'll keep it visible - small header-ish display on top? Actually the finder widget is 260x200 with a yellow background box containing title, text, distance. Keeping it visible makes the combined widget tall. 
+
+Alternative: put the finder's note text as the umbrella's own template display and let the image generator fill most of the widget. But then the finder subcomponent would need a view... if the umbrella has its own view template, the finder subcomponent still has its own view and renders wherever its @id is. We must have an @id container for the finder in the umbrella template.
+
+Hmm wait, actually re-reading the strategy hints more carefully:
+
+"To compose two widgets, define a fresh "umbrella" layer with `fluid.topLevelWidget` as the last of its `$layers`, holding each of them as a subcomponent by means of a `$component` record naming its existing layer. Choose the view of just one of them as the view of the umbrella with `view: "{first}.view"`, and cross-inject between them with references... If both widgets must remain visible, the umbrella may instead have a template of its own holding an `@id` element for each subcomponent."
+
+So yes: umbrella with own template, two @id elements. Good, that's my plan.
+
+Layout: I'll put finder on the left column (compact), imagegen on the right column. Both visible.
+
+Now the PTF mechanics:
+
+We need to:
+1. Define fresh layer `fluid.demos.noteGenerator` (an SFC or plain JS layer). Since it needs a template, an SFC is natural. name e.g. `fluid.demos.noteImageGenerator`.
+2. Replace the widgets: The instruction says response can alter the workspace. What exactly to do to satisfy "combine the functionality of the two selected widgets"? The user wants ONE combined widget they can move around. Options:
+   a. Replace shape:finder with the combined widget and delete shape:imagegen.
+   b. Replace both with a single combined widget and delete the other.
+   
+   The user selected both widgets ("shape-finder" and "shape-imagegen"). "Combine the functionality of the two selected widgets" → produce a single widget. I think: create/place the combined widget (replacing the finder position, say), and delete the separate imagegen (and finder). 
+
+   Approach: For shape:finder, send a component part whose filename is "shape:finder" WITH a potentia part for "/" that names our new layer `fluid.demos.noteImageGenerator` → replaces the finder widget with a fresh combined one at the same shape? Wait - "If the filename is the id of an existing widget and the nested document has a potentia part for '/', the widget is replaced by a fresh one constructed from the nested document." It says replaced by a fresh widget. Does the shape placement persist? The shape part in that nested doc can include x/y/w/h to place it. The finder's shape is at (100,100) w260 h200. For the combined widget we'd want a new size. We can include a `shape` part with x,y,w,h.
+
+   Then delete shape:imagegen with a `delete` part.
+
+   Alternatively replace both: modify finder in place to the combined widget with new shape bounds; delete imagegen. That's clean.
+
+   Should the combined keep its state? Existing imagegen state (prompt etc.) - probably not needed; fresh instance. The user wants the combined functionality; fresh state is fine. I won't carry over live state.
+
+   Keep finder live state? The finder has no mutable user state (its bounds come from shape). Fine.
+
+3. Also: the note-finder references `{tldrawHost}.notes` and `{self}.hostBounds` - these come from the topLevelWidget layers, so the umbrella subcomponent gets them too. Good.
+
+Where to place: finder is at (100,100), size 260x200. Combined needs bigger. Place at maybe (80, 80) with w 680 h 500? Canvas: notes at (120,420) and (960,140). The nearest note to (80,80) would be the fox at (120,420)? distance ~343. The lighthouse at (960,140) is 884 away. Fine - user moves it wherever.
+
+Let me set x: 80, y: 80, w: 680, h: 500.
+
+Now the template details.
+
+Umbrella SFC layer:
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 680, h: 500},
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imagegen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{finder}.noteText"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `
+                <div class="note-imagegen">
+                    <div class="note-imagegen-finder" @id="finder"></div>
+                    <div class="note-imagegen-imagegen" @id="imagegen"></div>
+                </div>`
+        }
+    }
+});
+```
+
+Hmm - the SFC loader normally supplies the view from the SFC template. But here we explicitly declare a view with a plain templateViewComponent layer. The loader "adds a `view` subcomponent... whose template is the SFC's `<template>` block". If we define our own view in the layer, merge rules: the loader adds `view: {$component: {...template...}}` at... `$layers` precedence defaults to `["fluid.component", "fluid.sfcLayer"]` and the sfc loader adds the view subcomponent — at what precedence? It'd be in the sfcLayer def. Our layer's explicit view override at higher precedence (our layer is listed... hmm). SFC layers: the SFC script defines layer `fluid.demos.noteImageGenerator` with `$layers` defaulting to fluid.component+fluid.sfcLayer. The loader adds the view configuration to the sfcLayer def, apparently. If our layer also has a view, subcomponent precedence (our layer's def) beats sfcLayer def? The ordering: our layer listed first in `$layers` (tldraw instantiates with `fluid.demos.noteImageGenerator` as the layer). Its own def beats parents. So our explicit view.$component with templateViewComponent layer and template would override the sfc template. But wait, merge subtleties: parent view record `{$component: {$layers: "fluid.sfcTemplateViewComponent", templateLayer: ..., template...}}` vs ours `{$component: {$layers: "fluid.templateViewComponent", template: "..."}}`. Plain object merge: `$component` merges; `$layers` from ours wins (signal record replaced as a unit: ours replaces theirs wholly? "A key holding a signal record is replaced as a unit by a stronger layer's value at that key" - ours (stronger) replaces the parent's `$layers: "fluid.sfcTemplateViewComponent"`). And `template` ours wins; `templateLayer` parent's remains? Merging `{$components: {...}}`: keys from both merge; `templateLayer` stays from parent. fluid.sfcTemplateViewComponent probably reads templateLayer... but we replaced layers with fluid.templateViewComponent which reads `template`. The leftover `templateLayer` key in the merged $component body is inert for templateViewComponent. Probably fine. 
+
+To avoid this mess, simpler: don't use an SFC's `<template>` block; make it a plain JavaScript layer? But we need `preferredSize` and layer def — plain JS layer with a `view` computed... wait, view template for a JS layer: we can include a `template` string in the view's $component record. fluid.templateViewComponent accepts a `template` (HTML string). So a plain JS layer works:
+
+```
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: ["fluid.demos.closestNote???", ...]
+```
+
+Hmm wait, but for a fresh widget, its potentia `$layers` must name a layer with fluid.topLevelWidget. Our layer directly names fluid.topLevelWidget. `$layers: "fluid.topLevelWidget"` suffices.
+
+But the doc example of a plain JS layer with a template view:
+
+```js
+fluid.def("my.greeting", {
+    $layers: "fluid.component",
+    ...
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "<p>Hello, @{name}!</p>"
+        }
+    }
+});
+```
+
+Yes. And it can be instantiated with `my.greeting({container: ...})` or as tldraw widget since it has fluid.topLevelWidget among layers. 
+
+So define the layer as text/javascript in PTF:
+
+```
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 680, h: 500},
+    finder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder"
+        }
+    },
+    imageGen: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{finder}.noteText"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="note-imagegen" style="box-sizing: border-box; height: 100%; display: flex; gap: 12px; padding: 12px;"><div class="note-imagegen-finder" @id="finder" style="flex: 0 0 280px;"></div><div class="note-imagegen-imagegen" @id="imageGen" style="flex: 1 1 auto; min-width: 0;"></div></div>`
+        }
+    }
+});
+```
+
+Hmm wait, names: subcomponent member names `finder` and `imageGen`. The @id elements reference those names.
+
+One concern: The finder subcomponent - its own view renders a `.notefinder` div. Inside the 280px column OK.
+
+Another concern: imageGen's template is a full widget with flex column; it fills its container (height 100%, width 100% via .imagegen class). Good.
+
+Now about `state.prompt` injection and the reactive root. Deep merge of the subcomponent body `{state: {prompt: "{finder}.noteText"}}` over the imageGenerator layer def `state: {$reactiveRoot: {...}}`. $reactiveRoot record: `{$reactiveRoot: {prompt: "", ...}}`. Merging key `state`: ours is a plain object `{"prompt": "..."}`, def's is `{$reactiveRoot: {...}}`. Deep merge plain objects recursively: result would be `{$reactiveRoot: {...}, prompt: "..."}`? That merges our `prompt` alongside `$reactiveRoot` as sibling keys! That's wrong - it would make `state.prompt` a plain member in addition to the reactive root, and the subcomponent's `state.prompt` resolution would pick the stronger (subcomponent precedence) plain value... while `state` itself is still a reactive root from def. Then `state.prompt` writes would hit the reactive root (mutable shared object)? Conflicts.
+
+Hmm. The hint says: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before."
+
+So per documentation, the framework handles this: writing `state.prompt` inside a subcomponent layer body overrides within the reactive root. OK - the docs' strategy hint explicitly blesses this. I'll trust it.
+
+But wait, there's another wrinkle: the imageGenerator template has the input bound `value="@{state.prompt}"` with live-state write-back. The user may type; if the finder later updates (note changed/moved), prompt gets overwritten by the note text again. That's the described tradeoff. Also note initially, before the shape is hosted... Actually topLevelWidgets are hosted by definition (they're on the canvas). hostBounds exists. If there are no notes: noteText = "No sticky notes found". Prompt becomes that; button generates "no images match" error. Acceptable.
+
+Should the finder UI remain, or would the user prefer just text in the umbrella header? Keep it visible - shows which note is closest, that's part of the finder's functionality.
+
+Now, about replacing widgets:
+
+Component parts:
+1. filename "shape:finder" with potentia part for "/" `{"$layers": ["fluid.demos.noteImageGenerator"]}`, plus shape part `{"x": 80, "y": 80, "w": 680, "h": 500}`. This replaces the finder widget with the combined one.
+
+Wait - subtle: replacing the widget means a fresh construction at the same shape id? The shape part in the nested doc sets the position/size. Hmm, the shape id: finder at shape:finder. We keep the id (nested doc filename shape:finder) so the canvas keeps the shape at (100,100) size 260x200; our shape part overrides with new geometry. Good.
+
+2. `delete` part for shape:imagegen.
+
+Alternatively I could place the new combined widget as a fresh shape and delete both old ones. But replacing in place keeps an id and location tidy. The strategy says smallest change: replace finder with combined, delete imagegen. 
+
+Hmm, but does replacing keep... The replacement: "If the filename is the id of an existing widget and the nested document has a potentia part for '/', the widget is replaced by a fresh one constructed from the nested document. Its existing state is not retained". Good.
+
+But careful: the combined widget has subcomponents named finder and imageGen. Its potentia carries `view.shapeId`? The old finder's potentia had `view: {$component: {"shapeId": "shape:finder"}}`. When replacing with fresh potentia from our nested doc, we must include shapeId so the widget knows its tldraw shape id! The original potentia for each widget included:
+
+```
+"view": {
+    "$component": {
+        "shapeId": "shape:finder"
+    }
+}
+```
+
+Hmm, how does shapeId get there? When the tldraw integration creates the widget it presumably pushes potentia with view.shapeId. Let me look: fluid.harness.hostView has `shapeId: null` and `hostBounds` computed from `{tldrawHost}.shapes` and `shapeId`. The fluid.topLevelWidgetView presumably extends hostView. So the widget needs shapeId for hostBounds to compute. So yes, include shapeId in the potentia:
+
+```
+{
+  "$layers": ["fluid.demos.noteImageGenerator"],
+  "view": {"$component": {"shapeId": "shape:finder"}}
+}
+```
+
+And the subcomponents finder/imageGen: finder's hostBounds come from the umbrella's view.shapeId automatically (finder inherits the top-level view's shapeId? hostView computes `{self}.hostBounds` per component that has shapeId... the finder subcomponent: does it have its own view with shapeId null? The finder is an SFC with its own view subcomponent (fluid.sfcTemplateViewComponent ← probably via fluid.topLevelWidgetView? no). Hmm.
+
+Let me think about the layer hierarchy: fluid.demos.closestNoteFinder has `$layers: "fluid.topLevelWidget"`. fluid.demos.imageGenerator also. fluid.topLevelWidget presumably includes fluid.topLevelWidgetView which includes fluid.harness.hostView with shapeId and hostBounds compute. So each subcomponent (finder, imagegen) inherits hostView too, with shapeId null. But finder's `closest` compute uses `{self}.hostBounds` - that's the finder's own hostBounds, from shapeId null → boundsFor(shapes, null) → presumably null → "Not placed on a canvas"! That's a problem: when finder is a subcomponent of the umbrella, its own shapeId is null.
+
+Wait, how did it work when finder was a top-level widget? Its potentia set view.shapeId = "shape:finder", and hostBounds computed from the tldraw shapes and that id. As a subcomponent with shapeId null, hostBounds = boundsFor(shapes, null) = null, so noteText = "Not placed on a canvas". Broken.
+
+So in the umbrella, we must set the finder's (and imagegen's) view shapeId to the umbrella's shapeId. The imagegen doesn't need hostBounds (its own logic uses state only)... but imagegen inherits hostView harmlessly. But the finder needs its hostBounds: we can inject `view: {"$component": {"shapeId": "shape:finder"}}` into the finder subcomponent record? Or reference: `"shapeId": "{self}.view.shapeId"`? Hmm wait, shapeId is on the VIEW subcomponent, not the component itself. In the original, potentia `view.$component.shapeId`. For the finder subcomponent record, we can write:
+
+```
+finder: {
+    $component: {
+        $layers: "fluid.demos.closestNoteFinder",
+        view: {
+            $component: {
+                shapeId: "shape:finder"
+            }
+        }
+    }
+}
+```
+
+But hardcoding the id is brittle; the umbrella doesn't know its own shapeId... Actually it does: the umbrella's own view.$component.shapeId potentia. Can the finder read `{self}.view.shapeId`? From the finder's context: `{self}.view.shapeId` = finder's own view shapeId - not set → null. We need the PARENT's: `{$parent}.view.shapeId`. In the finder's $component body, references resolve from the parent (component in which the reference appears). `{$parent}` context - is that available in the IL? Fluid View docs use `{$parent}.selection` in the UISelectView compute, where the view's config references its parent component. In IL config, `{$parent}` as a context: hmm, the View docs say "Configuration on the view ... reaches the owning component as {$parent}." That's for view config. For the finder subcomponent body, references resolve "from the point of view of the component in which it appears" — i.e., the umbrella. Context names include member names and layer names in scope. The umbrella's view member is named `view`, so `{view}` from the finder record would resolve to... scope: the component in which the reference appears is the umbrella; its member `view` is a subcomponent. `{view}` → the view subcomponent. Then `.shapeId` → its shapeId. 
+
+Actually scope resolution: "searching outwards from the referring component: its own names, then its direct children's..." The referring component for references appearing in the finder's $component body is the umbrella component itself (the record belongs to the umbrella's layers). So `{view}.shapeId` should resolve to the umbrella's view shapeId, which is set via potentia. And when does the finder merge this? When the umbrella's potentia view.shapeId = "shape:finder" is set - before construction. 
+
+But wait - does the finder's view subcomponent merge get `shapeId` from the finder subcomponent record at subcomponent precedence and thereby compute hostBounds properly? hostView: `hostBounds: compute(boundsFor(tldrawHost.shapes, shapeId))`. Setting shapeId on the finder's view $component → yes, hostBounds then computes finder's bounds = the umbrella's shape bounds. 
+
+But there's a catch: the umbrella's view - shapeId is set via potentia (user precedent). The finder is declared in umbrella's layer def `$layers` def precedence. Its `view.$component.shapeId` reference `{view}.shapeId` refers to... the umbrella view's shapeId. Merge fine.
+
+Also the imageGen subcomponent: it inherits hostView too but doesn't use hostBounds. It'll compute null bounds harmlessly. However the imagegen's OWN view shapeId would be null — irrelevant.
+
+But wait, actually — there's a subtlety with shapeId and tldraw: maybe the tldraw integration sets each top-level widget's view shapeId automatically, and when the combined widget is created at shape:finder via PTF instantiation, our potentia provides shapeId. When we replace the finder widget by including potentia with shapeId, does the tldraw integration still register shape binding? Presumably the shape part + potentia mechanism is the same as initial creation.
+
+Hmm, but do we even need `{view}.shapeId` wiring, or will the tldraw harness propagate its own shape id to nested widgets automatically? Not clear; safer to wire explicitly with the reference.
+
+Wait, actually simpler: does the finder compute use `{self}.hostBounds`? Yes: `closest: compute(findClosest(tldrawHost.notes, self.hostBounds))`. And hostBounds for the finder as subcomponent would be null unless shapeId set. So yes, we must wire it.
+
+Let me write the umbrella layer def (JS):
+
+```js
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 680,
+        h: 500
+    },
+    // Shows the closest sticky note, whose text becomes the image prompt
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            // Bound to the shape hosting this whole widget, so that hostBounds finds us
+            view: {
+                $component: {
+                    shapeId: "{view}.shapeId"
+                }
+            }
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{noteFinder}.noteText"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="note-image-generator">
+                <div class="note-image-generator-finder" @id="noteFinder"></div>
+                <div class="note-image-generator-imagegen" @id="imageGenerator"></div>
+            </div>`
+        }
+    }
+});
+```
+
+Hold on — `{view}.shapeId` in the noteFinder view $component body: the reference appears in the umbrella's layers (the subcomponent record is part of the umbrella's merged layers; signals within are resolved in the context of the component "in which it appears" - the umbrella). `{view}` → umbrella's view subcomponent. `.shapeId` → its (live) value. When the finder's view merges `shapeId: "{view}.shapeId"`, the reference is sited? No - it's a plain member value on the finder's view: the finder's view shapeId = resolved value. As the umbrella view's shapeId gets set (potentia - set at construction), the reference yields it. When does the finder's view effect start? The finder's view requires hostBounds compute; shapeId available at construction (potentia applied before effects allocate). OK.
+
+But careful with reference context vs. layer-name context: `{view}` is a member name — but is `view` also a framework layer name causing confusion? Scope searches "its own names" first - member name beats layer name at the same level. Also components bearing fluid.resolveRoot visible everywhere. `view` might be ambiguous but member name should win. Alternatively use `{/shape:finder}`? No — the umbrella shouldn't hardcode. Another option: `{$parent}.view.shapeId`. Is `$parent` a valid IL context? The docs' UISelectView example uses `{$parent}.selection` inside a view's $compute args. There `{$parent}` is in a view component's config. For our plain layer, is `$parent` usable as a context in IL references? The View doc says: "Configuration on the view, such as a $compute producing its templateTree, reaches the owning component as {$parent}." — that suggests within view configuration, `{$parent}` means the owning component. But our reference is in the umbrella's own layer config (the finder's subcomponent record), not in view config. Hmm. Which component is "the component in which the reference appears"? For references inside a `$component` record, the doc says they're resolved "from the point of view of the component in which [they] appear" — the $component record is part of the umbrella's layer, so the umbrella. Thus `{view}` refers to the umbrella's view subcomponent. I'm fairly confident.
+
+Hmm wait, but there's a deeper question: where does shapeId get its value in the umbrella's view? The umbrella's top-level potentia:
+
+```json
+{
+    "$layers": ["fluid.demos.noteImageGenerator"],
+    "view": {
+        "$component": {
+            "shapeId": "shape:finder"
+        }
+    }
+}
+```
+
+That mirrors the original finder potentia. Good.
+
+Now — the finder's hostView: `hostBounds: compute(boundsFor({tldrawHost}.shapes, {self}.shapeId))` — note the compute is on the view; our injected shapeId is at subcomponent... wait, the noteFinder's subcomponent record merges into the finder component, and its `view.$component.shapeId` merges into the finder's view subcomponent. The view subcomponent's own layers: hostView (with hostBounds compute) is among them (via topLevelWidgetView? does topLevelWidget include view? Actually the finder has `$layers: fluid.topLevelWidget` — does topLevelWidget itself include a view? In the original finder, its view subcomponent comes from the SFC loader adding `view` with sfcTemplateViewComponent... but the finder also needs hostBounds which lives in fluid.harness.hostView, which sits in fluid.topLevelWidgetView. Is the finder's view built on topLevelWidgetView? 
+
+The finder potentia included `view.$component.shapeId` — meaning the finder's view DOES have a shapeId member from hostView, and hostBounds compute. So the SFC loader's added view must merge with a hostView-based view. i.e., topLevelWidget probably itself declares a `view` subcomponent with layers [fluid.topLevelWidgetView] and the SFC loader's added view merges on top (adding sfcTemplateViewComponent/template). Merging views across layers works because views from layer defs accumulate.
+
+So for our noteFinder subcomponent, its view = merge of topLevelWidgetView (hostView: shapeId, hostBounds) + sfc template. Our `view.$component.shapeId` override at subcomponent precedence sets shapeId. 
+
+Now, does injecting `view` key in the noteFinder `$component` record collide with the loader-added view? The noteFinder's $layers = fluid.demos.closestNoteFinder, whose def includes topLevelWidget; its view record comes from... the SFC layer (fluid.sfcLayer adds the view? or topLevelWidget adds view with topLevelWidgetView?). When the SFC was loaded, its script was patched: "A view subcomponent is added, with layer fluid.sfcTemplateViewComponent" — added where? Presumably to the layer def of the SFC's layer (fluid.sfcLayer parent or the layer itself). In any case, our noteFinder subcomponent body adds `view.$component.shapeId` at subcomponent precedence which merges over whatever's there at def precedence. The `$layers` key of the view remains from def (e.g. sfcTemplateViewComponent). Good — our record only adds the shapeId.
+
+Similarly, the imageGenerator's SFC view: its own view shapeId is null - harmless. But should we also set imageGenerator view shapeId? Not needed.
+
+Wait, actually, is that right that imageGenerator's hostBounds compute would run pointlessly? It computes boundsFor(shapes, null) → maybe null → fine.
+
+Now the layout/styling. Template:
+
+```
+<div class="noteimagegen">
+    <div class="noteimagegen-finder" @id="noteFinder"></div>
+    <div class="noteimagegen-image" @id="imageGenerator"></div>
+</div>
+```
+
+CSS (in a <style> block... but this is a plain JS layer, not an SFC — no <style> support!). For a text/javascript PTF layer, styles can't be in a <style> block. Options: inline styles in the template, or add a `<style>` via... plain JS layers can't easily inject styles unless using $effect. Simplest: inline styles in the template HTML. But the subcomponents (finder, imagegen) render their own content; our template only styles the two container columns. Use inline style attribute. But @id container divs: the finder's view renders into the first div. With inline style `flex: 0 0 270px; min-width: 0` on the finder column; imagegen column `flex: 1 1 auto; min-width: 0`.
+
+Root div: `style="display: flex; gap: 12px; height: 100%; box-sizing: border-box; padding: 12px;"`.
+
+Hmm, does the tldraw-hosted widget's root get sized to the shape? In the demos, the widgets style themselves with width:100%;height:100%, so the container (renderedContainer) is sized to shape bounds already. OK.
+
+preferredSize {w: 680, h: 500} - the finder is 260 wide, imagegen 360-460 tall. 270 + 12 + ~365 + padding ≈ 665. Set 680x500.
+
+Now the PTF document parts:
+
+1. layer part (text/javascript) defining fluid.demos.noteImageGenerator.
+
+Content as above. Note PTF for JS layers: "Any other layer is rendered as a fluid.def(...) call in JavaScript, with functions included by their source text." Our layer def has no functions. Good.
+
+Wait - one more consideration: `$layers: "fluid.topLevelWidget"` — the hint says for a fresh layer made from scratch, name it explicitly even if inherited; here the layer doesn't inherit it otherwise. It names it directly. Good. And "Every widget you synthesize must apply fluid.topLevelWidget at its top level" - done.
+
+2. component part with filename "shape:finder", nested multipart with:
+   - potentia part for "/": {"$layers": ["fluid.demos.noteImageGenerator"], "view": {"$component": {"shapeId": "shape:finder"}}}
+   - shape part: {"x": 80, "y": 80, "w": 680, "h": 500}
+
+3. delete part with filename "shape:imagegen", empty body.
+
+Now, does replacing shape:finder via potentia for "/" while a shape part is present work? Yes: "Any nested document may hold a shape part... to place or resize the widget's shape."
+
+One question: on replacement, the finder widget is destroyed along with... the finder's own subcomponents etc. The combined new widget re-creates noteFinder fresh — state like hostBounds comes from the shape:finder id. Fine.
+
+Should the new combined widget be placed at (80,80)? The old finder was at (100,100). 260x200. Notes: fox at (120,420); lighthouse at (960,140). If combined is at x80..760, y80..580 - the fox note (120,420) would be closest to... distances: to (80,80): fox hypot(40,340)=342; lighthouse hypot(880,60)=882. Fox is closest at 342px. Hmm, would be nicer to place so that a note is near. But user will move it anyway. Place at (80, 80) w680 h500. Or maybe place it near the fox note (120,420)? If placed at (120,420)?? The note itself is there. Place combined at, say, (400, 300): fox distance hypot(280,120)=305; lighthouse hypot(560,160)=582. Fox closest, 305px. Eh.
+
+Actually maybe place it near-ish the fox: x=360, y=420? combined spans 360..1040, 420..920. Fox at (120,420): distance to (360,420) = 240. Lighthouse at (960,140): distance to (360,420) = hypot(600,280)=662. Fox wins at 240. 
+
+Hmm, or just keep near top-left (80,80). The user said "so I can move it close to a sticky note" - they'll move it. Place it conveniently: I'll put it at (400, 60)? spans 400..1080 x, 60..560 y. Fox at (120,420): to (400,60): hypot(280,360)=456. Lighthouse (960,140): hypot(560,80)=566. Fox closest 456. Meh.
+
+Better: put it right under between them, e.g. (500, 420): fox hypot(380,0)=380; lighthouse hypot(460,280)=539. Fox 380.
+
+Or place near the lighthouse since it's at (960,140), put combined at (680, 120): spans 680..1360, 140... lighthouse (960,140) vs (680,120): hypot(280,20)=281. Fox (120,420): hypot(560,300)=635. Lighthouse 281. That's decent - start with a note nearby. Canvas presumably large (lighthouse at x960). Canvas width unknown; tldraw default infinite. Fine.
+
+Let me choose x: 680, y: 120? But that overlaps the lighthouse note region vertically (note at y140 height 200; combined at y120..640 x680..1360; note at x960..1160, y140..340) - overlapping is fine since it's a canvas of widgets... could look cluttered. Actually overlapping the note is kind of the point but might obscure. Offset: x=760,y=420: lighthouse to (760,420): hypot(200,280)=344; fox to (760,420): hypot(640,0)=640. Lighthouse 344.
+
+Whatever - choose (360, 420): fox 240px closest, near enough to demonstrate. Canvas: fox note at (120,420)-(320,620) (w200h200). Combined at (360,420)-(1040,920): to the right of the fox note, 40px gap. Lighthouse far. I'll go with x=360, y=420, w=680, h=500.
+
+Hmm, wait, canvas height? tldraw has no fixed canvas. Fine.
+
+Now — one more check on the finder injection: the finder's compute `closest` references `{tldrawHost}.notes` and `{self}.hostBounds`. As subcomponent, self = finder; hostBounds = compute on finder's view with shapeId = umbrella's shapeId. When the combined widget is constructed at shape:finder, its view shapeId potentia → finder's view shapeId via reference. hostBounds → bounds of shape:finder. 
+
+But actually wait: is the reference `{view}.shapeId` resolved with `view` being the umbrella's view? The umbrella component's member names: noteFinder, imageGenerator, view. Scope search from referring component (umbrella): "its own names" - the umbrella's names are its member name (path: /) and layer names... member name `view` is a direct child name. "then its direct children's" - children noteFinder, imageGenerator, view. So {view} → umbrella.view. 
+
+Also imageGen prompt injection: `{noteFinder}.noteText` - noteFinder is a member of the umbrella - direct child, resolves. noteText = finder's closest.text (compute). Tracked. Good.
+
+Now: potential issue — the imageGenerator's `state.prompt` is inside a `$reactiveRoot`. We established the docs' hint sanctions `state: {prompt: ...}`. Let me double check the exact wording: "A reference may equally override a single member of a widget's reactive state, e.g. `state: {prompt: "{first}.text"}`: the member then takes the referenced value whenever that changes, and may still be written as before." Yes. Apply.
+
+But hold on: The imageGenerator template binds the input `value="@{state.prompt}"` with live-state write-back. If the user hasn't typed, reading state.prompt yields the injected note text; the input displays it. Good. If the user types, prompt becomes their text until the next note/finder update. Hmm, finder updates on every shape move of the umbrella (hostBounds) and every note change. So if the user drags the combined widget, noteText might flicker to different notes, overwriting a custom prompt. Tradeoff acceptable per the feature request ("move it close to a sticky note and press a button to generate an image"): the note text IS the intended prompt. Good.
+
+Generate method args: `"{self}.state"` - so generate(state) does state.prompt.trim(). Works with injected prompt since state.prompt holds resolved value... wait - injecting via subcomponent layer: `state.prompt` reads through to the reactive root with the injected value... how does the reference injection physically work? The docs say the member "takes the referenced value whenever that changes, and may still be written as before" - so state.prompt yields the note text (live), and generate reads it. 
+
+Now, one more concern: `state` in imageGenerator is `{$reactiveRoot: {...}}`. When we write `state: {prompt: "{noteFinder}.noteText"}` in a subcomponent body, the deep-merge question. Docs hint says it works. But note: our record should perhaps be:
+
+```
+state: {
+    prompt: "{noteFinder}.noteText"
+}
+```
+
+Yes per hint.
+
+Now, writing the PTF. The layer part:
+
+```
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 680,
+        h: 500
+    },
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            // Bound to this widget's own shape so that hostBounds reports this widget's bounds
+            view: {
+                $component: {
+                    shapeId: "{view}.shapeId"
+                }
+            }
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            // The closest note's text becomes the search prompt
+            state: {
+                prompt: "{noteFinder}.noteText"
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div style="box-sizing: border-box; height: 100%; padding: 12px; display: flex; gap: 12px;">
+                <div @id="noteFinder" style="flex: 0 0 270px;"></div>
+                <div @id="imageGenerator" style="flex: 1 1 auto; min-width: 0;"></div>
+            </div>`
+        }
+    }
+});
+```
+
+Wait, there's an issue with the finder's own styling: `.notefinder` has `width: 100%; height: 100%` and background. Its view container = the flex item div (270px). But the finder's view template root is `.notefinder` div with elideParent default true - merged with container. OK, it'll fill the 270px column with a yellow box. Fine.
+
+The imageGenerator's `.imagegen` has height:100%, width:100%. Its container = flex item (flex: 1 1 auto). Good.
+
+One more: the finder's `distanceLine` and error subcomponents etc. all fine.
+
+Another subtlety: the finder's view — when the finder subcomponent is created under the umbrella, will its `view` ALSO receive the umbrella's... no wait, the finder's own view is separate from the umbrella's view.
+
+But there's the `@id` rendering: the subcomponent renders "into" the marked element; who renders? The umbrella's view renders template; then each @id element's subcomponent view renders into it. The finder's view (sfcTemplateViewComponent) has its own container = the element. elideParent default true → root merged with container. The finder root `.notefinder` div merges INTO an empty div - becomes the div itself with notefinder classes? Merging root element with container: attributes/classes merge - the container div gets class="note-image-generator-finder" then merged? Hmm, the container div currently has inline style flex 0 0 270px and the notefinder styling (padding, flex column, yellow bg). The notefinder's own class adds its styling; inline style remains (template attrs and runtime attrs merge... the notefinder root would set class notefinder, display flex, etc. and inline style stays or merges). Should be OK visually.
+
+Now shape bounds 680x500 vs layout: imageGenerator preferred 360x460; in a 680-12-24-270-12 gap = 386 wide column; imagegen input flexes. Height: imagegen content 460 in 500-24=476. Fine.
+
+Also, `preferredSize` - is that honored? It says widgets advertise preferred size for creation; our explicit shape part overrides anyway.
+
+Now the component part for shape:finder (replacement). Nested multipart boundary "inner-finder":
+
+```
+Content-Type: multipart/mixed; boundary="ptf-boundary-note-1"
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: component
+
+--ptf-boundary-note-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:finder"
+        }
+    }
+}
+--ptf-boundary-note-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 360, "y": 420, "w": 680, "h": 500}
+--ptf-boundary-note-1--
+```
+
+And delete part:
+
+```
+--outer
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+
+--outer
+```
+
+The delete part has "empty body" - so just headers then the next delimiter. 
+
+Now double-check replacement semantics: "If the filename is the id of an existing widget and the nested document has a potentia part for '/', the widget is replaced by a fresh one constructed from the nested document." The nested doc's potentia `$layers` = ["fluid.demos.noteImageGenerator"] - fresh layer defined in this same doc (layer part). Good.
+
+Does the replacement keep the same shape id so notes distances work? shapeId in potentia = "shape:finder"; the shape part resizes shape:finder. The tldrawHost.shapes map - shape:finder exists. Good.
+
+One thing: the noteFinder's `{view}.shapeId` - at the time the finder's view merges, is umbrella's view.shapeId already the live value? The reference resolves reactively, so even if initially null it updates when potentia applied (potentia applied before stabilize). Fine.
+
+What about the imageGenerator subcomponent view shapeId null - its hostView.hostBounds computes boundsFor(shapes, null) → presumably null - no error. OK.
+
+Also, hmm: `shapeId: "{view}.shapeId"` - could there be a scoping conflict where `{view}` within the umbrella could also match the VIEW layer name? The context names table: "A member name" or "A layer name or its nickname". `view` isn't a layer name by default (fluid.viewComponent's nickname is viewComponent). Member name wins anyway.
+
+Wait, actually one more thing to verify: in the umbrella's view $component record I write `$layers: "fluid.templateViewComponent"`. But topLevelWidget probably already brings a view with fluid.topLevelWidgetView layers, into which our templateViewComponent view merges. Merging `$layers` keys: signal record, ours replaced as a unit - good: `$layers` becomes fluid.templateViewComponent entirely?? That would DROP the hostView layers (fluid.harness.hostView / topLevelWidgetView) from the umbrella's own view! 
+
+Uh oh. The view $component's $layers is a signal record in parent def (say topLevelWidget: view: {$component: {$layers: "fluid.topLevelWidgetView"}}). In our layer def (stronger precedence), view.$component.$layers = "fluid.templateViewComponent" replaces the parent's record as a unit (no merge of signal records). Then the umbrella's view would be a plain templateViewComponent WITHOUT hostView - no shapeId, no hostBounds for the umbrella itself. That breaks `{view}.shapeId` (missing member → unavailable → finder unavailable) and the whole widget's hosting (does the tldraw integration register via the view? Probably via hostView bindings like editor etc.).
+
+Hmm. So for a top-level widget layered over fluid.topLevelWidget, providing an explicit view.$component.$layers kills the base view layers. How do other widgets do it? They're SFCs: the SFC loader adds view $component with sfcTemplateViewComponent - replacing? If SFC loader's view $component.$layers = "fluid.sfcTemplateViewComponent" replaced parent's topLevelWidgetView too... then the SFCs' views would lack hostView, but the original widgets DO have shapeId (potentia set it, and it took effect - the finder potentia included view.$component.shapeId and it worked). So either (a) the SFC loader merges layers carefully (appends template view layer over base view layers), or (b) the base topLevelWidget doesn't define the view; instead hostView stuff is at the topLevelWidget level and the view's own $layers get combined some other way.
+
+Look at the harness hostView layer: `fluid.harness.hostView: {$layers: "fluid.topLevelWidgetView", shapeId: null, hostBounds: compute(...)}`. And Fluid View docs: topLevelWidget layer... The finder potentia `view.$component.shapeId` worked, meaning view exists with shapeId member. The SFC loader "adds a view subcomponent with layer fluid.sfcTemplateViewComponent". If that replaced $layers, the view would lose hostView's shapeId... unless the view $component from the loader is structured to extend: perhaps loader's added record is `view: {$component: {$layers: ["fluid.harness.hostView"?...`. I can't see the loader source. 
+
+Given the original finder works as a top-level tldraw widget via SFC, the safe assumption: whatever mechanism makes the SFC's view keep shapeId while adding the template also works for our override. But our case replaces $layers entirely with fluid.templateViewComponent. Risk: view loses hostView layers.
+
+Alternative safer approach: don't declare a view at all in the umbrella layer; instead make the umbrella's layer list INCLUDE fluid.demos.closestNoteFinder? No...
+
+Hmm. How does the SFC loader wire the view? "A `view` subcomponent is added, with layer `fluid.sfcTemplateViewComponent`, whose template is the SFC's `<template>` block" and the loader works - the finder's view has hostBounds. Two possibilities: the loader adds the view at the same merge precedence as our `$layers`... If parent def has view.$component.$layers = "fluid.topLevelWidgetView" (a signal record), and loader adds view.$component.$layers = "fluid.sfcTemplateViewComponent" — records like that merge by replacement... unless $layers values as strings are deep-merged differently: `$layers` is a directive but also a record value? It's a top-level key of the view's $component layer - as a value it's a primitive string, not a signal record. Deeper merge: view.$component merges key-by-key; $layers from sfc record replaces "fluid.topLevelWidgetView"?? Then hostView gone from view - contradiction with observed behavior (finder has hostBounds via view).
+
+Unless... the view $component $layers value is itself an array/list that merges via C3 linearization across layers ("$layers" directive semantics)! The `$component` record IS the layer body for the subcomponent. Its $layers directive gets merged across the parent layers by the component's own layer linearization. I.e., when building the finder's view subcomponent, its layer list is linearized from the view record that results from merging ALL parent view records. So: topLevelWidget's view record says view.$component.$layers = "fluid.topLevelWidgetView"; loader's record adds sfcTemplateViewComponent; when the layer bodies for the view subcomponent merge, the $layers key merges as a LIST (C3), including both layers: [fluid.topLevelWidgetView, fluid.sfcTemplateViewComponent]. Similarly, our $component view record's $layers = "fluid.templateViewComponent" would REPLACE the parent's string entirely? Or merge?
+
+The doc on $layers: it's "plain value, a reference, or a signal record" — $layers is itself a directive that the merge handles specially for layer linearization: components derived from a component record: the merged view $component body includes $layers from all merged parents, linearized with C3 (lists concatenate at the def level?). If the parent's view has $layers: "fluid.topLevelWidgetView" and ours "fluid.templateViewComponent", merged view $layers might be both: C3 says more derived beats less derived; but for a single component record derived from multiple parent layer records, the linearization concatenates? Actually the original doc: "$layers: The parent layers of this layer. A component's full layer list is linearized from the layer hierarchy by C3". This applies to LAYER derivation. For subcomponent records, the body itself is treated as a layer merged into the subcomponent... The subcomponent record names ONE (or more) layer(s) in $layers. The record body merges at subcomponent precedence. The merged result is the child's configuration, and the child's layer list is resolved from `$layers` in the merged body. If multiple layers merged, each contributing view.$component.$layers strings - the final $layers key value comes from the strongest layer only ("Any other value... from a stronger layer replaces that from a weaker one wholesale. Arrays are not concatenated.").
+
+So string vs array: if all say strings, strongest wins. The SFC loader adds view with fluid.sfcTemplateViewComponent (a string) at loader precedence... which is stronger than topLevelWidget? Then the finder's view layers = sfcTemplateViewComponent only, and hostView's shapeId would be gone. But empirically the finder potentia's view.$component.shapeId worked — "shapeId" was in the original finder potentia. Maybe shapeId worked because the HARNESS doesn't need hostView for the finder's own logic beyond hostBounds... wait the finder's `closest` compute uses `{self}.hostBounds`. Where's hostBounds? In fluid.harness.hostView which the finder's VIEW extends. If view layers were only sfcTemplateViewComponent, hostBounds undefined → finder shows "Not placed on a canvas". But it's a working demo, so view must include hostView. Therefore the merge of view.$component.$layers must accumulate, i.e., view $component $layers strings DO accumulate as a list (perhaps $component records merge their $layers via C3 across merged parent records, since each view record IS a layer fragment and the subcomponent treats the merged record as its own layer list: linearizing "layer hierarchy" formed by those $layers values).
+
+Given this, our umbrella's view.$component.$layers = "fluid.templateViewComponent" would REPLACE parent topLevelWidget's view $layers... unless replacement of a string by a string also drops the parent's. Hmm, but then how does the SFC loader's templateViewComponent coexist with hostView in finder's view?
+
+Wait — maybe topLevelWidget does NOT declare a view in its own $layers def; instead the VIEW is added by the loader/harness with BOTH topLevelWidgetView and sfcTemplateViewComponent in its $layers: the loader might add `view: {$component: {$layers: ["fluid.harness.hostView"?, "fluid.sfcTemplateViewComponent"]}}`. I.e., the loader composes the full view layer list itself: `["fluid.topLevelWidgetView", "fluid.sfcTemplateViewComponent"]`. The doc says "added ... with layer fluid.sfcTemplateViewComponent" - implying just that layer, and it worked because... hmm.
+
+Alternatively, maybe `fluid.topLevelWidget` itself includes the view subcomponent (its def has a view.$component.$layers = "fluid.topLevelWidgetView"), and the SFC loader's addition is a separate record that MERGES at the same $layers key... The $layers directive, unlike plain values, may be merged as a list: "$layers (String|String[])". Doc: "The parent layers of this layer" — when two layers each list parents, the CHILD layer's own $layers is a single directive (not merged across). But for the view SUBCOMPONENT, the merged $component body is like a child layer, and its $layers might accumulate across merged parents since each parent contributes a piece: like `fluid.def` merging... 
+
+I can't resolve this from the docs alone. Empirically: the SFC loader works. The mechanism must make the SFC template layer ADD to the view's layers rather than replace. Most plausible: the loader patches the layer record by APPENDING to an array `view.$component.$layers` (if it's an array) or the framework's view merging combines $layers lists with C3 across merged view records (since the view subcomponent's record from each parent is itself a "layer fragment" and C3 linearization across merged fragments is natural).
+
+Let me re-read the Fluid View docs view-layer table: "fluid.sfcTemplateViewComponent | The <template> block of the SFC named by templateLayer (added by the loader)". And: "A view inherited from another layer accumulates the configuration, by the usual merging rules." "accumulates the configuration" — suggests view records merge: template from one, sfc layer stuff from another, hostView from another. If view.$component.$layers strings accumulated... "accumulates" maybe means nested records merge key-by-key, where $layers from a stronger layer replaces. If replacement, the SFC layer's view would NOT accumulate the template over base... it WOULD have only sfcTemplateViewComponent though.
+
+Hmm, wait. Maybe the SFC loader does this: the added view record is `{$component: {$layers: <EXISTING array + sfcTemplateViewComponent>}}`... can't know.
+
+Let me look at the evidence again: In the CURRENT workspace, the finder widget works: its view has shapeId from potentia merged at subcomponent... the potentia `view.$component.shapeId` merged into the finder's view. For hostBounds (on the VIEW per hostView) to exist, hostView must be among view layers. So yes, the SFC's view includes both topLevelWidgetView-ish layers AND sfcTemplateViewComponent. Ergo: view $layers accumulate across merged view records (at least when the parent contributes the base view and the child/SFC contributes template layers).
+
+Actually here's a cleaner hypothesis: the "view" subcomponent is itself treated as an Infusion component whose LAYERS come from the merge, and `$layers` directive merging across the merged record: the merged view body = merge of parent fragments; its $layers value = linearization of ALL $layers contributed... For C3, multiple parents' layer lists linearize together. A `fluid.component` child created from a record: "The subcomponent's full layer list is linearized from the layer hierarchy" - the hierarchy here being: each merged parent's view.$component.$layers contributes, and they combine (order: weaker first). This is exactly how "A view inherited from another layer accumulates the configuration" would work if $layers accumulates.
+
+Under this hypothesis, our umbrella view $component.$layers = "fluid.templateViewComponent" would REPLACE "fluid.topLevelWidgetView"? Under C3 accumulation there's no "replace" - both parent fragments' $layers get linearized. E.g. merged fragment from layer A: {$layers: "fluid.topLevelWidgetView", ...} and from layer B (ours): {$layers: "fluid.templateViewComponent", template: ...}. The child view's layer list = C3 of [topLevelWidgetView, templateViewComponent]? That'd include BOTH. 
+
+Honestly, given the docs explicitly bless the pattern of SFC templates accumulating with inherited views (the finder itself is exactly such a widget - topLevelWidget + SFC view work together), I'll trust that a plain view.$component with templateViewComponent layer in our layer def will accumulate with the inherited topLevelWidgetView-based view, just like the SFC loader's addition does. Both the SFC loader's and our records contribute a view fragment at a similar precedence.
+
+Risk noted but acceptable. If it failed, we'd get feedback. Actually — could I avoid the risk entirely? Alternative: don't define a view in the umbrella; instead use the SFC approach where the loader adds the view... but then I can't control the template. The SFC loader adds the view with the SFC's template automatically — and accumulation evidently works (finder proves it: SFC template + hostView coexist). So making our layer an SFC would guarantee accumulation! Because the loader handles it exactly as for the finder.
+
+So: make `fluid.demos.noteImageGenerator` an SFC instead of a plain JS layer. Then the loader adds view with sfcTemplateViewComponent + our def's view fragment... wait, no: if OUR layer def also declares `view.$component`, both our fragment and the loader's fragment merge (our layer def precedence + loader). Our fragment would have $layers: "fluid.templateViewComponent" and template. The loader's has sfcTemplateViewComponent + actual template from <template>. If $layers accumulates: view = [topLevelWidgetView, templateViewComponent(from us), sfcTemplateViewComponent(loader)]? That could conflict (sfcTemplateViewComponent would try to load OUR SFC template named by templateLayer... which is OURS - fine, same template roughly).
+
+Messy. Use an SFC whose <template> is the layout, and DON'T declare a view in the layer def at all. Then the loader adds exactly the view fragment with sfcTemplateViewComponent (+ inherited accumulation, proven by finder/imagegen). This is the SAFEST path:
+
+```
+<script>
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 680, h: 500},
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            view: {
+                $component: {
+                    shapeId: "{view}.shapeId"
+                }
+            }
+        }
+    },
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{noteFinder}.noteText"
+            }
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="note-imagegen" style="box-sizing: border-box; height: 100%; padding: 12px; display: flex; gap: 12px;">
+        <div class="note-imagegen-finder" @id="noteFinder" style="flex: 0 0 270px;"></div>
+        <div class="note-imagegen-imagegen" style="flex: 1 1 auto; min-width: 0;"></div>
+    </div>
+</template>
+```
+
+Wait but @id="imageGenerator" - I omitted; the second div needs @id="imageGenerator". Fix:
+
+```
+<div class="note-imagegen-finder" @id="noteFinder" style="flex: 0 0 270px;"></div>
+<div class="note-imagegen-imagegen" @id="imageGenerator" style="flex: 1 1 auto; min-width: 0;"></div>
+```
+
+The `@id` mechanism needs the member to exist; imageGenerator member exists. Good.
+
+Style for SFC: include a <style> block? Not needed (inline styles). But class names unique-ish anyway.
+
+Now check the noteFinder subcomponent's `view.$component.shapeId` fragment merging: noteFinder's view = merge of inherited view fragments (topLevelWidgetView via topLevelWidget? plus SFC's added sfc view from the noteFinder layer). Our added fragment sets shapeId - plain value, merges in. 
+
+Hmm wait, actually now there's a question about whether `shapeId` injected at the noteFinder subcomponent's view overrides the umbrella's view... no, they're DIFFERENT view components (finder's own view vs umbrella's view). Fine.
+
+But CRUCIAL: `{view}.shapeId` inside noteFinder's view.$component.body — which view does it refer to? The reference appears in the noteFinder $component record, which is part of the umbrella's layer def. "It is resolved reactively from the point of view of the component in which it appears" — the umbrella. The umbrella's member named `view` → its view subcomponent → shapeId. 
+
+But WAIT. Now the umbrella is an SFC; the loader added the umbrella's view with the SFC template. The finder is a subcomponent; the finder's `view` member at umbrella scope — when the finder subcomponent gets created, the umbrella's view exists (it's a sibling subcomponent of the umbrella; both created from umbrella's merged layers). Scope: "its own names, then its direct children's" - the finder is a direct child; its OWN member names? The reference appears in the umbrella's record, so "referring component" = umbrella. Search: umbrella's own names (member name '' at root? nickname of fluid.demos.noteImageGenerator = noteImageGenerator), direct children's names: noteFinder, imageGenerator, view. `{view}` matches member `view`. 
+
+Also note the imageGenerator's `view` — no conflict.
+
+Now: does the finder's shapeId need to be the literal "shape:finder"? Better the reference. When the umbrella is constructed with potentia view.shapeId = "shape:finder", `{view}.shapeId` resolves. 
+
+Now what about the imageGenerator inheriting hostView and computing hostBounds with shapeId null → boundsFor returns null (probably handles missing). Finder's compute gets bounds and notes. OK.
+
+Now PTF document assembly. Since it's an SFC, content-type text/x-vue, filename "fluid.demos.noteImageGenerator".
+
+The component part replaces "shape:finder": nested multipart (boundary inner-ff). Parts: potentia for "/", shape. Actually wait: since we REPLACE the finder, should we keep the same filename "shape:finder"? The replacement semantics: filename = id of existing widget + potentia for "/" → replace in place. Yes.
+
+Then delete shape:imagegen.
+
+Boundary strings: outer "ptf-boundary-nimg-outer", nested "ptf-boundary-nimg-finder".
+
+Let me also double check the potentia merge: root potentia `{"$layers": ["fluid.demos.noteImageGenerator"], "view": {"$component": {"shapeId": "shape:finder"}}}`. When the harness instantiates with container etc. (tldraw integration presumably adds its own potentia: container from the shape, maybe tldrawHost, etc.). The integration must find the widget instantiable: layer fluid.demos.noteImageGenerator with topLevelWidget among layers. Yes.
+
+Wait, one more consideration: the original finder widget's own subcomponent noteFinder ALSO exists now inside; fine.
+
+Anything about `fluid.topLevelWidget` requiring specific potentia from the harness (like `container`)? The harness supplies it; the PTF mechanism for replacement presumably same as creation. OK.
+
+Now the CSS concern: none beyond inline styles. But hmm - the finder's yellow box has its own padding 16, fills 270px column; the umbrella root has padding 12; fine.
+
+Let me now also reconsider: is there any issue with `@id="imageGenerator"` matching member imageGenerator which holds subcomponent of type imageGenerator... The member name in umbrella is `imageGenerator`. Yes the @id uses member name.
+
+Also the finder's @id container: after elideParent merging, finder's root div becomes the container; still a child of umbrella template. OK.
+
+Spacing: notes: fox at (120,420) size 200x200 → right edge x=320, y span 420..620. Lighthouse (960,140). New combined at (360,420) size 680x500 → spans x 360..1040, y 420..920. Fox note distance to (360,420) = 40px (adjacent). Lighthouse distance to (360,420) = hypot(600, 280) = 662. So on stabilize: noteText = "A red fox in the snow", prompt same, everything wired. 
+
+Actually hmm, is it TOO close (overlapping)? x 360 > 320, no overlap, 40px gap. Good - demonstrates feature immediately.
+
+Now write the delete part. Also should I delete... the user selected both widgets; combining into one (finder replaced, imagegen deleted). 
+
+Now, let me carefully write the whole PTF.
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-nimg-1"
+
+This is a Potentia Transmission Format (PTF) document adding a combined note image generator widget.
+--ptf-boundary-nimg-1
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.noteImageGenerator"
+Content-Description: layer
+
+<script>
+fluid.def("fluid.demos.noteImageGenerator", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 680,
+        h: 500
+    },
+    // Left column: which sticky note is closest to this widget
+    noteFinder: {
+        $component: {
+            $layers: "fluid.demos.closestNoteFinder",
+            // Bound to this widget's own hosting shape, so that hostBounds is this widget's bounds
+            view: {
+                $component: {
+                    shapeId: "{view}.shapeId"
+                }
+            }
+        }
+    },
+    // Right column: generate an image whose prompt is the closest note's text
+    imageGenerator: {
+        $component: {
+            $layers: "fluid.demos.imageGenerator",
+            state: {
+                prompt: "{noteFinder}.noteText"
+            }
+        }
+    }
+});
+</script>
+
+<template>
+    <div class="note-imagegen" style="box-sizing: border-box; height: 100%; padding: 12px; display: flex; gap: 12px;">
+        <div class="note-imagegen-finder" @id="noteFinder" style="flex: 0 0 270px;"></div>
+        <div class="note-imagegen-imagegen" @id="imageGenerator" style="flex: 1 1 auto; min-width: 0;"></div>
+    </div>
+</template>
+--ptf-boundary-nimg-1
+Content-Type: multipart/mixed; boundary="ptf-boundary-nimg-2"
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: component
+
+--ptf-boundary-nimg-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.noteImageGenerator"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:finder"
+        }
+    }
+}
+--ptf-boundary-nimg-2
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 360, "y": 420, "w": 680, "h": 500}
+--ptf-boundary-nimg-2--
+--ptf-boundary-nimg-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+--ptf-boundary-nimg-1--
+```
+
+Wait - the delete part: "delete parts, each with an empty body, whose filename is the id of a shape". So headers followed directly by next boundary. Yes as above.
+
+One more check on the umbrella layer: SFC loader requires the layer to define one layer whose name matches default? The default layer name from filename: `fluid.demos.noteImageGenerator` - the loader's fluid-import not involved here; PTF layer loading uses the filename. Fine.
+
+Does the SFC script require $layers? Defaulted. Fine.
+
+Concern: `@id="imageGenerator"` vs `@id="noteFinder"` — the finder subcomponent and imageGen subcomponent render. But ALSO: the imageGenerator's own view — its member named `view` at umbrella scope vs the finder's template `@{noteText}` etc. - fine.
+
+Potential subtlety: elideParent on the finder's view: finder root merges into the flex div. The finder template root has class "notefinder" + inline styles from our container div (flex: 0 0 270px). Merged root: class keeps "note-imagegen-finder notefinder", inline style kept (probably). Display flex from .notefinder. Padding might double with umbrella's? .notefinder padding 16 vs umbrella root padding 12 - no doubling since different elements. Fine.
+
+Another check: the imageGenerator SFC root `.imagegen` has `width: 100%; height: 100%` + padding 16; in a flex column with flex: 1 1 auto min-width 0 — height 100% of the container... container is the flex item div whose height is determined by flex layout (align stretch → 100% of root height minus padding). Should work like the demos (they fill shapes directly; here nested via flex stretch). 
+
+Edge: the umbrella root has `height: 100%` - matches shape height (host supplies container sized to shape; the topLevelWidget view presumably sizes root). The demos rely on that too. OK.
+
+Now, should the combined widget also let the user generate with the current text? Yes - the input is editable (write-back), and prompt re-derives from noteFinder when notes/shape move. That's per docs.
+
+I think the plan is solid. Let me also double check the `state.prompt` override doesn't break `cannotGenerate` etc. - it just reads state.prompt. Fine.
+
+One more: the umbrella's potentia `view.$component.shapeId` — needed so hostView layer (in the umbrella's view) gets shapeId. Yes included.
+
+Wait, actually, hmm: does the umbrella's view (SFC-added) extend fluid.harness.hostView? In the current widgets, the finder widget works with hostBounds — the finder's own view has hostBounds. So yes, SFC views inherit the host view (accumulation works as discussed). Good.
+
+Also, `tldrawHost` referenced by finder - available in scope (topLevelWidget resolution root or provided by harness). Since the original finder used it, and the umbrella includes topLevelWidget too, fine - tldrawHost is likely a global resolveRoot-visible component. The imageGenerator doesn't use it.
+
+Final check on boundary uniqueness: outer ptf-boundary-nimg-1; nested ptf-boundary-nimg-2. Distinct. MIME preamble line fine.
+
+The response must be the PTF document only.

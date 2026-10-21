@@ -742,7 +742,9 @@ const fluidViewScope = function (fluid) {
                         };
                         patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "partialTemplateLayers"], ptl, "last");
                     } else {
-                        patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "templateLayer"], layerName, "last");
+                        // The template is written as the view's template member, referring to the template store, so
+                        // that a template supplied by any stronger layer, e.g. a layer derived from this one, overrides it
+                        patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "template"], {sfcLayer: layerName}, "last");
                     }
                     fluid.writeParsedTemplate(layerName, docTemplate);
                 }
@@ -1369,14 +1371,16 @@ const fluidViewScope = function (fluid) {
 
     /**
      * Resolve the model site to which a template reference bound to an attribute could write back a user's change.
-     * A site holding a signal product such as `$compute` is not writeable.
+     * A site holding a signal product such as `$compute` is not writeable - although a linked member of a reactive root
+     * is, since its link only writes into it.
      * @param {Signal} token - The live reference bound to the attribute, as resolved by `fluid.fetchContextReference`
      * @return {Site|null} The writeable site, or `null` if there is none
      */
     fluid.writeableAttrSite = function (token) {
         const sited = fluid.deSignalToSite(token);
         const site = fluid.isSignal(sited) && sited.$variety === "$sitedRef" ? sited.site : null;
-        const isProduct = site && fluid.get(site.shadow.shadowMap, [...site.segs, $m])?.signalRecord;
+        const rec = site && fluid.get(site.shadow.shadowMap, [...site.segs, $m]);
+        const isProduct = rec?.signalRecord && rec.handlerRecord !== fluid.reactiveLinkExpanderRecord;
         return site && !isProduct ? site : null;
     };
 
@@ -2083,11 +2087,23 @@ const fluidViewScope = function (fluid) {
         $variety: "framework"
     });
 
+    // A view rendering the template held as its member `template` - either markup, or a reference `{sfcLayer}` to the
+    // template of a Single File Component, as written by fluid.sfcToInjRecs
     fluid.def("fluid.templateViewComponent", {
         $layers: "fluid.viewComponent",
-        templateTree: "$compute:fluid.parseHTMLToTree({self}.template)",
+        templateTree: "$compute:fluid.templateToTree({self}.template)",
         $variety: "framework"
     });
+
+    /**
+     * Resolve the template held by a view to its parsed tree
+     * @param {String|Object} template - The view's template - either markup, or a reference `{sfcLayer}` to the template
+     * of the named Single File Component layer, held in the template store
+     * @return {VNode} The parsed template
+     */
+    fluid.templateToTree = function (template) {
+        return typeof(template) === "string" ? fluid.parseHTMLToTree(template) : fluid.fetchParsedTemplate(template.sfcLayer);
+    };
 
     // Tag layer applied by fluid.sfcToInjRecs to every layer which was loaded from a Single File Component, allowing
     // its MIME type to be determined by fluid.layerMimeType
@@ -2095,9 +2111,9 @@ const fluidViewScope = function (fluid) {
         $variety: "framework"
     });
 
+    // Tag layer applied by fluid.sfcToInjRecs to the view of a layer loaded from a Single File Component with a template
     fluid.def("fluid.sfcTemplateViewComponent", {
         $layers: "fluid.templateViewComponent",
-        templateTree: "$compute:fluid.fetchParsedTemplate({self}.templateLayer)",
         $variety: "framework"
     });
 
@@ -2167,8 +2183,15 @@ const fluidViewScope = function (fluid) {
         $layers: "fluid.component",
         // The size, as {w, h}, at which the widget would like to be hosted - null if it has no preference
         preferredSize: null,
-        // The bounds, as {x, y, w, h}, at which the widget is currently hosted, as reported by its view
-        hostBounds: "{self}.view.hostBounds",
+        // The bounds, as {x, y, w, h}, at which the widget is currently hosted, as reported by its view - or, for a
+        // widget nested within another of which its host reports nothing, e.g. one held as a subcomponent of an
+        // umbrella widget which renders it into its own template, those of the nearest enclosing top-level widget
+        hostBounds: "$compute:fluid.chooseHostBounds({self}.view.hostBounds, {self}.enclosingHostBounds)",
+        enclosingHostBounds: {
+            $bindable: {
+                bind: "fluid.bindEnclosingHostBounds({self})"
+            }
+        },
         view: {
             $component: {
                 $layers: "fluid.topLevelWidgetView"
@@ -2177,10 +2200,33 @@ const fluidViewScope = function (fluid) {
         $variety: "framework"
     });
 
+    /**
+     * Choose the bounds at which a top-level widget is hosted
+     * @param {ShapeBounds|null} own - The bounds reported for the widget by its view, or `null` if none are reported
+     * @param {ShapeBounds|null} enclosing - The bounds of the nearest enclosing top-level widget, or `null` if there is none
+     * @return {ShapeBounds|null} The bounds at which the widget is hosted
+     */
+    fluid.chooseHostBounds = (own, enclosing) => own || enclosing;
+
+    /**
+     * Find the bounds at which the nearest top-level widget enclosing a top-level widget is hosted
+     * @param {fluid.component} self - The top-level widget
+     * @return {Signal<ShapeBounds|null>|null} A signal for the bounds of the nearest enclosing top-level widget, or
+     * `null` if there is none
+     */
+    fluid.bindEnclosingHostBounds = function (self) {
+        let shadow = self[fluid.proxySymbol].shadow.parentShadow;
+        while (shadow && !(shadow.that && fluid.hasLayer(shadow.that, "fluid.topLevelWidget"))) {
+            shadow = shadow.parentShadow;
+        }
+        return shadow ? fluid.getForComponent(shadow, "hostBounds") : null;
+    };
+
     // Applied to the view of every top-level widget, this is the attachment point for any machinery supplied by a host,
     // typically broadcast onto it by a $linkage with this layer as its input
     fluid.def("fluid.topLevelWidgetView", {
-        // The bounds of the widget as hosted - null if its host does not report any
+        // The bounds of the widget as hosted - null if its host does not report any, as it should not for a widget
+        // which it does not itself host, e.g. one nested within another
         hostBounds: null,
         $variety: "framework"
     });

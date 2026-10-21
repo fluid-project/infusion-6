@@ -1,0 +1,81 @@
+{
+  "verdict": "WORKS - fit 5/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 131.547,
+      "usage": {
+        "inputTokens": 22949,
+        "outputTokens": 16935,
+        "reasoningTokens": 0
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.closestImageGenerator": "<script>\n// Combination of fluid.demos.closestNoteFinder and fluid.demos.imageGenerator: shows the sticky note\n// closest to the widget's own shape, feeds the note's text to the image search, and generates an image\n// for it when the button is pressed. Drag the widget next to a note, press \"Find Image\" (or Enter in\n// the prompt field), and the picture found on Pixabay for that note's text is shown with its credit.\n\nfluid.def(\"fluid.demos.closestImageGenerator\", {\n    $layers: [\"fluid.demos.closestNoteFinder\", \"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    preferredSize: {\n        w: 360,\n        h: 620\n    },\n    // Seed the generator's prompt with the text of the closest note, kept in step as the widget is dragged\n    state: {\n        prompt: \"{self}.noteText\"\n    },\n    generate: {\n        $method: {\n            // Sets the prompt from the closest note, guards against there being none, then runs the\n            // original image search - its promise is returned so the search is a single undoable step\n            func: \"fluid.demos.closestImageGenerator.generate\",\n            args: [\"{self}.state\", \"{self}.noteText\"]\n        }\n    }\n});\n\n/**\n * Seed the prompt from the closest note and delegate to the image generator's search\n * @param {Object} state - The component's reactive state\n * @param {String} noteText - The text of the closest sticky note, or a message if there is none\n * @return {Promise} A promise which resolves when the search has finished, successfully or not\n */\nfluid.demos.closestImageGenerator.generate = function (state, noteText) {\n    if (noteText === \"Not placed on a canvas\") {\n        state.error = \"this widget is not on the canvas\";\n    } else if (noteText === \"No sticky notes found\") {\n        state.error = \"there are no sticky notes on this page\";\n    } else {\n        state.prompt = noteText;\n        return fluid.demos.imageGenerator.generate(state);\n    }\n    return Promise.resolve();\n};\n</script>\n\n<template>\n    <div class=\"closestimg\">\n        <div class=\"closestimg-note\" style=\"background-color: #fffde7\">\n            <h3 class=\"closestimg-title\">Closest Sticky Note</h3>\n            <div class=\"closestimg-text\">@{noteText}</div>\n            <div @id=\"distanceLine\"></div>\n        </div>\n        <div class=\"closestimg-imagegen\">\n            <!-- The bound value is written back to state.prompt as the user types -->\n            <input type=\"text\" class=\"imagegen-input\"\n                   placeholder=\"The closest note's text - edit as you wish, then press Find Image\"\n                   value=\"@{state.prompt}\" disabled=\"@{isGenerating}\" @onkeydown=\"{self}.keyDown({0})\">\n            <div class=\"imagegen-buttons\">\n                <button class=\"imagegen-button\" disabled=\"@{cannotGenerate}\"\n                        @onclick=\"{self}.generate()\">@{buttonLabel}</button>\n                <button class=\"imagegen-button imagegen-another\" disabled=\"@{cannotShowAnother}\"\n                        @onclick=\"{self}.showAnother()\">Another</button>\n            </div>\n            <div @id=\"errorMessage\"></div>\n            <div @id=\"loadingMessage\"></div>\n            <div @id=\"result\"></div>\n        </div>\n    </div>\n</template>\n\n<style>\n/* SFC styles are injected globally, hence the closestimg- prefix throughout */\n.closestimg {\n    width: 100%;\n    height: 100%;\n    display: flex;\n    flex-direction: column;\n    box-sizing: border-box;\n    font-family: sans-serif;\n    overflow: hidden;\n}\n\n.closestimg-note {\n    flex: 0 0 auto;\n    padding: 16px;\n    display: flex;\n    flex-direction: column;\n    border-bottom: 1px solid #ddd;\n}\n\n.closestimg-title {\n    margin: 0 0 12px 0;\n    font-size: 14px;\n    color: #666;\n}\n\n.closestimg-text {\n    flex: 1;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    font-size: 18px;\n    font-weight: bold;\n    color: #333;\n    text-align: center;\n}\n\n/* The .imagegen-* classes below come from fluid.demos.imageGenerator's own styles */\n.closestimg-imagegen {\n    flex: 1 1 auto;\n    min-height: 0;\n    padding: 16px;\n    box-sizing: border-box;\n    background-color: #f5f5f5;\n    display: flex;\n    flex-direction: column;\n}\n\n.closestimg-imagegen .imagegen-image {\n    flex: 0 1 auto;\n    min-height: 0;\n    max-width: 100%;\n    object-fit: contain;\n}\n\n.closestimg-imagegen .imagegen-result {\n    flex: 1 1 auto;\n    min-height: 0;\n    display: flex;\n    flex-direction: column;\n    margin: 12px 0 0 0;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:finder",
+    "shape:imagegen"
+  ],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.closestImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": true,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A lighthouse at dusk"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<div style=\"background-color: #fffde7\" class=\"closestimg-note\"><h3 class=\"closestimg-title\">Closest Sticky Note</h3><div class=\"closestimg-text\">A lighthouse at dusk</div><div id=\"fl-id-closestImageGenerator-35.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><div class=\"closestimg-imagegen\"><input value=\"A lighthouse at dusk\" placeholder=\"The closest note's text - edit as you wish, then press Find Image\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-closestImageGenerator-35.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

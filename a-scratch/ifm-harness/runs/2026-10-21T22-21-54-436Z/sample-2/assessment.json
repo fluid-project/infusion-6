@@ -1,0 +1,77 @@
+{
+  "verdict": "DOES NOT WORK - fit 4/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 46.838,
+      "usage": {
+        "inputTokens": 22970,
+        "outputTokens": 16501,
+        "reasoningTokens": 15686
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.closestNoteImageGenerator": "<script>\n// Combines the closest-note finder and the image generator in one hosted widget.\n// The closest-note logic is inherited from fluid.demos.closestNoteFinder, so {self}.hostBounds\n// now refers to this combined widget's own shape. The image generator is a nested subcomponent.\nfluid.def(\"fluid.demos.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.closestNoteFinder\", \"fluid.topLevelWidget\"],\n    preferredSize: {w: 420, h: 700},\n    imageGen: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\"\n        }\n    }\n});\n</script>\n\n<template>\n    <div class=\"cnig-root\">\n        <div class=\"cnig-finder\">\n            <h3 class=\"cnig-title\">Closest Sticky Note</h3>\n            <div class=\"cnig-note-text\">@{noteText}</div>\n            <div @id=\"distanceLine\"></div>\n        </div>\n        <div class=\"cnig-imagegen\">\n            <div @id=\"imageGen\"></div>\n        </div>\n    </div>\n</template>\n\n<style>\n.cnig-root {\n    width: 100%;\n    height: 100%;\n    box-sizing: border-box;\n    display: flex;\n    flex-direction: column;\n    background-color: #fffde7;\n    font-family: sans-serif;\n    padding: 12px;\n}\n\n.cnig-finder {\n    flex: 0 0 200px;\n    display: flex;\n    flex-direction: column;\n    justify-content: center;\n    padding-bottom: 12px;\n}\n\n.cnig-title {\n    margin: 0 0 8px 0;\n    font-size: 14px;\n    color: #666;\n}\n\n.cnig-note-text {\n    font-size: 18px;\n    font-weight: bold;\n    color: #333;\n    margin-bottom: 8px;\n    text-align: center;\n}\n\n.cnig-imagegen {\n    flex: 1 1 auto;\n    min-height: 0;\n    margin-top: 12px;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:finder",
+    "shape:imagegen"
+  ],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.closestNoteImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": false,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": true,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": true,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": true,
+          "queries": [],
+          "imageShown": false,
+          "succeeded": false
+        }
+      ],
+      "markup": "<div class=\"cnig-finder\"><h3 class=\"cnig-title\">Closest Sticky Note</h3><div class=\"cnig-note-text\">A lighthouse at dusk</div><div id=\"fl-id-closestNoteImageGenerator-35.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><div class=\"cnig-imagegen\"><div id=\"fl-id-closestNoteImageGenerator-35.imageGen\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button disabled class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div id=\"fl-id-closestNoteImageGenerator-35.imageGen.errorMessage\" class=\"imagegen-error\">Please enter a prompt</div><div></div><div></div></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

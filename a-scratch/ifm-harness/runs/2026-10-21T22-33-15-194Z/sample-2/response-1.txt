@@ -1,0 +1,174 @@
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-closestimg-x9k2"
+
+This is a Potentia Transmission Format (PTF) document combining the closest-note finder and image generator into a single widget.
+--ptf-closestimg-x9k2
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.closestImageGenerator"
+Content-Description: layer
+
+<script>
+// Combination of fluid.demos.closestNoteFinder and fluid.demos.imageGenerator: shows the sticky note
+// closest to the widget's own shape, feeds the note's text to the image search, and generates an image
+// for it when the button is pressed. Drag the widget next to a note, press "Find Image" (or Enter in
+// the prompt field), and the picture found on Pixabay for that note's text is shown with its credit.
+
+fluid.def("fluid.demos.closestImageGenerator", {
+    $layers: ["fluid.demos.closestNoteFinder", "fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    preferredSize: {
+        w: 360,
+        h: 620
+    },
+    // Seed the generator's prompt with the text of the closest note, kept in step as the widget is dragged
+    state: {
+        prompt: "{self}.noteText"
+    },
+    generate: {
+        $method: {
+            // Sets the prompt from the closest note, guards against there being none, then runs the
+            // original image search - its promise is returned so the search is a single undoable step
+            func: "fluid.demos.closestImageGenerator.generate",
+            args: ["{self}.state", "{self}.noteText"]
+        }
+    }
+});
+
+/**
+ * Seed the prompt from the closest note and delegate to the image generator's search
+ * @param {Object} state - The component's reactive state
+ * @param {String} noteText - The text of the closest sticky note, or a message if there is none
+ * @return {Promise} A promise which resolves when the search has finished, successfully or not
+ */
+fluid.demos.closestImageGenerator.generate = function (state, noteText) {
+    if (noteText === "Not placed on a canvas") {
+        state.error = "this widget is not on the canvas";
+    } else if (noteText === "No sticky notes found") {
+        state.error = "there are no sticky notes on this page";
+    } else {
+        state.prompt = noteText;
+        return fluid.demos.imageGenerator.generate(state);
+    }
+    return Promise.resolve();
+};
+</script>
+
+<template>
+    <div class="closestimg">
+        <div class="closestimg-note" style="background-color: #fffde7">
+            <h3 class="closestimg-title">Closest Sticky Note</h3>
+            <div class="closestimg-text">@{noteText}</div>
+            <div @id="distanceLine"></div>
+        </div>
+        <div class="closestimg-imagegen">
+            <!-- The bound value is written back to state.prompt as the user types -->
+            <input type="text" class="imagegen-input"
+                   placeholder="The closest note's text - edit as you wish, then press Find Image"
+                   value="@{state.prompt}" disabled="@{isGenerating}" @onkeydown="{self}.keyDown({0})">
+            <div class="imagegen-buttons">
+                <button class="imagegen-button" disabled="@{cannotGenerate}"
+                        @onclick="{self}.generate()">@{buttonLabel}</button>
+                <button class="imagegen-button imagegen-another" disabled="@{cannotShowAnother}"
+                        @onclick="{self}.showAnother()">Another</button>
+            </div>
+            <div @id="errorMessage"></div>
+            <div @id="loadingMessage"></div>
+            <div @id="result"></div>
+        </div>
+    </div>
+</template>
+
+<style>
+/* SFC styles are injected globally, hence the closestimg- prefix throughout */
+.closestimg {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    font-family: sans-serif;
+    overflow: hidden;
+}
+
+.closestimg-note {
+    flex: 0 0 auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid #ddd;
+}
+
+.closestimg-title {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: #666;
+}
+
+.closestimg-text {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+    color: #333;
+    text-align: center;
+}
+
+/* The .imagegen-* classes below come from fluid.demos.imageGenerator's own styles */
+.closestimg-imagegen {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 16px;
+    box-sizing: border-box;
+    background-color: #f5f5f5;
+    display: flex;
+    flex-direction: column;
+}
+
+.closestimg-imagegen .imagegen-image {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-width: 100%;
+    object-fit: contain;
+}
+
+.closestimg-imagegen .imagegen-result {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 12px 0 0 0;
+}
+</style>
+--ptf-closestimg-x9k2
+Content-Type: multipart/mixed; boundary="inner-closestimg-77mz"
+Content-Disposition: attachment; filename="shape:closest-img-gen"
+Content-Description: component
+
+--inner-closestimg-77mz
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.closestImageGenerator"
+    ]
+}
+--inner-closestimg-77mz
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape"
+Content-Description: shape
+
+{"x": 640, "y": 120, "w": 360, "h": 620}
+--inner-closestimg-77mz--
+--ptf-closestimg-x9k2
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+--ptf-closestimg-x9k2
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="shape:imagegen"
+Content-Description: delete
+--ptf-closestimg-x9k2--

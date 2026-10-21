@@ -1,0 +1,161 @@
+The error says the component part wasn't parsed as a nested document. The nested multipart inside a component part — I need to check my nesting. The error: 'The part with filename "/" has unrecognised kind "potentia"' and 'filename "shape"... kind "shape"' — it seems the nested document was decoded as flat parts at the outer level rather than as a nested multipart. That happens if the Content-Type of the component part isn't multipart/mixed with a boundary, or if the nested boundary lines are malformed.
+
+Looking at my previous response: The nested entity headers:
+
+```
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteAI-comp"
+Content-Disposition: attachment; filename="shape:noteImageGenerator"
+Content-Description: component
+```
+
+Then inner parts with `--ptf-boundary-noteAI-comp`. Closers `--ptf-boundary-noteAI-comp--`. Then `--ptf-boundary-noteAI`.
+
+Hmm, the errors mention "filename undefined, kind ''" — a part with no filename/kind, possibly the blank body after "delete" parts created a spurious part, or the decode treated parts oddly.
+
+Wait — critical issue: the delete parts have an empty body. With "Content-Description: delete" and empty body, MIME decoding may see the empty line after headers as the part body ending immediately, fine. But I included a "delete" part — the spec says delete, OK.
+
+The main issue: nested component parts were decoded flat — meaning the decoder didn't recognize the nested multipart. Possibly because in my document, the outer part's Content-Type... Let me re-examine: I wrote:
+
+```
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteAI-comp"
+Content-Disposition: attachment; filename="shape:noteImageGenerator"
+Content-Description: component
+```
+
+That looks right per the spec example. Hmm, but the error says the component part "does not name an existing widget, so it must hold a potentia part" — meaning the decoder did not dive into the nested multipart. And then it complained about the inner parts at the top level: filename "/", filename "shape", filename undefined.
+
+Wait — "filename undefined has unrecognised kind ''" — that might be from the delete part having an empty body producing a phantom part? Or trailing content?
+
+Hold on — maybe the decoder requires the component part itself to be multipart AND its parts nested with their own Content-Disposition/Description... That I did. Let me check the example again:
+
+```
+--outer-1
+Content-Type: multipart/mixed; boundary="inner-1"
+Content-Disposition: attachment; filename="shape:abc"
+Content-Description: component
+
+--inner-1
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: live
+
+{"state.count": 5}
+--inner-1--
+--outer-1
+```
+
+In my message, I followed exactly this... except — did my `--inner--` closing line get placed correctly? Yes.
+
+Hmm, wait. Maybe the problem: the blank line after the component part headers. In MIME, after headers there must be a blank line before the body. I had:
+
+```
+Content-Description: component
+
+--ptf-boundary-noteAI-comp
+```
+
+Good.
+
+Actually, maybe the issue is that the inner parts' bodies must be preceded by blank line AND the boundary lines within the nested part are interpreted... The decoder in question apparently flattened everything into top-level parts. This suggests it parsed the whole response as a single-level multipart — i.e., it didn't treat the `multipart/mixed` part as nested, perhaps because when a part's Content-Type is multipart, the decoder expects... it should recurse. Unless: PTF decode treats a multipart part's internal boundary lines as belonging to the outer parser too — the outer parser scans for `--ptf-boundary-noteAI` lines only, so `--ptf-boundary-noteAI-comp` lines are body content of the component part; then recursion should occur. The error output suggests recursion didn't happen or the recursion produced parts with filenames being reported against the outer document.
+
+Alternatively, maybe the problem is my boundary "ptf-boundary-noteAI-comp" contains a hyphen — fine.
+
+Hmm, let me reconsider: 'The part with filename undefined has unrecognised kind ""'. My response began with:
+
+```
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteAI"
+
+This is a Potentia Transmission Format...
+--ptf-boundary-noteAI
+```
+
+Preamble ignored. Fine.
+
+The delete parts:
+
+```
+--ptf-boundary-noteAI
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="shape:finder"
+Content-Description: delete
+
+
+--ptf-boundary-noteAI
+```
+
+Empty body. OK.
+
+Errors listed:
+1. Component part shape:noteImageGenerator must hold potentia → outer validation on the component part.
+2. Part "/" kind potentia unrecognised → the nested "/" part leaked to top-level validation.
+3. Part "shape" kind shape unrecognised → leaked.
+4. Part with filename undefined, kind "" → leaked extra part.
+
+4 suggests the nested parse produced an extra part, perhaps because the nested body ended with `--ptf-boundary-noteAI-comp--` followed by `\n--ptf-boundary-noteAI`. Hmm.
+
+Wait, maybe the actual issue: The nested multipart needs the first thing after the blank line to be the boundary delimiter. I had that. But maybe the issue is that my component part used "multipart/mixed" while the top-level is also multipart/mixed — that should be fine...
+
+Let me look at the inner-close: 
+
+```
+--ptf-boundary-noteAI-comp
+...
+--ptf-boundary-noteAI-comp--
+--ptf-boundary-noteAI
+```
+
+That's exactly per example.
+
+Hmm, maybe the problem is the JSON body lines. potentia body:
+
+```
+{
+    "$layers": [
+        "fluid.demos.ai.noteImageGenerator"
+    ]
+}
+```
+
+Fine.
+
+Actually wait — could the problem be the shape JSON contains `"w": 360` — no.
+
+Alternatively, maybe the failure is unrelated to nesting: the decoder that applies workspace documents may not support `component` parts whose filename is new, expecting potentia at the TOP level of the component part — which I did. The first error explicitly says "does not name an existing widget, so it must hold a potentia part for '/' whose $layers names the layer". It treats "/" as a sibling part of "shape:noteImageGenerator" — i.e., it did NOT nest. So the nesting failed to parse. Why would nested parsing fail while the outer parsed?
+
+Possibility: The decoder detects nested multiparts by Content-Type containing "multipart/" and a boundary; mine does. Unless my headers within the nested part... hmm.
+
+Wait, actually — could trailing whitespace or the blank line inside the component headers break it? Let me recount my exact previous response:
+
+```
+--ptf-boundary-noteAI
+Content-Type: multipart/mixed; boundary="ptf-boundary-noteAI-comp"
+Content-Disposition: attachment; filename="shape:noteImageGenerator"
+Content-Description: component
+
+--ptf-boundary-noteAI-comp
+```
+
+That matches the example.
+
+Hmm, unless the application expects the component's inner parts to use a DIFFERENT boundary that doesn't look like the outer one... no.
+
+Let me think about error 4 again: 'The part with filename undefined has unrecognised kind ""'. Where would a part with no Content-Disposition and no Content-Description come from? If the decoder found a `--ptf-boundary-noteAI` delimiter where it expected a part, i.e., an "empty part" — a delimiter immediately followed by another delimiter (a blank part). My document had `--ptf-boundary-noteAI-comp--` followed by `--ptf-boundary-noteAI` — if the outer parser scanned for `--ptf-boundary-noteAI` and found `--ptf-boundary-noteAI-comp--` first... wait, does the outer parser match `--ptf-boundary-noteAI` as a prefix of `--ptf-boundary-noteAI-comp`? If it naively checks line startswith boundary, then `--ptf-boundary-noteAI-comp` starts with `--ptf-boundary-noteAI`! That could break everything: the outer parser would treat the inner delimiter lines as outer delimiters.
+
+That's very plausible: the boundary was "ptf-boundary-noteAI" and my inner boundary "ptf-boundary-noteAI-comp" begins with that exact string. So the outer parser saw `--ptf-boundary-noteAI-comp` and matched it as the boundary delimiter (prefix match, rest ignored or treated as epilogue). Then the inner document got flattened: inner header lines `--ptf-boundary-noteAI-comp` (again matched), `Content-Type: application/json...` etc. became top-level parts: "/" potentia, "shape" shape, and the `Content-Type: multipart/mixed; boundary="ptf-boundary-noteAI-comp"` line as an empty-kinder part maybe... Actually part 4 with filename undefined, kind "" might be the `Content-Description: component` leftover or something.
+
+Fix: choose inner boundaries that do NOT begin with the outer boundary string. E.g., outer boundary "outer-1" and inner "inner-1" as in the example — inner doesn't start with outer. I'll use distinct names like "boundaryA" and "boundaryB", and crucially the inner must not have the outer's boundary as a prefix. Safest: use the example style: outer "outer-1", inner "inner-1".
+
+Also ensure delete parts: empty body — maybe safer to still include delete parts; they seemed fine (no error about them, presumably). Errors 1-4 are explained by misnesting. Use the example's shape exactly.
+
+New response: layer part + component part (nested correctly) + two delete parts.
+
+Let me rewrite with boundaries "outer-1" and "inner-1".
+
+Also, should I worry the earlier errors say applied changes kept? The layer part was applied. Only send what's required — the component part for the new widget and deletes. Since the layer definition already applied, I should still send the layer? "The changes which were applied have been kept, so send only what is still required." The layer def applied successfully. But resending it is harmless... instruction says send only what's still required. The component creation and deletions are still required. I'll send the component part and the two delete parts. Keep the same layer definition? It's already applied — resubmitting identical is fine but unnecessary. I'll omit the layer part.
+
+Actually — to be safe (in case the first document was rejected entirely... but it says changes applied kept, and layer wasn't among errors), I'll resend the component + deletes only.
+
+The fresh shape: name it "shape:noteImageGenerator" again — it's still not existing, so fresh creation with potentia. Same position.
+
+Boundary naming: outer "outer-1", inner "inner-1". Ensure inner boundary is not prefixed by outer: correct.

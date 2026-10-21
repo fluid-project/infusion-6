@@ -1,0 +1,84 @@
+{
+  "verdict": "WORKS - fit 6/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 77.885,
+      "usage": {
+        "inputTokens": 23626,
+        "outputTokens": 9833,
+        "reasoningTokens": 0
+      },
+      "truncated": false
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.ai.notesToImages": "<script>\nfluid.def(\"fluid.demos.ai.notesToImages\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    preferredSize: {\n        w: 380,\n        h: 520\n    },\n    // The supplier: a hidden finder whose computation keeps running and whose noteText/distance feed the button.\n    // It shares this widget's view, so it and its subcomponents render nothing.\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{notesToImages}.view\"\n        }\n    },\n    // What the nearest note says and how far away it is, for the summary line\n    nearestLabel: \"$compute:fluid.demos.ai.notesToImages.nearestLabel({finder}.noteText, {finder}.distance)\",\n    cannotUseClosest: \"$compute:fluid.demos.ai.notesToImages.cannotUseClosest({finder}.distance, {self}.isGenerating)\",\n    // Fill the prompt with the nearest note's text and kick off a search for it\n    useClosestNote: {\n        $method: {\n            func: function (self, state, text, distance) {\n                if (distance === null || text === \"Empty note\") {\n                    state.error = \"Move me near a sticky note with some words on it first\";\n                    return;\n                }\n                state.prompt = text;\n                state.error = \"\";\n                return self.generate();\n            },\n            args: [\"{self}\", \"{self}.state\", \"{finder}.noteText\", \"{finder}.distance\"]\n        }\n    }\n});\n\nfluid.demos.ai.notesToImages.nearestLabel = function (text, distance) {\n    return distance === null ? \"no sticky note close by yet\" : `\"${text}\" - ${distance}px away`;\n};\n\nfluid.demos.ai.notesToImages.cannotUseClosest = function (distance, isGenerating) {\n    return isGenerating || distance === null;\n};\n</script>\n\n<template>\n    <div class=\"imagegen imagegen-notes\">\n        <h3 class=\"imagegen-title\">👋 Image from Nearest Note</h3>\n        <div class=\"notes-nearest\">Nearest note: @{nearestLabel}</div>\n        <!-- The bound value is written back to state.prompt as the user types -->\n        <input type=\"text\" class=\"imagegen-input\" placeholder=\"Describe the image you want...\"\n               value=\"@{state.prompt}\" disabled=\"@{isGenerating}\" @onkeydown=\"{self}.keyDown({0})\">\n        <div class=\"imagegen-buttons\">\n            <button class=\"imagegen-button notes-button\" disabled=\"@{cannotUseClosest}\"\n                    @onclick=\"{self}.useClosestNote()\">Image of nearest note</button>\n            <button class=\"imagegen-button\" disabled=\"@{cannotGenerate}\"\n                    @onclick=\"{self}.generate()\">@{buttonLabel}</button>\n            <button class=\"imagegen-button imagegen-another\" disabled=\"@{cannotShowAnother}\"\n                    @onclick=\"{self}.showAnother()\">Another</button>\n        </div>\n        <div @id=\"errorMessage\"></div>\n        <div @id=\"loadingMessage\"></div>\n        <div @id=\"result\"></div>\n    </div>\n</template>\n\n<style>\n/* SFC styles are injected globally, hence the imagegen-notes- prefix */\n.imagegen-notes .notes-nearest {\n    font-size: 13px;\n    color: #888;\n    margin-bottom: 8px;\n}\n\n.imagegen-notes .notes-button {\n    flex: 2;\n}\n</style>"
+  },
+  "deletions": [
+    "shape:finder",
+    "shape:imagegen"
+  ],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.ai.notesToImages",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": true,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": true,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": false
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Image of nearest note",
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Image of nearest note",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Image of nearest note",
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Image of nearest note",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<h3 class=\"imagegen-title\">👋 Image from Nearest Note</h3><div class=\"notes-nearest\">Nearest note: \"A lighthouse at dusk\" - 231px away</div><input value=\"A lighthouse at dusk\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button notes-button\">Image of nearest note</button><button class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-notesToImages-35.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

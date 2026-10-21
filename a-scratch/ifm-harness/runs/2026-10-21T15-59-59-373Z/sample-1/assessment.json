@@ -1,0 +1,78 @@
+{
+  "verdict": "WORKS - fit 6/9, 1 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 199.754,
+      "usage": {
+        "inputTokens": 22965,
+        "outputTokens": 16272,
+        "reasoningTokens": 0
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.ai.noteImageGen": "<script>\n// Composition of fluid.demos.closestNoteFinder and fluid.demos.imageGenerator: move this widget close\n// to a sticky note and press \"Find Image\" to search Pixabay for an image matching the note's text\nfluid.def(\"fluid.demos.ai.noteImageGen\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {\n        w: 640,\n        h: 480\n    },\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            // A subcomponent has no tldraw shape of its own, so it borrows the umbrella's canvas bounds\n            hostBounds: \"{noteImageGen}.hostBounds\"\n        }\n    },\n    imageGen: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\",\n            // The closest note's text becomes the search prompt, tracking it as the widget moves\n            state: {prompt: \"{finder}.noteText\"}\n        }\n    }\n});\n</script>\n\n<template>\n    <div class=\"nig\">\n        <div @id=\"finder\"></div>\n        <div @id=\"imageGen\"></div>\n    </div>\n</template>\n\n<style>\n.nig {\n    display: flex;\n    gap: 12px;\n    height: 100%;\n}\n\n/* Sized structurally, since each subcomponent's own root element merges into its @id container */\n.nig > div {\n    height: 100%;\n    min-height: 0;\n}\n\n.nig > div:first-child {\n    flex: 0 0 240px;\n}\n\n.nig > div:last-child {\n    flex: 1 1 auto;\n    min-width: 0;\n}\n</style>"
+  },
+  "deletions": [],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.ai.noteImageGen",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": true,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": true,
+        "noExistingLayerRedefined": true,
+        "originalsKept": true
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A lighthouse at dusk"
+          ],
+          "buttons": [
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Find Image",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<div id=\"fl-id-noteImageGen-35.finder\" class=\"notefinder\"><h3 class=\"notefinder-title\">Closest Sticky Note</h3><div class=\"notefinder-text\">A lighthouse at dusk</div><div id=\"fl-id-noteImageGen-35.finder.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><div id=\"fl-id-noteImageGen-35.imageGen\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"A lighthouse at dusk\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-noteImageGen-35.imageGen.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}

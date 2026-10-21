@@ -1,0 +1,89 @@
+{
+  "verdict": "WORKS - fit 4/9, 2 exchange(s)",
+  "failure": null,
+  "exchanges": [
+    {
+      "index": 1,
+      "seconds": 99.457,
+      "usage": {
+        "inputTokens": 22987,
+        "outputTokens": 14657,
+        "reasoningTokens": 0
+      }
+    },
+    {
+      "index": 2,
+      "seconds": 7.251,
+      "usage": {
+        "inputTokens": 38636,
+        "outputTokens": 4525,
+        "reasoningTokens": 4253
+      }
+    }
+  ],
+  "layersSent": {
+    "fluid.demos.closestImageGenerator": "<script>\n// Umbrella layer combining the two selected widgets: the closest-note finder shows the sticky note\n// nearest to the widget (recomputed as it is moved on the canvas), and a single button copies that\n// note's text into the image generator's prompt and starts the Pixabay search. Neither existing layer\n// is modified - they are composed as subcomponents, with `closest` overridden so that our host bounds\n// drive it (hostBounds is supplied to the hosted top-level widget, not to a subcomponent).\n\nfluid.def(\"fluid.demos.closestImageGenerator\", {\n    $layers: \"fluid.topLevelWidget\",\n    preferredSize: {\n        w: 380,\n        h: 720\n    },\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            closest: \"$compute:fluid.demos.closestNoteFinder.findClosest({tldrawHost}.notes, {closestImageGenerator}.hostBounds)\"\n        }\n    },\n    imageGen: {\n        $component: {\n            $layers: \"fluid.demos.imageGenerator\"\n        }\n    },\n    generateFromNote: {\n        $method: {\n            func: \"fluid.demos.closestImageGenerator.generateFromNote\",\n            args: [\"{noteFinder}:finder\", \"{imageGen}:generator\"]\n        }\n    }\n});\n\n/**\n * Use the closest note as the image prompt: copy its text into the generator's prompt and start\n * the search, guiding the user if there is no usable note nearby.\n * @param {Component} finder - The closest-note finder subcomponent\n * @param {Component} generator - The image generator subcomponent\n */\nfluid.demos.closestImageGenerator.generateFromNote = function (finder, generator) {\n    const closest = finder.closest;\n    if (!closest || closest.distance === null) {\n        generator.state.error = \"No sticky note nearby - move the widget next to one, then press the button again\";\n    } else if (closest.text === \"Empty note\") {\n        generator.state.error = \"The closest sticky note is empty - put some words in it first\";\n    } else {\n        generator.state.prompt = closest.text;\n        generator.generate();\n    }\n};\n</script>\n\n<template>\n    <div class=\"closest-imagegen\">\n        <div class=\"closest-imagegen-finder\" @id=\"noteFinder\"></div>\n        <button class=\"closest-imagegen-button\" disabled=\"@{imageGen.isGenerating}\"\n                @onclick=\"{self}.generateFromNote()\">Generate image of the closest note</button>\n        <div class=\"closest-imagegen-gen\" @id=\"imageGen\"></div>\n    </div>\n</template>\n\n<style>\n.closest-imagegen {\n    width: 100%;\n    height: 100%;\n    box-sizing: border-box;\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n    font-family: sans-serif;\n}\n\n.closest-imagegen-finder {\n    flex: 0 0 auto;\n}\n\n.closest-imagegen-button {\n    font: inherit;\n    padding: 10px;\n    background-color: #4a90d9;\n    color: #fff;\n    border: none;\n    cursor: pointer;\n    transition: background-color 0.2s;\n}\n\n.closest-imagegen-button:hover:not(:disabled) {\n    background-color: #3a7bc8;\n}\n\n.closest-imagegen-button:disabled {\n    background-color: #999;\n    cursor: not-allowed;\n}\n\n.closest-imagegen-gen {\n    flex: 1 1 auto;\n    min-height: 0;\n}\n</style>"
+  },
+  "deletions": [],
+  "replaced": [],
+  "redefinedExisting": [],
+  "widgets": [
+    {
+      "shapeId": "shape:created-1",
+      "layerName": "fluid.demos.closestImageGenerator",
+      "available": true,
+      "problems": [],
+      "fit": {
+        "extendsImageGenerator": false,
+        "reusesNoteFinderLayer": true,
+        "crossInjectsView": false,
+        "wiresByReference": false,
+        "noTemplateOfItsOwn": false,
+        "noCopiedLogic": true,
+        "noEffectOrMethod": false,
+        "noExistingLayerRedefined": true,
+        "originalsKept": true
+      },
+      "trials": [
+        {
+          "note": "A red fox in the snow",
+          "inputs": [
+            ""
+          ],
+          "buttons": [
+            "Generate image of the closest note",
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Generate image of the closest note",
+          "disabled": false,
+          "queries": [
+            "A red fox in the snow"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        },
+        {
+          "note": "A lighthouse at dusk",
+          "inputs": [
+            "A red fox in the snow"
+          ],
+          "buttons": [
+            "Generate image of the closest note",
+            "Find Image",
+            "Another"
+          ],
+          "pressed": "Generate image of the closest note",
+          "disabled": false,
+          "queries": [
+            "A lighthouse at dusk"
+          ],
+          "imageShown": true,
+          "succeeded": true
+        }
+      ],
+      "markup": "<div id=\"fl-id-closestImageGenerator-40.noteFinder\" class=\"notefinder\"><h3 class=\"notefinder-title\">Closest Sticky Note</h3><div class=\"notefinder-text\">A lighthouse at dusk</div><div id=\"fl-id-closestImageGenerator-40.noteFinder.distanceLine\" class=\"notefinder-distance\">Distance: 231px</div></div><button class=\"closest-imagegen-button\">Generate image of the closest note</button><div id=\"fl-id-closestImageGenerator-40.imageGen\" class=\"imagegen\"><h3 class=\"imagegen-title\">Image Generator</h3><input value=\"A lighthouse at dusk\" placeholder=\"Describe the image you want...\" class=\"imagegen-input\" type=\"text\"><div class=\"imagegen-buttons\"><button class=\"imagegen-button\">Find Image</button><button disabled class=\"imagegen-button imagegen-another\">Another</button></div><div></div><div></div><div id=\"fl-id-closestImageGenerator-40.imageGen.result\" class=\"imagegen-result\"><img alt=\"A lighthouse at dusk\" src=\"https://pixabay.com/get/2.jpg\" class=\"imagegen-image\"><figcaption class=\"imagegen-credit\">Image by <a href=\"https://pixabay.com/users/Some%20User-42/\" rel=\"noopener noreferrer\" target=\"_blank\">Some User</a> from <a href=\"https://pixabay.com/photos/1/\" rel=\"noopener noreferrer\" target=\"_blank\">Pixabay</a></figcaption></div></div>"
+    }
+  ],
+  "idealLayer": "fluid.def(\"fluid.demos.ai.closestNoteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    noteFinder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{closestNoteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{noteFinder}.noteText\"\n    }\n});"
+}
