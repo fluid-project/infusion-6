@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-        <title>tldraw "Ask me anything" Demo Tests</title>
+        <title>tldraw "Ask me anything" and Image Widget Demo Tests</title>
 
         <link rel="stylesheet" media="screen" href="../../../lib/qunit/css/qunit.css" />
 
@@ -20,6 +20,7 @@
         <script src="../../../../src/framework/core/js/FluidView-browser.js"></script>
         <script src="../../../../src/framework/core/js/template-parser.js"></script>
         <script src="../../../../src/framework/core/js/sfc-parser.js"></script>
+        <script src="../../../../src/lib/snarkdown/snarkdown.umd.js"></script>
 
         <!-- The actual SFC files and scripts of the demo at demo/tldraw which do not depend on tldraw -->
         <fluid-module id="tldrawDemo" src="../../../../demo/tldraw/"></fluid-module>
@@ -28,9 +29,12 @@
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue"></fluid-import>
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnything.vue"></fluid-import>
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnythingEntry.vue"></fluid-import>
+        <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerator.vue"></fluid-import>
 
         <script src="../../../../demo/tldraw/js/tldraw-hosting.js"></script>
         <script src="../../../../demo/tldraw/js/ai-protocol.js"></script>
+        <script src="../../../../demo/tldraw/js/markdown-block.js"></script>
+        <script src="../../../../demo/tldraw/js/pixabay.js"></script>
 
         <script src="../../../lib/qunit/js/qunit.js"></script>
         <script src="../../../test-core/qunit/js/qunit-fluid.js"></script>

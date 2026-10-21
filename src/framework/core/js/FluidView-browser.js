@@ -147,7 +147,8 @@ const $fluidViewBrowserScope = function (fluid) {
                     }
                 }
             }
-            const togo = handler(e);
+            // Everything the handler causes, until any promise it returns settles, is a single step of the arena's history
+            const togo = fluid.ptf.withinGesture(shadow, () => handler(e));
             fluid.cell.stabilize();
             return togo;
         };

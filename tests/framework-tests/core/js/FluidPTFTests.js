@@ -100,6 +100,13 @@ Trailing epilogue
     assert.deepEqual(JSON.parse(decoded[0].body), {a: 1}, "Body decoded");
     assert.ok(!fluid.ptf.isPTF("<b>Some html</b>"), "Arbitrary text not recognised as PTF");
     assert.ok(fluid.isUnavailable(fluid.ptf.decode("Some text")), "Decoding arbitrary text produces unavailable value");
+
+    // fluid-project/infusion-6#24 - material preceding the document, e.g. a covering message, is tolerated
+    const covered = "Here is my component, please paste it into your canvas:\r\n\r\n" + text.replace(/\n/g, "\r\n");
+    assert.ok(fluid.ptf.isPTF(covered), "Document preceded by other material is recognised as PTF");
+    assert.deepEqual(fluid.ptf.decode(covered).map(part => [part.kind, part.filename, part.body]),
+        decoded.map(part => [part.kind, part.filename, part.body]), "Document preceded by other material decoded as before");
+    assert.ok(!fluid.ptf.isPTF("MIME-Version: 1.0\nContent-Type: text/plain\n\nHello"), "Document which is not multipart not recognised");
 });
 
 fluid.tests.ptf.globalFunc = function (a) {
@@ -254,6 +261,19 @@ QUnit.test("SFC component transmitted and reconstructed", async function (assert
     copy.destroy();
 });
 
+// fluid-project/infusion-6#24 - a host, e.g. the tldraw demo, may await the definition of a transmitted layer before
+// constructing anything from it, so registering its part must define it without any component demanding it
+QUnit.test("Transmitted SFC layer defined on registration", async function (assert) {
+    const layerName = "fluid.tests.ptf.undemanded";
+    const body = fluid.tests.ptf.counterSFC.replaceAll("fluid.tests.ptf.counter", layerName);
+    fluid.ptf.registerLayerParts([{kind: "layer", contentType: "text/x-vue", filename: layerName, body}]);
+    const docEffect = fluid.readSFC(layerName).docInjectEffects.get(document);
+    assert.ok(docEffect, "SFC bound into the default document on registration");
+    await fluid.cell.waitFor(docEffect.injDone);
+    await fluid.cell.settle();
+    assert.equal(fluid.layerRecToUnavailable(fluid.readLayer(layerName).get()), null, "Layer defined without being demanded");
+});
+
 QUnit.test("JavaScript component with subcomponent transmitted and reconstructed", async function (assert) {
     fluid.def("fluid.tests.ptf.jsChild", {
         $layers: "fluid.component",
@@ -392,4 +412,260 @@ QUnit.test("Parts applied in place to an existing component, and construction de
     assert.throws(() => fluid.ptf.constructParts([pendingParts[1]]), "Construction without root potentia throws");
     that.destroy();
     pending.destroy();
+});
+
+// Undoable histories of an arena, and their persistence
+
+/**
+ * Empty both of the arena's history stacks
+ */
+fluid.tests.ptf.clearHistories = function () {
+    fluid.ptf.historyFromJSON(fluid.liveHistory, {records: [], index: 0});
+    fluid.ptf.historyFromJSON(fluid.definitionHistory, {records: [], index: 0});
+};
+
+fluid.def("fluid.tests.ptf.historical", {
+    $layers: "fluid.component",
+    state: {
+        $reactiveRoot: {
+            count: 0
+        }
+    },
+    notes: {
+        $reactiveRoot: {
+            label: "Initial"
+        }
+    },
+    // A plain member, writes to which are not recorded
+    label: "Initial"
+});
+
+QUnit.test("Live history of the arena stepped back and forward", function (assert) {
+    fluid.tests.ptf.clearHistories();
+    // Each write is a step of its own - coalescing of bursts of writes is tested below
+    const originalWindow = fluid.ptf.burstWindow;
+    fluid.ptf.burstWindow = -1;
+    const that = fluid.tests.ptf.historical();
+    fluid.cell.stabilize();
+    assert.equal(fluid.liveHistory.canBack.get(), false, "Nothing to undo initially");
+    that.state.count = 1;
+    that.state.count = 2;
+    that.notes.label = "Changed";
+    that.label = "Plain";
+    fluid.cell.stabilize();
+    const records = fluid.liveHistory.records.get();
+    assert.deepEqual(records.map(record => [record.type, record.records.length]), [["group", 1], ["group", 1], ["group", 1]], "Each write a step of its own");
+    assert.deepEqual(records.map(({records: [record]}) => [record.oldValue, record.newValue]), [[{count: 0}, {count: 1}], [{count: 1}, {count: 2}], [{label: "Initial"}, {label: "Changed"}]],
+        "Writes beneath reactive roots recorded, at the whole of each root, but not the write to a plain member");
+    assert.ok(fluid.ptf.historyBack(fluid.liveHistory), "Stepped back");
+    fluid.cell.stabilize();
+    assert.equal(that.notes.label, "Initial", "Write beneath second reactive root undone");
+    fluid.ptf.historyBack(fluid.liveHistory);
+    fluid.cell.stabilize();
+    assert.equal(that.state.count, 1, "Write beneath reactive root undone");
+    assert.equal(fluid.liveHistory.records.get().length, 3, "Undoing records nothing further");
+    fluid.ptf.historyForward(fluid.liveHistory);
+    fluid.cell.stabilize();
+    assert.equal(that.state.count, 2, "Write redone");
+    assert.equal(fluid.liveHistory.canForward.get(), true, "Further write may be redone");
+
+    that.state.count = 5;
+    fluid.cell.stabilize();
+    assert.equal(fluid.liveHistory.records.get().length, 3, "Fresh write discards the records stepped back through");
+    assert.equal(fluid.liveHistory.canForward.get(), false, "Nothing to redo after fresh write");
+
+    // Live parts applied from a PTF document are restored state, not fresh changes
+    return fluid.ptf.applyParts(that, [{kind: "live", contentType: "application/json", filename: "/", body: JSON.stringify({label: "Applied"})}]).then(() => {
+        assert.equal(that.label, "Applied", "Live part applied");
+        assert.equal(fluid.liveHistory.records.get().length, 3, "Applied live part not recorded");
+
+        // A component outside the arena is not recorded
+        const originalContains = fluid.arenaContains;
+        fluid.arenaContains = shadow => shadow !== fluid.ptf.componentToShadow(that);
+        that.state.count = 6;
+        fluid.arenaContains = originalContains;
+        assert.equal(fluid.liveHistory.records.get().length, 3, "Write to component outside arena not recorded");
+
+        that.destroy();
+        fluid.cell.stabilize();
+        assert.notOk(fluid.ptf.historyBack(fluid.liveHistory), "Records of destroyed component are stepped over");
+        assert.equal(fluid.liveHistory.index.get(), 0, "Stepped back to beginning");
+        fluid.tests.ptf.clearHistories();
+        fluid.ptf.burstWindow = originalWindow;
+    });
+});
+
+QUnit.test("Bursts of writes coalesced into single steps", async function (assert) {
+    fluid.tests.ptf.clearHistories();
+    const originalNow = fluid.ptf.now;
+    let time = 1000;
+    fluid.ptf.now = () => time;
+    const that = fluid.tests.ptf.historical();
+    const other = fluid.tests.ptf.historical();
+    fluid.cell.stabilize();
+    const steps = () => fluid.liveHistory.records.get().map(step => step.records.map(record => [record.oldValue, record.newValue]));
+    try {
+        // Writes in quick succession, e.g. keystrokes, form one step, with successive writes to one site folded together
+        that.state.count = 1;
+        time += 500;
+        that.state.count = 2;
+        time += 500;
+        that.notes.label = "Typed";
+        assert.deepEqual(steps(), [[[{count: 0}, {count: 2}], [{label: "Initial"}, {label: "Typed"}]]], "Burst of writes coalesced into one step");
+        // A write to another component begins a step of its own
+        other.state.count = 7;
+        // As does a write after a pause
+        time += 1000;
+        that.state.count = 3;
+        assert.equal(steps().length, 3, "Write to other component and write after pause begin fresh steps");
+
+        // A gesture is a step of its own, extending until its promise settles, however long that takes
+        let finish;
+        const gestureResult = fluid.ptf.withinGesture(fluid.ptf.componentToShadow(that), () => {
+            that.state.count = 4;
+            return new Promise(resolve => finish = resolve);
+        });
+        time += 5000;
+        that.notes.label = "During gesture";
+        time += 5000;
+        that.state.count = 5;
+        finish("done");
+        assert.equal(await gestureResult, "done", "Gesture's promise passed on");
+        assert.deepEqual(fluid.peek(steps()), [[{count: 3}, {count: 4}], [{label: "Typed"}, {label: "During gesture"}], [{count: 4}, {count: 5}]],
+            "Writes throughout gesture coalesced into one step");
+        assert.equal(steps().length, 4, "Gesture began a step of its own, despite following within the window");
+        that.notes.label = "After gesture";
+        assert.equal(steps().length, 5, "Write after gesture has settled begins a fresh step");
+
+        // Stepping back through a coalesced step undoes all of it
+        fluid.ptf.historyBack(fluid.liveHistory);
+        fluid.ptf.historyBack(fluid.liveHistory);
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.notes.label], [3, "Typed"], "Whole of gesture's step undone");
+        fluid.ptf.historyForward(fluid.liveHistory);
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.notes.label], [5, "During gesture"], "Whole of gesture's step redone");
+        // A write after stepping back does not extend the step before it
+        that.state.count = 9;
+        assert.deepEqual(fluid.peek(steps()), [[{count: 5}, {count: 9}]], "Write after stepping back begins a fresh step");
+        assert.equal(steps().length, 5, "Step stepped back through discarded");
+
+        // A gesture which does not return a promise ends at once
+        fluid.ptf.withinGesture(fluid.ptf.componentToShadow(that), () => {
+            that.state.count = 10;
+        });
+        assert.deepEqual(fluid.ptf.openGestures.size, 0, "Synchronous gesture ended");
+    } finally {
+        fluid.ptf.now = originalNow;
+        that.destroy();
+        other.destroy();
+        fluid.tests.ptf.clearHistories();
+    }
+});
+
+QUnit.test("Definition history of the arena stepped back and forward", async function (assert) {
+    fluid.tests.ptf.clearHistories();
+    fluid.def("fluid.tests.ptf.redefined", {$layers: "fluid.component", value: 1});
+    assert.equal(fluid.definitionHistory.records.get().length, 0, "Initial definition is not a redefinition");
+    fluid.def("fluid.tests.ptf.redefined", {$layers: "fluid.component", value: 2});
+    const records = fluid.definitionHistory.records.get();
+    assert.equal(records.length, 1, "Redefinition recorded");
+    assert.equal(records[0].layerName, "fluid.tests.ptf.redefined", "Redefined layer recorded");
+    assert.ok(records[0].oldSource.body.includes("value: 1") && records[0].newSource.body.includes("value: 2"), "Old and new sources recorded");
+    fluid.ptf.historyBack(fluid.definitionHistory);
+    assert.equal(fluid.def("fluid.tests.ptf.redefined").value, 1, "Redefinition undone");
+    fluid.ptf.historyForward(fluid.definitionHistory);
+    assert.equal(fluid.def("fluid.tests.ptf.redefined").value, 2, "Redefinition redone");
+    assert.equal(fluid.definitionHistory.records.get().length, 1, "Stepping records nothing further");
+
+    // An SFC is redefined asynchronously, and its source is its text, including its template
+    const layerName = "fluid.tests.ptf.historicalSFC";
+    const sfc = template => `<script>
+fluid.def("${layerName}", {$layers: "fluid.component"});
+</script>
+<template><div class="historical">${template}</div></template>
+`;
+    await fluid.tests.ptf.loadSFCText(layerName, sfc("First"));
+    assert.equal(fluid.definitionHistory.records.get().length, 1, "Loading SFC is not a redefinition");
+    await fluid.tests.ptf.loadSFCText(layerName, sfc("Second"));
+    const sfcRecord = fluid.peek(fluid.definitionHistory.records.get());
+    assert.deepEqual([sfcRecord.layerName, sfcRecord.oldSource.body, sfcRecord.newSource.body], [layerName, sfc("First"), sfc("Second")],
+        "Edit of SFC template recorded with its text");
+    fluid.ptf.historyBack(fluid.definitionHistory);
+    await fluid.cell.settle();
+    assert.equal(fluid.readSFC(layerName).textSignal.get(), sfc("First"), "SFC edit undone");
+    assert.equal(fluid.definitionHistory.records.get().length, 2, "Undoing SFC edit records nothing further");
+    assert.equal(fluid.definitionHistory.index.get(), 1, "Positioned before undone edit");
+    fluid.tests.ptf.clearHistories();
+});
+
+QUnit.test("Deletion of a layer recorded in the definition history - fluid-project/infusion-6#24", function (assert) {
+    fluid.tests.ptf.clearHistories();
+    fluid.def("fluid.tests.ptf.deleted", {$layers: "fluid.component", value: 3});
+    fluid.deleteLayer("fluid.tests.ptf.deleted");
+    const records = fluid.definitionHistory.records.get();
+    assert.equal(records.length, 1, "Deletion recorded");
+    assert.deepEqual([records[0].layerName, records[0].newSource], ["fluid.tests.ptf.deleted", null], "Deletion recorded with no new source");
+    const isDefined = () => fluid.layerRecToUnavailable(fluid.readLayer("fluid.tests.ptf.deleted").get()) === null;
+    assert.notOk(isDefined(), "Layer deleted");
+    fluid.ptf.historyBack(fluid.definitionHistory);
+    assert.equal(fluid.def("fluid.tests.ptf.deleted").value, 3, "Deletion undone");
+    fluid.ptf.historyForward(fluid.definitionHistory);
+    assert.notOk(isDefined(), "Deletion redone");
+    assert.equal(fluid.definitionHistory.records.get().length, 1, "Stepping records nothing further");
+    fluid.tests.ptf.clearHistories();
+});
+
+QUnit.test("Histories persisted and restored", function (assert) {
+    const stack = fluid.ptf.makeHistoryStack("test", () => true);
+    ["{a}.state", "{gone}.state", "{b}.state"].forEach((site, i) => fluid.ptf.pushToStack(stack, {type: "live", site, oldValue: i, newValue: {n: i + 1, f: () => {}}}));
+    stack.index.set(2);
+    const siteToRef = site => site === "{gone}.state" ? null : {name: site.substring(1, 2)};
+    const persisted = fluid.ptf.historyToJSON(stack, record => fluid.ptf.encodeLiveRecord(record, siteToRef));
+    assert.deepEqual(persisted, {
+        records: [
+            {type: "live", ref: {name: "a"}, oldValue: 0, newValue: {n: 1}},
+            {type: "live", ref: {name: "b"}, oldValue: 2, newValue: {n: 3}}
+        ],
+        index: 1
+    }, "Unpersistable record omitted, values made JSON-amenable and index adjusted");
+    const restored = fluid.ptf.makeHistoryStack("restored", () => true);
+    fluid.ptf.historyFromJSON(restored, JSON.parse(JSON.stringify(persisted)), record =>
+        fluid.ptf.decodeLiveRecord(record, ref => ref.name === "a" ? "{a2}.state" : null));
+    assert.deepEqual(restored.records.get(), [
+        {type: "live", site: "{a2}.state", ref: {name: "a"}, oldValue: 0, newValue: {n: 1}},
+        {type: "live", site: null, ref: {name: "b"}, oldValue: 2, newValue: {n: 3}}
+    ], "Records restored at fresh sites, retaining their references even where these do not currently resolve");
+    assert.equal(restored.index.get(), 1, "Index restored");
+    // A record already holding a reference is persisted through it
+    assert.deepEqual(fluid.ptf.encodeLiveRecord({type: "live", site: "{gone}.state", ref: {name: "kept"}, oldValue: 1, newValue: 2}, siteToRef).ref,
+        {name: "kept"}, "Record persisted through its own reference");
+});
+
+QUnit.test("Persistence adapters", function (assert) {
+    assert.equal(fluid.persistenceAdapter, fluid.emptyPersistenceAdapter, "Nothing is persisted by default");
+    assert.equal(fluid.emptyPersistenceAdapter.load(), null, "Empty adapter loads nothing");
+    const items = {};
+    const storage = {
+        getItem: key => items[key] ?? null,
+        setItem: (key, value) => items[key] = value
+    };
+    const plain = fluid.makeLocalStoragePersistenceAdapter(storage, new URL("https://example.com/demo/tldraw/?other=1#frag"));
+    assert.equal(plain.key, "infusion-arena:https://example.com/demo/tldraw/#0", "Arena id defaults to 0");
+    assert.equal(plain.load(), null, "Nothing loaded initially");
+    plain.save("Arena 0");
+    const other = fluid.makeLocalStoragePersistenceAdapter(storage, new URL("https://example.com/demo/tldraw/?infusionArenaId=xyz"));
+    assert.equal(other.key, "infusion-arena:https://example.com/demo/tldraw/#xyz", "Arena id read from URL parameter");
+    assert.equal(other.load(), null, "Arenas are persisted separately");
+    other.save("Arena xyz");
+    assert.equal(plain.load(), "Arena 0", "Arena loaded");
+    assert.equal(other.load(), "Arena xyz", "Other arena loaded");
+    const broken = fluid.makeLocalStoragePersistenceAdapter({getItem: () => {
+        throw new Error("Denied");
+    }, setItem: () => {
+        throw new Error("Full");
+    }}, new URL("https://example.com/"));
+    assert.equal(broken.load(), null, "Unavailable storage loads nothing");
+    broken.save("Lost");
+    assert.ok(true, "Failure to save does not throw");
 });

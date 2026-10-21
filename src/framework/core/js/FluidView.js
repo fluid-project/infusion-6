@@ -1030,6 +1030,25 @@ const fluidViewScope = function (fluid) {
         return docEffect.injDone;
     };
 
+    /**
+     * Withdraw the injections of a Single File Component from every document they were bound into, e.g. once its layer
+     * has been deleted - its elements, such as its styles, are removed, and its injections forgotten, so that should
+     * the layer be registered once more, e.g. on undoing its deletion, they are injected afresh even if its text is
+     * unchanged, defining its layer again.
+     * @param {String} layerName - The name of the layer defined by the SFC
+     */
+    fluid.withdrawLayerInjections = function (layerName) {
+        const rec = fluid.sfcStore[layerName];
+        if (rec) {
+            const injRecs = rec.injRecsSignal._value;
+            rec.docInjectEffects.forEach((docEffect, dokkument) => {
+                docEffect.dispose();
+                Object.keys(fluid.isUnavailable(injRecs) ? {} : injRecs || {}).forEach(nodeId => fluid.clearInjRec(dokkument, nodeId));
+            });
+            rec.docInjectEffects.clear();
+        }
+    };
+
     // TODO: need equivalent for server-style injections where there is no document - this would use "require" or "import".
     // Also: In future this will be the point that fluid.layerLoaders is actually triggered
     /**
@@ -1461,8 +1480,6 @@ const fluidViewScope = function (fluid) {
             return func(value);
         }, [sig], {mapArg: fluid.deproxyAndDesignal});
 
-    fluid.filterObjKeys = (obj, func) => Object.fromEntries(Object.entries(obj).filter(([key]) => func(key)));
-
     /**
      * Renders a parsed string template against the local component tree by replacing tokens with their corresponding values.
      * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
@@ -1824,12 +1841,13 @@ const fluidViewScope = function (fluid) {
     /**
      * Assign a default id derived from a component's path to the root VNode of its rendered tree, which is rendered onto
      * its container, so that rendered components are easily distinguished in markup. The id is applied only if the
-     * template does not specify one and the container does not already have one.
+     * template does not specify one and the container does not already have one, and the tree is not a placeholder
+     * rendered from the parent's template by `fluid.placeholderTree`.
      * @param {VNode} vTree - The root VNode of the component's rendered tree
      * @param {Shadow} shadow - The shadow of the rendering component
      */
     fluid.assignContainerId = function (vTree, shadow) {
-        if (vTree.attrs?.id === undefined) {
+        if (vTree.attrs?.id === undefined && !vTree.isPlaceholder) {
             vTree.defaultAttrs = {...vTree.defaultAttrs, id: fluid.containerIdPrefix + shadow.path};
         }
     };
@@ -1972,7 +1990,12 @@ const fluidViewScope = function (fluid) {
         $layers: "fluid.component",
         elideParent: true,
         container: "$compute:fluid.unavailable(Container not specified)",
-        templateTree: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
+        // The markup at our container in our parent's template, supplied by the template record of a parent whose
+        // template designates our container with @id
+        parentTemplate: fluid.unavailable({cause: "No virtual DOM tree is configured", variety: "config"}),
+        // A view with no template of its own renders the markup found at its container in its parent's template - for
+        // example, once the $if of a conditional component has become false, and only its parent's template record remains
+        templateTree: "$compute:fluid.placeholderTree({self}.parentTemplate)",
         // Mashed in live by bindContainer called at the end of activateTemplate
         renderedContainer: {
             $reactiveRoot: fluid.unavailable({cause: "Component not rendered", variety: "config"})
@@ -1981,6 +2004,17 @@ const fluidViewScope = function (fluid) {
         renderView: "$effect:fluid.renderView({self}, {self}.container, {self}.vTree)",
         $variety: "framework"
     });
+
+    /**
+     * Wrap the markup found at a view's container in its parent's template as a fragment, so that it is rendered onto
+     * the container itself when the root of the tree is elided, as it is by default. The markup is marked as a
+     * placeholder so that the container is rendered just as the parent's template has it, without a default id.
+     * @param {VNode} parentTemplate - The markup found at the container in the parent's template
+     * @return {VNode} A fragment holding the markup
+     */
+    fluid.placeholderTree = function (parentTemplate) {
+        return {tag: "fragment", children: [{...parentTemplate, isPlaceholder: true}]};
+    };
 
     /**
      * Forward any `container` supplied as an argument to a free component's creator function to the component's view,

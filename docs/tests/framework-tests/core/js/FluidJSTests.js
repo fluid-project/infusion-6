@@ -77,6 +77,24 @@ QUnit.test("remove_if index stability and target", assert => {
     assert.deepEqual(target, [1, 2], "Target contains removed elements in original order");
 });
 
+// fluid-project/infusion-6#24
+QUnit.test("filterKeys and censorKeys do not require jQuery", assert => {
+    const source = {a: 1, b: 2, c: 3};
+    assert.deepEqual(fluid.filterKeys(source, ["a", "c", "d"]), {a: 1, c: 3}, "Listed keys retained");
+    assert.deepEqual(fluid.filterKeys(source, ["a", "c"], true), {b: 2}, "Listed keys excluded");
+    assert.deepEqual(fluid.censorKeys(source, ["b"]), {a: 1, c: 3}, "Listed keys censored");
+    assert.deepEqual(source, {a: 1, b: 2, c: 3}, "Source is not modified");
+    assert.deepEqual(fluid.filterObjKeys(source, key => key !== "a"), {b: 2, c: 3}, "Keys filtered by predicate");
+});
+
+// fluid-project/infusion-6#24
+QUnit.test("Unavailable proxy renders as a string", assert => {
+    const proxy = fluid.unavailableProxy(fluid.unavailable({message: "Gone missing", path: "a.b"}));
+    assert.equal(String(proxy.deeper.member), "[Unavailable: Gone missing at path a.b]", "Single cause rendered");
+    const merged = fluid.mergeUnavailable(fluid.unavailable("First"), fluid.unavailable("Second"));
+    assert.equal(fluid.formatUnavailable(merged), "[Unavailable: First; Second]", "Multiple causes rendered");
+});
+
 QUnit.test("stringTemplate: greedy", assert => {
     const template = "%tenant/%tenantname";
     const tenant = "../tenant";

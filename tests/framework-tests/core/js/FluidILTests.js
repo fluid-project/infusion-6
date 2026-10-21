@@ -719,6 +719,99 @@ QUnit.test("Shape cognition test", function (assert) {
     checkObnoxious(that.fromMethod.member);
 });
 
+// Arrays nested within a $reactiveRoot - fluid-project/infusion-6#24
+
+fluid.def("fluid.tests.reactiveArrays", {
+    $layers: "fluid.component",
+    state: {
+        $reactiveRoot: {
+            name: "Initial",
+            entries: []
+        }
+    },
+    list: {
+        $reactiveRoot: []
+    },
+    entryCount: "$compute:fluid.tests.countEntries({self}.state.entries)",
+    listCount: "$compute:fluid.tests.countEntries({self}.list)"
+});
+
+fluid.tests.countEntries = entries => entries.length;
+
+QUnit.test("Mutation of arrays within reactive roots", function (assert) {
+    const that = fluid.tests.reactiveArrays();
+    fluid.cell.stabilize();
+    assert.equal(that.entryCount, 0, "Initially no entries");
+
+    that.state.entries.push({id: 1});
+    fluid.cell.stabilize();
+    assert.equal(that.entryCount, 1, "Push onto nested array observed");
+    assert.deepEqual(fluid.unwrapProxy(that.state), {name: "Initial", entries: [{id: 1}]}, "Push applied within reactive root");
+
+    that.state.entries = [...that.state.entries, {id: 2}];
+    fluid.cell.stabilize();
+    assert.equal(that.entryCount, 2, "Reassignment of nested array from a spread of itself observed");
+    assert.deepEqual(fluid.unwrapProxy(that.state.entries), [{id: 1}, {id: 2}], "Spread elements written as plain values");
+
+    that.state.name = "Renamed";
+    that.state.entries.splice(0, 1);
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.state), {name: "Renamed", entries: [{id: 2}]}, "Sibling write and splice both retained");
+
+    that.list.push("a");
+    that.list.push("b");
+    fluid.cell.stabilize();
+    assert.equal(that.listCount, 2, "Successive pushes onto top-level reactive array both observed");
+    assert.deepEqual(fluid.unwrapProxy(that.list), ["a", "b"], "Top-level reactive array holds pushed elements");
+});
+
+QUnit.test("Proxy onto material which has gone away reads as empty - fluid-project/infusion-6#24", function (assert) {
+    const that = fluid.tests.reactiveArrays();
+    fluid.cell.stabilize();
+    that.state.entries = [{id: 1}, {id: 2}];
+    fluid.cell.stabilize();
+    const element = that.state.entries[1];
+    assert.equal(element.id, 2, "Proxy onto array element reads its material");
+    that.state.entries = [];
+    fluid.cell.stabilize();
+    assert.notOk(fluid.isUnavailable(element), "Testing type of vanished material does not throw");
+    assert.equal(Object.getPrototypeOf(element), null, "Vanished material has no prototype");
+    assert.deepEqual(Object.keys(element), [], "Vanished material has no keys");
+    assert.equal(element.id, undefined, "Member of vanished material reads as undefined");
+    that.destroy();
+});
+
+// As for the editor's tabs - its open tabs are held in a reactive root, recorded in the history, whereas which of them is
+// selected is a plain member which is not, so that navigating the history restores tabs without their selection
+fluid.def("fluid.tests.tabHolder", {
+    $layers: "fluid.component",
+    openTabs: {
+        $reactiveRoot: []
+    },
+    selectedTab: null
+});
+
+QUnit.test("Only writes beneath reactive roots recorded in the history", function (assert) {
+    const that = fluid.tests.tabHolder();
+    fluid.cell.stabilize();
+    const start = fluid.layerHistory.get().length;
+    that.openTabs.push("first");
+    that.selectedTab = "first";
+    that.openTabs.splice(0, 1);
+    that.selectedTab = null;
+    fluid.cell.stabilize();
+    const added = fluid.layerHistory.get().slice(start);
+    assert.deepEqual(added.map(record => [record.oldValue, record.newValue]), [[[], ["first"]], [["first"], []]],
+        "Mutations of reactive array recorded, but not writes to plain member");
+    fluid.historyBack();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.openTabs), ["first"], "Stepping back reopens the closed tab");
+    fluid.historyForward();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.openTabs), [], "Stepping forward closes it again");
+    that.destroy();
+});
+
 // Higher-order reference tracking. A $contextRef's *value* is a $sitedRef cell.
 // These probe whether that indirection is represented in the graph, or merely
 // re-derived by each consumer through flattenSignals.

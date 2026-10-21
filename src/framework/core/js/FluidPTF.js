@@ -381,16 +381,33 @@ const fluidPTFScope = function (fluid) {
         return {headers: fluid.ptf.parseHeaders(headerText.split("\n")), body};
     };
 
+    // Matches the header with which a PTF document begins
+    fluid.ptf.startRE = /MIME-Version:[ \t]*1\.0/i;
+
     /**
-     * Determine whether the supplied text is a PTF document - that is, a multipart MIME document whose top-level
-     * Content-Type specifies a boundary. Suitable for sniffing clipboard contents on paste.
+     * Extract a PTF document from text which may hold other material before it, e.g. a covering message pasted
+     * together with it, by discarding everything before the first occurrence of `MIME-Version: 1.0`. Line endings are
+     * normalised to LF. Any material following the document's close delimiter is discarded on decoding.
+     * @param {String} text - The text holding the document
+     * @return {String|null} The text of the document, or `null` if the text holds no `MIME-Version: 1.0` header
+     */
+    fluid.ptf.extractDocument = function (text) {
+        const start = typeof(text) === "string" ? text.search(fluid.ptf.startRE) : -1;
+        return start === -1 ? null : text.substring(start).replace(/\r\n/g, "\n");
+    };
+
+    /**
+     * Determine whether the supplied text holds a PTF document - that is, a multipart MIME document whose top-level
+     * Content-Type specifies a boundary, beginning with `MIME-Version: 1.0` after any other material. Suitable for
+     * sniffing clipboard contents on paste.
      * @param {String} text - The text to be tested
-     * @return {Boolean} `true` if the text appears to be a PTF document
+     * @return {Boolean} `true` if the text appears to hold a PTF document
      */
     fluid.ptf.isPTF = function (text) {
+        const extracted = fluid.ptf.extractDocument(text);
         let togo = false;
-        if (typeof(text) === "string" && /^MIME-Version:/i.test(text.trimStart())) {
-            const {headers} = fluid.ptf.splitHeaders(text.trimStart().replace(/\r\n/g, "\n"));
+        if (extracted !== null) {
+            const {headers} = fluid.ptf.splitHeaders(extracted);
             const contentType = fluid.ptf.parseHeaderValue(headers["content-type"]);
             togo = contentType.value.startsWith("multipart/") && !!contentType.params.boundary;
         }
@@ -433,14 +450,14 @@ const fluidPTFScope = function (fluid) {
 
     /**
      * Decode a PTF document into its parts.
-     * @param {String} text - The text of the PTF document, with either LF or CRLF line endings
+     * @param {String} text - The text of the PTF document, with either LF or CRLF line endings, which may be preceded
+     * by other material as described for `fluid.ptf.extractDocument`
      * @return {PTFPart[]|Unavailable} The decoded parts, or an unavailable value if the text is not a PTF document
      */
     fluid.ptf.decode = function (text) {
         let togo;
         if (fluid.ptf.isPTF(text)) {
-            const normalised = text.trimStart().replace(/\r\n/g, "\n");
-            const {headers, body} = fluid.ptf.splitHeaders(normalised);
+            const {headers, body} = fluid.ptf.splitHeaders(fluid.ptf.extractDocument(text));
             const boundary = fluid.ptf.parseHeaderValue(headers["content-type"]).params.boundary;
             togo = fluid.ptf.decodeBody(body, boundary);
         } else {
@@ -471,12 +488,17 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
-     * Register the layer definition held in a PTF layer part.
+     * Register the layer definition held in a PTF layer part. The injections of an SFC are bound into the default
+     * document straight away, as for one imported by `<fluid-import>`, since its layer is otherwise only defined once
+     * some component demands it - a host which awaits the layer before constructing anything would wait forever.
      * @param {PTFPart} part - The layer part
      */
     fluid.ptf.registerLayerPart = function (part) {
         if (part.contentType === fluid.layerMimeTypes.sfc) {
             fluid.loadSFCText(part.filename, part.body);
+            if (fluid.defaultDocument) {
+                fluid.subscribeDocToInjections(part.filename, fluid.defaultDocument);
+            }
         } else if (part.contentType === fluid.layerMimeTypes.javascript) {
             // Evaluating a transmitted layer is equivalent in trust to loading an SFC from the same source
             new Function("fluid", part.body)(fluid);
@@ -540,7 +562,8 @@ const fluidPTFScope = function (fluid) {
     /**
      * Apply the potentia of subcomponents and the live layer contents held in the parts of a PTF document to an
      * existing component and its subcomponents. Any potentia for the root component itself is ignored, since this
-     * determines how the component is created rather than anything which can be applied to it.
+     * determines how the component is created rather than anything which can be applied to it. The live layer contents
+     * are restored state rather than fresh changes, and so are not recorded in the history.
      * @param {fluid.component} that - The component to which the parts are to be applied
      * @param {PTFPart[]} parts - The decoded parts of the PTF document - any which are not potentia or live parts are ignored
      * @return {Promise<String[]>} A promise for the filenames of any parts which could not be applied since no
@@ -565,9 +588,9 @@ const fluidPTFScope = function (fluid) {
             const shadow = fluid.ptf.resolveShadow(rootShadow, fluid.ptf.filenameToSegs(part.filename));
             if (shadow) {
                 await fluid.ptf.awaitAvailable(shadow);
-                fluid.each(JSON.parse(part.body), (value, path) => {
+                fluid.withoutHistory(() => fluid.each(JSON.parse(part.body), (value, path) => {
                     fluid.setForComponent(shadow.that, path, value);
-                });
+                }));
             } else {
                 unresolved.push(part.filename);
             }
@@ -625,6 +648,568 @@ const fluidPTFScope = function (fluid) {
     fluid.ptf.instantiate = function (text, options) {
         const parts = fluid.ptf.decode(text);
         return fluid.isUnavailable(parts) ? Promise.reject(parts) : fluid.ptf.instantiateParts(parts, options);
+    };
+
+    /*** Undoable histories of an arena, and their persistence ***/
+
+    // An "arena" is the set of components whose state may be stepped back and forth through, and persisted - by
+    // default, every component. Two histories are kept of it, each holding records shaped so that they can be persisted:
+    // - fluid.liveHistory, of updates to the live layers ("Potentia II") of its components, as {LiveHistoryRec}
+    // - fluid.definitionHistory, of redefinitions of user layers ("Potentia I"), as {DefinitionHistoryRec}
+    // These are fed from fluid.pushHistory, whose own linear history, as shown by the editor, is unaffected.
+
+    /**
+     * Determine whether a component belongs to the arena whose live updates are recorded in `fluid.liveHistory`. A host
+     * which renders furniture of its own beside the arena's components, e.g. the tldraw demo's "Ask me anything" panel,
+     * narrows the arena by replacing this function.
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {Boolean} `true` if the component belongs to the arena
+     */
+    fluid.arenaContains = function (shadow) {
+        return !!shadow;
+    };
+
+    /**
+     * Render a site in the arena as a reference which remains valid as its component is reconstructed, e.g. one
+     * relative to a widget hosting it, which is recorded alongside the site in `fluid.liveHistory`. By default there is
+     * no such reference, and records refer to their site alone. A host which reconstructs its components, e.g. on
+     * undoing their deletion or on restoring a persisted arena, replaces this together with `fluid.arenaRefToSite`.
+     * @param {String} site - The site, as rendered by `fluid.renderSite`
+     * @return {Object|null} A JSON-amenable reference to the site, or `null` if there is none
+     */
+    fluid.arenaSiteToRef = function (site) { // eslint-disable-line no-unused-vars
+        return null;
+    };
+
+    /**
+     * Resolve a reference produced by `fluid.arenaSiteToRef` to the site it currently refers to
+     * @param {Object} ref - The reference
+     * @return {String|null} The site, as rendered by `fluid.renderSite`, or `null` if it does not currently exist
+     */
+    fluid.arenaRefToSite = function (ref) { // eslint-disable-line no-unused-vars
+        return null;
+    };
+
+    /**
+     * @typedef {Object} LiveHistoryRec
+     * @property {String} type - "live"
+     * @property {String|null} site - The site which was updated, as rendered by `fluid.renderSite`, or `null` if it did
+     * not exist when the record was restored from persistence
+     * @property {Object} [ref] - A reference to the site as rendered by `fluid.arenaSiteToRef`, through which the record
+     * is applied in preference to its site, so that it applies to a reconstructed component
+     * @property {any} oldValue - The value at the site before the update
+     * @property {any} newValue - The value at the site after the update
+     */
+
+    /**
+     * @typedef {Object} GroupHistoryRec
+     * @property {String} type - "group"
+     * @property {String} key - The burst key, as determined by `fluid.arenaBurstKey`, shared by the records of the group
+     * @property {Number} time - When the group was last written to, in milliseconds since the epoch
+     * @property {Number} [gesture] - The id of the gesture which wrote the group, if any - see `fluid.ptf.withinGesture`
+     * @property {Object[]} records - The records of the group, oldest first, which are stepped through together
+     */
+
+    /**
+     * @typedef {Object} DefinitionHistoryRec
+     * @property {String} type - "definition"
+     * @property {String} layerName - The name of the layer which was redefined or deleted
+     * @property {LayerSource} oldSource - The layer's source before its redefinition or deletion
+     * @property {LayerSource|null} newSource - The layer's source after its redefinition, or `null` if it was deleted
+     */
+
+    /**
+     * @typedef {Object} LayerSource
+     * @property {String} contentType - The MIME type of the source, one of `fluid.layerMimeTypes`
+     * @property {String} body - The text of the source, as held by a layer part
+     */
+
+    /**
+     * @typedef {Object} HistoryStack
+     * @property {String} name - A name for the stack, for debugging
+     * @property {Cell<Object[]>} records - The records of the stack, oldest first
+     * @property {Cell<Number>} index - The number of records currently applied - records at and after this index may
+     * be stepped forward through
+     * @property {Cell<Boolean>} canBack - `true` if there is a record to step back through
+     * @property {Cell<Boolean>} canForward - `true` if there is a record to step forward through
+     * @property {Function} apply - Accepts a record and either "old" or "new", applies that side of it and returns
+     * `true`, or returns `false` if it can no longer be applied, e.g. since its component has been destroyed
+     */
+
+    // The greatest number of records held by a history stack - the oldest are discarded beyond this
+    fluid.ptf.maxHistoryLength = 200;
+
+    /**
+     * Construct an empty history stack
+     * @param {String} name - A name for the stack, for debugging
+     * @param {Function} apply - Applies a record, as described for {HistoryStack}
+     * @return {HistoryStack} The stack
+     */
+    fluid.ptf.makeHistoryStack = function (name, apply) {
+        const records = fluid.cell([], {name: `${name} records`});
+        const index = fluid.cell(0, {name: `${name} index`});
+        return {
+            name,
+            records,
+            index,
+            apply,
+            canBack: fluid.cell(undefined, {name: `${name} canBack`}).computed(index => index > 0, [index]),
+            canForward: fluid.cell(undefined, {name: `${name} canForward`}).computed((records, index) => index < records.length, [records, index])
+        };
+    };
+
+    /**
+     * Push a record onto a history stack, discarding any records which had been stepped back through
+     * @param {HistoryStack} stack - The stack
+     * @param {Object} record - The record
+     */
+    fluid.ptf.pushToStack = function (stack, record) {
+        const kept = [...stack.records.get().slice(0, stack.index.get()), record];
+        const trimmed = kept.slice(Math.max(0, kept.length - fluid.ptf.maxHistoryLength));
+        stack.records.set(trimmed);
+        stack.index.set(trimmed.length);
+    };
+
+    /**
+     * Step back through a history stack, undoing its most recently applied record. Any records which can no longer be
+     * applied are stepped over.
+     * @param {HistoryStack} stack - The stack
+     * @return {Boolean} `true` if a record was undone
+     */
+    fluid.ptf.historyBack = function (stack) {
+        const records = stack.records.get();
+        let index = stack.index.get();
+        let applied = false;
+        while (index > 0 && !applied) {
+            --index;
+            applied = stack.apply(records[index], "old");
+        }
+        stack.index.set(index);
+        return applied;
+    };
+
+    /**
+     * Step forward through a history stack, redoing the record most recently undone. Any records which can no longer be
+     * applied are stepped over.
+     * @param {HistoryStack} stack - The stack
+     * @return {Boolean} `true` if a record was redone
+     */
+    fluid.ptf.historyForward = function (stack) {
+        const records = stack.records.get();
+        let index = stack.index.get();
+        let applied = false;
+        while (index < records.length && !applied) {
+            applied = stack.apply(records[index], "new");
+            ++index;
+        }
+        stack.index.set(index);
+        return applied;
+    };
+
+    /**
+     * Apply one side of a live history record, unless its component no longer exists. The record is applied through its
+     * reference if it has one which currently resolves, and otherwise to its site.
+     * @param {LiveHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if the record was applied
+     */
+    fluid.ptf.applyLiveRecord = function (record, side) {
+        const siteName = (record.ref ? fluid.arenaRefToSite(record.ref) : null) ?? record.site;
+        const site = siteName ? fluid.parseSite(siteName) : {};
+        const live = !!site.shadow && site.shadow.lifecycleStatus !== "destroyed";
+        if (live) {
+            fluid.withoutHistory(() => fluid.setForComponent(site.shadow.that, site.path, record[side + "Value"]));
+        }
+        return live;
+    };
+
+    /**
+     * Apply one side of a definition history record, by registering that source for its layer, or deleting the layer if
+     * that side has no source
+     * @param {DefinitionHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true`, since a layer can always be redefined or deleted
+     */
+    fluid.ptf.applyDefinitionRecord = function (record, side) {
+        const source = record[side + "Source"];
+        if (source) {
+            fluid.ptf.registerLayerPartQuietly({kind: "layer", filename: record.layerName, ...source});
+        } else {
+            fluid.ptf.deleteLayerQuietly(record.layerName);
+        }
+        return true;
+    };
+
+    /**
+     * Delete a layer without recording its deletion in `fluid.definitionHistory`, e.g. whilst applying a record of the
+     * history itself, or restoring a persisted arena
+     * @param {String} layerName - The name of the layer
+     */
+    fluid.ptf.deleteLayerQuietly = function (layerName) {
+        fluid.withoutHistory(() => fluid.deleteLayer(layerName));
+        fluid.ptf.layerSources.delete(layerName);
+    };
+
+    /**
+     * The functions which apply each type of record held in `fluid.liveHistory`, keyed by type, as described for the
+     * `apply` member of {HistoryStack}. A host may register further types, e.g. the tldraw demo's records of the
+     * creation and deletion of widgets.
+     * @type {Object<String, Function>}
+     */
+    fluid.ptf.liveRecordAppliers = {
+        live: fluid.ptf.applyLiveRecord
+    };
+
+    /**
+     * Apply one side of a record held in `fluid.liveHistory`, through the applier registered for its type
+     * @param {Object} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if the record was applied, or `false` if it could not be, or no applier is registered
+     */
+    fluid.ptf.applyArenaRecord = function (record, side) {
+        const applier = fluid.ptf.liveRecordAppliers[record.type];
+        return applier ? applier(record, side) : false;
+    };
+
+    /**
+     * Apply one side of a group record, by applying each of its records - in reverse order when stepping back
+     * @param {GroupHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if any of the group's records was applied
+     */
+    fluid.ptf.applyGroupRecord = function (record, side) {
+        const records = side === "old" ? [...record.records].reverse() : record.records;
+        return records.map(member => fluid.ptf.applyArenaRecord(member, side)).some(applied => applied);
+    };
+
+    fluid.ptf.liveRecordAppliers.group = fluid.ptf.applyGroupRecord;
+
+    /**
+     * Transform each record of a group record, e.g. into a persistable form, omitting any which cannot be transformed
+     * @param {GroupHistoryRec} record - The group record
+     * @param {Function} transform - Accepts a record and returns its transformed form, or `null` if it has none
+     * @return {GroupHistoryRec|null} The transformed group, or `null` if none of its records could be transformed
+     */
+    fluid.ptf.transformGroupRecord = function (record, transform) {
+        const records = record.records.map(member => transform(member)).filter(member => member !== null);
+        return records.length > 0 ? {...record, records} : null;
+    };
+
+    /** @type {HistoryStack} */
+    fluid.liveHistory = fluid.ptf.makeHistoryStack("fluid.liveHistory", fluid.ptf.applyArenaRecord);
+
+    // Bursts of writes to the arena's live state are coalesced into single steps of fluid.liveHistory, held as group
+    // records. Writes to the same part of the arena, as determined by fluid.arenaBurstKey, are coalesced if each follows
+    // the previous within fluid.ptf.burstWindow, e.g. the keystrokes typing a word. Everything caused by a single
+    // gesture of the user, e.g. a click on a button invoking an asynchronous method, is coalesced into a step of its
+    // own until any promise it returned has settled, however long that takes.
+
+    // The greatest interval between writes which are coalesced into the same step, in milliseconds
+    fluid.ptf.burstWindow = 750;
+
+    /**
+     * The current time, in milliseconds since the epoch - held here so that it may be replaced in tests
+     * @return {Number} The current time
+     */
+    fluid.ptf.now = () => Date.now();
+
+    /**
+     * Determine the key of a site, writes to sites sharing which may be coalesced into a single step. By default this is
+     * the component holding the site - a host whose arena holds widgets made of several components, e.g. the tldraw
+     * demo, replaces this to coalesce writes to the same widget.
+     * @param {String} site - The site, as rendered by `fluid.renderSite`, or the bare component reference `{path}`
+     * @return {String} The burst key
+     */
+    fluid.arenaBurstKey = function (site) {
+        return fluid.parseContextReference(site).context;
+    };
+
+    // The id of the latest gesture to have begun
+    fluid.ptf.gestureCount = 0;
+
+    // The id of the gesture currently in progress for each burst key
+    /** @type {Map<String, Number>} */
+    fluid.ptf.openGestures = new Map();
+
+    /**
+     * Execute a function on behalf of a gesture of the user, e.g. the handler of a DOM event bound by a template, such
+     * that all writes it causes to the part of the arena holding the component are coalesced into a single step of
+     * `fluid.liveHistory`. If the function returns a promise, writes are coalesced until it settles.
+     * @param {Shadow} shadow - The shadow of the component on whose behalf the gesture is made
+     * @param {Function} func - The function to execute
+     * @return {any} The return value of the function
+     */
+    fluid.ptf.withinGesture = function (shadow, func) {
+        const key = fluid.arenaBurstKey(`{${shadow.path}}`);
+        const gesture = ++fluid.ptf.gestureCount;
+        const close = () => {
+            if (fluid.ptf.openGestures.get(key) === gesture) {
+                fluid.ptf.openGestures.delete(key);
+            }
+        };
+        fluid.ptf.openGestures.set(key, gesture);
+        let togo;
+        try {
+            togo = func();
+        } finally {
+            if (typeof(togo?.then) === "function") {
+                // The returned promise is left to report its own failure
+                togo.then(close, close);
+            } else {
+                close();
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * Record a write to the arena's live state in `fluid.liveHistory`, coalescing it into the latest step if it belongs
+     * to the same burst as that step. A burst is only extended if no step has been stepped back through since, and a
+     * gesture always begins a step of its own.
+     * @param {LiveHistoryRec} record - The record of the write
+     */
+    fluid.ptf.pushLiveRecord = function (record) {
+        const stack = fluid.liveHistory;
+        const key = fluid.arenaBurstKey(record.site);
+        const now = fluid.ptf.now();
+        const gesture = fluid.ptf.openGestures.get(key);
+        const records = stack.records.get();
+        const index = stack.index.get();
+        const top = index === records.length ? records[index - 1] : undefined;
+        const joins = top?.type === "group" && top.key === key &&
+            (gesture === undefined ? top.gesture === undefined && now - top.time <= fluid.ptf.burstWindow : top.gesture === gesture);
+        if (joins) {
+            const last = fluid.peek(top.records);
+            // Successive writes to the same site are folded together
+            const members = last.site === record.site && last.type === "live" ?
+                [...top.records.slice(0, -1), {...record, oldValue: last.oldValue}] : [...top.records, record];
+            stack.records.set([...records.slice(0, -1), {...top, time: now, records: members}]);
+        } else {
+            fluid.ptf.pushToStack(stack, {type: "group", key, time: now, ...(gesture === undefined ? {} : {gesture}), records: [record]});
+        }
+    };
+
+    /** @type {HistoryStack} */
+    fluid.definitionHistory = fluid.ptf.makeHistoryStack("fluid.definitionHistory", fluid.ptf.applyDefinitionRecord);
+
+    // The source of each user layer as last defined, from which the old source of its next redefinition is taken - the
+    // source of an SFC layer cannot be recovered from its previous definition, which does not hold its template
+    /** @type {Map<String, LayerSource>} */
+    fluid.ptf.layerSources = new Map();
+
+    // Layers which have been registered by fluid.ptf.registerLayerPartQuietly whose redefinition, which for an SFC
+    // follows asynchronously, is still to arrive and is not to be recorded - keyed by layer name, holding the time
+    // after which it is no longer expected
+    /** @type {Map<String, Number>} */
+    fluid.ptf.expectedRedefinitions = new Map();
+
+    // How long the redefinition of a quietly registered layer is expected for
+    fluid.ptf.expectedRedefinitionLifetime = 10000;
+
+    /**
+     * Determine the source of a layer as currently defined
+     * @param {String} layerName - The name of the layer
+     * @return {LayerSource} Its source
+     */
+    fluid.ptf.layerSource = function (layerName) {
+        const {contentType, body} = fluid.ptf.layerToPart(layerName);
+        return {contentType, body};
+    };
+
+    /**
+     * Register a layer part without recording it in `fluid.definitionHistory`, e.g. whilst applying a record of the
+     * history itself, or restoring a persisted arena
+     * @param {PTFPart} part - The layer part
+     */
+    fluid.ptf.registerLayerPartQuietly = function (part) {
+        const existing = fluid.deSignal(fluid.readLayer(part.filename).get().raw);
+        const defined = fluid.isPlainObject(existing, true) && !fluid.isUnavailable(existing);
+        const source = {contentType: part.contentType, body: part.body};
+        if (part.contentType === fluid.layerMimeTypes.sfc) {
+            // An SFC is redefined once it has been parsed and injected, which may follow asynchronously - but not at all if
+            // its text is unchanged
+            if (defined && fluid.readSFC(part.filename).textSignal.get() !== part.body) {
+                fluid.ptf.expectedRedefinitions.set(part.filename, Date.now() + fluid.ptf.expectedRedefinitionLifetime);
+            }
+            fluid.ptf.registerLayerPart(part);
+        } else {
+            fluid.withoutHistory(() => fluid.ptf.registerLayerPart(part));
+        }
+        fluid.ptf.layerSources.set(part.filename, source);
+    };
+
+    /**
+     * Receive a record pushed onto the history by `fluid.pushHistory`, and record it in `fluid.liveHistory` or
+     * `fluid.definitionHistory` if it is an update of the live layer of a component in the arena or a redefinition or
+     * deletion of a user layer respectively. The initial definitions of layers, e.g. as SFCs load, are not
+     * redefinitions, but the source of each is noted.
+     * @param {HistoryRec} record - The record
+     */
+    fluid.ptf.receiveHistory = function (record) {
+        if (record.layerName.startsWith("{")) {
+            const site = fluid.parseSite(record.layerName);
+            if (record.type === "updateLayer" && site.shadow && fluid.arenaContains(site.shadow)) {
+                const ref = fluid.arenaSiteToRef(record.layerName);
+                fluid.ptf.pushLiveRecord({type: "live", site: record.layerName, ...(ref ? {ref} : {}),
+                    oldValue: record.oldValue, newValue: record.newValue});
+            }
+        } else {
+            const layerName = record.layerName;
+            const newDef = fluid.deSignal(record.newValue?.raw);
+            // Some updates, e.g. those tracking the loading of an SFC, hold no definition
+            if (record.type === "updateLayer" && fluid.isPlainObject(newDef, true) && !fluid.isUnavailable(newDef)) {
+                const oldDef = fluid.deSignal(record.oldValue?.raw);
+                const oldSource = fluid.ptf.layerSources.get(layerName) || (fluid.isPlainObject(oldDef, true) && !fluid.isUnavailable(oldDef) ?
+                    {contentType: fluid.layerMimeTypes.javascript, body: fluid.layerToJavaScript(layerName, oldDef)} : null);
+                const newSource = fluid.ptf.layerSource(layerName);
+                fluid.ptf.layerSources.set(layerName, newSource);
+                const expected = fluid.ptf.expectedRedefinitions.get(layerName);
+                fluid.ptf.expectedRedefinitions.delete(layerName);
+                if (oldSource && oldSource.body !== newSource.body && !(expected > Date.now())) {
+                    fluid.ptf.pushToStack(fluid.definitionHistory, {type: "definition", layerName, oldSource, newSource});
+                }
+            } else if (record.type === "newLayer") {
+                fluid.ptf.layerSources.set(layerName, fluid.ptf.layerSource(layerName));
+            } else if (record.type === "deleteLayer") {
+                const oldSource = fluid.ptf.layerSources.get(layerName);
+                fluid.ptf.layerSources.delete(layerName);
+                if (oldSource) {
+                    fluid.ptf.pushToStack(fluid.definitionHistory, {type: "definition", layerName, oldSource, newSource: null});
+                }
+            }
+        }
+    };
+
+    fluid.historyListeners.push(fluid.ptf.receiveHistory);
+
+    /**
+     * @typedef {Object} PersistedHistory
+     * @property {Object[]} records - The persisted records, oldest first
+     * @property {Number} index - The number of records applied
+     */
+
+    /**
+     * Render a history stack in a form which can be persisted as JSON. Records which cannot be persisted are omitted.
+     * @param {HistoryStack} stack - The stack
+     * @param {Function} [encode] - Accepts a record and returns a JSON-amenable form of it, or `null` if it cannot be
+     * persisted - by default, records are persisted as they stand
+     * @return {PersistedHistory} The stack's persistable form
+     */
+    fluid.ptf.historyToJSON = function (stack, encode = fluid.identity) {
+        const index = stack.index.get();
+        const encoded = stack.records.get().map(record => encode(record));
+        return {
+            records: encoded.filter(record => record !== null),
+            index: encoded.slice(0, index).filter(record => record !== null).length
+        };
+    };
+
+    /**
+     * Restore a history stack from its persisted form. Records which can no longer be restored are omitted.
+     * @param {HistoryStack} stack - The stack
+     * @param {PersistedHistory} persisted - The persisted form of the stack, as produced by `fluid.ptf.historyToJSON`
+     * @param {Function} [decode] - Accepts a persisted record and returns the record, or `null` if it can no longer be
+     * restored - by default, records are restored as they stand
+     */
+    fluid.ptf.historyFromJSON = function (stack, persisted, decode = fluid.identity) {
+        const decoded = persisted.records.map(record => decode(record));
+        stack.records.set(decoded.filter(record => record !== null));
+        stack.index.set(decoded.slice(0, persisted.index).filter(record => record !== null).length);
+    };
+
+    /**
+     * Render a live history record in a form which can be persisted, referring to its site by a reference which will
+     * remain valid once the arena has been restored, e.g. one relative to the widget holding the component - the
+     * record's own reference if it has one, or else one rendered by the supplied function
+     * @param {LiveHistoryRec} record - The record
+     * @param {Function} siteToRef - Accepts a rendered site and returns a JSON-amenable reference to it, or `null` if it
+     * cannot be referred to
+     * @return {Object|null} The persistable record, or `null` if it cannot be persisted
+     */
+    fluid.ptf.encodeLiveRecord = function (record, siteToRef) {
+        const ref = record.ref ?? (record.site ? siteToRef(record.site) : null);
+        return ref === null ? null : {
+            type: "live",
+            ref,
+            oldValue: fluid.ptf.toJSONAmenable(record.oldValue) ?? null,
+            newValue: fluid.ptf.toJSONAmenable(record.newValue) ?? null
+        };
+    };
+
+    /**
+     * Restore a live history record from its persisted form. The record is retained with its reference even if this does
+     * not currently resolve, since its component may be reconstructed later, e.g. on undoing its deletion.
+     * @param {Object} persisted - The persisted record, as produced by `fluid.ptf.encodeLiveRecord`
+     * @param {Function} refToSite - Accepts a reference produced by the `siteToRef` supplied to
+     * `fluid.ptf.encodeLiveRecord` and returns the rendered site it now refers to, or `null` if there is none
+     * @return {LiveHistoryRec} The record
+     */
+    fluid.ptf.decodeLiveRecord = function (persisted, refToSite) {
+        return {type: "live", site: refToSite(persisted.ref), ref: persisted.ref, oldValue: persisted.oldValue, newValue: persisted.newValue};
+    };
+
+    /**
+     * @typedef {Object} PersistenceAdapter
+     * @property {Function} load - Returns the text of the persisted arena, or `null` if none has been persisted
+     * @property {Function} save - Accepts the text of the arena to be persisted
+     */
+
+    /**
+     * A persistence adapter which persists nothing
+     * @type {PersistenceAdapter}
+     */
+    fluid.emptyPersistenceAdapter = {
+        load: () => null,
+        save: () => {}
+    };
+
+    /**
+     * The adapter through which a host persists its arena - by default, nothing is persisted. A host, e.g. the tldraw
+     * demo, replaces this, typically with an adapter constructed by `fluid.makeLocalStoragePersistenceAdapter`.
+     * @type {PersistenceAdapter}
+     */
+    fluid.persistenceAdapter = fluid.emptyPersistenceAdapter;
+
+    // The URL parameter by which several arenas may be persisted for the same page
+    fluid.arenaIdParam = "infusionArenaId";
+
+    /**
+     * Determine the id of the arena persisted for a page, from its `infusionArenaId` URL parameter
+     * @param {Location|URL} location - The location of the page
+     * @return {String} The arena's id, or "0" if the page has no such parameter
+     */
+    fluid.arenaId = function (location) {
+        return new URLSearchParams(location.search).get(fluid.arenaIdParam) || "0";
+    };
+
+    /**
+     * Construct a persistence adapter which persists an arena in a browser's local storage, under a key derived from
+     * the page's URL, without its query or fragment, and the arena's id, as determined by `fluid.arenaId`
+     * @param {Storage} [storage] - The storage to be used, by default the browser's local storage
+     * @param {Location|URL} [location] - The location of the page, by default the current one
+     * @return {PersistenceAdapter} The adapter, with a further member `key` holding the key under which it persists
+     */
+    fluid.makeLocalStoragePersistenceAdapter = function (storage = window.localStorage, location = window.location) {
+        const key = `infusion-arena:${location.origin}${location.pathname}#${fluid.arenaId(location)}`;
+        return {
+            key,
+            load: function () {
+                let togo = null;
+                try {
+                    togo = storage.getItem(key);
+                } catch (e) {
+                    fluid.log(fluid.logLevel.WARN, "Local storage is unavailable - the arena cannot be restored: ", e.message);
+                }
+                return togo;
+            },
+            save: function (text) {
+                try {
+                    storage.setItem(key, text);
+                } catch (e) {
+                    fluid.log(fluid.logLevel.WARN, "The arena could not be saved to local storage: ", e.message);
+                }
+            }
+        };
     };
 };
 

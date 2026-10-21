@@ -1,8 +1,11 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react} from "tldraw";
-import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions} from "./tldraw-clipboard.js";
+import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions, guardClipboardEvents,
+    instantiationTimeout, isWidgetAvailable, diagnoseWidget} from "./tldraw-clipboard.js";
 import {makeAIBridge} from "./tldraw-ai.js";
+import {containsWidget, restoreArena, persistArena, bindHistoryKeys, bindWidgetHistory, recordWidgetCreation,
+    widgetBurstKey} from "./tldraw-arena.js";
 
 const h = React.createElement;
 
@@ -21,6 +24,17 @@ const loadLicenseKey = async function () {
 };
 
 const licenseKey = await loadLicenseKey();
+
+// The canvas is persisted in this browser's local storage, separately for each value of any ?infusionArenaId URL parameter
+fluid.persistenceAdapter = fluid.makeLocalStoragePersistenceAdapter();
+// The arena whose state is undoable and persisted consists of the widgets on the canvas, excluding e.g. the AI panel
+fluid.arenaContains = containsWidget;
+// Records of widget state refer to their widget through its shape, so that they apply once more to a widget which has
+// been reconstructed, e.g. on undoing its deletion or restoring the arena
+fluid.arenaSiteToRef = site => fluid.tldraw.siteToRef(site, infusionInstances);
+fluid.arenaRefToSite = ref => fluid.tldraw.refToSite(ref, infusionInstances);
+// Bursts of writes to a widget, e.g. typing or everything caused by a click, are coalesced into single undoable steps
+fluid.arenaBurstKey = widgetBurstKey;
 
 fluid.registerNamespace("fluid.tldraw");
 
@@ -192,10 +206,29 @@ const awaitLayer = function (layerName) {
 };
 
 /**
+ * Render a description of why a widget could not be hosted into its container, in place of the blank square which
+ * would otherwise be seen. This is replaced by the widget's own markup should it later render.
+ * @param {Element} container - The container of the widget
+ * @param {String[]} problems - Descriptions of the problems found
+ */
+const renderHostProblems = function (container, problems) {
+    const holder = document.createElement("div");
+    holder.className = "infusion-host-problems";
+    problems.forEach(problem => {
+        const line = document.createElement("div");
+        line.textContent = problem;
+        holder.appendChild(line);
+    });
+    container.replaceChildren(holder);
+};
+
+/**
  * A React component hosting an Infusion component. The Infusion component is constructed once React has mounted the
  * container, and destroyed when React unmounts it. A shape which was pasted from a PTF document is reconstructed from
  * the document's parts, and otherwise the component is constructed afresh via its layer's creator function. In either
- * case the shape's id is supplied to the component's view, where fluid.tldrawViewComponent will find it.
+ * case the shape's id is supplied to the component's view, where fluid.tldrawViewComponent will find it. If the
+ * component cannot be constructed, or has neither rendered nor become available within `instantiationTimeout`, the
+ * problems are described within the shape.
  * @param {Object} props - The React props
  * @param {String} props.layerName - The name of the Infusion layer to be instantiated
  * @param {String} props.shapeId - The id of the tldraw shape hosting the component
@@ -237,6 +270,7 @@ const InfusionHost = function ({layerName, shapeId, ptfToken}) {
                         });
                     } catch (error) {
                         console.error(`Failed to reconstruct Infusion component for shape ${shapeId} from PTF: `, error);
+                        renderHostProblems(container, [`This widget could not be constructed: ${fluid.tldraw.ai.describeError(error)}`]);
                         notifyInstantiation(ptfToken, {error});
                     }
                 }
@@ -244,13 +278,26 @@ const InfusionHost = function ({layerName, shapeId, ptfToken}) {
         } else {
             awaitLayer(layerName).then(() => {
                 if (!unmounted) {
-                    const creator = fluid.getGlobalValue(layerName);
-                    adopt(creator(fluid.tldraw.hostPotentiaFor(layerName, container, shapeId)), "Constructed");
+                    try {
+                        const creator = fluid.getGlobalValue(layerName);
+                        adopt(creator(fluid.tldraw.hostPotentiaFor(layerName, container, shapeId)), "Constructed");
+                    } catch (error) {
+                        console.error(`Failed to construct Infusion component for shape ${shapeId}: `, error);
+                        renderHostProblems(container, [`This widget could not be constructed: ${fluid.tldraw.ai.describeError(error)}`]);
+                    }
                 }
             });
         }
+        const diagnosisTimer = setTimeout(() => {
+            // Only a widget which has rendered nothing is diagnosed in place, since one which has rendered, e.g. whilst
+            // it awaits slow I/O, may be in use
+            if (!unmounted && container.childNodes.length === 0 && !isWidgetAvailable(shapeId)) {
+                renderHostProblems(container, diagnoseWidget(shapeId, layerName, "This widget"));
+            }
+        }, instantiationTimeout);
         return () => {
             unmounted = true;
+            clearTimeout(diagnosisTimer);
             if (that) {
                 console.log(`Destroying Infusion component ${layerName} with id ${that.$id}`);
                 if (infusionInstances.get(shapeId) === that) {
@@ -349,16 +396,6 @@ class InfusionShapeUtil extends BaseBoxShapeUtil {
 const shapeUtils = [InfusionShapeUtil];
 
 /**
- * A cell listing the layers registered in Infusion's SFC registry which are top-level widgets. Whether a layer is a
- * top-level widget is determined from the merged structure of its avatar, since it may acquire fluid.topLevelWidget
- * through any of its parent layers. This updates both as fresh SFCs are registered and as they finish loading.
- * @type {fluid.cell<String[]>} The sorted names of all top-level widget layers loaded from SFCs
- */
-// Note that dependencies are tracked dynamically, since the avatars' merges are only discovered by reading them
-fluid.tldraw.widgetLayers = fluid.cell(undefined, {name: "tldraw top-level widget layers"}).computed(() =>
-    fluid.sfcLayerNames.get().filter(layerName => fluid.hasLayer(fluid.avatarMerged(layerName), "fluid.topLevelWidget")).sort());
-
-/**
  * A React hook rendering the current value of an Infusion cell, rerendering whenever it changes
  * @param {fluid.cell} cell - The cell whose value is required
  * @return {any} The cell's current value
@@ -398,8 +435,91 @@ fluid.tldraw.findFreeSite = function (editor, site) {
 };
 
 /**
- * A panel allowing a fresh Infusion widget to be constructed on the canvas from any top-level widget layer found in
- * the SFC registry, which is listed live as widgets are registered and loaded.
+ * Delete a widget layer, after asking the user to confirm. The widgets on the canvas made from the layer, directly or
+ * through a layer built on it, are deleted with it, since they could no longer work. Both deletions are recorded in
+ * the arena's histories, so that each may be undone.
+ * @param {Editor} editor - The tldraw editor
+ * @param {String} layerName - The name of the layer
+ * @return {Boolean} `true` if the layer was deleted
+ */
+const deleteWidgetLayer = function (editor, layerName) {
+    const doomed = editor.getCurrentPageShapes().filter(shape => shape.type === "infusion" &&
+        (shape.props.layerName === layerName || fluid.tldraw.layerReaches(shape.props.layerName, layerName)));
+    const question = fluid.tldraw.deletionQuestion(layerName, doomed.length, fluid.tldraw.dependentLayers(layerName), fluid.tldraw.isApple());
+    // eslint-disable-next-line no-alert
+    const confirmed = window.confirm(question);
+    if (confirmed) {
+        editor.deleteShapes(doomed.map(shape => shape.id));
+        fluid.deleteLayer(layerName);
+    }
+    return confirmed;
+};
+
+// A small trash can, drawn in the current colour
+const trashIcon = h("svg", {width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2,
+    strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true},
+h("path", {d: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"}));
+
+/**
+ * A dropdown listing widget layers, each of which may be chosen, or deleted through a trash can at its right, which
+ * appears as the pointer passes over it. This stands in for a native select, whose options cannot hold buttons.
+ * @param {Object} props - The React props
+ * @param {String[]} props.layers - The names of the layers listed
+ * @param {String} props.choice - The name of the chosen layer
+ * @param {Function} props.onChoose - Accepts the name of a layer which the user chooses
+ * @param {Function} props.onDelete - Accepts the name of a layer which the user asks to delete
+ * @return {ReactElement} The rendered dropdown
+ */
+const LayerPicker = function ({layers, choice, onChoose, onDelete}) {
+    const [open, setOpen] = React.useState(false);
+    const rootRef = React.useRef(null);
+    // The list is closed by a press anywhere outside it
+    React.useEffect(() => {
+        let togo;
+        if (open) {
+            const close = e => {
+                if (!rootRef.current?.contains(e.target)) {
+                    setOpen(false);
+                }
+            };
+            document.addEventListener("pointerdown", close, true);
+            togo = () => document.removeEventListener("pointerdown", close, true);
+        }
+        return togo;
+    }, [open]);
+    return h("div", {className: "layer-picker", ref: rootRef},
+        h("button", {
+            className: "layer-picker-button",
+            disabled: layers.length === 0,
+            title: "Top-level widget layers",
+            "aria-haspopup": "listbox",
+            "aria-expanded": open,
+            onClick: () => setOpen(!open)
+        }, h("span", {className: "layer-picker-choice"}, choice || "No widget layers"), h("span", {"aria-hidden": true}, "\u25be")),
+        open && h("ul", {className: "layer-picker-list", role: "listbox"}, layers.map(layerName =>
+            h("li", {key: layerName, className: "layer-picker-option" + (layerName === choice ? " layer-picker-chosen" : ""),
+                role: "option", "aria-selected": layerName === choice},
+            h("button", {
+                className: "layer-picker-name",
+                onClick: () => {
+                    onChoose(layerName);
+                    setOpen(false);
+                }
+            }, layerName),
+            h("button", {
+                className: "layer-picker-delete",
+                title: `Delete the layer ${layerName}`,
+                "aria-label": `Delete the layer ${layerName}`,
+                onClick: () => onDelete(layerName)
+            }, trashIcon)
+            )))
+    );
+};
+
+/**
+ * A panel allowing a fresh Infusion widget to be constructed on the canvas from any top-level widget layer in the
+ * layer store, which is listed live as layers are defined, redefined and deleted - including those sent by the AI or
+ * pasted - and allowing such layers to be deleted.
  * @return {ReactElement} The rendered panel
  */
 const NewShapePanel = function () {
@@ -423,15 +543,18 @@ const NewShapePanel = function () {
                 h: hh
             }
         });
+        // Undoable through the arena's history of widget state, which tracks the creation of widgets as well as their state
+        recordWidgetCreation(editor, [id]);
         editor.select(id);
         editor.setCurrentTool("select");
     };
     return h("div", {className: "new-shape-panel"},
-        h("select", {
-            value: choice,
-            title: "Top-level widgets found in the SFC registry",
-            onChange: e => setSelected(e.target.value)
-        }, layers.map(layerName => h("option", {key: layerName, value: layerName}, layerName))),
+        h(LayerPicker, {
+            layers,
+            choice,
+            onChoose: setSelected,
+            onDelete: layerName => deleteWidgetLayer(editor, layerName)
+        }),
         h("button", {
             disabled: !choice,
             onClick: create
@@ -439,16 +562,60 @@ const NewShapePanel = function () {
     );
 };
 
+/**
+ * A pair of buttons stepping back and forward through one of the arena's history stacks, which advertise their
+ * keyboard shortcuts in their tooltips
+ * @param {Object} props - The React props
+ * @param {String} props.caption - The caption of the pair
+ * @param {HistoryCommand} props.back - The command stepping back
+ * @param {HistoryCommand} props.forward - The command stepping forward
+ * @return {ReactElement} The rendered buttons
+ */
+const HistoryButtons = function ({caption, back, forward}) {
+    const isApple = fluid.tldraw.isApple();
+    const stack = fluid[back.stack];
+    const enabled = {
+        back: useCellValue(stack.canBack),
+        forward: useCellValue(stack.canForward)
+    };
+    const button = (command, which) => h("button", {
+        className: "history-button",
+        disabled: !enabled[which],
+        title: fluid.tldraw.commandTooltip(command, isApple),
+        "aria-label": command.label,
+        onClick: () => fluid.tldraw.runHistoryCommand(command)
+    }, command.icon);
+    return h("div", {className: "history-buttons"},
+        button(back, "back"),
+        h("span", {className: "history-caption"}, caption),
+        button(forward, "forward")
+    );
+};
+
+/**
+ * The panel at the top right of the canvas, holding the history buttons and the panel creating fresh widgets
+ * @return {ReactElement} The rendered panel
+ */
+const TopPanel = function () {
+    const [liveBack, liveForward, layerBack, layerForward] = fluid.tldraw.historyCommands;
+    return h("div", {className: "top-panel"},
+        h(HistoryButtons, {caption: "Widgets", back: liveBack, forward: liveForward}),
+        h(HistoryButtons, {caption: "Layers", back: layerBack, forward: layerForward}),
+        h(NewShapePanel)
+    );
+};
+
 const components = {
-    SharePanel: NewShapePanel
+    SharePanel: TopPanel
 };
 
 // Copying or cutting Infusion shapes writes a PTF document to the clipboard, and pasting one reconstructs them
 const options = makeClipboardOptions();
 
 /**
- * Construct the tldrawHost component exposing the editor to Infusion, populate an empty canvas with a single Infusion
- * widget, and expose the editor for debugging
+ * Construct the tldrawHost component exposing the editor to Infusion, and expose the editor for debugging. Restore
+ * any arena persisted for the page, or else populate the canvas with a single Infusion widget, and then persist the
+ * arena as it changes.
  * @param {Editor} editor - The tldraw editor which has just mounted
  * @return {Function} A function which tldraw will call on unmount, destroying the tldrawHost component
  */
@@ -458,14 +625,36 @@ const onMount = function (editor) {
     const tldrawHost = fluid.demos.tldrawHost({editor});
     // Lets the "Ask me anything" panel reflect on and alter the canvas
     fluid.tldraw.ai.bridge = makeAIBridge(editor);
-    if (editor.getCurrentPageShapes().length === 0) {
-        editor.createShape({
-            type: "infusion",
-            x: 200,
-            y: 200
-        });
-    }
-    return () => tldrawHost.destroy();
+    // Lets the user copy text from the panel, rather than the canvas's selection
+    const unguard = guardClipboardEvents(document.getElementById("ai-root"));
+    const unbindKeys = bindHistoryKeys();
+    const unbindWidgetHistory = bindWidgetHistory(editor);
+    let unmounted = false;
+    let stopPersisting = null;
+    restoreArena(editor, fluid.persistenceAdapter.load()).catch(error => {
+        console.error("Failed to restore the persisted arena: ", error);
+        return false;
+    }).then(restored => {
+        if (!unmounted) {
+            if (!restored && editor.getCurrentPageShapes().length === 0) {
+                editor.createShape({
+                    type: "infusion",
+                    x: 200,
+                    y: 200
+                });
+            }
+            // Begun only once restored, so that a partly restored arena is never saved over the persisted one
+            stopPersisting = persistArena(editor);
+        }
+    });
+    return () => {
+        unmounted = true;
+        stopPersisting?.();
+        unbindWidgetHistory();
+        unbindKeys();
+        unguard();
+        tldrawHost.destroy();
+    };
 };
 
 createRoot(document.getElementById("tldraw-root")).render(

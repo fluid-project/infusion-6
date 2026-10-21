@@ -982,13 +982,54 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
+     * Replace a proxy onto mat-forming material with the plain value which it fronts. Proxies onto components, and all
+     * other values, are returned unchanged.
+     * @param {any} value - The value which may be a proxy
+     * @return {any} The plain value fronted by the proxy, or the value itself if it is not such a proxy
+     */
+    fluid.deproxyMatValue = function (value) {
+        const target = fluid.isPlainObject(value) ? value[$t] : undefined;
+        const unwrapped = target === undefined ? undefined : fluid.deSignal(target);
+        return target === undefined || fluid.isComponent(unwrapped) ? value : unwrapped;
+    };
+
+    /**
+     * Replace any proxies onto mat-forming material held as the direct members of a fresh array or object which is
+     * about to be written into a component with the plain values which they front, so that the proxies themselves are
+     * not written into the component's live layer. Such values are assembled by spreading proxied material, e.g.
+     * `[...that.list, item]`, and a proxy written back beneath the site it fronts would refer to itself. No deeper
+     * traversal is made, since the value may hold arbitrary material which the framework should not traverse, and a
+     * value which is itself a proxy is written as it is.
+     * @param {any} value - The value to be written
+     * @return {any} The value with any such proxies replaced, which is the value itself if it holds none
+     */
+    fluid.deproxyMat = function (value) {
+        let togo = value;
+        if (fluid.deproxyMatValue(value) === value) {
+            if (Array.isArray(value)) {
+                const mapped = value.map(fluid.deproxyMatValue);
+                togo = mapped.some((element, i) => element !== value[i]) ? mapped : value;
+            } else if (fluid.isPlainObject(value, true)) {
+                const mapped = Object.entries(value).map(([key, member]) => [key, fluid.deproxyMatValue(member)]);
+                togo = mapped.some(([key, member]) => member !== value[key]) ? Object.fromEntries(mapped) : value;
+            }
+        }
+        return togo;
+    };
+
+    /**
      * Set a value for a component at a specified path, via immutable application if the path is nested below a reactive root.
      * @param {Object} component - The component holding the path to be modified
      * @param {String|Array<String>} path - The path at which to set the value, as a string or array of segments.
-     * @param {any} value - The value to set at the specified path.
+     * @param {any} inValue - The value to set at the specified path - any proxies onto mat-forming material within it are
+     * replaced by the values they front
+     * @param {Object} [options] - Options governing the write
+     * @param {Boolean} [options.recordHistory] - If `true`, the write is recorded in the history even if it is not to a
+     * reactive root of a user component, as is done for the mutating methods of an array
      * @return {Cell<Object>} Signal for the value at the updated path, which will now have been raised into the live layer
      */
-    fluid.setForComponent = function (component, path, value) {
+    fluid.setForComponent = function (component, path, inValue, options = {}) {
+        const value = fluid.deproxyMat(inValue);
         const segs = fluid.pathToSegs(path),
             shadow = component[$m];
         const reactiveSegs = fluid.findReactiveRoot(shadow.shadowMap, segs);
@@ -1000,10 +1041,13 @@ const $fluidILScope = function (fluid) {
         const updated = reactiveSegs ? fluid.setImmutable(existingValue, surplusSegs, value) : value;
         if (updated !== existingValue) {
             existing.set(updated);
-            if (reactiveSegs && fluid.isUserLayer(fluid.peek(component.$layers))) {
+            // Writes beneath a reactive root of a user component are recorded at the whole of the root. Writes to its
+            // other members are not, since its reactive roots alone are the state which navigating its history restores
+            // - e.g. the editor records its open tabs but not which of them is selected
+            if (options.recordHistory || reactiveSegs && fluid.isUserLayer(fluid.peek(component.$layers))) {
                 // We'd like this to be asynchronous but then source tracking breaks down
                 //fluid.invokeLater(() => {
-                const layerName = fluid.renderSite({shadow, segs: reactiveSegs});
+                const layerName = fluid.renderSite({shadow, segs: reactiveSegs || segs});
                 fluid.pushHistory({type: "updateLayer", oldValue: existingValue, newValue: updated, layerName});
                 //});
             }
@@ -2701,7 +2745,11 @@ const $fluidILScope = function (fluid) {
                 fluid.expectLiveComponent(shadow, prop);
                 // Use "Symbol.toStringTag" to make sure that tricks like Qunit's plain object detection work on the target
                 const deTarget = fluid.deSignalSoft(target);
-                if (prop === Symbol.toStringTag) {
+                // The material fronted by the proxy may have gone away, e.g. an element of an array which has since
+                // been shortened - the proxy then reads as empty
+                if (deTarget === undefined || deTarget === null) {
+                    return undefined;
+                } else if (prop === Symbol.toStringTag) {
                     return Array.isArray(deTarget) ? "Array" : deTarget[Symbol.toStringTag];
                 } else {
                     const nextSegs = [...segs, prop];
@@ -2712,19 +2760,15 @@ const $fluidILScope = function (fluid) {
                         fluid.getForComponent(shadow, nextSegs) : deTarget[prop]; // TODO: These two should be the same but perhaps latter is optimisation when in config
                     if (Array.isArray(deTarget) && typeof(deTarget[prop]) === "function") {
                         if (fluid.mutatingArrayMethods[prop]) {
-                            const liveSignal = fluid.pathToLive(shadow, segs);
-                            // For any mutating array methods, assemble a shallow copy of the current live layer value,
-                            // apply the mutation to that, and after it is done, write it back into the live layer
-                            // TODO: pass this through fluid.setForComponent taking account of inReactive
-                            const oldValue = liveSignal.get();
-                            const forked = [...oldValue];
+                            // For any mutating array methods, assemble a shallow copy of the array's current value,
+                            // apply the mutation to that, and after it is done, write it back via fluid.setForComponent,
+                            // which applies it immutably to any reactive root enclosing the array - the mutation is
+                            // recorded in the history whether or not the array is within a reactive root
                             return function () {
+                                const oldValue = fluid.cell.untracked(() => fluid.deSignal(fluid.getForComponent(shadow, segs)));
+                                const forked = [...oldValue];
                                 const togo = Array.prototype[prop].apply(forked, arguments);
-                                liveSignal.set(forked);
-                                fluid.invokeLater( () => {
-                                    const layerName = fluid.renderSite({shadow, segs: segs});
-                                    fluid.pushHistory({type: "updateLayer", oldValue, newValue: forked, layerName});
-                                });
+                                fluid.setForComponent(shadow.that, segs, forked, {recordHistory: true});
                                 return togo;
                             };
                         } else {
@@ -2774,13 +2818,17 @@ const $fluidILScope = function (fluid) {
                 set: setHandler,
                 deleteProperty: deleteHandler,
                 // Pattern described at https://stackoverflow.com/a/50139861/1381443
+                // Each of these tolerates material which has gone away, as getHandler does
                 ownKeys: () => {
-                    return Reflect.ownKeys(fluid.deSignalSoft(target));
+                    return Reflect.ownKeys(Object(fluid.deSignalSoft(target) ?? {}));
                 },
                 getOwnPropertyDescriptor: function (target, prop) {
-                    return Reflect.getOwnPropertyDescriptor(fluid.deSignalSoft(target), prop);
+                    return Reflect.getOwnPropertyDescriptor(Object(fluid.deSignalSoft(target) ?? {}), prop);
                 },
-                getPrototypeOf: () => Object.getPrototypeOf(fluid.deSignalSoft(target))
+                getPrototypeOf: () => {
+                    const deTarget = fluid.deSignalSoft(target);
+                    return deTarget === undefined || deTarget === null ? null : Object.getPrototypeOf(deTarget);
+                }
             });
             return rec.proxy = proxy;
         }

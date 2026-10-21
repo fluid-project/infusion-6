@@ -1,3 +1,6 @@
 node_modules
 
 .idea/
+
+# Local copy of the Pixabay API key, which is embedded in demo/tldraw/js/pixabay.js
+pixabay-api-key.txt

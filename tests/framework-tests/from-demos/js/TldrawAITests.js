@@ -172,6 +172,60 @@ QUnit.test("Changes planned from PTF document", function (assert) {
     expectedProblems.forEach((fragment, i) => assert.ok(plan.problems[i].includes(fragment), "Problem reported: " + fragment));
 });
 
+// Widgets synthesized by the AI must name fluid.topLevelWidget, which is checked by a search of the layers it sends
+QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function (assert) {
+    const jsonPart = fluid.tests.tldrawAI.jsonPart;
+    const layerPart = (layerName, layers) => ({kind: "layer", contentType: "text/javascript", filename: layerName,
+        body: `fluid.def(${JSON.stringify(layerName)}, {$layers: ${JSON.stringify(layers)}, extra: 1});`});
+    const plan = parts => fluid.tldraw.ai.planChanges(fluid.ptf.decode(fluid.ptf.encode(parts)), ["shape:a"], ["shape:a", "shape:note1"]);
+    const create = (key, layerName, extra = []) => ({kind: "component", filename: key, parts: [jsonPart("potentia", "/", {$layers: [layerName]}), ...extra]});
+    const deletion = {kind: "delete", contentType: "text/plain", filename: "shape:note1", body: ""};
+
+    const missing = plan([layerPart("fluid.demos.ai.adapted", "fluid.demos.counter"), create("new-1", "fluid.demos.ai.adapted"), deletion]);
+    assert.deepEqual([missing.layers, missing.creations, missing.updates, missing.deletions], [[], [], [], []],
+        "Document synthesizing a widget without fluid.topLevelWidget rejected in its entirety");
+    assert.equal(missing.problems.length, 1, "One problem reported");
+    assert.ok(missing.problems[0].includes("synthesizes widgets from the layers fluid.demos.ai.adapted") &&
+        missing.problems[0].includes("fluid.topLevelWidget"), "Missing layer described");
+
+    const rebuilt = plan([layerPart("fluid.demos.ai.adapted", "fluid.demos.counter"),
+        {kind: "component", filename: "shape:a", parts: [jsonPart("potentia", "/", {$layers: ["fluid.demos.ai.adapted"]})]}]);
+    assert.equal(rebuilt.problems.length, 1, "Replacement of widget from synthesized layer is checked too");
+
+    const nested = plan([create("new-1", "fluid.demos.ai.nested", [layerPart("fluid.demos.ai.nested", "fluid.demos.counter")])]);
+    assert.equal(nested.problems.length, 1, "Layer defined within component part is checked");
+
+    const named = plan([layerPart("fluid.demos.ai.adapted", ["fluid.demos.counter", "fluid.topLevelWidget"]), create("new-1", "fluid.demos.ai.adapted"), deletion]);
+    assert.deepEqual([named.problems, named.layers.length, named.creations.length, named.deletions], [[], 1, 1, ["shape:note1"]],
+        "Document naming fluid.topLevelWidget accepted");
+
+    assert.deepEqual(plan([create("new-1", "fluid.demos.counter")]).problems, [], "Widget created from an existing layer need not name it");
+    assert.deepEqual(plan([layerPart("fluid.demos.ai.helper", "fluid.component")]).problems, [], "Layer defined without synthesizing a widget need not name it");
+
+    // The rejection is reported to the AI for correction, and nothing is applied
+    const bridge = fluid.tests.tldrawAI.makeFakeBridge(fluid.tests.tldrawAI.makeWorkspace([]), []);
+    const sent = [];
+    const responses = [
+        fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", "fluid.demos.counter"), create("new-1", "fluid.demos.ai.adapted")]),
+        fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", ["fluid.demos.counter", "fluid.topLevelWidget"]), create("new-1", "fluid.demos.ai.adapted")])
+    ];
+    await fluid.tldraw.ai.converse({
+        direction: "Adapt the counter",
+        history: [],
+        bridge,
+        call: messages => {
+            sent.push(fluid.peek(messages).content);
+            return Promise.resolve(responses[sent.length - 1]);
+        },
+        report: () => {},
+        getDocs: () => Promise.resolve([])
+    });
+    assert.equal(sent.length, 2, "AI asked to correct its response");
+    assert.ok(sent[1].includes("does not name fluid.topLevelWidget"), "Correction requested names the missing layer");
+    assert.deepEqual(bridge.plans.map(oneplan => oneplan.creations.length), [0, 1], "Nothing applied from rejected response, and corrected one applied");
+    assert.ok(fluid.tldraw.ai.responseRules.includes("must apply `fluid.topLevelWidget` at its top level"), "AI instructed to apply fluid.topLevelWidget");
+});
+
 QUnit.test("Worked examples in the response rules are valid", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const examples = fluid.tldraw.ai.responseRules.split("\nMIME-Version: 1.0\n").slice(1)
@@ -418,6 +472,38 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     that.destroy();
 });
 
+QUnit.test("Markdown rendered safely - fluid-project/infusion-6#24", function (assert) {
+    const element = document.createElement("div");
+    fluid.demos.markdownBlock.renderInto(element, "# Title\n\n* One <script>alert(1)</script>\n* [Two](https://example.com) [Three](javascript:alert)\n\n`a<b`", true);
+    assert.equal(qs("h1", element).textContent, "Title", "Heading rendered");
+    assert.deepEqual(qsa("li", element).map(li => li.textContent), ["One <script>alert(1)</script>", "Two Three"], "List rendered");
+    assert.notOk(qs("script", element), "Markup in text escaped");
+    const links = qsa("a", element);
+    assert.equal(links[0].getAttribute("href"), "https://example.com", "http(s) link retained");
+    assert.equal(links[0].getAttribute("target"), "_blank", "Link opens in a fresh tab");
+    assert.notOk(links[1].hasAttribute("href"), "Link to javascript URL neutralised");
+    assert.equal(qs("code", element).textContent, "a<b", "Inline code rendered");
+    fluid.demos.markdownBlock.renderInto(element, "Plain **text** <b>here</b>", false);
+    assert.equal(element.textContent, "Plain **text** <b>here</b>", "Plain text rendered as it stands");
+    assert.notOk(qs("b", element), "Plain text holds no markup");
+});
+
+QUnit.test("Tokens in common prompt prefix assumed cached", function (assert) {
+    const workspace = fluid.tests.tldrawAI.makeWorkspace([]);
+    const system = fluid.tldraw.ai.systemPrompt(["DOCS"], workspace);
+    const prefixLength = system.indexOf(fluid.tldraw.ai.workspaceHeading);
+    assert.ok(prefixLength > 0 && system.substring(0, prefixLength).includes("DOCS"), "Prefix holds the introduction and documentation");
+    const messages = fluid.tldraw.ai.buildMessages(system, [], "Do something");
+    const totalLength = messages.reduce((total, message) => total + message.content.length, 0);
+    assert.equal(fluid.tldraw.ai.cachedTokens(messages), Math.floor(prefixLength / 4), "Cached tokens estimated from prefix");
+    assert.equal(fluid.tldraw.ai.cachedTokens(messages, 10000), Math.round(10000 * prefixLength / totalLength),
+        "Reported tokens apportioned by prefix's share of request");
+    assert.equal(fluid.tldraw.ai.cachedTokens([{role: "user", content: "Hello"}], 50), 0, "Nothing cached without system prompt");
+    const entry = {inputTokens: 10234, cachedTokens: 8000, estimated: false};
+    assert.equal(fluid.demos.askAnythingEntry.formatSent(entry), "2,234 tokens (8,000 cached)", "Uncached tokens are headline figure");
+    assert.equal(fluid.demos.askAnythingEntry.formatSent({...entry, estimated: true}), "~2,234 tokens (~8,000 cached)", "Estimates marked");
+});
+
 QUnit.test("Ask me anything panel converses through the bridge", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const container = qs(".container");
@@ -425,8 +511,9 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
     const originalFetch = fluid.tldraw.ai.fetchDocs;
     const calls = [];
     fluid.tldraw.ai.callEndpoint = options => {
-        calls.push(options);
-        return Promise.resolve("<think>Easy</think>There is nothing here yet");
+        // The messages are copied, since the conversation goes on to append the reply to them
+        calls.push({...options, messages: [...options.messages]});
+        return Promise.resolve({content: "<think>Easy</think>There is **nothing** here yet", usage: {inputTokens: 12345, outputTokens: 67, reasoningTokens: 5}});
     };
     fluid.tldraw.ai.fetchDocs = () => Promise.resolve(["DOCS"]);
     fluid.tldraw.ai.bridge = fluid.tests.tldrawAI.makeFakeBridge(fluid.tests.tldrawAI.makeWorkspace([]), []);
@@ -443,17 +530,31 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
         assert.notOk(isHidden(".ask-anything-composer"), "Composer shown once token is held");
         assert.ok(qs(".ask-anything-composer .ask-anything-button", container).hasAttribute("disabled"), "Send disabled without direction");
 
-        that.state.direction = "What is on the canvas?";
+        that.state.direction = "What is on the *canvas*?";
         fluid.cell.stabilize();
         await that.send();
         fluid.cell.stabilize();
         assert.equal(calls.length, 1, "Endpoint called once");
         assert.equal(calls[0].token, "abc123", "Token presented to endpoint");
         assert.equal(calls[0].model, fluid.tldraw.ai.defaultModel, "Default model requested");
-        const rendered = qsa(".ask-anything-entry", container);
+        assert.notOk("usage" in calls[0].messages[0], "Usage is not sent to the AI");
+        const allRendered = qsa(".ask-anything-entry", container);
+        const metrics = allRendered.filter(entry => entry.classList.contains("ask-anything-metrics-entry"));
+        assert.equal(metrics.length, 1, "One metrics entry for the one request");
+        const cached = fluid.tldraw.ai.cachedTokens(calls[0].messages, 12345);
+        assert.ok(cached > 0 && cached < 12345, "Part of the request's tokens assumed cached");
+        const metricsText = qs(".ask-anything-metrics", metrics[0]).textContent;
+        assert.ok(/^Received text in \d+\.\d s - sent /.test(metricsText), "Metrics report elapsed time");
+        assert.ok(metricsText.endsWith(`sent ${(12345 - cached).toLocaleString("en-US")} tokens (${cached.toLocaleString("en-US")} cached), `
+            + "received 67 tokens, of which 5 tokens reasoning"), "Metrics report uncached tokens as headline, followed by cached tokens");
+        assert.equal(that.state.entries[1].finishedAt !== null, true, "Metrics entry completed");
+        const rendered = allRendered.filter(entry => !metrics.includes(entry));
         assert.deepEqual(rendered.map(entry => qs(".ask-anything-entry-text", entry).textContent),
-            ["What is on the canvas?", "There is nothing here yet"], "User's direction and AI's reply rendered");
+            ["What is on the *canvas*?", "There is nothing here yet"], "User's direction and AI's reply rendered");
         assert.ok(rendered[1].classList.contains("ask-anything-assistant"), "Reply rendered as assistant entry");
+        assert.equal(qs(".ask-anything-entry-text strong", rendered[1])?.textContent, "nothing", "Reply rendered as markdown");
+        assert.notOk(qs(".ask-anything-entry-text em", rendered[0]), "User's direction rendered as plain text");
+        assert.equal(qs(".ask-anything-model input", container).getAttribute("readonly"), "", "Model is read-only");
         assert.ok(qs(".ask-anything-entry-detail", rendered[1]).classList.contains("ask-anything-hidden"), "Empty detail hidden");
         assert.equal(that.state.direction, "", "Direction cleared once sent");
         assert.equal(that.state.busy, false, "Panel no longer busy");
@@ -473,6 +574,35 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
         assert.equal(qs(".ask-anything-login-error", container).textContent, "The password was not accepted - please enter it again.",
             "Rejection explained");
         assert.ok(fluid.peek(qsa(".ask-anything-entry", container)).classList.contains("ask-anything-error"), "Rejection reported");
+        assert.ok(/^Request failed after \d+\.\d s - sent ~[\d,]+ tokens \(~[\d,]+ cached\)$/.test(fluid.peek(qsa(".ask-anything-metrics", container)).textContent),
+            "Failed request reported in metrics");
+
+        // A pending request whose reply, holding a PTF document, reports no usage
+        let resolveReply;
+        const pending = fluid.demos.askAnything.measureCall(that.state, [{role: "user", content: "x".repeat(400)}],
+            () => new Promise(resolve => resolveReply = resolve));
+        fluid.cell.stabilize();
+        const lastMetrics = () => fluid.peek(qsa(".ask-anything-metrics", container)).textContent;
+        assert.ok(/^Waiting for the AI: \d+\.\d s - sent ~100 tokens \(~0 cached\)$/.test(lastMetrics()), "Pending request reported with estimated input");
+        resolveReply("MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"b\"\n\n--b\nContent-Description: layer\n\nx\n--b--\n");
+        await pending;
+        fluid.cell.stabilize();
+        assert.ok(/^Received a PTF document in \d+\.\d s - sent ~100 tokens \(~0 cached\), received ~\d+ tokens \(estimated\)$/.test(lastMetrics()),
+            "PTF reply reported with estimated token counts");
+
+        // Text and problems offered by the canvas on paste
+        assert.ok(fluid.demos.askAnything.offer({text: "Pasted text"}), "Panel found to receive offer");
+        fluid.cell.stabilize();
+        assert.equal(that.state.direction, "Pasted text", "Offered text placed in direction");
+        fluid.demos.askAnything.offer({text: "More text"});
+        fluid.cell.stabilize();
+        assert.equal(that.state.direction, "Pasted text\nMore text", "Further offered text appended to direction");
+        fluid.demos.askAnything.offer({problem: "The paste failed", detail: "Junk"});
+        fluid.cell.stabilize();
+        const problem = fluid.peek(qsa(".ask-anything-entry", container));
+        assert.ok(problem.classList.contains("ask-anything-error"), "Offered problem reported as error");
+        assert.equal(qs(".ask-anything-entry-text", problem).textContent, "The paste failed", "Offered problem described");
+        assert.equal(qs(".ask-anything-entry-detail pre", problem).textContent, "Junk", "Offered problem detail held");
         that.destroy();
     } finally {
         fluid.tldraw.ai.callEndpoint = originalCall;
@@ -480,4 +610,225 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
         fluid.tldraw.ai.bridge = undefined;
         fluid.demos.askAnything.history = [];
     }
+});
+
+/**
+ * Construct a fake Pixabay hit
+ * @param {Number} id - The image's id
+ * @param {String} url - The image's URL
+ * @return {Object} The hit, as found in a Pixabay API response
+ */
+fluid.tests.tldrawAI.pixabayHit = (id, url) => ({
+    id,
+    webformatURL: url,
+    webformatWidth: 640,
+    webformatHeight: 427,
+    tags: "red fox, snow",
+    pageURL: `https://pixabay.com/photos/fox-${id}/`,
+    user: "Some User",
+    user_id: 42
+});
+
+/**
+ * Replace the fetching of the Pixabay API by a fake, recording the API requests made
+ * @param {Function} respond - Accepts the parameters of an API request and returns the hits to be returned for it
+ * @return {Object[]} The parameters of each API request made, to which the fake will append
+ */
+fluid.tests.tldrawAI.fakePixabay = function (respond) {
+    const requests = [];
+    fluid.demos.pixabay.cache.clear();
+    fluid.demos.pixabay.fetch = url => {
+        const params = Object.fromEntries(new URL(url).searchParams);
+        requests.push(params);
+        return Promise.resolve({ok: true, json: () => Promise.resolve({totalHits: 1, hits: respond(params)})});
+    };
+    return requests;
+};
+
+QUnit.test("Image widget finds and credits images from Pixabay", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const originalFetch = fluid.demos.pixabay.fetch;
+    const requests = fluid.tests.tldrawAI.fakePixabay(params => params.id === "1" ? [fluid.tests.tldrawAI.pixabayHit(1, "https://pixabay.com/get/fresh.jpg")] :
+        params.q === "nothing" ? [] : [fluid.tests.tldrawAI.pixabayHit(1, "https://pixabay.com/get/one.jpg"), fluid.tests.tldrawAI.pixabayHit(2, "https://pixabay.com/get/two.jpg")]);
+    const container = qs(".container");
+    try {
+        const that = fluid.demos.imageGenerator({container});
+        fluid.cell.stabilize();
+        assert.notOk(qs("img", container), "No image initially");
+        that.state.prompt = "  A red fox in the snow  ";
+        fluid.cell.stabilize();
+        await that.generate();
+        fluid.cell.stabilize();
+        assert.deepEqual(requests, [{key: fluid.demos.pixabay.apiKey, q: "A red fox in the snow", safesearch: "true", per_page: "20"}],
+            "Pixabay searched for the trimmed prompt with the embedded key");
+        assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/one.jpg", "First image shown");
+        assert.equal(qs("img", container).getAttribute("alt"), "red fox, snow", "Image described by its tags");
+        const links = qsa(".imagegen-credit a", container);
+        assert.equal(qs(".imagegen-credit", container).textContent.replace(/\s+/g, " ").trim(), "Image by Some User from Pixabay", "Image credited");
+        assert.deepEqual(links.map(link => link.getAttribute("href")), ["https://pixabay.com/users/Some%20User-42/", "https://pixabay.com/photos/fox-1/"],
+            "Credit links to contributor and image page");
+
+        that.showAnother();
+        fluid.cell.stabilize();
+        assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/two.jpg", "Another image shown");
+        that.showAnother();
+        fluid.cell.stabilize();
+        assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/one.jpg", "First image shown again after the last");
+
+        await that.generate();
+        assert.equal(requests.length, 1, "Repeated search answered from cache");
+
+        // An expired URL is refreshed once by looking the image up by its id
+        await that.refresh();
+        fluid.cell.stabilize();
+        assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/fresh.jpg", "Expired image refreshed");
+        await that.refresh();
+        assert.equal(requests.length, 2, "Image refreshed only once");
+
+        that.state.prompt = "nothing";
+        fluid.cell.stabilize();
+        await that.generate();
+        fluid.cell.stabilize();
+        assert.equal(qs(".imagegen-error", container).textContent, "No images on Pixabay match \"nothing\" - try describing it differently",
+            "Absence of results reported");
+        that.destroy();
+    } finally {
+        fluid.demos.pixabay.fetch = originalFetch;
+        fluid.demos.pixabay.cache.clear();
+    }
+});
+
+QUnit.test("History commands and their keyboard shortcuts", function (assert) {
+    const [liveBack, liveForward, layerBack, layerForward] = fluid.tldraw.historyCommands;
+    assert.deepEqual(fluid.tldraw.historyCommands.map(command => fluid.tldraw.commandTooltip(command, false)), [
+        "Undo widget change (Ctrl+Z)", "Redo widget change (Ctrl+Y)", "Undo layer change (Ctrl+Shift+Z)", "Redo layer change (Ctrl+Shift+Y)"
+    ], "Shortcuts advertised for Windows and Linux");
+    assert.deepEqual(fluid.tldraw.historyCommands.map(command => fluid.tldraw.shortcutLabel(command, true)), ["⌘Z", "⌘Y", "⇧⌘Z", "⇧⌘Y"],
+        "Shortcuts advertised for macOS");
+    assert.ok(fluid.tldraw.isApple({platform: "MacIntel"}), "macOS detected");
+    assert.ok(fluid.tldraw.isApple({userAgentData: {platform: "macOS"}}), "macOS detected from user agent data");
+    assert.notOk(fluid.tldraw.isApple({platform: "Win32"}), "Windows is not Apple");
+    const key = (key, modifiers) => ({key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...modifiers});
+    assert.equal(fluid.tldraw.commandForKey(key("z", {ctrlKey: true}), false), liveBack, "Ctrl+Z undoes state");
+    assert.equal(fluid.tldraw.commandForKey(key("y", {ctrlKey: true}), false), liveForward, "Ctrl+Y redoes state");
+    assert.equal(fluid.tldraw.commandForKey(key("Z", {ctrlKey: true, shiftKey: true}), false), layerBack, "Ctrl+Shift+Z undoes layers");
+    assert.equal(fluid.tldraw.commandForKey(key("Y", {ctrlKey: true, shiftKey: true}), false), layerForward, "Ctrl+Shift+Y redoes layers");
+    assert.equal(fluid.tldraw.commandForKey(key("z", {metaKey: true}), true), liveBack, "Cmd+Z undoes state on macOS");
+    assert.equal(fluid.tldraw.commandForKey(key("z", {ctrlKey: true}), true), undefined, "Ctrl+Z does nothing on macOS");
+    assert.equal(fluid.tldraw.commandForKey(key("z", {metaKey: true}), false), undefined, "Meta+Z does nothing elsewhere");
+    assert.equal(fluid.tldraw.commandForKey(key("z", {ctrlKey: true, altKey: true}), false), undefined, "Alt modifies the shortcut away");
+    assert.equal(fluid.tldraw.commandForKey(key("z"), false), undefined, "Plain key does nothing");
+    assert.ok(fluid.tldraw.isTextEditing(document.createElement("textarea")), "Text area edits text");
+    assert.notOk(fluid.tldraw.isTextEditing(document.createElement("button")), "Button does not edit text");
+    assert.notOk(fluid.tldraw.isTextEditing(null), "Nothing focused does not edit text");
+});
+
+QUnit.test("Sites in the arena referred to relative to their widget", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const first = fluid.tests.tldrawAI.makeCounter(qs(".container"), "shape:a", 1);
+    const instances = new Map([["shape:a", first]]);
+    const site = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first), segs: ["state"]});
+    const ref = fluid.tldraw.siteToRef(site, instances);
+    assert.deepEqual(ref, {shapeId: "shape:a", component: "/", path: "state"}, "Site in widget referred to by shape");
+    const viewSite = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first.view), segs: ["hostBounds"]});
+    assert.deepEqual(fluid.tldraw.siteToRef(viewSite, instances), {shapeId: "shape:a", component: "/view", path: "hostBounds"},
+        "Site in widget's subcomponent referred to by its path");
+    assert.ok(fluid.tldraw.findWidget(fluid.ptf.componentToShadow(first.view), instances), "Subcomponent belongs to widget");
+    assert.equal(fluid.tldraw.siteToRef(site, new Map()), null, "Site outside any widget cannot be referred to");
+
+    // Reconstruct the widget, as on restoring the arena
+    const second = fluid.tests.tldrawAI.makeCounter(qs(".container2"), "shape:a", 0);
+    const restored = new Map([["shape:a", second]]);
+    assert.equal(fluid.tldraw.refToSite(ref, restored), fluid.renderSite({shadow: fluid.ptf.componentToShadow(second), segs: ["state"]}),
+        "Reference resolved to reconstructed widget");
+    assert.equal(fluid.tldraw.refToSite({...ref, shapeId: "shape:gone"}, restored), null, "Reference to missing widget resolves to nothing");
+    assert.equal(fluid.tldraw.refToSite({...ref, component: "/missing"}, restored), null, "Reference to missing component resolves to nothing");
+    first.destroy();
+    second.destroy();
+});
+
+QUnit.test("Sent directions recalled with the arrow keys", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const that = fluid.demos.askAnything({container: qs(".container")});
+    fluid.cell.stabilize();
+    const state = that.state;
+    state.entries = ["First", "Second", "Second", "Third\nwith two lines"].map(text => ({kind: "user", text, detail: ""}))
+        .concat([{kind: "assistant", text: "A reply", detail: ""}]);
+    assert.deepEqual(fluid.demos.askAnything.sentDirections(state.entries), ["First", "Second", "Third\nwith two lines"],
+        "Sent directions listed, with repetitions once");
+    // A stand-in for the textarea, whose value follows the direction and whose caret is placed as given
+    const textarea = caret => ({value: state.direction, selectionStart: caret ?? state.direction.length, selectionEnd: caret ?? state.direction.length});
+    const press = (key, caret) => {
+        let prevented = false;
+        const target = {...textarea(caret), setSelectionRange: () => {}};
+        fluid.demos.askAnything.directionKeyDown(that, {key, target, preventDefault: () => prevented = true});
+        fluid.cell.stabilize();
+        return prevented;
+    };
+    state.direction = "Half typed";
+    assert.ok(press("ArrowUp"), "Up recalls from a single line");
+    assert.equal(state.direction, "Third\nwith two lines", "Most recent direction recalled first");
+    assert.ok(press("ArrowUp"), "Up recalls again from an unedited recalled direction, wherever its caret");
+    assert.equal(state.direction, "Second", "Earlier direction recalled");
+    press("ArrowUp");
+    assert.equal(state.direction, "First", "Earliest direction recalled");
+    assert.notOk(press("ArrowUp"), "Nothing earlier to recall, so the arrow moves the caret as usual");
+    assert.equal(state.direction, "First", "Earliest direction retained");
+    press("ArrowDown");
+    press("ArrowDown");
+    assert.equal(state.direction, "Third\nwith two lines", "Down recalls later directions");
+    assert.ok(press("ArrowDown"), "Down beyond the latest direction");
+    assert.equal(state.direction, "Half typed", "Direction typed before recall restored");
+    assert.notOk(press("ArrowDown"), "Down without recall moves the caret as usual");
+
+    // A recalled direction which has been edited is only left when the caret is on its first or last line
+    press("ArrowUp");
+    state.direction = "Third\nwith two lines, edited";
+    assert.notOk(press("ArrowUp", 10), "Up within the last line of an edited direction moves the caret");
+    assert.notOk(press("ArrowDown", 2), "Down within the first line of an edited direction moves the caret");
+    assert.ok(press("ArrowUp", 2), "Up from the first line recalls");
+    assert.equal(state.direction, "Second", "Edited direction left for an earlier one");
+    let prevented = false;
+    fluid.demos.askAnything.directionKeyDown(that, {key: "ArrowUp", shiftKey: true, target: {...textarea(0), setSelectionRange: () => {}},
+        preventDefault: () => prevented = true});
+    assert.notOk(prevented, "Shift+Up extends the selection as usual");
+    that.destroy();
+});
+
+QUnit.test("Widget layers listed from the layer store, and deleted", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const listed = () => {
+        fluid.cell.stabilize();
+        return fluid.tldraw.widgetLayers.get();
+    };
+    assert.ok(listed().includes("fluid.demos.counter"), "Widget layer loaded by the page listed");
+    assert.notOk(listed().includes("fluid.demos.askAnything"), "Layer which is not a widget not listed");
+    assert.notOk(listed().includes("fluid.topLevelWidget"), "Framework layer not listed");
+
+    // A JavaScript layer, as sent by the AI, and one built on it
+    fluid.ptf.registerLayerPart({kind: "layer", contentType: "text/javascript", filename: "fluid.demos.ai.colourChanger",
+        body: "fluid.def(\"fluid.demos.ai.colourChanger\", {$layers: \"fluid.topLevelWidget\", colour: \"red\"});"});
+    assert.ok(listed().includes("fluid.demos.ai.colourChanger"), "JavaScript widget layer sent by the AI listed at once");
+    fluid.def("fluid.demos.ai.colourChangerPlus", {$layers: ["fluid.demos.ai.colourChanger"], extra: 1});
+    assert.ok(listed().includes("fluid.demos.ai.colourChangerPlus"), "Layer acquiring fluid.topLevelWidget from its parent listed");
+    // An SFC layer registered from its text, as from a PTF document
+    fluid.ptf.registerLayerPart({kind: "layer", contentType: "text/x-vue", filename: "fluid.demos.ai.sfcWidget",
+        body: "<script>\nfluid.def(\"fluid.demos.ai.sfcWidget\", {$layers: \"fluid.topLevelWidget\"});\n</script>\n<template><div>SFC</div></template>"});
+    await fluid.cell.waitFor(fluid.readSFC("fluid.demos.ai.sfcWidget").docInjectEffects.get(document).injDone);
+    await fluid.cell.settle();
+    assert.ok(listed().includes("fluid.demos.ai.sfcWidget"), "SFC widget layer registered from text listed");
+
+    assert.deepEqual(fluid.tldraw.dependentLayers("fluid.demos.ai.colourChanger"), ["fluid.demos.ai.colourChangerPlus"], "Dependent layer found");
+    assert.equal(fluid.tldraw.deletionQuestion("fluid.demos.ai.colourChanger", 2, ["fluid.demos.ai.colourChangerPlus"], false),
+        "Delete the layer fluid.demos.ai.colourChanger?\n\nThe 2 widgets on the canvas made from it will be deleted too.\n\n"
+        + "These layers are built on it, and will no longer work: fluid.demos.ai.colourChangerPlus\n\n"
+        + "The deletion of the layer can be undone with Ctrl+Shift+Z.", "Deletion question describes its consequences");
+    assert.equal(fluid.tldraw.deletionQuestion("x.y", 0, [], true), "Delete the layer x.y?\n\nThe deletion of the layer can be undone with ⇧⌘Z.",
+        "Deletion question for unused layer on macOS");
+
+    fluid.deleteLayer("fluid.demos.ai.colourChangerPlus");
+    fluid.deleteLayer("fluid.demos.ai.colourChanger");
+    assert.notOk(listed().includes("fluid.demos.ai.colourChanger"), "Deleted layer no longer listed");
+    fluid.deleteLayer("fluid.demos.ai.sfcWidget");
+    assert.notOk(listed().includes("fluid.demos.ai.sfcWidget"), "Deleted SFC layer no longer listed");
 });

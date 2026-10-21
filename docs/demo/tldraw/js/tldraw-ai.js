@@ -4,24 +4,14 @@
 // See https://github.com/fluid-project/infusion-6/issues/22
 
 import {createShapeId} from "tldraw";
-import {infusionInstances, registerPendingParts, awaitInstantiation, snapshotForUndo} from "./tldraw-clipboard.js";
-
-// How long to wait for a fresh or replaced widget to be constructed and become available before diagnosing it
-const instantiationTimeout = 8000;
+import {infusionInstances, registerPendingParts, awaitInstantiation, snapshotForUndo, instantiationTimeout, wait,
+    awaitReport, describeInstantiation, isWidgetAvailable} from "./tldraw-clipboard.js";
 
 // How long to let the workspace settle after a change before diagnosing its widgets
 const settleDelay = 500;
 
 // The gap left between the user's selection and a fresh widget placed beside it
 const placementGap = 40;
-
-/**
- * Returns a promise which resolves after the supplied delay
- * @param {Number} delay - The delay in milliseconds
- * @param {any} [value] - The value with which the promise resolves
- * @return {Promise} A promise resolving to `value` after `delay`
- */
-const wait = (delay, value) => new Promise(resolve => setTimeout(() => resolve(value), delay));
 
 /**
  * @typedef {Object} AppliedChanges
@@ -98,10 +88,8 @@ export const makeAIBridge = function (editor) {
      */
     const checkInstantiation = async function (instantiation, shapeId, change) {
         const problems = await diagnoseInstantiation(instantiation, shapeId, change);
-        const that = infusionInstances.get(shapeId);
-        const available = that && !fluid.isUnavailable(fluid.ptf.componentToShadow(that).availableInstance.get());
         let togo;
-        if (shapeId !== change.key && problems.length > 0 && !available) {
+        if (shapeId !== change.key && problems.length > 0 && !isWidgetAvailable(shapeId)) {
             editor.deleteShapes([shapeId]);
             togo = problems.map(problem => problem + " - its shape has been removed");
         } else {
@@ -118,25 +106,9 @@ export const makeAIBridge = function (editor) {
      * @return {Promise<String[]>} A promise for descriptions of any problems found
      */
     const diagnoseInstantiation = async function (instantiation, shapeId, change) {
-        const report = await Promise.race([instantiation, wait(instantiationTimeout, null)]);
+        const report = await awaitReport(instantiation);
         const what = `The widget ${JSON.stringify(change.key)}` + (shapeId === change.key ? "" : ` (now shape ${shapeId})`);
-        let togo;
-        if (report === null) {
-            const that = infusionInstances.get(shapeId);
-            if (that) {
-                const diagnosis = fluid.tldraw.ai.diagnose(that, true);
-                togo = diagnosis.length > 0 ? diagnosis.map(problem => `${what}: ${problem}`) :
-                    [`${what} did not become available within ${instantiationTimeout / 1000} seconds`];
-            } else {
-                togo = [`${what} was never constructed, since its layer ${change.layerName} never became available - `
-                    + "check that the layer is defined, either already or by a layer part"];
-            }
-        } else if (report.error) {
-            togo = [`${what} could not be constructed: ${fluid.tldraw.ai.describeError(report.error)}`];
-        } else {
-            togo = report.unresolved.map(filename => `${what} has no subcomponent at path ${filename} to which its parts could be applied`);
-        }
-        return togo;
+        return describeInstantiation(report, shapeId, change.layerName, what);
     };
 
     /**

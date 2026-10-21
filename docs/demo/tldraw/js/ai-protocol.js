@@ -11,7 +11,7 @@ fluid.registerNamespace("fluid.tldraw.ai");
 // A password-protected proxy which swaps a token derived from the password for the real key of the IFM endpoint
 fluid.tldraw.ai.endpoint = "https://live.ponder.org.uk/ifm/v1/chat/completions";
 
-// The proxy only forwards POSTs, so the models it offers cannot be listed - this may be overridden in the panel
+// The proxy only forwards POSTs, so the models it offers cannot be listed - the panel displays this model read-only
 fluid.tldraw.ai.defaultModel = "IFM/K2-Horizon-375B-A23B";
 
 // Parameters for deriving the proxy token from the password, which must agree with those used to configure the proxy
@@ -221,6 +221,14 @@ any of whose members may be omitted, to place or resize the widget's shape in pa
 without one is placed beside the user's selection, at its layer's \`preferredSize\`.
 * \`delete\` parts, each with an empty body, whose filename is the id of a shape to be removed.
 
+**Every widget you synthesize must apply \`fluid.topLevelWidget\` at its top level.** Whenever you define a layer in \
+your document and construct a fresh or replacement widget from it, the top-level \`$layers\` of that layer's \
+\`fluid.def\` must name \`fluid.topLevelWidget\` explicitly - even if it is already inherited from a parent layer - \
+and as the LAST of its layers, since naming it before a parent which already has it is an inconsistent hierarchy. \
+For example \`$layers: "fluid.topLevelWidget"\` for a widget made from scratch, or \
+\`$layers: ["fluid.demos.counter", "fluid.topLevelWidget"]\` for one adapting the counter. A document which \
+synthesizes a widget without naming \`fluid.topLevelWidget\` is rejected in its entirety, and nothing in it is applied.
+
 Every multipart entity, nested ones included, must declare its own boundary in its Content-Type, distinct from that of \
 any enclosing entity, and every part must have Content-Type, Content-Disposition (with filename) and \
 Content-Description (the part's kind) headers. For example, a response setting the count of an existing counter \
@@ -349,10 +357,10 @@ fluid.tldraw.ai.strategyHints = `## Strategy hints
 * Make the smallest change which achieves the user's direction. To change what a widget holds, prefer \`live\` \
 values applied in place over replacing it.
 * Reuse the existing layer definitions maximally. To adapt a widget, define a fresh layer which lists the existing \
-layer in its \`$layers\` and holds only overrides, rather than copying and editing the existing layer's source, and \
-replace the widget with one constructed from your fresh layer. Only redefine an existing layer when the user asks for \
+layer in its \`$layers\`, followed by \`fluid.topLevelWidget\`, and holds only overrides, rather than copying and \
+editing the existing layer's source, and replace the widget with one constructed from your fresh layer. Only redefine an existing layer when the user asks for \
 every widget made from it to change.
-* To compose two widgets, define a fresh "umbrella" layer with \`fluid.topLevelWidget\` amongst its \`$layers\`, \
+* To compose two widgets, define a fresh "umbrella" layer with \`fluid.topLevelWidget\` as the last of its \`$layers\`, \
 holding each of them as a subcomponent by means of a \`$component\` record naming its existing layer. Choose the view of \
 just one of them as the view of the umbrella with \`view: "{first}.view"\`, and cross-inject between them with \
 references, e.g. \`second: {$component: {$layers: "my.second", input: "{first}.output"}}\`. If the second should share \
@@ -381,6 +389,10 @@ fluid.tldraw.ai.layersToPTF = function (layerNames) {
  * @param {Workspace} workspace - The current state of the workspace
  * @return {String} The system prompt
  */
+// The heading of the section of the system prompt describing the workspace. All that precedes it - the introduction
+// and the documentation - is the same for every request, and so may be assumed to be cached by the endpoint
+fluid.tldraw.ai.workspaceHeading = "# The workspace";
+
 fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
     const usedLayers = new Set(workspace.widgets.map(widget => widget.layerName));
     const libraryLayers = workspace.availableLayers.filter(layerName => !usedLayers.has(layerName));
@@ -390,7 +402,7 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
     return [
         fluid.tldraw.ai.introduction,
         "# Documentation\n\n" + docs.join("\n\n"),
-        "# The workspace\n\nThe following PTF document holds every Infusion widget in the workspace, with the definitions of "
+        fluid.tldraw.ai.workspaceHeading + "\n\nThe following PTF document holds every Infusion widget in the workspace, with the definitions of "
             + "the layers they use, where each is hosted on the canvas, and the native tldraw shapes alongside them:\n\n"
             + fluid.tldraw.ai.workspaceToPTF(workspace) + library,
         "# The user's selection\n\n" + fluid.tldraw.ai.describeSelection(workspace),
@@ -411,7 +423,60 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
  * @typedef {Object} AIReply
  * @property {String} content - The content of the AI's reply
  * @property {String} [reasoning] - Any reasoning which the model reported separately from its content
+ * @property {TokenUsage} [usage] - The numbers of tokens consumed by the request, if the endpoint reported them. This
+ * is not part of the conversation, and is not retained in its history
  */
+
+/**
+ * @typedef {Object} TokenUsage
+ * @property {Number} inputTokens - The number of tokens in the request's messages
+ * @property {Number} outputTokens - The number of tokens in the reply, including any reasoning
+ * @property {Number} [reasoningTokens] - The number of the output tokens spent on reasoning, if reported
+ */
+
+/**
+ * Read the numbers of tokens consumed by a request from the response of an OpenAI-compatible endpoint
+ * @param {Object} payload - The parsed body of the response
+ * @return {TokenUsage|undefined} The numbers of tokens, or `undefined` if the response did not report them
+ */
+fluid.tldraw.ai.usageFromPayload = function (payload) {
+    const usage = payload.usage;
+    const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens;
+    return typeof(usage?.prompt_tokens) === "number" && typeof(usage.completion_tokens) === "number" ? {
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+        ...(typeof(reasoningTokens) === "number" ? {reasoningTokens} : {})
+    } : undefined;
+};
+
+// The average number of characters per token, by which token counts are estimated where they were not reported
+fluid.tldraw.ai.charsPerToken = 4;
+
+/**
+ * Estimate the number of tokens in some texts, for use where an endpoint does not report them
+ * @param {String[]} texts - The texts
+ * @return {Number} The estimated number of tokens
+ */
+fluid.tldraw.ai.estimateTokens = function (texts) {
+    return Math.ceil(texts.reduce((total, text) => total + (text || "").length, 0) / fluid.tldraw.ai.charsPerToken);
+};
+
+/**
+ * Determine how many of the tokens sent in a request lie in the prefix of the prompt which is common to every request -
+ * the part of the system prompt preceding the workspace - and so may be assumed to be cached by the endpoint. Given the
+ * number of tokens which the endpoint reported, this is apportioned by the prefix's share of the request's text, and
+ * otherwise it is estimated from the prefix's length.
+ * @param {ChatMessage[]} messages - The messages sent
+ * @param {Number} [inputTokens] - The number of tokens which the endpoint reported for the request, if any
+ * @return {Number} The number of tokens assumed to be cached
+ */
+fluid.tldraw.ai.cachedTokens = function (messages, inputTokens) {
+    const system = messages.find(message => message.role === "system")?.content || "";
+    const prefixLength = Math.max(0, system.indexOf(fluid.tldraw.ai.workspaceHeading));
+    const totalLength = messages.reduce((total, message) => total + (message.content || "").length, 0);
+    return inputTokens === undefined ? Math.floor(prefixLength / fluid.tldraw.ai.charsPerToken) :
+        totalLength === 0 ? 0 : Math.round(inputTokens * prefixLength / totalLength);
+};
 
 /**
  * Assemble the messages to be sent for a fresh direction from the user. The system prompt is assembled afresh
@@ -469,8 +534,13 @@ fluid.tldraw.ai.callEndpoint = async function ({token, model, messages}) {
     if (response.ok) {
         const payload = await response.json();
         const message = payload.choices?.[0]?.message;
+        const usage = fluid.tldraw.ai.usageFromPayload(payload);
         if (typeof(message?.content) === "string") {
-            togo = typeof(message.reasoning) === "string" ? {content: message.content, reasoning: message.reasoning} : {content: message.content};
+            togo = {
+                content: message.content,
+                ...(typeof(message.reasoning) === "string" ? {reasoning: message.reasoning} : {}),
+                ...(usage ? {usage} : {})
+            };
         } else {
             throw new Error("The AI endpoint returned no message: " + JSON.stringify(payload).substring(0, 500));
         }
@@ -654,7 +724,39 @@ fluid.tldraw.ai.planChanges = function (parts, widgetIds, shapeIds) {
                 + "Content-Description - expected layer, component or delete");
         }
     });
+    fluid.tldraw.ai.checkTopLevelWidget(parts, plan);
     return plan;
+};
+
+// The layer which every widget synthesized by the AI must apply at its top level
+fluid.tldraw.ai.topLevelWidgetLayer = "fluid.topLevelWidget";
+
+/**
+ * Check that a document which synthesizes a widget - that is, constructs a fresh or replacement widget from a layer
+ * which it defines - names `fluid.topLevelWidget` somewhere in its layer definitions, as the AI is instructed to. This
+ * is a simple search of their text rather than an analysis of the layers. If the check fails, the whole document is
+ * rejected for correction, by emptying the plan of all of its changes and reporting the problem.
+ * @param {PTFPart[]} parts - The decoded parts of the document
+ * @param {ChangePlan} plan - The changes planned from the document, which are cleared if the check fails
+ */
+fluid.tldraw.ai.checkTopLevelWidget = function (parts, plan) {
+    const layerParts = [...parts, ...parts.flatMap(part => part.kind === "component" && part.parts ? part.parts : [])]
+        .filter(part => part.kind === "layer");
+    const definedLayers = new Set(layerParts.map(part => part.filename));
+    const synthesized = [...plan.creations, ...plan.updates.filter(change => change.rebuild)]
+        .filter(change => definedLayers.has(change.layerName));
+    const named = layerParts.some(part => part.body.includes(fluid.tldraw.ai.topLevelWidgetLayer));
+    if (synthesized.length > 0 && !named) {
+        const layerNames = [...new Set(synthesized.map(change => change.layerName))].join(", ");
+        plan.layers = [];
+        plan.updates = [];
+        plan.creations = [];
+        plan.deletions = [];
+        plan.problems.push(`Your document synthesizes widgets from the layers ${layerNames} which you define, but does not `
+            + `name ${fluid.tldraw.ai.topLevelWidgetLayer} - every widget you synthesize must name it as the last of the `
+            + "$layers of its layer's definition, even if it is inherited. None of your document has been applied, so "
+            + "send all of it again with this corrected.");
+    }
 };
 
 /**
@@ -815,7 +917,9 @@ fluid.tldraw.ai.converse = async function ({direction, history, bridge, call, re
     while (!done) {
         messages[0].content = fluid.tldraw.ai.systemPrompt(docs, bridge.gatherWorkspace());
         const received = await call(messages);
-        const reply = typeof(received) === "string" ? {content: received} : received;
+        // Any token usage is not part of the conversation, and is reported by the caller - see measureCall
+        // eslint-disable-next-line no-unused-vars
+        const {usage, ...reply} = typeof(received) === "string" ? {content: received} : received;
         const response = fluid.tldraw.ai.parseResponse(reply.content);
         // The reply is retained verbatim, together with any reasoning, since some models reject a history in which
         // their earlier turns have been altered

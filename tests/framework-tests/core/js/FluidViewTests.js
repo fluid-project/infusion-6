@@ -661,7 +661,7 @@ fluid.def("fluid.tests.assigneeIf", {
             view: {
                 $component: {
                     $layers: "fluid.templateViewComponent",
-                    template: `<div class="assignee"></div>`
+                    template: `<div class="assignee">Assigned</div>`
                 }
             }
         }
@@ -669,6 +669,7 @@ fluid.def("fluid.tests.assigneeIf", {
 });
 
 
+// The conditional component's content must be removed along with it - fluid-project/infusion-6#24
 QUnit.test("Conditional rendering", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.assigneeIf({container});
@@ -680,7 +681,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: ""}]}, "Conditional render correct");
+    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: "Assigned"}]}, "Conditional render correct");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -688,7 +689,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: ""}]}, "Conditional render correct 2");
+    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: "Assigned"}]}, "Conditional render correct 2");
 
     that.enabled = false;
     fluid.cell.stabilize();

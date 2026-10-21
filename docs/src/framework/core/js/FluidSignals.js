@@ -800,11 +800,14 @@ const $fluidSignalsScope = function (fluid) {
     fluid.cell.withAmbientSource = function (source, callback) {
         return (e) => {
             fluid.cell.ambientSource = source;
+            let togo;
             try {
-                callback(e);
+                // The callback's return value is passed on, e.g. a promise from an asynchronous method
+                togo = callback(e);
             } finally {
                 fluid.cell.ambientSource = null;
             }
+            return togo;
         };
     };
 

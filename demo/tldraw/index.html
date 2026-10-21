@@ -36,6 +36,11 @@
     <!-- Hosting machinery, and the protocol of the "Ask me anything" AI panel, which do not depend on tldraw -->
     <script src="js/tldraw-hosting.js"></script>
     <script src="js/ai-protocol.js"></script>
+    <!-- Renders the AI's responses as markdown -->
+    <script src="../../src/lib/snarkdown/snarkdown.umd.js"></script>
+    <script src="js/markdown-block.js"></script>
+    <!-- Image search for the image widget -->
+    <script src="js/pixabay.js"></script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -65,15 +70,98 @@
         body {
             font-family: var(--font-body);
         }
-        .new-shape-panel {
+        .top-panel {
+            /* Above tldraw's style panel, a later sibling at z-index 300, which the open layer list would otherwise fall
+               beneath */
+            position: relative;
+            z-index: 301;
             pointer-events: all;
             display: flex;
             gap: 6px;
             margin: 8px;
+        }
+        .new-shape-panel, .history-buttons {
+            display: flex;
+            align-items: center;
+            gap: 6px;
             padding: 6px;
             background: var(--color-panel, white);
             border-radius: 9px;
             box-shadow: var(--shadow-2, 0 1px 4px rgba(0, 0, 0, 0.2));
+        }
+        .history-button {
+            font: inherit;
+            font-size: 16px;
+            line-height: 1;
+            padding: 4px 6px;
+            cursor: pointer;
+        }
+        .history-button:disabled {
+            cursor: default;
+        }
+        .history-caption {
+            font-size: 12px;
+            color: #616161;
+        }
+        .layer-picker {
+            position: relative;
+        }
+        .layer-picker-button {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 280px;
+        }
+        .layer-picker-choice {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .layer-picker-list {
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            z-index: 10;
+            min-width: 100%;
+            max-height: 360px;
+            overflow-y: auto;
+            margin: 0;
+            padding: 4px 0;
+            list-style: none;
+            background: var(--color-panel, white);
+            border-radius: 8px;
+            box-shadow: var(--shadow-3, 0 2px 10px rgba(0, 0, 0, 0.25));
+        }
+        .layer-picker-option {
+            display: flex;
+            align-items: center;
+        }
+        .layer-picker-option:hover, .layer-picker-chosen {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        .new-shape-panel .layer-picker-name {
+            flex: 1;
+            padding: 6px 10px;
+            text-align: left;
+            white-space: nowrap;
+            background: none;
+            border: none;
+        }
+        .new-shape-panel .layer-picker-delete {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            align-self: stretch;
+            padding: 0;
+            color: #C62828;
+            background: none;
+            border: none;
+            /* Revealed only as the pointer passes over the right of its row */
+            opacity: 0;
+        }
+        .new-shape-panel .layer-picker-delete:hover, .new-shape-panel .layer-picker-delete:focus-visible {
+            opacity: 1;
         }
         .new-shape-panel select, .new-shape-panel button {
             font: inherit;
@@ -86,6 +174,19 @@
         #tldraw-root {
             position: fixed;
             inset: 0 var(--ai-panel-width) 0 0;
+        }
+        .infusion-host-problems {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            height: 100%;
+            box-sizing: border-box;
+            padding: 10px;
+            overflow: auto;
+            font-size: 12px;
+            color: #B71C1C;
+            background-color: #FFEBEE;
+            user-select: text;
         }
         #ai-root {
             position: fixed;

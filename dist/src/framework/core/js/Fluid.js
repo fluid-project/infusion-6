@@ -141,6 +141,17 @@ const $fluidScope = function (fluid) {
         return ["Causes:", ...unavailable.causes.map(cause => fluid.renderCause(cause))].join("\n");
     };
 
+    /**
+     * Render an unavailable value as a single line of text listing the message of each of its causes, suitable for use
+     * as its string form, e.g. when it is interpolated into a template
+     * @param {Unavailable} unavailable - The unavailable value
+     * @return {String} The rendered value
+     */
+    fluid.formatUnavailable = function (unavailable) {
+        const messages = fluid.unavailableToCauses(unavailable).map(cause => cause.path ? `${cause.message} at path ${cause.path}` : cause.message);
+        return "[Unavailable: " + messages.join("; ") + "]";
+    };
+
     fluid.renderLoggingArg = function (arg) {
         return arg === undefined ? "undefined" : fluid.isUnavailable(arg) ? arg.message :
             fluid.isPrimitive(arg) || !fluid.isPlainObject(arg) ? arg : JSON.stringify(arg);
@@ -522,18 +533,23 @@ const $fluidScope = function (fluid) {
         });
     };
 
+    /**
+     * Construct a shallow copy of an object holding only those of its own enumerable members whose keys pass a predicate
+     * @param {Object} obj - The object to be filtered - this is not modified
+     * @param {Function} func - A predicate accepting a key, returning `true` if the member at that key is to be retained
+     * @return {Object} The filtered copy
+     */
+    fluid.filterObjKeys = (obj, func) => Object.fromEntries(Object.entries(obj).filter(([key]) => func(key)));
+
     /** Accepts an object to be filtered, and an array of keys. Either all keys not present in
      * the array are removed, or only keys present in the array are returned.
-     * @param {Object} toFilter - The object to be filtered - this will be NOT modified by the operation (current implementation
-     * passes through $.extend shallow algorithm)
+     * @param {Object} toFilter - The object to be filtered - this will NOT be modified by the operation
      * @param {String[]} keys - The array of keys to operate with
-     * @param {Boolean} exclude - If <code>true</code>, the keys listed are removed rather than included
-     * @return {Object} the filtered object (the same object that was supplied as <code>toFilter</code>
+     * @param {Boolean} [exclude] - If <code>true</code>, the keys listed are removed rather than included
+     * @return {Object} A shallow copy of <code>toFilter</code> holding just the selected members
      */
     fluid.filterKeys = function (toFilter, keys, exclude) {
-        return fluid.remove_if($.extend({}, toFilter), function (value, key) {
-            return exclude ^ (keys.indexOf(key) === -1);
-        });
+        return fluid.filterObjKeys(toFilter, key => !!exclude !== keys.includes(key));
     };
 
     /* A convenience wrapper for <code>fluid.filterKeys</code> with the parameter <code>exclude</code> set to <code>true</code>
@@ -697,9 +713,8 @@ const $fluidScope = function (fluid) {
             get: function (target, prop) {
                 if (prop === $t) {
                     return target;
-                } else if (prop === Symbol.toPrimitive) {
-                    return target;
-                } else if (prop === "toString") {
+                } else if (prop === Symbol.toPrimitive || prop === "toString") {
+                    // Rendered as text when coerced, e.g. by interpolation into a string
                     return () => fluid.formatUnavailable(target);
                 } else {
                     // Properly this should wrap the updated path of the unavailable to give better provenance for the site
@@ -1265,7 +1280,7 @@ const $fluidScope = function (fluid) {
      */
     fluid.parsePriorityRecords = function (records, name) {
         const array = fluid.hashToArray(records, "namespace", function (newElement, oldElement) {
-            $.extend(newElement, oldElement);
+            Object.assign(newElement, oldElement);
             newElement.priority = fluid.parsePriority(oldElement.priority, 0, false, name);
         });
         fluid.sortByPriority(array);
@@ -1702,7 +1717,14 @@ const $fluidScope = function (fluid) {
      */
 
     /**
-     * Pushes a new history record onto the history stack.
+     * Functions notified of each record pushed onto the history, e.g. to maintain the undoable histories of an arena
+     * in FluidPTF.js. Each accepts a {HistoryRec}.
+     * @type {Function[]}
+     */
+    fluid.historyListeners = [];
+
+    /**
+     * Pushes a new history record onto the history stack, and notifies any `fluid.historyListeners` of it.
      * @param {HistoryRec} record - The history record to push
      */
     fluid.pushHistory = function (record) {
@@ -1711,7 +1733,25 @@ const $fluidScope = function (fluid) {
             const index = fluid.layerHistoryIndex.get();
             fluid.layerHistory.set([...fluid.layerHistory._value.slice(0, index), record]);
             fluid.layerHistoryIndex.set(index + 1);
+            fluid.historyListeners.forEach(listener => listener(record));
         }
+    };
+
+    /**
+     * Execute a function without recording any history, e.g. whilst applying a history record or restoring state
+     * @param {Function} func - The function to execute
+     * @return {any} The return value of the function
+     */
+    fluid.withoutHistory = function (func) {
+        const wasPushing = fluid.historyPush;
+        fluid.historyPush = true;
+        let togo;
+        try {
+            togo = func();
+        } finally {
+            fluid.historyPush = wasPushing;
+        }
+        return togo;
     };
 
     /**
@@ -1722,9 +1762,7 @@ const $fluidScope = function (fluid) {
     fluid.applyLiveHistory = function (rec, key) {
         const site = fluid.parseSite(rec.layerName);
         // TODO: source tracking for changes
-        fluid.historyPush = true;
-        fluid.setForComponent(site.shadow.that, site.path, rec[key]);
-        fluid.historyPush = false;
+        fluid.withoutHistory(() => fluid.setForComponent(site.shadow.that, site.path, rec[key]));
     };
 
     /**
@@ -1881,6 +1919,12 @@ const $fluidScope = function (fluid) {
             const oldValue = layerSig._value;
             if (layer !== oldValue.raw) {
                 layerSig.set(layerValue);
+                // A layer coming into existence through a placeholder, e.g. one allocated by fluid.readLayer for a layer
+                // not yet defined or since deleted, which was added to the store without updating it, is announced as a
+                // change to the store, so that anything listing its layers sees it
+                if (fluid.layerRecToUnavailable(oldValue) !== null && fluid.layerRecToUnavailable(layerValue) === null) {
+                    fluid.layerStore.set({...store});
+                }
                 if (!fluid.isUnavailable(fluid.deSignal(layer))) {
                     fluid.pushHistory({type: "updateLayer", oldValue, newValue: layerValue, layerName});
                 }
@@ -1932,8 +1976,12 @@ const $fluidScope = function (fluid) {
     // Stub that will be overridden in FluidIL.js, where avatars are implemented
     fluid.destroyAvatar = () => {};
 
+    // Stub that will be overridden in FluidView.js, where the injections of Single File Components are implemented
+    fluid.withdrawLayerInjections = () => {};
+
     /**
-     * Removes a layer from the `fluid.layerStore` immutably, destroying any avatar which was instantiated from it.
+     * Removes a layer from the `fluid.layerStore` immutably, destroying any avatar which was instantiated from it, and
+     * withdrawing anything injected into documents for it, e.g. the script and styles of a Single File Component.
      * This function creates a new object excluding the specified layer and updates the signal.
      *
      * @param {String} layerName - The name of the layer to delete.
@@ -1942,9 +1990,11 @@ const $fluidScope = function (fluid) {
         const currentStore = fluid.layerStore.get();
         const newStore = {...currentStore};
         delete newStore[layerName];
+        // Recorded whilst the layer is still in the store, since only the history of user layers is recorded
+        fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
         fluid.layerStore.set(newStore);
         fluid.destroyAvatar(layerName);
-        fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
+        fluid.withdrawLayerInjections(layerName);
     };
 
     /**
