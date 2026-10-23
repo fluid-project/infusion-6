@@ -274,6 +274,69 @@ QUnit.test("Transmitted SFC layer defined on registration", async function (asse
     assert.equal(fluid.layerRecToUnavailable(fluid.readLayer(layerName).get()), null, "Layer defined without being demanded");
 });
 
+QUnit.test("Text of a JavaScript layer part, including its free functions, transmitted verbatim", function (assert) {
+    const layerName = "fluid.tests.ptf.jsWithFunctions";
+    const plain = `fluid.def("${layerName}", {
+    $layers: "fluid.component",
+    total: "$compute:fluid.tests.ptf.jsWithFunctions.sum({self}.values)",
+    values: [1, 2, 3]
+});
+
+// A free function referred to by name, which a rendering of the definition would lose
+fluid.tests.ptf.jsWithFunctions.sum = values => values.reduce((a, b) => a + b, 0);
+`;
+    const provenance = {model: "test-model", prompt: "Sum\n  the values", datestamp: "2026-10-23T12:00:00.000Z"};
+    const body = fluid.writeJSProvenance(plain, provenance);
+    assert.ok(body.endsWith("// <provenance>\n//     <model>test-model</model>\n//     <prompt>Sum\n//   the values</prompt>\n"
+        + "//     <datestamp>2026-10-23T12:00:00.000Z</datestamp>\n// </provenance>\n"), "Provenance written in line comments");
+    assert.deepEqual(fluid.readJSProvenance(body), provenance, "Provenance read back from comments");
+    const rewritten = fluid.writeJSProvenance(body, {model: "other-model"});
+    assert.deepEqual(fluid.readJSProvenance(rewritten), {model: "other-model"}, "Provenance in comments replaced");
+    assert.equal(rewritten.match(/<provenance>/g).length, 1, "Existing comments replaced rather than added to");
+    assert.equal(fluid.readJSProvenance(plain), null, "No provenance read from layer without it");
+
+    const part = {kind: "layer", contentType: "text/javascript", filename: layerName, body};
+    assert.deepEqual(fluid.ptf.readLayerProvenance(part), provenance, "Provenance read from layer part by its type");
+    fluid.ptf.registerLayerPart(part);
+    const that = fluid.tests.ptf.jsWithFunctions();
+    assert.equal(that.total, 6, "Layer registered with its free function");
+    assert.deepEqual(fluid.ptf.layerToPart(layerName), part, "Layer transmitted as the text it was registered from");
+    assert.equal(fluid.ptf.componentToParts(that)[0].body, body, "Text transmitted with component");
+    assert.equal(fluid.ptf.layerSource(layerName).body, body, "Text recorded as the layer's source for its history");
+    that.destroy();
+
+    // Redefining the layer by other means renders it afresh from its definition
+    fluid.def(layerName, {$layers: "fluid.component", values: [4]});
+    const rendered = fluid.ptf.layerToPart(layerName).body;
+    assert.ok(rendered.includes("values: [") && !rendered.includes(".sum ="), "Layer redefined directly rendered from its definition");
+    fluid.deleteLayer(layerName);
+});
+
+QUnit.test("Provenance of an SFC written, read, and carried through its loading and transmission", async function (assert) {
+    const layerName = "fluid.tests.ptf.provenanced";
+    const plain = fluid.tests.ptf.counterSFC.replaceAll("fluid.tests.ptf.counter", layerName);
+    assert.equal(fluid.readSFCProvenance(plain), null, "No provenance read from an SFC without a block");
+    const provenance = {model: "test-model", prompt: "Make a <counter> & \"show\" it\nplease", datestamp: "2026-10-23T12:00:00.000Z"};
+    const body = fluid.writeSFCProvenance(plain, provenance);
+    assert.ok(body.startsWith(plain.trimEnd()), "Provenance block appended to the SFC's existing text");
+    assert.ok(body.includes("<prompt>Make a &lt;counter&gt; &amp; \"show\" it\nplease</prompt>"), "Prompt escaped as text");
+    assert.deepEqual(fluid.readSFCProvenance(body), provenance, "Provenance read back");
+    const rewritten = fluid.writeSFCProvenance(body, {model: "other-model"});
+    assert.deepEqual(fluid.readSFCProvenance(rewritten), {model: "other-model"}, "Provenance replaced, omitting absent fields");
+    assert.equal(rewritten.match(/<provenance>/g).length, 1, "Existing block replaced rather than added to");
+
+    const loaded = await fluid.tests.ptf.loadSFCText(layerName, body);
+    assert.ok(loaded, "SFC holding a provenance block loaded");
+    const container = qs(".container");
+    const that = fluid.tests.ptf.provenanced({container, text: "Provenanced"});
+    fluid.cell.stabilize();
+    assert.equal(qs(".ptf-text", container).textContent, "Provenanced", "Component rendered from SFC holding a provenance block");
+    assert.equal(container.querySelectorAll("provenance").length, 0, "Provenance block not rendered");
+    const parts = fluid.ptf.componentToParts(that);
+    assert.equal(parts[0].body, body, "SFC text including its provenance block transmitted verbatim");
+    that.destroy();
+});
+
 QUnit.test("JavaScript component with subcomponent transmitted and reconstructed", async function (assert) {
     fluid.def("fluid.tests.ptf.jsChild", {
         $layers: "fluid.component",
@@ -315,6 +378,51 @@ QUnit.test("JavaScript component with subcomponent transmitted and reconstructed
     assert.equal(copy.child.doubled, 10, "Transmitted function in JavaScript layer operates");
     that.destroy();
     copy.destroy();
+});
+
+QUnit.test("Layers transmitted with the most derived first", function (assert) {
+    fluid.def("fluid.tests.ptf.base", {
+        $layers: "fluid.component",
+        value: 1
+    });
+    fluid.def("fluid.tests.ptf.middle", {
+        $layers: "fluid.tests.ptf.base",
+        middleValue: 2
+    });
+    fluid.def("fluid.tests.ptf.mixin", {
+        $layers: "fluid.component",
+        mixinValue: 3
+    });
+    fluid.def("fluid.tests.ptf.derived", {
+        $layers: ["fluid.tests.ptf.middle", "fluid.tests.ptf.mixin"],
+        child: {
+            $component: {
+                $layers: "fluid.tests.ptf.base"
+            }
+        },
+        other: {
+            $component: {
+                $layers: "fluid.tests.ptf.unrelated"
+            }
+        }
+    });
+    fluid.def("fluid.tests.ptf.unrelated", {
+        $layers: "fluid.component"
+    });
+    assert.deepEqual(fluid.ptf.sortLayerNames(["fluid.tests.ptf.base", "fluid.tests.ptf.unrelated", "fluid.tests.ptf.mixin",
+        "fluid.tests.ptf.middle", "fluid.tests.ptf.derived"]),
+    ["fluid.tests.ptf.unrelated", "fluid.tests.ptf.derived", "fluid.tests.ptf.mixin", "fluid.tests.ptf.middle", "fluid.tests.ptf.base"],
+    "Each layer follows all those derived from it, those of equal rank in supplied order");
+
+    const that = fluid.tests.ptf.derived();
+    fluid.cell.stabilize();
+    const layerNames = fluid.ptf.componentToParts(that).filter(part => part.kind === "layer").map(part => part.filename);
+    assert.equal(layerNames[0], "fluid.tests.ptf.derived", "Layer of the transmitted component comes first");
+    assert.equal(fluid.peek(layerNames), "fluid.tests.ptf.base", "Base layer, also used by a subcomponent, comes last");
+    assert.ok(layerNames.indexOf("fluid.tests.ptf.middle") < layerNames.indexOf("fluid.tests.ptf.base"), "Intermediate layer precedes its base");
+    assert.deepEqual([...layerNames].sort(), ["fluid.tests.ptf.base", "fluid.tests.ptf.derived", "fluid.tests.ptf.middle",
+        "fluid.tests.ptf.mixin", "fluid.tests.ptf.unrelated"], "All user layers transmitted");
+    that.destroy();
 });
 
 QUnit.test("Component injecting its grandparent transmitted and reconstructed - fluid-project/infusion-6#20", async function (assert) {

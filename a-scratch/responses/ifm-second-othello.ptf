@@ -1,0 +1,242 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-8vymonp19l"
+
+This is a Potentia Transmission Format (PTF) document holding tldraw shapes together with the layers and potentia of the Infusion components they host.
+--ptf-boundary-8vymonp19l
+Content-Type: multipart/mixed; boundary="ptf-boundary-okkzyl5gfm"
+Content-Disposition: attachment; filename="shape:QYsiv6h2Ys4ggQuovS__B"
+Content-Description: component
+
+--ptf-boundary-okkzyl5gfm
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.othello"
+Content-Description: layer
+
+<script>
+/**
+ * An Othello (Reversi) widget: the standard 8x8 game. Click a highlighted empty
+ * square to place the current player's disc; opposing discs outflanked by the move
+ * are flipped. Turns alternate, a player with no moves passes, and when neither can
+ * move the higher count wins.
+ *
+ * The rule functions are defined before the layer, since the layer's initial
+ * reactive state calls fluid.demos.othello.initialBoard() at registration time.
+ */
+
+fluid.demos.othello = fluid.demos.othello || {};
+
+fluid.demos.othello.initialBoard = function () {
+    const board = new Array(64).fill("");
+    // Standard starting position: the central black diagonal and white diagonal
+    board[3 * 8 + 3] = "B";
+    board[4 * 8 + 4] = "B";
+    board[3 * 8 + 4] = "W";
+    board[4 * 8 + 3] = "W";
+    return board;
+};
+
+/**
+ * The squares which a move at `square` would flip: every opponent disc lying
+ * between it and a friendly disc in each of the 8 directions - empty otherwise.
+ * @param {String[]} board - The current board
+ * @param {String} side - "B" or "W"
+ * @param {Number} square - The square played, 0-63
+ * @return {Number[]} Squares to flip
+ */
+fluid.demos.othello.flipsFor = function (board, side, square) {
+    if (!board || board[square]) {
+        return [];
+    }
+    const other = side === "B" ? "W" : "B";
+    const result = [];
+    for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            let row = (square >> 3) + dr;
+            let col = (square & 7) + dc;
+            const path = [];
+            while (row >= 0 && row < 8 && col >= 0 && col < 8) {
+                const occupant = board[row * 8 + col];
+                if (occupant === other) {
+                    path.push(row * 8 + col);
+                    row += dr;
+                    col += dc;
+                } else if (occupant === side) {
+                    result.push(...path);
+                    break;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    return result;
+};
+
+/**
+ * Every square on which `side` may legally move: an empty square which flips
+ * at least one opposing disc.
+ * @param {String[]} board - The current board
+ * @param {String} side - "B" or "W"
+ * @return {Number[]} Squares which may be played
+ */
+fluid.demos.othello.legalMoves = function (board, side) {
+    const moves = [];
+    for (let square = 0; square < 64; square++) {
+        if (!board[square] && fluid.demos.othello.flipsFor(board, side, square).length > 0) {
+            moves.push(square);
+        }
+    }
+    return moves;
+};
+
+fluid.demos.othello.counts = function (board) {
+    let black = 0;
+    let white = 0;
+    board.forEach(d => {
+        if (d === "B") black++;
+        else if (d === "W") white++;
+    });
+    return {B: black, W: white};
+};
+
+fluid.demos.othello.status = function (state, counts, legal) {
+    if (state.gameOver) {
+        if (counts.B === counts.W) return "It's a draw";
+        const won = Math.max(counts.B, counts.W);
+        const wonBy = counts.B > counts.W ? "Black" : "White";
+        return wonBy + " wins " + won + " - " + Math.min(counts.B, counts.W);
+    }
+    const who = state.turn === "B" ? "Black" : "White";
+    return who + " to move" + (legal.length === 0 ? " - you have no moves and pass" : "");
+};
+
+/**
+ * Play a square for the side whose turn it is, flipping the outflanked discs.
+ * The turn passes to the opponent if they have a legal move; play ends when
+ * neither player can move.
+ * @param {Object} state - The component's reactive state
+ * @param {Number} square - The square played, 0-63
+ */
+fluid.demos.othello.place = function (state, square) {
+    if (state.gameOver || state.board[square]) return;
+    const side = state.turn;
+    const flips = fluid.demos.othello.flipsFor(state.board, side, square);
+    if (flips.length === 0) return;
+    const nextBoard = state.board.slice();
+    nextBoard[square] = side;
+    flips.forEach(f => { nextBoard[f] = side; });
+    state.board = nextBoard;
+    const other = side === "B" ? "W" : "B";
+    if (fluid.demos.othello.legalMoves(nextBoard, other).length > 0) {
+        state.turn = other;
+    } else if (fluid.demos.othello.legalMoves(nextBoard, side).length === 0) {
+        state.gameOver = true;
+    }
+    // Otherwise the opponent passes and `side` moves again
+};
+
+fluid.demos.othello.restart = function (state) {
+    state.board = fluid.demos.othello.initialBoard();
+    state.turn = "B";
+    state.gameOver = false;
+};
+
+fluid.demos.othello.template = function (state, legal, status) {
+    let cells = "";
+    for (let square = 0; square < 64; square++) {
+        const row = square >> 3;
+        const col = square & 7;
+        const disc = state.board[square];
+        const playable = !disc && !state.gameOver;
+        const isLegal = playable && legal.indexOf(square) >= 0;
+        const bg = isLegal ? "#8ec48e" : (row + col) % 2 === 0 ? "#3d7d43" : "#2f5d33";
+        let cell = `<div style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:${bg};${playable ? "cursor:pointer;" : "cursor:default;"}"`;
+        if (playable) {
+            cell += ` @onclick="{self}.place(${square})"`;
+        }
+        cell += ">";
+        if (isLegal) {
+            cell += `<span style="position:absolute;bottom:14%;right:14%;width:18%;height:18%;border-radius:50%;background:rgba(255,255,255,0.85);"></span>`;
+        } else if (disc) {
+            cell += `<span style="width:72%;height:72%;border-radius:50%;background:${disc === "B" ? "#101010" : "#f8f8f8"};box-shadow:0 1px 3px rgba(0,0,0,0.4);"></span>`;
+        }
+        cells += cell + "</div>";
+    }
+    return `<div style="box-sizing:border-box;width:100%;height:100%;padding:10px;display:flex;flex-direction:column;gap:8px;background:#2e5b2e;font-family:system-ui,-apple-system,sans-serif;">
+        <div style="display:flex;justify-content:space-between;font-weight:bold;">
+            <span style="color:#fafafa;">Black @{counts.B}</span>
+            <span>White @{counts.W}</span>
+        </div>
+        <div style="text-align:center;font-weight:bold;">@{status}</div>
+        <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);aspect-ratio:1;align-self:center;gap:2px;background:#1e3a1e;padding:2px;box-sizing:border-box;">${cells}</div>
+        <button @onclick="{self}.restart()" style="font:inherit;padding:6px 14px;cursor:pointer;">Restart</button>
+    </div>`;
+};
+
+fluid.def("fluid.demos.othello", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {w: 360, h: 420},
+    state: {
+        $reactiveRoot: {
+            // Flat 64-square board: "", "B" (black) or "W" (white), row-major
+            board: fluid.demos.othello.initialBoard(),
+            // "B" moves first; the player who just moved flips to the other colour
+            turn: "B",
+            gameOver: false
+        }
+    },
+    legal: "$compute:fluid.demos.othello.legalMoves({self}.state.board, {self}.state.turn)",
+    counts: "$compute:fluid.demos.othello.counts({self}.state.board)",
+    status: "$compute:fluid.demos.othello.status({self}.state, {self}.counts, {self}.legal)",
+    place: {
+        $method: {
+            func: "fluid.demos.othello.place",
+            args: ["{self}.state", "{0}:square"]
+        }
+    },
+    restart: {
+        $method: {
+            func: "fluid.demos.othello.restart",
+            args: ["{self}.state"]
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            // The markup is computed so that the 64 squares can be generated; the
+            // @{...} bindings and @onclick handlers are live within the string
+            template: "$compute:fluid.demos.othello.template({othello}.state, {othello}.legal, {othello}.status)"
+        }
+    }
+});
+</script>
+
+<provenance>
+    <model>IFM/K2-Horizon-375B-A23B</model>
+    <prompt>Write a widget that lets me play Othello</prompt>
+    <datestamp>2026-10-23T21:41:32.448Z</datestamp>
+</provenance>
+
+--ptf-boundary-okkzyl5gfm
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.othello"
+    ],
+    "view": {
+        "$component": {
+            "shape": {
+                "x": 517.5999755859375,
+                "y": 649.6000366210938,
+                "w": 360,
+                "h": 420
+            }
+        }
+    }
+}
+--ptf-boundary-okkzyl5gfm--
+--ptf-boundary-8vymonp19l--

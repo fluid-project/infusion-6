@@ -156,6 +156,21 @@ const $fluidViewBrowserScope = function (fluid) {
         // console.log(`Bound handler to ${event} for vnode ${vnode._id} for DOM element ${el.flDomId} `, el);
         el.addEventListener(event, rawHandler, modifiers);
         vTreeRec.push({el, event, rawHandler, modifiers, vnodeId: vnode._id});
+        // Noted on the element, so that a host of the component, e.g. a canvas which would otherwise take the pointer
+        // gestures over it as its own, can find which of its elements handle which events - see fluid.hasBoundEvent
+        el.flEventsBound ||= {};
+        (el.flEventsBound[vnode._id] ||= []).push(event);
+    };
+
+    /**
+     * Determine whether a template has bound a handler for any of the supplied events onto an element, through an
+     * `@on` attribute
+     * @param {Element} el - The element
+     * @param {String[]} events - The names of the events, e.g. "click"
+     * @return {Boolean} `true` if a handler for any of the events is bound onto the element
+     */
+    fluid.hasBoundEvent = function (el, events) {
+        return Object.values(el.flEventsBound || {}).some(bound => bound.some(event => events.includes(event)));
     };
 
     fluid.globalDismissalSignal = fluid.cell(0, {name: "Global dismissal signal"});

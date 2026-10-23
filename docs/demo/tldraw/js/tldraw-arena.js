@@ -3,7 +3,8 @@
 // histories of widget state and of layer definitions - and restores it when the page is loaded. Also binds the
 // keyboard shortcuts which step through those histories.
 
-import {infusionInstances, registerPendingParts, lookupPendingParts, awaitInstantiation, awaitReport} from "./tldraw-clipboard.js";
+import {infusionInstances, registerPendingParts, componentPartsFor, awaitInstantiation, awaitReport, contentToParts,
+    partsToContent} from "./tldraw-clipboard.js";
 
 const arenaPreamble = "This is a Potentia Transmission Format (PTF) document holding a persisted tldraw arena - its "
     + "shapes, the layers and potentia of the Infusion components they host, and its undoable histories.";
@@ -112,8 +113,7 @@ export const bindWidgetHistory = function (editor) {
     const unregister = editor.sideEffects.registerBeforeDeleteHandler("shape", (shape, source) => {
         if (shape.type === "infusion" && source === "user" && !applyingWidgets) {
             // Captured whilst the widget's component still exists
-            const that = infusionInstances.get(shape.id);
-            deleted.push(widgetRecord(shape, that ? fluid.ptf.componentToParts(that) : lookupPendingParts(shape.meta.ptfToken) || null));
+            deleted.push(widgetRecord(shape, componentPartsFor(shape)));
             if (deleted.length === 1) {
                 queueMicrotask(() => {
                     fluid.ptf.pushToStack(fluid.liveHistory, {type: "widgets", created: false, widgets: deleted});
@@ -203,52 +203,24 @@ const settledParts = function (shapeId, parts) {
 };
 
 /**
- * Assemble the part persisting a widget - a nested document of kind "component" whose filename is the id of the shape
- * hosting it, as in the workspace sent to the AI. It holds a part of kind "shape" recording the widget's layer and the
- * geometry of its shape, followed by the parts of its component, in their settled state, from which it is regenerated -
- * or, for a widget still to be constructed, those from which it is to be constructed.
- * @param {TLShape} shape - The shape hosting the widget
- * @return {PTFPart} The part
- */
-const widgetToPart = function (shape) {
-    const that = infusionInstances.get(shape.id);
-    const componentParts = that ? settledParts(shape.id, fluid.ptf.componentToParts(that)) : lookupPendingParts(shape.meta.ptfToken) || [];
-    const {x, y, rotation, index, parentId, props: {layerName, w, h}} = shape;
-    const geometry = {layerName, x, y, w, h, rotation, index, ...(parentId.startsWith("shape:") ? {parentId} : {})};
-    return {
-        kind: "component",
-        filename: shape.id,
-        parts: [{kind: "shape", contentType: "application/json", filename: "shape", body: JSON.stringify(geometry, null, 4)}, ...componentParts]
-    };
-};
-
-/**
- * Assemble the parts of the PTF document persisting the arena. The canvas's native tldraw shapes are held in a part of
- * kind "tldraw" as for a copy of them, but its widgets are not - each is held in a part of its own, as assembled by
- * `widgetToPart`, from which it is regenerated rather than restored as a tldraw shape. These are followed by a part of
- * kind "history" holding the arena's histories.
+ * Assemble the parts of the PTF document persisting the arena. The canvas's shapes are held as for a copy of them -
+ * see `contentToParts` - with each widget held in its settled state. These are followed by a part of kind "history"
+ * holding the arena's histories.
  * @param {Editor} editor - The tldraw editor
  * @return {PTFPart[]} The parts
  */
 export const arenaToParts = function (editor) {
-    const shapes = editor.getCurrentPageShapes();
-    const widgets = shapes.filter(shape => shape.type === "infusion");
-    const widgetIds = new Set(widgets.map(shape => shape.id));
-    const nativeIds = shapes.filter(shape => !widgetIds.has(shape.id)).map(shape => shape.id);
-    const copied = nativeIds.length > 0 ? editor.getContentFromCurrentPage(nativeIds) : null;
-    // A widget within a native shape, e.g. a frame, is copied as one of its descendants, and is removed again
-    const content = copied && {
-        ...copied,
-        shapes: copied.shapes.filter(shape => !widgetIds.has(shape.id)),
-        rootShapeIds: copied.rootShapeIds.filter(id => !widgetIds.has(id)),
-        bindings: copied.bindings.filter(binding => !widgetIds.has(binding.fromId) && !widgetIds.has(binding.toId))
+    const shapeIds = editor.getCurrentPageShapes().map(shape => shape.id);
+    const content = shapeIds.length > 0 ? editor.getContentFromCurrentPage(shapeIds) : null;
+    const partsFor = shape => {
+        const parts = componentPartsFor(shape);
+        return parts && infusionInstances.has(shape.id) ? settledParts(shape.id, parts) : parts;
     };
     const history = {
         live: fluid.ptf.historyToJSON(fluid.liveHistory, encodeArenaRecord),
         definitions: fluid.ptf.historyToJSON(fluid.definitionHistory)
     };
-    const contentPart = {kind: "tldraw", contentType: "application/json", filename: "tldraw-content", body: JSON.stringify(content, null, 4)};
-    return [...(content ? [contentPart] : []), ...widgets.map(widgetToPart), {
+    return [...(content ? contentToParts(content, partsFor) : []), {
         kind: "history",
         contentType: "application/json",
         filename: "history",
@@ -288,8 +260,8 @@ const awaitPageInjections = function () {
 
 /**
  * Restore a persisted arena onto the canvas. Layers which were redefined within the arena are restored over those
- * loaded by the page, and its native tldraw shapes are restored with their original ids and positions. Each widget is
- * then regenerated from its persisted parts, in a fresh shape with its original id and geometry. Once the widgets
+ * loaded by the page, and its shapes are restored with their original ids and positions - each widget in a fresh shape
+ * reconstructed by `partsToContent`, from whose persisted parts the widget is regenerated. Once the widgets
  * have been reconstructed, the arena's histories are restored, with records of widget state referring to the
  * reconstructed components. Nothing restored is recorded in the histories, nor in tldraw's own undo history.
  * @param {Editor} editor - The tldraw editor
@@ -304,10 +276,8 @@ export const restoreArena = async function (editor, text) {
     } else if (fluid.isUnavailable(parts)) {
         console.warn("Ignoring persisted arena which is not a PTF document");
     } else {
-        const contentPart = parts.find(part => part.kind === "tldraw");
         const historyPart = parts.find(part => part.kind === "history");
         const history = historyPart ? JSON.parse(historyPart.body) : null;
-        let shapeCount = 0;
         if (history) {
             await awaitPageInjections();
             redefinedSources(history.definitions).forEach((source, layerName) => {
@@ -320,34 +290,13 @@ export const restoreArena = async function (editor, text) {
                 }
             });
         }
-        const componentParts = parts.filter(part => part.kind === "component" && part.parts);
-        const instantiations = [];
-        if (contentPart) {
-            const content = JSON.parse(contentPart.body);
-            // An arena persisted before widgets were persisted through their parts alone holds them in its content
-            content.shapes.filter(shape => shape.type === "infusion").forEach(shape => {
-                const part = componentParts.find(onePart => onePart.filename === shape.id);
-                const ptfToken = part ? registerPendingParts(part.parts) : null;
-                shape.meta = ptfToken ? {...shape.meta, ptfToken} : shape.meta;
-                instantiations.push(...(ptfToken ? [awaitInstantiation(ptfToken)] : []));
-            });
+        const {content, widgets} = partsToContent(editor, parts);
+        const instantiations = widgets.filter(widget => widget.ptfToken).map(widget => awaitInstantiation(widget.ptfToken));
+        if (content.shapes.length > 0) {
             editor.run(() => editor.putContentOntoCurrentPage(content, {preserveIds: true, preservePosition: true, select: false}),
                 {history: "ignore"});
-            shapeCount += content.shapes.length;
         }
-        const widgets = componentParts.map(part => ({part, shapePart: part.parts.find(nested => nested.kind === "shape")}))
-            .filter(({part, shapePart}) => shapePart && !editor.getShape(part.filename));
-        editor.run(() => editor.createShapes(widgets.map(({part, shapePart}) => {
-            const {layerName, x, y, w, h, rotation, index, parentId} = JSON.parse(shapePart.body);
-            const widgetParts = part.parts.filter(nested => nested !== shapePart);
-            // A widget persisted before it had been constructed, and without parts, is constructed afresh from its layer
-            const ptfToken = widgetParts.length > 0 ? registerPendingParts(widgetParts) : null;
-            instantiations.push(...(ptfToken ? [awaitInstantiation(ptfToken)] : []));
-            return {id: part.filename, type: "infusion", x, y, rotation, index, props: {layerName, w, h}, meta: ptfToken ? {ptfToken} : {},
-                // The widget returns to its parent, e.g. a frame, if this has been restored
-                ...(parentId && editor.getShape(parentId) ? {parentId} : {})};
-        })), {history: "ignore"});
-        shapeCount += widgets.length;
+        const shapeCount = content.shapes.length;
         await Promise.all(instantiations.map(awaitReport));
         if (history) {
             fluid.ptf.historyFromJSON(fluid.liveHistory, history.live, decodeArenaRecord);

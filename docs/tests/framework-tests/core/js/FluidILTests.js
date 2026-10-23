@@ -2029,3 +2029,42 @@ QUnit.test("Reference designating its own value is unavailable rather than cycli
         "Overlapping paths detected");
     that.destroy();
 });
+
+fluid.def("fluid.tests.missingMember", {
+    $layers: "fluid.component",
+    count: 3,
+    plain: "$compute:fluid.identity({self}.absent.deep)",
+    inner: {
+        $component: {
+            $layers: "fluid.component",
+            // Written as {self}, which designates the subcomponent, intending its parent
+            doubled: "$compute:fluid.tests.selfReference.double({self}.count)"
+        }
+    }
+});
+
+QUnit.test("Value computed from a reference to a missing member is explained", function (assert) {
+    const that = fluid.tests.missingMember();
+    fluid.cell.stabilize();
+    const plainCell = fluid.getForComponent(that[fluid.metadataSymbol], "plain");
+    const plain = fluid.deSignal(plainCell);
+    assert.ok(fluid.isUnavailable(plain), "Value computed from missing member is unavailable");
+    const causes = fluid.cell.explainUnavailable(plainCell);
+    assert.equal(causes.length, 1, "One cause found for value computed from missing member");
+    assert.ok(causes[0].message.startsWith("Component at path " + that[fluid.metadataSymbol].path + " has no member absent"),
+        "Missing member described");
+    assert.notOk(causes[0].message.includes("parent"), "No hint about the parent, which has no such member either");
+    assert.deepEqual(fluid.cell.explainUnavailable(fluid.getForComponent(that[fluid.metadataSymbol], "count")), [],
+        "Available value needs no explanation");
+
+    const innerShadow = that.inner[fluid.metadataSymbol];
+    // As documented, the explanation reads the graph as it stands, so the value must have been read
+    const doubledCell = fluid.getForComponent(innerShadow, "doubled");
+    assert.ok(fluid.isUnavailable(fluid.deSignal(doubledCell)), "Value computed from member held by parent is unavailable");
+    const doubledCauses = fluid.cell.explainUnavailable(doubledCell);
+    assert.equal(doubledCauses.length, 1, "One cause found for value computed from member held by parent");
+    assert.ok(doubledCauses[0].message.endsWith("has no member count, although its parent component at path "
+        + that[fluid.metadataSymbol].path + " does"), "Parent's member noted");
+    assert.equal(doubledCauses[0].hint, fluid.parentMemberHintText, "Hint explains the meaning of {self}");
+    that.destroy();
+});

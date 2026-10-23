@@ -8,7 +8,8 @@ fluid.registerNamespace("fluid.demos.askAnything");
 
 // Keys under which the panel's settings are remembered in this browser
 fluid.demos.askAnything.storageKeys = {
-    token: "fluid.demos.askAnything.token"
+    token: "fluid.demos.askAnything.token",
+    modelChoice: "fluid.demos.askAnything.modelChoice"
 };
 
 // The name of the DOM event, dispatched on the panel's container, through which the canvas offers the panel text
@@ -57,8 +58,9 @@ fluid.def("fluid.demos.askAnything", {
             password: "",
             // Remembered from an earlier visit, if any
             token: fluid.demos.askAnything.readStored("token"),
-            // Displayed read-only, since the proxy offers no means of listing the models it can forward to
-            model: fluid.tldraw.ai.defaultModel,
+            // The model chosen in the dropdown, as the value of its option - see fluid.demos.askAnything.modelChoices -
+            // remembered from an earlier visit, if any. If empty, the IFM proxy's model is chosen.
+            modelChoice: fluid.demos.askAnything.readStored("modelChoice"),
             busy: false,
             loginError: "",
             // Whilst sent directions are being recalled into the direction with the arrow keys, the index of the one
@@ -68,9 +70,19 @@ fluid.def("fluid.demos.askAnything", {
             recallDraft: ""
         }
     },
+    // The local service whose models are offered beside that of the IFM proxy, if a key for it is found on startup, or
+    // else `null`
+    local: {
+        $bindable: {
+            bind: "fluid.demos.askAnything.bindLocalService()"
+        }
+    },
+    connection: "$compute:fluid.demos.askAnything.connection({self}.local, {self}.state.token, {self}.state.modelChoice)",
+    // Only the token for the IFM proxy may be forgotten, and only whilst it is held
+    cannotLogOut: "$compute:fluid.demos.askAnything.cannotLogOut({self}.connection)",
     busy: "{self}.state.busy",
-    hasToken: "$compute:fluid.demos.askAnything.isPresent({self}.state.token)",
-    needsPassword: "$compute:fluid.demos.askAnything.isAbsent({self}.state.token)",
+    hasToken: "$compute:fluid.demos.askAnything.isPresent({self}.connection.token)",
+    needsPassword: "$compute:fluid.demos.askAnything.isAbsent({self}.connection.token)",
     cannotSend: "$compute:fluid.demos.askAnything.cannotSend({self}.state.direction, {self}.busy)",
     sendLabel: "$compute:fluid.demos.askAnything.sendLabel({self}.busy)",
     entryList: {
@@ -80,6 +92,25 @@ fluid.def("fluid.demos.askAnything", {
                 source: "{askAnything}.state.entries",
                 valueAs: "entry"
             }
+        }
+    },
+    // A dropdown of the models which may be conversed with - the IFM proxy's first, followed by those of any local service
+    modelSelect: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.viewComponent",
+                    elideParent: false,
+                    templateTree: "$compute:fluid.demos.askAnything.modelSelectTree({askAnything}.local, {askAnything}.connection.choice)"
+                }
+            }
+        }
+    },
+    chooseModel: {
+        $method: {
+            func: "fluid.demos.askAnything.chooseModel",
+            args: ["{self}.state", "{0}:event"]
         }
     },
     passwordKeyDown: {
@@ -113,7 +144,7 @@ fluid.def("fluid.demos.askAnything", {
     send: {
         $method: {
             func: "fluid.demos.askAnything.send",
-            args: ["{self}.state"]
+            args: ["{self}.state", "{self}.connection"]
         }
     },
     receiveOffer: {
@@ -124,16 +155,140 @@ fluid.def("fluid.demos.askAnything", {
     }
 });
 
-// The conversation's history, as sent to the AI - this is kept out of the reactive state since it is never rendered
+// The conversation's history, as the exchanges sent to the AI - this is kept out of the reactive state since it is
+// never rendered
 fluid.demos.askAnything.history = [];
 
 fluid.demos.askAnything.isPresent = value => !!value;
 
 fluid.demos.askAnything.isAbsent = value => !value;
 
+fluid.demos.askAnything.cannotLogOut = connection => connection.local || !connection.token;
+
 fluid.demos.askAnything.cannotSend = (direction, busy) => busy || !direction.trim();
 
 fluid.demos.askAnything.sendLabel = busy => busy ? "Thinking..." : "Send";
+
+/**
+ * Bind a cell holding the local service, which is looked for once on startup by `fluid.tldraw.ai.findLocalService`
+ * @return {fluid.cell<LocalService|null>} A cell holding `null` until the local service, if any, has been found
+ */
+fluid.demos.askAnything.bindLocalService = function () {
+    const cell = fluid.cell(null, {name: "askAnything local service"});
+    fluid.tldraw.ai.findLocalService().then(service => {
+        if (service) {
+            console.log(`Offering ${service.models.length} models of ${service.name} at ${service.endpoint} beside the IFM proxy`);
+            cell.set(service);
+        }
+    }, error => console.log("Failed to look for a local AI service: ", error));
+    return cell;
+};
+
+/**
+ * @typedef {Object} Connection
+ * @property {String} endpoint - The URL of the chat completions endpoint to be called
+ * @property {String} token - The token or key presented to the endpoint, or an empty string if none is held
+ * @property {String} model - The model to be requested
+ * @property {Boolean} local - `true` if the endpoint is that of a local service rather than the IFM proxy
+ * @property {String} choice - The value of the dropdown's option for the model - see fluid.demos.askAnything.modelChoices
+ */
+
+// The prefix of the value of a dropdown option choosing a model of the local service, followed by the model's id
+fluid.demos.askAnything.localPrefix = "local:";
+
+// The value of the dropdown option choosing the IFM proxy's model
+fluid.demos.askAnything.ifmChoice = "ifm";
+
+/**
+ * @typedef {Object} ModelChoiceGroup
+ * @property {String} label - The label of the group of options, naming the service offering them
+ * @property {Object[]} options - The options, each as `{value, text}`
+ */
+
+/**
+ * List the models which may be chosen in the dropdown, grouped by the service offering them - the IFM proxy's model
+ * first, followed by those of the local service, if any
+ * @param {LocalService|null} local - The local service, if any
+ * @return {ModelChoiceGroup[]} The groups of options
+ */
+fluid.demos.askAnything.modelChoices = function (local) {
+    const ifm = {label: "IFM proxy", options: [{value: fluid.demos.askAnything.ifmChoice, text: fluid.tldraw.ai.defaultModel}]};
+    const localGroup = local ? [{
+        label: local.name,
+        options: local.models.map(model => ({value: fluid.demos.askAnything.localPrefix + model, text: model}))
+    }] : [];
+    return [ifm, ...localGroup];
+};
+
+/**
+ * Determine how the AI is to be reached - through the local service if one of its models is chosen and it offers it,
+ * or else through the IFM proxy with the token derived from the user's password, which is chosen by default
+ * @param {LocalService|null} local - The local service, if any
+ * @param {String} token - The token for the IFM proxy, or an empty string if none is held
+ * @param {String} modelChoice - The value of the option chosen in the dropdown, or an empty string if none is chosen
+ * @return {Connection} The connection to the AI
+ */
+fluid.demos.askAnything.connection = function (local, token, modelChoice) {
+    const prefix = fluid.demos.askAnything.localPrefix;
+    const localModel = modelChoice.startsWith(prefix) ? modelChoice.slice(prefix.length) : null;
+    let togo;
+    if (local && local.models.includes(localModel)) {
+        togo = {
+            endpoint: local.endpoint,
+            token: local.key,
+            model: localModel,
+            local: true,
+            choice: modelChoice
+        };
+    } else {
+        togo = {
+            endpoint: fluid.tldraw.ai.endpoint,
+            token,
+            model: fluid.tldraw.ai.defaultModel,
+            local: false,
+            choice: fluid.demos.askAnything.ifmChoice
+        };
+    }
+    return togo;
+};
+
+/**
+ * Render the dropdown of the models which may be conversed with, as listed by `fluid.demos.askAnything.modelChoices`
+ * @param {LocalService|null} local - The local service, if any
+ * @param {String} choice - The value of the option currently chosen
+ * @return {VNode} The tree of the dropdown
+ */
+fluid.demos.askAnything.modelSelectTree = function (local, choice) {
+    return {
+        tag: "select",
+        attrs: {
+            "class": "ask-anything-model-select",
+            "@onchange": "{askAnything}.chooseModel({0})"
+        },
+        children: fluid.demos.askAnything.modelChoices(local).map(group => ({
+            tag: "optgroup",
+            attrs: {label: group.label},
+            children: group.options.map(({value, text}) => ({
+                tag: "option",
+                attrs: {
+                    value,
+                    ...(value === choice && {selected: "selected"})
+                },
+                children: [{text}]
+            }))
+        }))
+    };
+};
+
+/**
+ * Choose a model in the dropdown, and remember the choice
+ * @param {Object} state - The panel's reactive state
+ * @param {Event} e - The change event of the dropdown
+ */
+fluid.demos.askAnything.chooseModel = function (state, e) {
+    state.modelChoice = e.target.value;
+    fluid.demos.askAnything.writeStored("modelChoice", e.target.value);
+};
 
 /**
  * Derive the proxy token from the typed password and remember it. Whether the password is correct is only discovered
@@ -249,9 +404,10 @@ fluid.demos.askAnything.measureCall = async function (state, messages, invoke) {
 /**
  * Send the user's direction to the AI, and act on its response
  * @param {Object} state - The panel's reactive state
+ * @param {Connection} connection - How the AI is to be reached
  * @return {Promise} A promise which resolves once the exchange has finished, successfully or not
  */
-fluid.demos.askAnything.send = async function (state) {
+fluid.demos.askAnything.send = async function (state, connection) {
     const direction = state.direction.trim();
     const bridge = fluid.tldraw.ai.bridge;
     if (direction && !state.busy && bridge) {
@@ -260,18 +416,20 @@ fluid.demos.askAnything.send = async function (state) {
         state.recallIndex = null;
         state.recallDraft = "";
         state.busy = true;
-        const model = state.model;
+        const {endpoint, token, model} = connection;
         try {
             fluid.demos.askAnything.history = await fluid.tldraw.ai.converse({
                 direction,
                 history: fluid.demos.askAnything.history,
+                model,
                 bridge,
                 call: messages => fluid.demos.askAnything.measureCall(state, messages,
-                    () => fluid.tldraw.ai.callEndpoint({token: state.token, model, messages})),
+                    () => fluid.tldraw.ai.callEndpoint({endpoint, token, model, messages})),
                 report: entry => fluid.demos.askAnything.addEntry(state, entry)
             });
         } catch (error) {
-            if (error.unauthorised) {
+            // The key of a local service cannot be entered afresh, so its rejection is only reported
+            if (error.unauthorised && !connection.local) {
                 fluid.demos.askAnything.logout(state);
                 state.loginError = "The password was not accepted - please enter it again.";
             }
@@ -409,15 +567,19 @@ fluid.demos.askAnything.receiveOffer = function (state, event) {
             </div>
             <div class="ask-anything-login-error">@{state.loginError}</div>
         </div>
-        <div class="ask-anything-composer" @class="ask-anything-hidden:@{needsPassword}">
+        <div class="ask-anything-composer">
             <textarea class="ask-anything-direction" placeholder="Ask anything ... (↑ recalls earlier requests)"
-                      value="@{state.direction}" @onkeydown="{self}.directionKeyDown({0})"></textarea>
+                      value="@{state.direction}" @onkeydown="{self}.directionKeyDown({0})"
+                      @class="ask-anything-hidden:@{needsPassword}"></textarea>
+            <!-- The model may be chosen whether or not a password is needed, since a model of a local service needs none -->
             <div class="ask-anything-row">
                 <label class="ask-anything-model">Model
-                    <input type="text" value="@{state.model}" readonly>
+                    <select @id="modelSelect"></select>
                 </label>
-                <button class="ask-anything-link" disabled="@{busy}" @onclick="{self}.logout()">Log Out</button>
-                <button class="ask-anything-button" disabled="@{cannotSend}" @onclick="{self}.send()">@{sendLabel}</button>
+                <button class="ask-anything-link" disabled="@{busy}" @onclick="{self}.logout()"
+                        @class="ask-anything-hidden:@{cannotLogOut}">Log Out</button>
+                <button class="ask-anything-button" disabled="@{cannotSend}" @onclick="{self}.send()"
+                        @class="ask-anything-hidden:@{needsPassword}">@{sendLabel}</button>
             </div>
         </div>
     </div>
@@ -477,7 +639,7 @@ fluid.demos.askAnything.receiveOffer = function (state, event) {
     min-width: 0;
 }
 
-.ask-anything-password, .ask-anything-model input {
+.ask-anything-password, .ask-anything-model select {
     font: inherit;
     padding: 6px 8px;
     border: 1px solid #BDBDBD;
@@ -506,16 +668,12 @@ fluid.demos.askAnything.receiveOffer = function (state, event) {
     color: #616161;
 }
 
-.ask-anything-model input {
+.ask-anything-model select {
     flex: 1;
     min-width: 0;
     font-size: 12px;
 }
 
-.ask-anything-model input[readonly] {
-    color: #757575;
-    background-color: #F5F5F5;
-}
 
 .ask-anything-button {
     font: inherit;

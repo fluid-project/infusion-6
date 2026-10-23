@@ -7,3 +7,9 @@ pixabay-api-key.txt
 
 # Password for the IFM proxy, read by a-scratch/ifm-harness
 ifm-password.txt
+
+# Key for the CAVI AI proxy, used in place of IFM by the tldraw demo's "Ask me anything" panel when present - the
+# source, and its copy in demo/tldraw from which it is fetched, together with its deployed copy written by build.js
+cavi-key.txt
+demo/tldraw/cavi-key.json
+docs/demo/tldraw/cavi-key.json

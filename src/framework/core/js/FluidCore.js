@@ -141,6 +141,8 @@ const $fluidCoreJSScope = function (fluid) {
      * @property {String} message - A human-readable message describing the cause.
      * @property {String} variety - The variety assigned to the cause (e.g., "error", "config", "pending").
      * @property {String} [site] - An optional site associated with the cause of unavailability
+     * @property {String} [hint] - An optional hint towards correcting the cause, e.g. explaining a commonly
+     *   misunderstood construct which may be responsible for it
      */
 
     /**

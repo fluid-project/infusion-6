@@ -532,6 +532,7 @@ QUnit.test("Compose the selected widgets via the IFM - fluid-project/infusion-6#
         await fluid.tldraw.ai.converse({
             direction: fluid.harness.direction,
             history: [],
+            model,
             bridge,
             report: entry => entries.push(entry),
             call: async messages => {

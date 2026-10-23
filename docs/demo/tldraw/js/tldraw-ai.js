@@ -4,11 +4,8 @@
 // See https://github.com/fluid-project/infusion-6/issues/22
 
 import {createShapeId} from "tldraw";
-import {infusionInstances, registerPendingParts, awaitInstantiation, snapshotForUndo, instantiationTimeout, wait,
-    awaitReport, describeInstantiation, isWidgetAvailable} from "./tldraw-clipboard.js";
-
-// How long to let the workspace settle after a change before diagnosing its widgets
-const settleDelay = 500;
+import {infusionInstances, registerPendingParts, awaitInstantiation, snapshotForUndo, awaitReport, describeInstantiation,
+    isWidgetAvailable} from "./tldraw-clipboard.js";
 
 // The gap left between the user's selection and a fresh widget placed beside it
 const placementGap = 40;
@@ -181,7 +178,10 @@ export const makeAIBridge = function (editor) {
                 if (that) {
                     try {
                         fluid.ptf.registerLayerParts(change.parts, true);
-                        const unresolved = await Promise.race([fluid.ptf.applyParts(that, change.parts), wait(instantiationTimeout, null)]);
+                        const applying = fluid.ptf.applyParts(that, change.parts);
+                        // A widget which is not available once the graph has settled never will be
+                        const settled = fluid.tldraw.ai.awaitSettled().then(() => isWidgetAvailable(shape.id) ? applying : null);
+                        const unresolved = await Promise.race([applying, settled]);
                         if (unresolved === null) {
                             problems.push(`The widget ${shape.id} did not become available to apply your parts to: `
                                 + fluid.tldraw.ai.diagnose(that, true).join("; "));
@@ -219,7 +219,8 @@ export const makeAIBridge = function (editor) {
             editor.select(...createdIds);
         }
         (await Promise.all(instantiations)).forEach(found => problems.push(...found));
-        await wait(settleDelay);
+        // The widgets are diagnosed once the workspace has settled, when their state is final
+        await fluid.tldraw.ai.awaitSettled();
         // Redefining a layer may have broken any widget using it, so all of them are checked
         diagnoseAll(constructedIds).filter(problem => !existingProblems.has(problem)).forEach(problem => problems.push(problem));
         // A fresh widget may become available whilst some of its members have failed, e.g. a reference to its own value

@@ -1,0 +1,412 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ptf-boundary-i08jy18clq"
+
+This is a Potentia Transmission Format (PTF) document holding tldraw shapes together with the layers and potentia of the Infusion components they host.
+Original version of the Othello widget produced by IFM which produced an empty white widget due to undiagnosed duplication
+of view template with SFC template.
+--ptf-boundary-i08jy18clq
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="tldraw-content"
+Content-Description: tldraw
+
+{
+    "schema": {
+        "schemaVersion": 2,
+        "sequences": {
+            "com.tldraw.store": 5,
+            "com.tldraw.asset": 1,
+            "com.tldraw.camera": 1,
+            "com.tldraw.document": 2,
+            "com.tldraw.instance": 26,
+            "com.tldraw.instance_page_state": 5,
+            "com.tldraw.page": 1,
+            "com.tldraw.instance_presence": 6,
+            "com.tldraw.pointer": 1,
+            "com.tldraw.shape": 4,
+            "com.tldraw.user": 1,
+            "com.tldraw.asset.image": 6,
+            "com.tldraw.asset.video": 5,
+            "com.tldraw.asset.bookmark": 2,
+            "com.tldraw.shape.group": 0,
+            "com.tldraw.shape.text": 4,
+            "com.tldraw.shape.bookmark": 2,
+            "com.tldraw.shape.draw": 5,
+            "com.tldraw.shape.geo": 12,
+            "com.tldraw.shape.note": 13,
+            "com.tldraw.shape.line": 5,
+            "com.tldraw.shape.frame": 1,
+            "com.tldraw.shape.arrow": 8,
+            "com.tldraw.shape.highlight": 4,
+            "com.tldraw.shape.embed": 4,
+            "com.tldraw.shape.image": 5,
+            "com.tldraw.shape.video": 4,
+            "com.tldraw.shape.infusion": 0,
+            "com.tldraw.binding.arrow": 1
+        }
+    },
+    "shapes": [
+        {
+            "x": 500,
+            "y": 620,
+            "rotation": 0,
+            "isLocked": false,
+            "opacity": 1,
+            "meta": {
+                "ptfToken": "ptf-9bf3ccab-a771-4bae-809b-e6a3fec60d19"
+            },
+            "id": "shape:X9kynMOOW38HRzrpu6bfP",
+            "type": "infusion",
+            "props": {
+                "w": 420,
+                "h": 480,
+                "layerName": "fluid.demos.othello"
+            },
+            "parentId": "page:page",
+            "index": "a75ab",
+            "typeName": "shape"
+        }
+    ],
+    "rootShapeIds": [
+        "shape:X9kynMOOW38HRzrpu6bfP"
+    ],
+    "bindings": [],
+    "assets": [],
+    "users": []
+}
+--ptf-boundary-i08jy18clq
+Content-Type: multipart/mixed; boundary="ptf-boundary-ajdmlkfo1v"
+Content-Disposition: attachment; filename="shape:X9kynMOOW38HRzrpu6bfP"
+Content-Description: component
+
+--ptf-boundary-ajdmlkfo1v
+Content-Type: text/x-vue; charset=utf-8
+Content-Disposition: attachment; filename="fluid.demos.othello"
+Content-Description: layer
+
+<script>
+fluid.def("fluid.demos.othello", {
+    $layers: "fluid.topLevelWidget",
+    preferredSize: {
+        w: 420,
+        h: 480
+    },
+    state: {
+        $reactiveRoot: {
+            // 1 is Black, -1 is White, 0 an empty square
+            player: 1,
+            board: [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 1, -1, 0, 0],
+                [0, 0, 0, -1, 1, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0]
+            ]
+        }
+    },
+    // Legal moves are recomputed whenever the board or the player changes; the render below highlights them
+    moves: "$compute:fluid.demos.othello.legalMoves({self}.state.board, {self}.state.player)",
+    status: "$compute:fluid.demos.othello.status({self}.state.board, {self}.state.player)",
+    play: {
+        $method: {
+            func: "fluid.demos.othello.place",
+            args: ["{self}.state", "{0}:r", "{1}:c"]
+        }
+    },
+    restart: {
+        $method: {
+            func: "fluid.demos.othello.reset",
+            args: ["{self}.state"]
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "$compute:fluid.demos.othello.render({self}.state.board, {self}.moves, {self}.state.player, {self}.status)"
+        }
+    }
+});
+
+fluid.demos.othello.startBoard = function () {
+    return [
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 1, -1, 0, 0],
+        [0, 0, 0, -1, 1, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0]
+    ];
+};
+
+fluid.demos.othello.directions = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+
+// For a candidate move at (r, c), the discs in every direction which are bracketed and so would be flipped
+fluid.demos.othello.lineFlips = function (board, r, c, player) {
+    const opponent = -player;
+    const flips = [];
+    fluid.demos.othello.directions.forEach(function ([dr, dc]) {
+        const line = [];
+        let rr = r + dr, cc = c + dc;
+        while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8 && board[rr][cc] === opponent) {
+            line.push([rr, cc]);
+            rr += dr;
+            cc += dc;
+        }
+        if (line.length > 0 && rr >= 0 && rr < 8 && cc >= 0 && cc < 8 && board[rr][cc] === player) {
+            flips.push(line);
+        }
+    });
+    return flips;
+};
+
+fluid.demos.othello.legalMoves = function (board, player) {
+    const moves = [];
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            if (board[r][c] === 0 && fluid.demos.othello.lineFlips(board, r, c, player).length > 0) {
+                moves.push({r: r, c: c});
+            }
+        }
+    }
+    return moves;
+};
+
+fluid.demos.othello.play = function (board, r, c, player) {
+    const newBoard = board.map(function (row) { return row.slice(); });
+    newBoard[r][c] = player;
+    fluid.demos.othello.lineFlips(board, r, c, player).forEach(function (line) {
+        line.forEach(function ([fr, fc]) { newBoard[fr][fc] = player; });
+    });
+    return newBoard;
+};
+
+// Place at (r, c) if legal, flipping the bracketed discs; the turn passes to the opponent if they have a move,
+// otherwise the same player moves again, and when neither does the game is over (reported by `status`)
+fluid.demos.othello.place = function (state, r, c) {
+    const player = state.player;
+    const moves = fluid.demos.othello.legalMoves(state.board, player);
+    if (!moves.some(function (m) { return m.r === r && m.c === c; })) {
+        return null;
+    }
+    state.board = fluid.demos.othello.play(state.board, r, c, player);
+    if (fluid.demos.othello.legalMoves(state.board, -player).length > 0) {
+        state.player = -player;
+    }
+};
+
+fluid.demos.othello.count = function (board, player) {
+    return board.reduce(function (total, row) {
+        return total + row.filter(function (v) { return v === player; }).length;
+    }, 0);
+};
+
+fluid.demos.othello.reset = function (state) {
+    state.board = fluid.demos.othello.startBoard();
+    state.player = 1;
+};
+
+fluid.demos.othello.status = function (board, player) {
+    const name = player === 1 ? "Black" : "White";
+    const other = player === 1 ? "White" : "Black";
+    const ours = fluid.demos.othello.legalMoves(board, player);
+    const others = fluid.demos.othello.legalMoves(board, -player);
+    if (ours.length === 0 && others.length === 0) {
+        const black = fluid.demos.othello.count(board, 1);
+        const white = fluid.demos.othello.count(board, -1);
+        return black > white ? "Game over - Black wins " + black + " to " + white
+            : white > black ? "Game over - White wins " + white + " to " + black
+            : "Game over - Draw " + black + " to " + white;
+    }
+    return ours.length === 0 ? name + " has no move - " + other + " takes another turn" : name + " to move";
+};
+
+// Build the whole board as an HTML string; legal moves are marked and wired to `play`, and reconciliation keeps
+// updates to exactly the cells that change
+fluid.demos.othello.render = function (board, moves, player, status) {
+    const black = fluid.demos.othello.count(board, 1);
+    const white = fluid.demos.othello.count(board, -1);
+    const hints = {};
+    moves.forEach(function (m) { hints[m.r * 8 + m.c] = true; });
+    let cells = "";
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            const v = board[r][c];
+            const hint = hints[r * 8 + c];
+            let cls = "othello-cell";
+            let body = "";
+            let onClick = "";
+            if (v === 1) {
+                cls += " othello-player1";
+                body = '<span class="othello-disc"></span>';
+            } else if (v === -1) {
+                cls += " othello-player2";
+                body = '<span class="othello-disc"></span>';
+            } else if (hint) {
+                cls += " othello-hint";
+                onClick = ' @onclick="{self}.play(' + r + ", " + c + ')"';
+            }
+            cells += '<div class="' + cls + '"' + onClick + ">" + body + "</div>";
+        }
+    }
+    return '<div class="othello othello-turn-' + (player === 1 ? "black" : "white") + '">'
+        + '<div class="othello-header">'
+        + '<span class="othello-score othello-black"><strong>Black</strong> ' + black + "</span>"
+        + '<span class="othello-vs">vs</span>'
+        + '<span class="othello-score othello-white"><strong>White</strong> ' + white + "</span>"
+        + "</div>"
+        + '<div class="othello-board">' + cells + "</div>"
+        + '<div class="othello-status">' + status + "</div>"
+        + '<div class="othello-restart"><button class="othello-button" @onclick="{self}.restart()">Restart</button></div>'
+        + "</div>";
+};
+</script>
+
+<template>
+    <div class="othello-placeholder"></div>
+</template>
+
+<style>
+/* SFC styles are global, hence the othello- prefix throughout */
+.othello {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    background: #f8f9fa;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+.othello-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.othello-score {
+    font-size: 15px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-weight: 600;
+}
+
+.othello-black {
+    color: #fafafa;
+    background: #1c1c1c;
+}
+
+.othello-white {
+    color: #111;
+    background: #fafafa;
+    border: 1px solid #999;
+}
+
+.othello-vs {
+    color: #888;
+    font-size: 12px;
+}
+
+.othello-board {
+    display: grid;
+    grid-template-columns: repeat(8, 36px);
+    grid-gap: 6px;
+    background: #2d6a4f;
+    padding: 8px;
+    border-radius: 8px;
+}
+
+.othello-cell {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #58a05c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.othello-hint {
+    cursor: pointer;
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+.othello-hint::after {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.8);
+}
+
+.othello-player1 .othello-disc {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #111c1c;
+}
+
+.othello-player2 .othello-disc {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #fafafa;
+    border: 2px solid #9aa0a6;
+}
+
+.othello-status {
+    font-size: 15px;
+    min-height: 20px;
+}
+
+.othello-button {
+    font: inherit;
+    padding: 8px 18px;
+    border: none;
+    border-radius: 999px;
+    background: #2d6a4f;
+    color: #fff;
+    cursor: pointer;
+}
+</style>
+
+--ptf-boundary-ajdmlkfo1v
+Content-Type: text/javascript; charset=utf-8
+Content-Disposition: attachment; filename="fluid.tldrawViewComponent"
+Content-Description: layer
+
+fluid.def("fluid.tldrawViewComponent", {
+    $layers: "fluid.topLevelWidgetView",
+    shapeId: null,
+    editor: "{tldrawHost}.editor",
+    hostBounds: {
+        $bindable: {
+            bind: "fluid.tldraw.bindShapeBounds({self}.editor, {self}.shapeId)",
+            unbind: "fluid.tldraw.stopReactiveCell({boundValue})"
+        }
+    }
+});
+
+--ptf-boundary-ajdmlkfo1v
+Content-Type: application/json; charset=utf-8
+Content-Disposition: attachment; filename="/"
+Content-Description: potentia
+
+{
+    "$layers": [
+        "fluid.demos.othello"
+    ],
+    "view": {
+        "$component": {
+            "shapeId": "shape:X9kynMOOW38HRzrpu6bfP"
+        }
+    }
+}
+--ptf-boundary-ajdmlkfo1v--
+--ptf-boundary-i08jy18clq--

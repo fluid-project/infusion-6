@@ -927,6 +927,34 @@ const $fluidILScope = function (fluid) {
      * @param {Boolean} penultimate - If true, return the signal at the final segment rather than unwrapping it.
      * @return {any} The resolved value at the specified path, or an unavailable value if the path cannot be fully resolved.
      */
+    // The hint accompanying a reference to a member which a component lacks but its parent has
+    fluid.parentMemberHintText = "Within a $component record, {self} designates the subcomponent being defined rather "
+        + "than its parent, which may be referred to as {$parent} or by a context name such as that of one of its layers";
+
+    /**
+     * Construct the unavailable value resulting from a reference to a member which a component lacks. If its parent
+     * has such a member, as most often happens when `{self}.member` is written within a `$component` record, e.g. that
+     * of a view, intending the component which holds the record, this is noted, and the cause bears a `hint` explaining
+     * the meaning of `{self}`. The parent's merged layers are consulted as they stand, without evaluating anything.
+     * @param {Shadow} shadow - The shadow of the component which lacks the member
+     * @param {String[]} segs - The path segments of the reference within the component
+     * @param {Number} index - The index within `segs` of the member which is lacking
+     * @return {Unavailable} The unavailable value
+     */
+    fluid.missingMemberUnavailable = function (shadow, segs, index) {
+        const memberName = segs[index];
+        const parentShadow = shadow.parentShadow;
+        const parentMerged = parentShadow?.flatMerged?._value;
+        const parentHas = index === 0 && fluid.isPlainObject(parentMerged, true) && memberName in parentMerged;
+        return fluid.unavailable({
+            message: `Component at path ${shadow.path} has no member ${memberName}` +
+                (parentHas ? `, although its parent component at path ${parentShadow.path} does` : ""),
+            variety: "config",
+            site: {shadow, segs},
+            ...(parentHas ? {hint: fluid.parentMemberHintText} : {})
+        });
+    };
+
     fluid.getThroughSignalsImpl = function (root, segs, penultimate) {
         // Always fully designal the root so it is concrete
         let move = penultimate && segs.length === 0 ? fluid.deSignalSoft(root) : fluid.deSignal(root);
@@ -936,12 +964,7 @@ const $fluidILScope = function (fluid) {
             }
             const seg = segs[j];
             if (!(seg in move) && move[$m]) {
-                const shadow = move[$m];
-                move = fluid.unavailable({
-                    message: `Component at path ${shadow.path} has no member ${seg}`,
-                    variety: "config",
-                    site: {shadow, segs}
-                });
+                move = fluid.missingMemberUnavailable(move[$m], segs, j);
                 break;
             }
             // Stop if we've been asked to report the very last sited ref
@@ -2970,15 +2993,39 @@ const $fluidILScope = function (fluid) {
     fluid.upgradeFreeComponentArgs = argLayer => argLayer;
 
     fluid.initFreeComponent = function (componentName, ...initArgs) {
-        const instantiator = fluid.globalInstantiator;
         // TODO: Perhaps one day we will support a directive which allows the user to select a current component
-        // root for free components other than the global root
+        // root for free components other than the global root - fluid.initChildComponent constructs one elsewhere
+        return fluid.initComponentInShadow(fluid.globalInstantiator.rootShadow, componentName, initArgs[0]);
+    };
 
+    /**
+     * Construct a component as a child of an existing one, as a free component is constructed as a child of the root,
+     * under a member name allocated from its name and a fresh id. This allows a host to scope the behaviour of the
+     * components it constructs, e.g. through an error boundary or contexts found amongst its ancestors, whilst the
+     * component remains free in that it is not declared by its parent's layers. It is destroyed by
+     * `fluid.destroyComponent`.
+     * @param {fluid.component} parent - The component which is to hold the fresh one
+     * @param {String} componentName - The name of the fresh component's principal layer
+     * @param {Object} [argLayer] - User arguments for the fresh component, which may include further `$layers`
+     * @return {fluid.component} The proxy for the fresh component, which may not yet be available
+     */
+    fluid.initChildComponent = function (parent, componentName, argLayer) {
+        return fluid.initComponentInShadow(parent[$t].shadow, componentName, argLayer);
+    };
+
+    /**
+     * Construct a free component as a child of the component with the supplied shadow - see `fluid.initChildComponent`
+     * @param {Shadow} parentShadow - The shadow of the component which is to hold the fresh one
+     * @param {String} componentName - The name of the fresh component's principal layer
+     * @param {Object} [argLayerIn] - User arguments for the fresh component, which may include further `$layers`
+     * @return {fluid.component} The proxy for the fresh component, which may not yet be available
+     */
+    fluid.initComponentInShadow = function (parentShadow, componentName, argLayerIn) {
         const id = fluid.allocateId();
         const instanceName = fluid.computeGlobalMemberName(componentName, id);
 
         // Currently just a single initial argument is supported - perhaps one day we might revive "argMaps" looked up by componentName
-        const argLayer = fluid.upgradeFreeComponentArgs(initArgs[0] || {});
+        const argLayer = fluid.upgradeFreeComponentArgs(argLayerIn || {});
         const ourLayerNames = [componentName].concat(fluid.makeArray(argLayer.$layers));
 
         const userLayerRecord = {
@@ -2993,7 +3040,7 @@ const $fluidILScope = function (fluid) {
             mergeRecords: [userLayerRecord]
         };
 
-        const computer = fluid.computeInstance(potentia, instantiator.rootComponent[$m], instanceName);
+        const computer = fluid.computeInstance(potentia, parentShadow, instanceName);
         computer.get();
 
         const proxy = fluid.proxyMat(computer, computer.shadow, []);

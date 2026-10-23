@@ -77,6 +77,58 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} JSLayerSource
+     * @property {String} body - The text of a JavaScript layer part, as registered by `fluid.ptf.registerLayerPart`
+     * @property {Object|null} def - The definition of the layer which evaluating the text produced, or `null` whilst it
+     * is being evaluated
+     */
+
+    // The text of each layer registered from a JavaScript layer part. Unlike a layer's definition, from which its text
+    // is otherwise rendered by fluid.layerToJavaScript, this holds everything else the text does - e.g. functions it
+    // assigns alongside its fluid.def call, which the definition refers to by name, and any comments.
+    /** @type {Object<String, JSLayerSource>} */
+    fluid.ptf.jsLayerSources = Object.create(null);
+
+    /**
+     * Retrieve the text from which a JavaScript layer was registered, if it is still current - that is, the layer has
+     * not been redefined since by other means, e.g. by a direct call to `fluid.def`
+     * @param {String} layerName - The name of the layer
+     * @return {String|undefined} The text of the layer, or `undefined` if there is none current
+     */
+    fluid.ptf.jsLayerSourceText = function (layerName) {
+        const record = fluid.ptf.jsLayerSources[layerName];
+        return record && (record.def === null || record.def === fluid.def(layerName)) ? record.body : undefined;
+    };
+
+    // Readers and writers of the provenance recorded in the text of a layer, keyed by the layer's MIME type - see
+    // fluid.readSFCProvenance and fluid.readJSProvenance
+    fluid.ptf.provenanceAccessors = {
+        [fluid.layerMimeTypes.sfc]: {read: text => fluid.readSFCProvenance(text), write: (text, provenance) => fluid.writeSFCProvenance(text, provenance)},
+        [fluid.layerMimeTypes.javascript]: {read: text => fluid.readJSProvenance(text), write: (text, provenance) => fluid.writeJSProvenance(text, provenance)}
+    };
+
+    /**
+     * Read the provenance recorded in a layer part
+     * @param {PTFPart} part - The layer part
+     * @return {SFCProvenance|null} The provenance it records, or `null` if it records none or its type cannot hold any
+     */
+    fluid.ptf.readLayerProvenance = function (part) {
+        const accessors = fluid.ptf.provenanceAccessors[part.contentType];
+        return accessors ? accessors.read(part.body) : null;
+    };
+
+    /**
+     * Write provenance into a layer part, replacing any it already records
+     * @param {PTFPart} part - The layer part
+     * @param {SFCProvenance} provenance - The provenance to be written
+     * @return {PTFPart} A copy of the part recording the provenance, or the part itself if its type cannot hold any
+     */
+    fluid.ptf.writeLayerProvenance = function (part, provenance) {
+        const accessors = fluid.ptf.provenanceAccessors[part.contentType];
+        return accessors ? {...part, body: accessors.write(part.body, provenance)} : part;
+    };
+
+    /**
      * Determine the source text for the named layer in the representation given by `fluid.layerMimeType`.
      * @param {String} layerName - The name of the layer
      * @return {PTFPart} A layer part holding the layer's source text and MIME type
@@ -84,9 +136,12 @@ const fluidPTFScope = function (fluid) {
     fluid.ptf.layerToPart = function (layerName) {
         const mimeType = fluid.layerMimeType(layerName);
         const sfcText = mimeType === fluid.layerMimeTypes.sfc ? fluid.sfcStore[layerName]?.textSignal.get() : undefined;
+        const jsText = mimeType === fluid.layerMimeTypes.javascript ? fluid.ptf.jsLayerSourceText(layerName) : undefined;
         let togo;
         if (typeof(sfcText) === "string") {
             togo = {kind: "layer", contentType: mimeType, filename: layerName, body: sfcText};
+        } else if (jsText !== undefined) {
+            togo = {kind: "layer", contentType: mimeType, filename: layerName, body: jsText};
         } else {
             togo = {
                 kind: "layer",
@@ -215,8 +270,51 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
+     * Determine the names of the layers from which a layer derives, whether directly or through its parents
+     * @param {String} layerName - The name of the layer
+     * @param {Set<String>} [togo] - Accumulates the names found
+     * @return {Set<String>} The names of all of the layer's ancestors
+     */
+    fluid.ptf.layerAncestors = function (layerName, togo = new Set()) {
+        const layerRec = fluid.readLayer(layerName).get();
+        const def = fluid.isUnavailable(layerRec) ? null : fluid.deSignal(layerRec.raw);
+        const parents = fluid.isPlainObject(def, true) ? fluid.makeArray(def.$layers) : [];
+        parents.filter(parent => typeof(parent) === "string" && !togo.has(parent)).forEach(parent => {
+            togo.add(parent);
+            fluid.ptf.layerAncestors(parent, togo);
+        });
+        return togo;
+    };
+
+    /**
+     * Sort layer names so that the most derived layers of any hierarchy come first and its base layers last. Each
+     * layer is ranked by the length of the longest chain of layers among those supplied which derive from it, and
+     * layers of equal rank retain their supplied order - so that if the layer of a transmitted component is supplied
+     * first, it comes first.
+     * @param {String[]} layerNames - The names of the layers
+     * @return {String[]} The sorted names
+     */
+    fluid.ptf.sortLayerNames = function (layerNames) {
+        const ancestors = new Map(layerNames.map(layerName => [layerName, fluid.ptf.layerAncestors(layerName)]));
+        const ranks = new Map();
+        const rank = function (layerName, visiting) {
+            if (!ranks.has(layerName)) {
+                // A cycle, which no registered layers can form, is broken where it is found
+                const derived = layerNames.filter(other => !visiting.has(other) && ancestors.get(other).has(layerName));
+                const nextVisiting = new Set([...visiting, layerName]);
+                ranks.set(layerName, derived.reduce((acc, other) => Math.max(acc, rank(other, nextVisiting) + 1), 0));
+            }
+            return ranks.get(layerName);
+        };
+        return layerNames.map((layerName, index) => ({layerName, index, rank: rank(layerName, new Set())}))
+            .sort((a, b) => a.rank - b.rank || a.index - b.index)
+            .map(({layerName}) => layerName);
+    };
+
+    /**
      * Assemble all of the parts required to reconstruct the supplied component at another location. These are
      * i) the definitions of all user layers resolved in the `$layers` of the component and any of its subcomponents,
+     * sorted by `fluid.ptf.sortLayerNames` so that the layer of the component itself comes first,
      * ii) the user potentia of the component and any subcomponents having one and iii) the contents of the live layers
      * of the component and its subcomponents.
      * @param {fluid.component} component - The component to be transmitted
@@ -224,7 +322,9 @@ const fluidPTFScope = function (fluid) {
      */
     fluid.ptf.componentToParts = function (component) {
         const rootShadow = fluid.ptf.componentToShadow(component);
-        const layerNames = new Set();
+        // The layers applied to the component itself are found first, so that they come first amongst those of equal rank
+        const layerNames = new Set(rootShadow.potentia.get().layerNames.filter(layerName =>
+            !fluid.isReferenceOrExpander(layerName) && fluid.isUserLayer(layerName)));
         const potentiaParts = [];
         const liveParts = [];
         const visit = function (shadow, segs) {
@@ -252,7 +352,7 @@ const fluidPTFScope = function (fluid) {
             });
         };
         visit(rootShadow, []);
-        const layerParts = [...layerNames].map(layerName => fluid.ptf.layerToPart(layerName));
+        const layerParts = fluid.ptf.sortLayerNames([...layerNames]).map(layerName => fluid.ptf.layerToPart(layerName));
         return [...layerParts, ...potentiaParts, ...liveParts];
     };
 
@@ -500,8 +600,19 @@ const fluidPTFScope = function (fluid) {
                 fluid.subscribeDocToInjections(part.filename, fluid.defaultDocument);
             }
         } else if (part.contentType === fluid.layerMimeTypes.javascript) {
-            // Evaluating a transmitted layer is equivalent in trust to loading an SFC from the same source
-            new Function("fluid", part.body)(fluid);
+            // The text is recorded before it is evaluated, so that the history of the layer's definition, which is
+            // recorded synchronously as it is defined, records the text rather than a rendering of the definition
+            const record = {body: part.body, def: null};
+            fluid.ptf.jsLayerSources[part.filename] = record;
+            try {
+                // Evaluating a transmitted layer is equivalent in trust to loading an SFC from the same source
+                new Function("fluid", part.body)(fluid);
+                record.def = fluid.def(part.filename);
+            } finally {
+                if (record.def === null) {
+                    delete fluid.ptf.jsLayerSources[part.filename];
+                }
+            }
         } else if (part.contentType === fluid.layerMimeTypes.json) {
             fluid.def(part.filename, JSON.parse(part.body));
         } else {
@@ -608,6 +719,9 @@ const fluidPTFScope = function (fluid) {
      * @param {Boolean} [options.overrideLayers] - If `true`, transmitted layers override any existing definitions
      * @param {Object} [options.potentia] - Further potentia supplied by the receiving environment, for example a
      * `container`, which is merged over the transmitted root potentia
+     * @param {fluid.component} [options.parent] - A component within which the root component is to be constructed, as
+     * by `fluid.initChildComponent` - by default it is constructed as a free component at the root. Its parts are
+     * written relative to the root component wherever it is constructed.
      * @return {Promise<PTFInstantiation>} A promise resolving once the component and its transmitted state are available
      */
     fluid.ptf.instantiateParts = async function (parts, options = {}) {
@@ -632,7 +746,9 @@ const fluidPTFScope = function (fluid) {
         if (rootPart) {
             const rootPotentia = JSON.parse(rootPart.body);
             const [componentName, ...layerNames] = fluid.makeArray(rootPotentia.$layers);
-            togo = fluid.initFreeComponent(componentName, {...rootPotentia, ...options.potentia, $layers: layerNames});
+            const argLayer = {...rootPotentia, ...options.potentia, $layers: layerNames};
+            togo = options.parent ? fluid.initChildComponent(options.parent, componentName, argLayer) :
+                fluid.initFreeComponent(componentName, argLayer);
         } else {
             throw fluid.unavailable("PTF document has no potentia for its root component", "error");
         }
@@ -1017,13 +1133,22 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
+     * Determine whether a layer currently holds a definition
+     * @param {String} layerName - The name of the layer
+     * @return {Boolean} `true` if the layer is defined
+     */
+    fluid.ptf.isLayerDefined = function (layerName) {
+        const existing = fluid.deSignal(fluid.readLayer(layerName).get().raw);
+        return fluid.isPlainObject(existing, true) && !fluid.isUnavailable(existing);
+    };
+
+    /**
      * Register a layer part without recording it in `fluid.definitionHistory`, e.g. whilst applying a record of the
      * history itself, or restoring a persisted arena
      * @param {PTFPart} part - The layer part
      */
     fluid.ptf.registerLayerPartQuietly = function (part) {
-        const existing = fluid.deSignal(fluid.readLayer(part.filename).get().raw);
-        const defined = fluid.isPlainObject(existing, true) && !fluid.isUnavailable(existing);
+        const defined = fluid.ptf.isLayerDefined(part.filename);
         const source = {contentType: part.contentType, body: part.body};
         if (part.contentType === fluid.layerMimeTypes.sfc) {
             // An SFC is redefined once it has been parsed and injected, which may follow asynchronously - but not at all if

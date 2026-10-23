@@ -1,7 +1,0 @@
-[
-  {
-    "kind": "change",
-    "text": "Defined layer fluid.demos.noteImageGenerator\nCreated widget \"shape:noteimagegen\" as shape shape:created-1 from layer fluid.demos.noteImageGenerator",
-    "detail": "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"b-outer-1\"\n\n--b-outer-1\nContent-Type: text/javascript; charset=utf-8\nContent-Disposition: attachment; filename=\"fluid.demos.noteImageGenerator\"\nContent-Description: layer\n\nfluid.def(\"fluid.demos.noteImageGenerator\", {\n    $layers: [\"fluid.demos.imageGenerator\", \"fluid.topLevelWidget\"],\n    finder: {\n        $component: {\n            $layers: \"fluid.demos.closestNoteFinder\",\n            view: \"{noteImageGenerator}.view\"\n        }\n    },\n    state: {\n        prompt: \"{finder}.noteText\"\n    }\n});\n--b-outer-1\nContent-Type: multipart/mixed; boundary=\"b-inner-1\"\nContent-Disposition: attachment; filename=\"shape:noteimagegen\"\nContent-Description: component\n\n--b-inner-1\nContent-Type: application/json; charset=utf-8\nContent-Disposition: attachment; filename=\"/\"\nContent-Description: potentia\n\n{\n    \"$layers\": [\n        \"fluid.demos.noteImageGenerator\"\n    ],\n    \"view\": {\n        \"$component\": {\n            \"shapeId\": \"shape:noteimagegen\"\n        }\n    }\n}\n--b-inner-1\nContent-Type: application/json; charset=utf-8\nContent-Disposition: attachment; filename=\"shape\"\nContent-Description: shape\n\n{\"x\": 345, \"y\": 420}\n--b-inner-1--\n--b-outer-1--"
-  }
-]

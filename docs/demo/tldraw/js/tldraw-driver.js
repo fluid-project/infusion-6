@@ -2,7 +2,7 @@ import React from "react";
 import {createRoot} from "react-dom/client";
 import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react} from "tldraw";
 import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions, guardClipboardEvents,
-    instantiationTimeout, isWidgetAvailable, diagnoseWidget} from "./tldraw-clipboard.js";
+    isWidgetAvailable} from "./tldraw-clipboard.js";
 import {makeAIBridge} from "./tldraw-ai.js";
 import {containsWidget, restoreArena, persistArena, bindHistoryKeys, bindWidgetHistory, recordWidgetCreation,
     widgetBurstKey} from "./tldraw-arena.js";
@@ -150,12 +150,16 @@ fluid.tldraw.bindNotes = function (editor) {
 };
 
 /**
- * A root-scoped component holding the tldraw editor, through which any Infusion component may reach it as
- * `{tldrawHost}.editor` - the Infusion counterpart of React's `useEditor()`. It broadcasts tldraw's machinery onto the
- * view of every top-level widget, and bridges any tldraw state of interest to several widgets into Infusion.
+ * The component holding the tldraw editor, of which every widget on the canvas is constructed as a child by
+ * InfusionHost. Within it, the editor may be reached as `{tldrawHost}.editor` - the Infusion counterpart of React's
+ * `useEditor()`. It broadcasts tldraw's machinery onto the view of every top-level widget, and bridges any tldraw state
+ * of interest to several widgets into Infusion. It is the {errorBoundary} of each widget, whose errors are reported on
+ * the widget's problem badge. Components operating the integration itself, e.g. the "Ask me anything" panel, are
+ * constructed elsewhere, and so do not fall within its scope.
  */
 fluid.def("fluid.demos.tldrawHost", {
-    $layers: ["fluid.resolveRoot", "fluid.component"],
+    $layers: "fluid.errorBoundary",
+    reportError: "$method:fluid.tldraw.reportWidgetError({0})",
     editor: fluid.unavailable({cause: "No tldraw editor supplied", variety: "config"}),
     // Every top-level widget's view, wherever it is instantiated, becomes a tldraw view for as long as we exist
     viewLinkage: {
@@ -174,158 +178,182 @@ fluid.def("fluid.demos.tldrawHost", {
 
 /**
  * The view of a top-level widget hosted in a tldraw shape, broadcast onto it by the tldrawHost's linkage. This reports
- * the shape's bounds as the widget's hostBounds.
+ * the shape's bounds as the widget's hostBounds. It is part of the canvas rather than of any widget, and so is not a
+ * user layer, and is not transmitted with a widget's PTF.
  */
 fluid.def("fluid.tldrawViewComponent", {
     $layers: "fluid.topLevelWidgetView",
     // Supplied by InfusionHost - absent, for a widget nested within another, no bounds are reported, so that the widget
     // takes those of the widget enclosing it - see fluid.topLevelWidget
     shapeId: null,
+    // The configuration of the shape, as supplied by InfusionHost when the widget is constructed. This is how the shape
+    // is transmitted in the widget's PTF, written afresh from the shape as it is transmitted - see
+    // fluid.tldraw.shapeToConfig. A member holding its default here is not transmitted, and a shape transmitted without
+    // a position or size takes those chosen by the host.
+    shape: {
+        x: null,
+        y: null,
+        w: null,
+        h: null,
+        rotation: 0,
+        isLocked: false,
+        opacity: 1,
+        parentId: null,
+        index: null
+    },
     editor: "{tldrawHost}.editor",
     hostBounds: {
         $bindable: {
             bind: "fluid.tldraw.bindShapeBounds({self}.editor, {self}.shapeId)",
             unbind: "fluid.tldraw.stopReactiveCell({boundValue})"
         }
-    }
+    },
+    $variety: "frameworkAux"
 });
 
 /**
- * Returns a promise which resolves once the named layer has been registered. Since SFCs are loaded asynchronously,
- * a layer's creator function will not exist until its SFC has been fetched and its script evaluated. Whilst its SFC is
- * being injected, the layer store holds a pending record for it, which fluid.layerRecToUnavailable reports.
- * @param {String} layerName - The name of the layer to wait for
- * @return {Promise} A promise resolving once the layer is available
+ * The tldrawHost component, once tldraw has mounted and it has been constructed - see `onMount`
+ * @type {Promise<fluid.component>}
  */
-const awaitLayer = function (layerName) {
-    const layerSignal = fluid.readLayer(layerName);
-    return new Promise(resolve => {
-        if (fluid.layerRecToUnavailable(layerSignal.get()) !== null) {
-            const effect = fluid.cell.effect(layerRec => {
-                if (fluid.layerRecToUnavailable(layerRec) === null) {
-                    resolve();
-                    // Dispose asynchronously since we are currently executing within the effect
-                    queueMicrotask(() => effect.dispose());
-                }
-            }, [layerSignal], {name: `awaitLayer for ${layerName}`, isFree: true});
-        } else {
-            // A freshly created effect would not be run until the next stabilization, so resolve directly
-            resolve();
-        }
-    });
-};
+let hostReady = null;
+let resolveHost = null;
 
 /**
- * Render a description of why a widget could not be hosted into its container, in place of the blank square which
- * would otherwise be seen. This is replaced by the widget's own markup should it later render.
- * @param {Element} container - The container of the widget
- * @param {String[]} problems - Descriptions of the problems found
+ * Begin awaiting a fresh tldrawHost component, as tldraw mounts afresh
  */
-const renderHostProblems = function (container, problems) {
-    const holder = document.createElement("div");
-    holder.className = "infusion-host-problems";
-    problems.forEach(problem => {
-        const line = document.createElement("div");
-        line.textContent = problem;
-        holder.appendChild(line);
+const awaitHost = function () {
+    hostReady = new Promise(resolve => {
+        resolveHost = resolve;
     });
-    container.replaceChildren(holder);
 };
+awaitHost();
 
 /**
- * A React component hosting an Infusion component. The Infusion component is constructed once React has mounted the
- * container, and destroyed when React unmounts it. A shape which was pasted from a PTF document is reconstructed from
- * the document's parts, and otherwise the component is constructed afresh via its layer's creator function. In either
- * case the shape's id is supplied to the component's view, where fluid.tldrawViewComponent will find it. If the
- * component cannot be constructed, or has neither rendered nor become available within `instantiationTimeout`, the
- * problems are described within the shape.
+ * A React component hosting an Infusion component. The Infusion component is constructed as a child of the tldrawHost
+ * component once React has mounted the container, and destroyed when React unmounts it. A shape which was pasted from
+ * a PTF document is reconstructed from the document's parts, and otherwise the component is constructed afresh from
+ * its layer. In either case the shape's id and configuration are supplied to the component's view, where
+ * fluid.tldrawViewComponent will find them. The component is kept diagnosed, and any problems found in it, including the errors in rendering it
+ * reported by the tldrawHost as its error boundary, are reported by a badge overlaying the shape once the reactive
+ * graph has settled - see `fluid.tldraw.renderProblemBadge`.
  * @param {Object} props - The React props
  * @param {String} props.layerName - The name of the Infusion layer to be instantiated
  * @param {String} props.shapeId - The id of the tldraw shape hosting the component
+ * @param {TLShape} props.shape - The shape hosting the component, as it was when the component was constructed
  * @param {String} [props.ptfToken] - A token resolving to the PTF parts from which the component should be reconstructed
  * @return {ReactElement} The rendered container
  */
-const InfusionHost = function ({layerName, shapeId, ptfToken}) {
+const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
+    const hostRef = React.useRef(null);
     const containerRef = React.useRef(null);
+    const badgeRef = React.useRef(null);
     React.useEffect(() => {
         let that = null;
         let unmounted = false;
+        let diagnosis = null;
+        const hostElement = hostRef.current;
+        const container = containerRef.current;
+        const onFix = problems => fluid.demos.askAnything.offer({text: fluid.tldraw.fixDirection(shapeId, layerName, problems)});
+        const showProblems = function (problems) {
+            fluid.tldraw.renderProblemBadge(badgeRef.current, problems, {
+                // A widget which shows nothing else has its problems listed straight away
+                expand: container.textContent.trim() === "",
+                // The panel's SFC may not have loaded
+                onFix: fluid.demos?.askAnything?.offer ? onFix : null
+            });
+        };
+        // An error reported by the tldrawHost may arise whilst the widget is being constructed, before it is diagnosed,
+        // in which case it is found by the first diagnosis
+        fluid.tldraw.problemReporters.set(hostElement, () => diagnosis?.refresh());
         const adopt = function (constructed, how) {
             that = constructed;
             infusionInstances.set(shapeId, that);
             console.log(`${how} Infusion component ${layerName} with id ${that.$id}`);
+            diagnosis = fluid.tldraw.ai.bindDiagnosis(that, showProblems);
         };
-        const container = containerRef.current;
         const parts = lookupPendingParts(ptfToken);
-        if (parts) {
-            // Layers are registered first, since the host potentia can only be determined once the widget's own layer,
-            // which may be an SFC which is parsed asynchronously, is available
-            fluid.ptf.registerLayerParts(parts);
-            awaitLayer(layerName).then(() => {
-                if (!unmounted) {
+        /**
+         * Construct the widget within the tldrawHost, reconstructing it from its PTF parts if it has any. A widget
+         * whose layer has failed is constructed nonetheless, so that its failure is reported as for any other.
+         * @param {fluid.component} host - The tldrawHost component
+         * @param {Unavailable|null} layerUnavailable - Why the widget's layer is not available, or `null` if it is
+         */
+        const construct = function (host, layerUnavailable) {
+            const shapeConfig = fluid.tldraw.shapeToConfig(shape, true);
+            // The host potentia can only be determined once the widget's own layer is available
+            const potentia = layerUnavailable === null ? fluid.tldraw.hostPotentiaFor(layerName, container, shapeId, shapeConfig) :
+                {view: {$component: {container, shapeId, shape: shapeConfig}}};
+            try {
+                if (parts) {
                     // The component is adopted as soon as it is constructed, before it is available, so that it can be
                     // diagnosed whilst it is incomplete and is destroyed if the shape unmounts in the meantime
-                    try {
-                        const potentia = fluid.tldraw.hostPotentiaFor(layerName, container, shapeId);
-                        adopt(fluid.ptf.constructParts(parts, {potentia}), "Reconstructed");
-                        const constructed = that;
-                        fluid.ptf.applyParts(constructed, parts).then(unresolved => {
-                            if (unresolved.length > 0) {
-                                console.warn(`Could not apply PTF parts ${unresolved.join(", ")} for shape ${shapeId}`);
-                            }
-                            notifyInstantiation(ptfToken, {that: constructed, unresolved});
-                        }, error => {
-                            console.error(`Failed to apply PTF parts for shape ${shapeId}: `, error);
-                            notifyInstantiation(ptfToken, {that: constructed, error});
-                        });
-                    } catch (error) {
-                        console.error(`Failed to reconstruct Infusion component for shape ${shapeId} from PTF: `, error);
-                        renderHostProblems(container, [`This widget could not be constructed: ${fluid.tldraw.ai.describeError(error)}`]);
-                        notifyInstantiation(ptfToken, {error});
-                    }
+                    adopt(fluid.ptf.constructParts(parts, {potentia, parent: host}), "Reconstructed");
+                    const constructed = that;
+                    fluid.ptf.applyParts(constructed, parts).then(unresolved => {
+                        if (unresolved.length > 0) {
+                            console.warn(`Could not apply PTF parts ${unresolved.join(", ")} for shape ${shapeId}`);
+                        }
+                        notifyInstantiation(ptfToken, {that: constructed, unresolved});
+                    }, error => {
+                        console.error(`Failed to apply PTF parts for shape ${shapeId}: `, error);
+                        notifyInstantiation(ptfToken, {that: constructed, error});
+                    });
+                    fluid.tldraw.ai.awaitSettled().then(() => {
+                        // A widget which is not available once the graph has settled will never be, and its parts will
+                        // never be applied, so this is reported without waiting further
+                        if (!isWidgetAvailable(shapeId)) {
+                            notifyInstantiation(ptfToken, {that: constructed, unavailable: true});
+                        }
+                    });
+                } else {
+                    adopt(fluid.initChildComponent(host, layerName, potentia), "Constructed");
                 }
-            });
-        } else {
-            awaitLayer(layerName).then(() => {
-                if (!unmounted) {
-                    try {
-                        const creator = fluid.getGlobalValue(layerName);
-                        adopt(creator(fluid.tldraw.hostPotentiaFor(layerName, container, shapeId)), "Constructed");
-                    } catch (error) {
-                        console.error(`Failed to construct Infusion component for shape ${shapeId}: `, error);
-                        renderHostProblems(container, [`This widget could not be constructed: ${fluid.tldraw.ai.describeError(error)}`]);
-                    }
+            } catch (error) {
+                console.error(`Failed to construct Infusion component for shape ${shapeId}: `, error);
+                showProblems([`This widget could not be constructed: ${fluid.tldraw.ai.describeError(error)}`]);
+                if (parts) {
+                    notifyInstantiation(ptfToken, {error});
                 }
-            });
-        }
-        const diagnosisTimer = setTimeout(() => {
-            // Only a widget which has rendered nothing is diagnosed in place, since one which has rendered, e.g. whilst
-            // it awaits slow I/O, may be in use
-            if (!unmounted && container.childNodes.length === 0 && !isWidgetAvailable(shapeId)) {
-                renderHostProblems(container, diagnoseWidget(shapeId, layerName, "This widget"));
             }
-        }, instantiationTimeout);
+        };
+        if (parts) {
+            // Layers are registered first, since the widget's own layer may be an SFC which is parsed asynchronously
+            fluid.ptf.registerLayerParts(parts);
+        }
+        // A layer which is not available once the graph has settled never will be, e.g. since its SFC was rejected
+        Promise.all([hostReady, fluid.tldraw.ai.awaitLayer(layerName)]).then(([host, layerUnavailable]) => {
+            if (!unmounted) {
+                construct(host, layerUnavailable);
+            }
+        });
         return () => {
             unmounted = true;
-            clearTimeout(diagnosisTimer);
+            fluid.tldraw.problemReporters.delete(hostElement);
+            diagnosis?.dispose();
             if (that) {
                 console.log(`Destroying Infusion component ${layerName} with id ${that.$id}`);
                 if (infusionInstances.get(shapeId) === that) {
                     infusionInstances.delete(shapeId);
                 }
-                that.destroy();
+                // A component whose layers failed has no destroy method of its own
+                fluid.destroyComponent(that);
             }
         };
     }, [layerName, shapeId, ptfToken]);
+    // The badge is held beside the component's container rather than within it, since the component renders onto its
+    // container, replacing its content
     return h("div", {
-        ref: containerRef,
+        ref: hostRef,
+        className: "infusion-host",
         onPointerDown: e => {
-            // Let interactive elements within the component receive their events rather than tldraw selecting the shape
-            if (e.target.closest("button, input, select, textarea, a")) {
+            // Let interactive elements within the component, including any bound to pointer events by its template, and
+            // the badge's buttons, receive their events rather than tldraw selecting the shape - the rest of the badge,
+            // e.g. its list of problems, drags the shape as the component itself does
+            if (fluid.tldraw.isInteractiveTarget(e.target, e.currentTarget)) {
                 e.stopPropagation();
             }
         }
-    });
+    }, h("div", {ref: containerRef}), h("div", {ref: badgeRef, className: "infusion-problem-holder"}));
 };
 
 const defaultShapeWidth = 260;
@@ -387,6 +415,7 @@ class InfusionShapeUtil extends BaseBoxShapeUtil {
         }, h(InfusionHost, {
             layerName: shape.props.layerName,
             shapeId: shape.id,
+            shape,
             ptfToken: shape.meta.ptfToken
         }));
     }
@@ -633,6 +662,8 @@ const onMount = function (editor) {
     fluid.tldraw.editorInstance = editor;
     fluid.tldraw.instances = infusionInstances;
     const tldrawHost = fluid.demos.tldrawHost({editor});
+    // Widgets awaiting the host are constructed within it
+    resolveHost(tldrawHost);
     // Lets the "Ask me anything" panel reflect on and alter the canvas
     fluid.tldraw.ai.bridge = makeAIBridge(editor);
     // Lets the user copy text from the panel, rather than the canvas's selection
@@ -663,6 +694,7 @@ const onMount = function (editor) {
         unbindWidgetHistory();
         unbindKeys();
         unguard();
+        awaitHost();
         tldrawHost.destroy();
     };
 };

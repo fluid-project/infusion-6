@@ -1412,6 +1412,41 @@ const $fluidSignalsScope = function (fluid) {
             watcher.get();
         });
     };
+
+    /**
+     * Explain why a cell's value is unavailable, in terms of the causes which bear messages. A cell may hold an
+     * unavailable value without any - for example `fluid.cell.initialUnavailable`, held by a computed cell which was
+     * never evaluated since one of its sources was itself unavailable for reasons of configuration (see
+     * `fluid.cell.findDirtyEdge`). Such a cell is explained by searching upstream through the sources of its computed
+     * relations for the cells whose unavailable values do bear messages. The search reads the graph as it stands,
+     * without updating or tracking any cell.
+     * @param {Cell} cell - The cell whose unavailable value is to be explained
+     * @param {Set<Cell>} [visited] - The cells already visited by this search
+     * @return {UnavailableCause[]} The causes found, which is empty if the cell's value is available or no cause bearing
+     * a message could be found
+     */
+    fluid.cell.explainUnavailable = function (cell, visited = new Set()) {
+        const value = cell._value;
+        let togo = [];
+        if (fluid.isUnavailable(value) && !visited.has(cell)) {
+            visited.add(cell);
+            const causes = fluid.unavailableToCauses(value).filter(cause => cause.message !== undefined);
+            if (causes.length > 0) {
+                togo = causes;
+            } else {
+                (cell._inEdges || []).forEach(edge => {
+                    (edge.sources || []).forEach(source => {
+                        fluid.cell.explainUnavailable(source, visited).forEach(cause => {
+                            if (!togo.includes(cause)) {
+                                togo.push(cause);
+                            }
+                        });
+                    });
+                });
+            }
+        }
+        return togo;
+    };
 };
 
 // Signal to a global environment compositor what path this scope function should be applied to

@@ -49,6 +49,8 @@ const instantiationWaiters = new Map();
  * @property {fluid.component} [that] - The reconstructed component, if it could be constructed
  * @property {String[]} [unresolved] - The filenames of any parts which could not be applied to it
  * @property {Error|Unavailable} [error] - Why reconstruction failed, if it did
+ * @property {Boolean} [unavailable] - `true` if the component was constructed, but the reactive graph settled without
+ * its becoming available
  */
 
 /**
@@ -74,7 +76,7 @@ export const notifyInstantiation = function (ptfToken, report) {
     waiters.forEach(resolve => resolve(report));
 };
 
-// How long to wait for a widget to be constructed and become available before diagnosing it
+// The longest to wait for a widget to be constructed and become available, should the reactive graph not settle
 export const instantiationTimeout = 8000;
 
 /**
@@ -86,7 +88,8 @@ export const instantiationTimeout = 8000;
 export const wait = (delay, value) => new Promise(resolve => setTimeout(() => resolve(value), delay));
 
 /**
- * Await the outcome of the next reconstruction of a shape's component, for no longer than `instantiationTimeout`
+ * Await the outcome of the next reconstruction of a shape's component, for no longer than `instantiationTimeout`. The
+ * outcome is ordinarily reported by InfusionHost as soon as the reactive graph has settled.
  * @param {Promise<InstantiationReport>} instantiation - The promise from `awaitInstantiation` for the shape's token
  * @return {Promise<InstantiationReport|null>} A promise for the outcome, or for `null` if there was none in time
  */
@@ -105,9 +108,9 @@ export const isWidgetAvailable = function (shapeId) {
 };
 
 /**
- * Describe why the widget hosted by a shape is not available, e.g. once it has not become available within
- * `instantiationTimeout` of its construction - either it was never constructed since its layer never became
- * available, or it was constructed but some of its material is unavailable
+ * Describe why the widget hosted by a shape is not available, e.g. once the reactive graph has settled without its
+ * becoming so - either it was never constructed since its layer never became available, or it was constructed but some
+ * of its material is unavailable
  * @param {String} shapeId - The id of the shape
  * @param {String} layerName - The name of the widget's layer
  * @param {String} what - How the widget is to be described, e.g. "The widget \"counter\""
@@ -119,7 +122,7 @@ export const diagnoseWidget = function (shapeId, layerName, what) {
     if (that) {
         const diagnosis = fluid.tldraw.ai.diagnose(that, true);
         togo = diagnosis.length > 0 ? diagnosis.map(problem => `${what}: ${problem}`) :
-            [`${what} did not become available within ${instantiationTimeout / 1000} seconds`];
+            [`${what} did not become available, although no problem with it could be diagnosed`];
     } else {
         const unavailable = fluid.layerRecToUnavailable(fluid.readLayer(layerName).get());
         const why = unavailable ? ` (${fluid.tldraw.ai.describeError(unavailable)})` : "";
@@ -139,7 +142,7 @@ export const diagnoseWidget = function (shapeId, layerName, what) {
  */
 export const describeInstantiation = function (report, shapeId, layerName, what) {
     let togo;
-    if (report === null) {
+    if (report === null || report.unavailable) {
         togo = diagnoseWidget(shapeId, layerName, what);
     } else if (report.error) {
         togo = [`${what} could not be constructed: ${fluid.tldraw.ai.describeError(report.error)}`];
@@ -167,25 +170,67 @@ const ptfPreamble = "This is a Potentia Transmission Format (PTF) document holdi
     "layers and potentia of the Infusion components they host.";
 
 /**
- * Assemble the parts of a PTF document holding tldraw content. The content itself, holding the positions and ids of
- * its shapes including any native tldraw shapes, is held in a part of kind "tldraw", and each Infusion shape is
- * accompanied by a nested PTF document of kind "component" whose filename is the shape's id. This is assembled from
- * the shape's component if it has been constructed, or else from the parts from which it is still to be constructed.
+ * Determine the parts of the component hosted by an Infusion shape - assembled from the component if it has been
+ * constructed, or else those from which it is still to be constructed
+ * @param {TLShape} shape - The shape
+ * @return {PTFPart[]|null} The parts, or `null` if the shape is to be constructed afresh from its layer
+ */
+export const componentPartsFor = function (shape) {
+    const that = infusionInstances.get(shape.id);
+    return that ? fluid.ptf.componentToParts(that) : lookupPendingParts(shape.meta.ptfToken) || null;
+};
+
+/**
+ * Assemble the part transmitting a widget - a nested document of kind "component" whose filename is the id of the
+ * shape hosting it. This holds the parts of its component, or a bare root potentia naming its layer if it has none,
+ * with the configuration of its shape written into the potentia of its view - from which its shape is reconstructed.
+ * @param {TLShape} shape - The shape hosting the widget
+ * @param {PTFPart[]|null} componentParts - The parts of the widget's component, as determined by `componentPartsFor`
+ * @param {Boolean} withIndex - `true` if the shape's index is to be transmitted, since other shapes are transmitted with it
+ * @return {PTFPart} The part
+ */
+export const widgetToPart = function (shape, componentParts, withIndex) {
+    const layerName = shape.props.layerName;
+    const parts = componentParts || [];
+    const complete = parts.some(fluid.ptf.isRootPotentiaPart) ? parts : [
+        ...parts.filter(part => part.kind === "layer"),
+        {kind: "potentia", contentType: fluid.layerMimeTypes.json, filename: "/", body: JSON.stringify({$layers: [layerName]})},
+        ...parts.filter(part => part.kind !== "layer")
+    ];
+    return {
+        kind: "component",
+        filename: shape.id,
+        parts: fluid.tldraw.writeShapeConfig(complete, layerName, fluid.tldraw.shapeToConfig(shape, withIndex))
+    };
+};
+
+/**
+ * Assemble the parts of a PTF document holding tldraw content. Each Infusion shape is held as a nested PTF document of
+ * kind "component", as assembled by `widgetToPart`, from which it is reconstructed. Any native tldraw shapes are held
+ * in a part of kind "tldraw", together with any bindings and assets of the content. Since content is only pasted into
+ * the version of tldraw from which it was copied, the content's schema is not held, but is supplied by the editor as it
+ * is pasted - see `partsToContent`.
  * @param {TLContent} content - The content, as supplied by tldraw
+ * @param {Function} [partsFor] - Determines the parts of the component hosted by an Infusion shape, as for `componentPartsFor`
  * @return {PTFPart[]} The parts
  */
-export const contentToParts = function (content) {
-    const componentParts = content.shapes.filter(shape => shape.type === "infusion").map(shape => {
-        const that = infusionInstances.get(shape.id);
-        const parts = that ? fluid.ptf.componentToParts(that) : lookupPendingParts(shape.meta.ptfToken);
-        return parts ? {kind: "component", filename: shape.id, parts} : null;
-    }).filter(part => part !== null);
-    return [{
+export const contentToParts = function (content, partsFor = componentPartsFor) {
+    const widgets = content.shapes.filter(shape => shape.type === "infusion");
+    const widgetIds = new Set(widgets.map(shape => shape.id));
+    const native = {
+        shapes: content.shapes.filter(shape => !widgetIds.has(shape.id)),
+        rootShapeIds: content.rootShapeIds.filter(id => !widgetIds.has(id)),
+        bindings: content.bindings || [],
+        assets: content.assets || []
+    };
+    const contentPart = native.shapes.length === 0 ? [] : [{
         kind: "tldraw",
         contentType: "application/json",
         filename: "tldraw-content",
-        body: JSON.stringify(content, null, 4)
-    }, ...componentParts];
+        body: JSON.stringify(fluid.filterObjKeys(native, key => native[key].length > 0), null, 4)
+    }];
+    const withIndex = content.shapes.length > 1;
+    return [...contentPart, ...widgets.map(shape => widgetToPart(shape, partsFor(shape), withIndex))];
 };
 
 /**
@@ -246,6 +291,67 @@ const checkComponentParts = function (parts, where) {
 };
 
 /**
+ * @typedef {Object} PendingWidget
+ * @property {String|null} ptfToken - The token resolving to the parts from which the widget is to be constructed, or
+ * `null` if it is to be constructed afresh from its layer
+ * @property {String} layerName - The name of the widget's layer
+ */
+
+/**
+ * Reconstruct tldraw content from the parts of a PTF document as assembled by `contentToParts`. A shape is constructed
+ * for each widget from the configuration of its shape held in its potentia, and marked with a token resolving to the
+ * parts from which its component is to be constructed. Content written before widgets were held in their parts alone,
+ * i.e. holding the widget's shape in the native content or in a part of kind "shape", is also accepted.
+ * @param {Editor} editor - The tldraw editor
+ * @param {PTFPart[]} parts - The parts of the document
+ * @return {{content: TLContent, widgets: PendingWidget[]}} The content, and a record of each widget within it
+ */
+export const partsToContent = function (editor, parts) {
+    const contentPart = parts.find(part => part.kind === "tldraw");
+    const native = contentPart ? parseJSONPart(contentPart, "holding the tldraw content") : {};
+    const content = {
+        schema: native.schema || editor.store.schema.serialize(),
+        shapes: native.shapes || [],
+        rootShapeIds: native.rootShapeIds || [],
+        bindings: native.bindings || [],
+        assets: native.assets || []
+    };
+    const componentParts = parts.filter(part => part.kind === "component" && part.parts);
+    const shapeParts = componentParts.map(part => part.parts.find(nested => nested.kind === "shape"));
+    const legacyShapes = shapeParts.map(shapePart => shapePart ? parseJSONPart(shapePart, "holding a widget's shape") : null);
+    // All components are checked before anything is reconstructed
+    const layerNames = componentParts.map((part, i) => legacyShapes[i] && !part.parts.some(fluid.ptf.isRootPotentiaPart) ?
+        legacyShapes[i].layerName : checkComponentParts(part.parts, `in component ${part.filename}`));
+    const pageId = editor.getCurrentPageId();
+    const widgets = componentParts.map((part, i) => {
+        const widgetParts = part.parts.filter(nested => nested !== shapeParts[i]);
+        const ptfToken = widgetParts.length > 0 ? registerPendingParts(widgetParts) : null;
+        const meta = ptfToken ? {ptfToken} : {};
+        const existing = content.shapes.find(shape => shape.id === part.filename);
+        if (existing) {
+            existing.meta = {...existing.meta, ...meta};
+        } else {
+            // eslint-disable-next-line no-unused-vars
+            const {layerName, ...legacyConfig} = legacyShapes[i] || {};
+            const config = {...legacyConfig, ...fluid.tldraw.readShapeConfig(part.parts)};
+            const shape = fluid.tldraw.configToShape(config, {id: part.filename, layerName: layerNames[i], parentId: pageId,
+                index: fluid.tldraw.defaultIndex(i)});
+            content.shapes.push({...shape, meta});
+        }
+        return {ptfToken, layerName: layerNames[i]};
+    });
+    const shapeIds = new Set(content.shapes.map(shape => shape.id));
+    content.shapes.filter(shape => !shapeIds.has(shape.parentId)).forEach(shape => {
+        // A shape whose parent was not transmitted with it is placed on the page
+        shape.parentId = shape.parentId.startsWith("shape:") ? pageId : shape.parentId;
+        if (!content.rootShapeIds.includes(shape.id)) {
+            content.rootShapeIds.push(shape.id);
+        }
+    });
+    return {content, widgets};
+};
+
+/**
  * Await the reconstruction of each widget pasted from a PTF document, and report any problems with it
  * @param {Editor} editor - The tldraw editor
  * @param {Object[]} pasted - A record for each pasted widget, holding its `ptfToken`, `layerName` and `instantiation`,
@@ -268,10 +374,10 @@ const checkPastedWidgets = async function (editor, pasted, text) {
 };
 
 /**
- * Paste a PTF document onto the canvas. A document produced by `contentToPTF` is pasted through tldraw's own handling
- * of its content, so that shape ids are remapped and positions resolved as for a native paste, after each Infusion shape
- * has been marked with a token resolving to the parts of its component. A bare component document, as produced by
- * `fluid.ptf.componentToPTF`, is pasted as a single fresh Infusion shape. A document which cannot be read is reported
+ * Paste a PTF document onto the canvas. A document produced by `contentToPTF` is reconstructed as tldraw content by
+ * `partsToContent`, and pasted through tldraw's own handling of it, so that shape ids are remapped and positions
+ * resolved as for a native paste. A bare component document, as produced by `fluid.ptf.componentToPTF`, is pasted as a
+ * single fresh Infusion shape. A document which cannot be read is reported
  * as a formatting problem, and nothing is pasted from it - any widget which then cannot be reconstructed is reported as
  * an instantiation problem.
  * @param {Editor} editor - The tldraw editor
@@ -281,42 +387,20 @@ const checkPastedWidgets = async function (editor, pasted, text) {
  */
 export const pastePTF = function (editor, text, point) {
     const pasted = [];
-    const register = (parts, layerName) => {
-        const ptfToken = registerPendingParts(parts);
-        pasted.push({ptfToken, layerName, instantiation: awaitInstantiation(ptfToken)});
-        return ptfToken;
-    };
     try {
         const parts = fluid.ptf.decode(text);
-        const contentPart = fluid.isUnavailable(parts) ? null : parts.find(part => part.kind === "tldraw");
+        const isContent = !fluid.isUnavailable(parts) && parts.some(part => part.kind === "tldraw" || part.kind === "component");
         if (fluid.isUnavailable(parts)) {
             throw parts;
-        } else if (contentPart) {
-            const content = parseJSONPart(contentPart, "holding the tldraw content");
-            const componentParts = parts.filter(part => part.kind === "component" && part.parts);
-            // All components are checked before anything is pasted
-            const layerNames = componentParts.map(part => checkComponentParts(part.parts, `in component ${part.filename}`));
-            componentParts.forEach((part, i) => {
-                const shape = content.shapes.find(oneShape => oneShape.id === part.filename);
-                if (shape) {
-                    shape.meta = {...shape.meta, ptfToken: register(part.parts, layerNames[i])};
-                }
+        } else if (isContent || parts.some(fluid.ptf.isRootPotentiaPart)) {
+            // A bare component document is pasted as the sole widget of some content, in the centre of the viewport if
+            // its shape has no position
+            const {content, widgets} = partsToContent(editor, isContent ? parts : [{kind: "component", filename: "shape:pasted", parts}]);
+            widgets.filter(widget => widget.ptfToken).forEach(({ptfToken, layerName}) => {
+                pasted.push({ptfToken, layerName, instantiation: awaitInstantiation(ptfToken)});
             });
-            editor.putExternalContent({type: "tldraw", content, point});
-        } else if (parts.some(fluid.ptf.isRootPotentiaPart)) {
-            const layerName = checkComponentParts(parts, "in the document");
-            const ptfToken = register(parts, layerName);
-            const center = point || editor.getViewportPageBounds().center;
-            // Sized as for a fresh widget - see tldraw-driver.js
-            const {w, h} = fluid.tldraw.shapeSizeFor(layerName);
             editor.markHistoryStoppingPoint("paste");
-            editor.createShape({
-                type: "infusion",
-                x: center.x - w / 2,
-                y: center.y - h / 2,
-                props: {layerName, w, h},
-                meta: {ptfToken}
-            });
+            editor.putExternalContent({type: "tldraw", content, point: point || (isContent ? undefined : editor.getViewportPageBounds().center)});
         } else {
             throw new Error("It holds neither tldraw content nor the potentia of a root component");
         }

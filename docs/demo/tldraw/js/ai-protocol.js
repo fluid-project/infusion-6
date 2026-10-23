@@ -14,6 +14,19 @@ fluid.tldraw.ai.endpoint = "https://live.ponder.org.uk/ifm/v1/chat/completions";
 // The proxy only forwards POSTs, so the models it offers cannot be listed - the panel displays this model read-only
 fluid.tldraw.ai.defaultModel = "IFM/K2-Horizon-375B-A23B";
 
+// An OpenAI-compatible service which is used in place of the IFM proxy if a key for it is found beside the page, as
+// it is when the demo is served locally - the key's file is gitignored, so that it is never committed or deployed.
+// Unlike the proxy, it lists the models it offers, from which the user chooses.
+fluid.tldraw.ai.localService = {
+    name: "CAVI",
+    // Relative to the page, holding JSON of the form {"key": "<key>"}
+    keyUrl: "cavi-key.json",
+    endpoint: "https://ai.cavi.au.dk/v1/chat/completions",
+    modelsUrl: "https://ai.cavi.au.dk/v1/models",
+    // Chosen unless the user has chosen another, if the service offers it
+    defaultModel: "natai/glm"
+};
+
 // Parameters for deriving the proxy token from the password, which must agree with those used to configure the proxy
 fluid.tldraw.ai.tokenDerivation = {
     salt: "live.ponder.org.uk/ifm",
@@ -32,11 +45,8 @@ fluid.tldraw.ai.docUrls = [
 // The number of times a response which could not be applied is reported back to the AI for it to correct
 fluid.tldraw.ai.maxRepairs = 2;
 
-// Layers which the host broadcasts onto every widget, which are part of the canvas rather than any widget and so are
-// not transmitted as part of the workspace
-fluid.tldraw.ai.hostLayers = ["fluid.tldrawViewComponent"];
-
-// The number of earlier messages of the conversation which are sent along with each fresh direction
+// The most messages of earlier exchanges of the conversation which are sent along with each fresh direction - only
+// whole exchanges are sent, so that fewer may be - see fluid.tldraw.ai.recentExchanges
 fluid.tldraw.ai.maxHistory = 8;
 
 // The number of tokens, including reasoning, which the AI may produce in one reply. Without this, the endpoint cuts off
@@ -83,6 +93,94 @@ fluid.tldraw.ai.fetchDocs = function () {
 };
 
 /**
+ * @typedef {Object} LocalService
+ * @property {String} name - The service's name, for display
+ * @property {String} endpoint - The URL of the service's chat completions endpoint
+ * @property {String} key - The key presented to the service
+ * @property {String[]} models - The models offered by the service which can converse, sorted by name
+ * @property {String} defaultModel - The model chosen unless the user chooses another
+ */
+
+/**
+ * Fetch the key of `fluid.tldraw.ai.localService`, if one is held beside the page
+ * @return {Promise<String|null>} A promise for the key, or `null` if none could be found
+ */
+fluid.tldraw.ai.fetchLocalKey = async function () {
+    let togo = null;
+    try {
+        const response = await fetch(fluid.tldraw.ai.localService.keyUrl, {cache: "no-store"});
+        if (response.ok) {
+            const parsed = await response.json();
+            togo = typeof(parsed?.key) === "string" && parsed.key.trim() ? parsed.key.trim() : null;
+        }
+    } catch (e) {
+        // A missing key, or unparseable JSON, simply leaves the IFM proxy in use
+        togo = null;
+    }
+    return togo;
+};
+
+/**
+ * Determine whether a model listed by an OpenAI-compatible endpoint can converse - those whose mode is not "chat",
+ * e.g. for speech, are excluded, as are those whose names show them to be embedding models, which are listed as "chat"
+ * @param {Object} model - The model's record as listed by the endpoint
+ * @return {Boolean} `true` if the model can converse
+ */
+fluid.tldraw.ai.isChatModel = function (model) {
+    return (model.mode === undefined || model.mode === "chat") && !/embed/i.test(model.id);
+};
+
+/**
+ * List the models offered by an OpenAI-compatible endpoint which can converse
+ * @param {String} modelsUrl - The URL of the endpoint's model listing
+ * @param {String} key - The key presented to the endpoint
+ * @return {Promise<String[]>} A promise for the ids of the models, sorted
+ */
+fluid.tldraw.ai.fetchModels = async function (modelsUrl, key) {
+    const response = await fetch(modelsUrl, {
+        headers: {"Authorization": "Bearer " + key}
+    });
+    let togo;
+    if (response.ok) {
+        const payload = await response.json();
+        togo = (payload.data || []).filter(fluid.tldraw.ai.isChatModel).map(model => model.id).sort();
+    } else {
+        throw new Error(`Failed to list models from ${modelsUrl}: ${response.status} ${response.statusText}`);
+    }
+    return togo;
+};
+
+/**
+ * Look for a key for `fluid.tldraw.ai.localService` beside the page, and if one is found, list the models it offers
+ * @return {Promise<LocalService|null>} A promise for the service, or `null` if no key was found or its models could
+ * not be listed
+ */
+fluid.tldraw.ai.findLocalService = async function () {
+    const service = fluid.tldraw.ai.localService;
+    const key = await fluid.tldraw.ai.fetchLocalKey();
+    let togo = null;
+    if (key) {
+        try {
+            const models = await fluid.tldraw.ai.fetchModels(service.modelsUrl, key);
+            if (models.length > 0) {
+                togo = {
+                    name: service.name,
+                    endpoint: service.endpoint,
+                    key,
+                    models,
+                    defaultModel: models.includes(service.defaultModel) ? service.defaultModel : models[0]
+                };
+            } else {
+                console.log(`${service.name} offers no models which can converse - using the IFM proxy`);
+            }
+        } catch (e) {
+            console.log(`Found a key for ${service.name} but could not list its models - using the IFM proxy: `, e);
+        }
+    }
+    return togo;
+};
+
+/**
  * @typedef {Object} WidgetRec
  * @property {String} shapeId - The id of the tldraw shape hosting the widget
  * @property {String} layerName - The layer from which the shape's widget was constructed
@@ -111,28 +209,36 @@ fluid.tldraw.ai.fetchDocs = function () {
 
 /**
  * Encode the workspace as a PTF document. The definitions of all user layers used by any widget are held once each
- * in top-level `layer` parts, followed by a nested `component` document for each widget, whose filename is its shape
- * id, holding a `shape` part recording where it is hosted followed by its potentia and live parts. A final `canvas`
- * part lists the native tldraw shapes. This is also the form in which the AI may reply - see `fluid.tldraw.ai.planChanges`.
+ * in top-level `layer` parts, sorted as by `fluid.ptf.sortLayerNames`, followed by a nested `component` document for each widget, whose filename is its shape
+ * id, holding a `shape` part recording where it is hosted followed by its potentia and live parts, and finally a
+ * `problems` part listing any problems diagnosed in it by `fluid.tldraw.ai.diagnose`. A final `canvas` part lists the
+ * native tldraw shapes. This is also the form in which the AI may reply - see `fluid.tldraw.ai.planChanges`.
  * @param {Workspace} workspace - The workspace to be encoded
  * @return {String} The text of the PTF document
  */
 fluid.tldraw.ai.workspaceToPTF = function (workspace) {
     const layerParts = new Map();
     const componentParts = workspace.widgets.map(widget => {
-        const parts = widget.component ? fluid.ptf.componentToParts(widget.component) : [];
-        parts.filter(part => part.kind === "layer" && !fluid.tldraw.ai.hostLayers.includes(part.filename))
-            .forEach(part => layerParts.set(part.filename, part));
+        // What the host supplied to the widget's view is described by its shape part instead
+        const parts = widget.component ? fluid.tldraw.writeShapeConfig(fluid.ptf.componentToParts(widget.component), widget.layerName, null) : [];
+        parts.filter(part => part.kind === "layer").forEach(part => layerParts.set(part.filename, part));
         const shapePart = {
             kind: "shape",
             contentType: fluid.layerMimeTypes.json,
             filename: "shape",
             body: JSON.stringify({layerName: widget.layerName, ...fluid.tldraw.ai.roundBounds(widget.bounds)})
         };
+        const problems = widget.component ? fluid.tldraw.ai.diagnose(widget.component) : [];
+        const problemsPart = problems.length === 0 ? [] : [{
+            kind: "problems",
+            contentType: "text/plain",
+            filename: "problems",
+            body: problems.map(problem => "* " + problem).join("\n")
+        }];
         return {
             kind: "component",
             filename: widget.shapeId,
-            parts: [shapePart, ...parts.filter(part => part.kind !== "layer")]
+            parts: [shapePart, ...parts.filter(part => part.kind !== "layer"), ...problemsPart]
         };
     });
     const canvasPart = {
@@ -141,7 +247,8 @@ fluid.tldraw.ai.workspaceToPTF = function (workspace) {
         filename: "canvas",
         body: JSON.stringify(workspace.canvasShapes.map(shape => ({...shape, ...fluid.tldraw.ai.roundBounds(shape)})), null, 4)
     };
-    return fluid.ptf.encode([...layerParts.values(), ...componentParts, canvasPart],
+    const sortedLayerParts = fluid.ptf.sortLayerNames([...layerParts.keys()]).map(layerName => layerParts.get(layerName));
+    return fluid.ptf.encode([...sortedLayerParts, ...componentParts, canvasPart],
         "This is a Potentia Transmission Format (PTF) document holding the Infusion widgets in the workspace.");
 };
 
@@ -226,6 +333,11 @@ its layers, directly or through a parent layer.
 any of whose members may be omitted, to place or resize the widget's shape in page coordinates. A fresh widget \
 without one is placed beside the user's selection, at its layer's \`preferredSize\`.
 * \`delete\` parts, each with an empty body, whose filename is the id of a shape to be removed.
+
+In the workspace document, the \`component\` part of a widget in which problems have been found also holds a \
+\`problems\` part listing them - e.g. a reference which does not resolve, a template which cannot be rendered, or a \
+view which renders nothing at all. These are what the user sees reported on the widget. When asked to fix a widget, \
+address every one of its problems. Never send a \`problems\` part yourself.
 
 **Every widget you synthesize must apply \`fluid.topLevelWidget\` at its top level.** Whenever you define a layer in \
 your document and construct a fresh or replacement widget from it, the top-level \`$layers\` of that layer's \
@@ -356,6 +468,25 @@ quotes - quotes would become part of the string. Numbers, \`true\`, \`false\` an
 values, and \`{0}\` passes the DOM event.
 * \`value="@{state.text}"\` on an input or textarea binds it two-way to the referenced value.
 
+A view's template is either the \`<template>\` block of a Single File Component, or markup held as the view's \
+\`template\` member, e.g. \`view: {$component: {$layers: "fluid.templateViewComponent", template: "<div>...</div>"}}\`, \
+which may be computed as a string of markup, e.g. \`template: "$compute:my.render({myWidget}.state.board)"\`. Never \
+both - an SFC holding a \`<template>\` block whose layer also writes \`view.$component.template\` is rejected. A \
+computed template is parsed afresh whenever it changes, and the syntax above applies within it, e.g. \
+\`@onclick="{self}.play(2, 3)"\`, where \`{self}\` designates the widget. However, within the \`$compute\` record \
+itself, which is written in the view's \`$component\` record, \`{self}\` designates the view - so refer to the \
+widget by its context name, e.g. \`{myWidget}.state.board\` for a layer named \`my.myWidget\`, as for any \
+\`$component\` record. A template's markup must have a single top-level element, since only the first is rendered.
+
+A layer's text is kept exactly as you send it, including any functions which it assigns alongside its \
+\`fluid.def\` call, e.g. \`fluid.demos.othello.legalMoves = function (board) {...}\`. Their namespace does not \
+exist until the \`fluid.def\` call creates it - so either assign them after that call, or create the namespace \
+first with \`fluid.registerNamespace("fluid.demos.othello")\` if the definition itself calls any of them.
+
+A layer in the workspace may record the model, prompt and date from which it was generated in a \`<provenance>\` \
+block - in an SFC, as a block of its own, and in a \`text/javascript\` layer, in line comments at its end. The \
+workspace maintains these records itself - never write one, and leave any you find unchanged.
+
 If your document cannot be decoded or applied, you will be told what went wrong and asked to send a corrected one.`;
 
 fluid.tldraw.ai.strategyHints = `## Strategy hints
@@ -419,7 +550,12 @@ refer to that by its context name instead, e.g. \`{showsFoundResult}\`, and neve
 itself such as \`hostBounds: "{self}.hostBounds"\`. A widget layer may advertise the size at which it would like to be created as \
 \`preferredSize: {w, h}\`.
 * Give fresh layers distinctive dotted names, e.g. \`fluid.demos.ai.counterWithDoubler\`, and fresh SFC styles \
-distinctive class names, since styles apply globally.`;
+distinctive class names, since styles apply globally.
+* Write all of a widget's CSS in the \`<style>\` block of its SFC - never in the body of a JavaScript function, \
+including one computing a template's markup as a string, whether as a \`style\` attribute or a \`<style>\` element. \
+Such a function chooses amongst class names defined in the \`<style>\` block instead, e.g. \
+\`class="othello-cell othello-legal"\`. A widget which needs any CSS is therefore sent as a \`text/x-vue\` layer, \
+since a \`text/javascript\` layer has nowhere to hold it.`;
 
 /**
  * Encode the definitions of the named layers as a PTF document of layer parts
@@ -466,6 +602,12 @@ fluid.tldraw.ai.systemPrompt = function (docs, workspace) {
  * @property {String} content - The text of the message
  * @property {String} [reasoning] - For an assistant message, the reasoning which the model produced with it. This is
  * sent back verbatim as part of the conversation's history, which some models (e.g. IFM's) require.
+ */
+
+/**
+ * The messages of one exchange of a conversation - the user's direction, followed by each of the AI's replies, and
+ * between them any problems with its replies which were reported back to it for repair
+ * @typedef {ChatMessage[]} ChatExchange
  */
 
 /**
@@ -533,17 +675,42 @@ fluid.tldraw.ai.cachedTokens = function (messages, inputTokens) {
 };
 
 /**
+ * Select the messages of the most recent exchanges of a conversation which are to be sent with a fresh direction - as
+ * many whole exchanges as together hold no more than `maxMessages` messages. An exchange is never sent in part, since
+ * a reply or a reported problem would make no sense without the direction it answers.
+ * @param {ChatExchange[]} history - The earlier exchanges of the conversation
+ * @param {Number} [maxMessages] - The most messages to be selected
+ * @return {ChatMessage[]} The messages of the selected exchanges, in order
+ */
+fluid.tldraw.ai.recentExchanges = function (history, maxMessages = fluid.tldraw.ai.maxHistory) {
+    const selected = [];
+    let count = 0;
+    let full = false;
+    for (let i = history.length - 1; i >= 0 && !full; --i) {
+        if (count + history[i].length <= maxMessages) {
+            selected.unshift(history[i]);
+            count += history[i].length;
+        } else {
+            // Exchanges are only ever dropped from the start of the conversation, so that those sent are contiguous
+            full = true;
+        }
+    }
+    return selected.flat();
+};
+
+/**
  * Assemble the messages to be sent for a fresh direction from the user. The system prompt is assembled afresh
- * reflecting the current workspace, followed by recent messages of the conversation, and then the direction.
+ * reflecting the current workspace, followed by the most recent exchanges of the conversation, as selected by
+ * `fluid.tldraw.ai.recentExchanges`, and then the direction.
  * @param {String} systemPrompt - The system prompt, as assembled by `fluid.tldraw.ai.systemPrompt`
- * @param {ChatMessage[]} history - Earlier messages of the conversation, which have no system message
+ * @param {ChatExchange[]} history - The earlier exchanges of the conversation
  * @param {String} direction - The user's direction
  * @return {ChatMessage[]} The messages to be sent
  */
 fluid.tldraw.ai.buildMessages = function (systemPrompt, history, direction) {
     return [
         {role: "system", content: systemPrompt},
-        ...history.slice(-fluid.tldraw.ai.maxHistory),
+        ...fluid.tldraw.ai.recentExchanges(history),
         {
             role: "user",
             content: "The user's direction follows. Attend to it carefully, and respond in exactly one of the two forms "
@@ -569,14 +736,15 @@ fluid.tldraw.ai.repairMessage = function (problems) {
 /**
  * Call the AI endpoint with a conversation
  * @param {Object} options - The call's options
- * @param {String} options.token - The token derived from the user's password
+ * @param {String} [options.endpoint] - The endpoint to be called, by default the IFM proxy at `fluid.tldraw.ai.endpoint`
+ * @param {String} options.token - The token derived from the user's password, or the key of a local service
  * @param {String} options.model - The model to be used
  * @param {ChatMessage[]} options.messages - The messages to be sent
  * @return {Promise<AIReply>} A promise for the AI's reply. On a rejected token, the promise rejects with an error whose
  * `unauthorised` member is `true`
  */
-fluid.tldraw.ai.callEndpoint = async function ({token, model, messages}) {
-    const response = await fetch(fluid.tldraw.ai.endpoint, {
+fluid.tldraw.ai.callEndpoint = async function ({endpoint = fluid.tldraw.ai.endpoint, token, model, messages}) {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -735,12 +903,35 @@ fluid.tldraw.ai.checkLayerPart = function (part, where, problems) {
     } else if (part.contentType === fluid.layerMimeTypes.sfc) {
         if (!/<script[\s>]/.test(part.body)) {
             problems.push(`The SFC layer ${name} ${where} has no <script> block defining the layer`);
+        } else if (fluid.tldraw.ai.hasTemplateConflict(part)) {
+            problems.push(`The SFC layer ${name} ${where} could not be registered: ${fluid.sfcTemplateConflictMessage(part.filename)}`);
         }
     } else {
         problems.push(`The layer ${name} ${where} has unrecognised Content-Type ${part.contentType} - use `
             + `${fluid.layerMimeTypes.sfc} or ${fluid.layerMimeTypes.javascript}`);
     }
     return problems.length === initialCount;
+};
+
+/**
+ * Determine whether an SFC layer part defines its view's template twice, as both a `<template>` block and
+ * `view.$component.template` - which the framework would reject on registering it. This is checked in advance so that
+ * the problem is reported at once rather than surfacing as a widget which never becomes available.
+ * @param {PTFPart} part - The SFC layer part
+ * @return {Boolean} `true` if the template is defined twice
+ */
+fluid.tldraw.ai.hasTemplateConflict = function (part) {
+    let togo = false;
+    try {
+        const vTree = fluid.parseHTMLToTree(part.body);
+        const defMapList = fluid.parseSFCScripts(fluid.querySelectorAll(vTree, "script"));
+        const ourDef = fluid.indexLayerDefs(defMapList)[part.filename];
+        togo = !!ourDef && fluid.hasSFCTemplateConflict(vTree, defMapList[ourDef.scriptIndex], part.filename);
+    } catch (e) {
+        // A script which cannot be parsed is reported when the layer is registered
+        togo = false;
+    }
+    return togo;
 };
 
 /**
@@ -782,6 +973,53 @@ fluid.tldraw.ai.planChanges = function (parts, widgetIds, shapeIds) {
     });
     fluid.tldraw.ai.checkTopLevelWidget(parts, plan);
     return plan;
+};
+
+/**
+ * Record the provenance of a layer part sent by the AI - in a `<provenance>` block of an SFC, or in line comments at
+ * the end of a JavaScript layer. A layer which is not yet defined is stamped with the provenance of the response
+ * defining it, replacing any the AI wrote itself. A layer which is already defined keeps the provenance recorded in
+ * its current source, if any, whatever the AI sent - so that a layer resent with changes, e.g. in correcting a
+ * response, is still attributed to the exchange which created it. Other parts are returned unchanged.
+ * @param {PTFPart} part - The layer part
+ * @param {SFCProvenance} provenance - The provenance of the response holding the part
+ * @param {Function} isDefined - Accepts a layer name and returns `true` if the layer is currently defined
+ * @return {PTFPart} The part, with its provenance recorded
+ */
+fluid.tldraw.ai.stampLayerPart = function (part, provenance, isDefined) {
+    let togo = part;
+    if (part.kind === "layer") {
+        try {
+            if (!isDefined(part.filename)) {
+                togo = fluid.ptf.writeLayerProvenance(part, provenance);
+            } else {
+                const current = fluid.ptf.readLayerProvenance(fluid.ptf.layerToPart(part.filename));
+                if (current) {
+                    togo = fluid.ptf.writeLayerProvenance(part, current);
+                }
+            }
+        } catch (e) {
+            // Markup which cannot be parsed is reported when the layer is registered
+            togo = part;
+        }
+    }
+    return togo;
+};
+
+/**
+ * Record the provenance of every layer part of the changes planned from a response of the AI, at the top level
+ * of its document and within its component parts - see `fluid.tldraw.ai.stampLayerPart`
+ * @param {ChangePlan} plan - The planned changes, whose layer parts are replaced by ones recording their provenance
+ * @param {SFCProvenance} provenance - The provenance of the response
+ * @param {Function} [isDefined] - Accepts a layer name and returns `true` if the layer is currently defined,
+ * defaulting to `fluid.ptf.isLayerDefined`
+ */
+fluid.tldraw.ai.stampProvenance = function (plan, provenance, isDefined = fluid.ptf.isLayerDefined) {
+    const stamp = part => fluid.tldraw.ai.stampLayerPart(part, provenance, isDefined);
+    plan.layers = plan.layers.map(stamp);
+    [...plan.creations, ...plan.updates].forEach(change => {
+        change.parts = change.parts.map(stamp);
+    });
 };
 
 // The layer which every widget synthesized by the AI must apply at its top level
@@ -846,6 +1084,8 @@ fluid.tldraw.ai.planShapeChange = function (part, widgetIds, shapeIds, problems)
                 if (fluid.tldraw.ai.parseJSONPart(nestedPart, where, problems) !== undefined) {
                     nested.push(nestedPart);
                 }
+            } else if (nestedPart.kind === "problems") {
+                // Problems are diagnosed afresh in the workspace, so any echoed back are ignored
             } else {
                 problems.push(`The part with filename ${JSON.stringify(nestedPart.filename)} ${where} has unrecognised kind `
                     + `${JSON.stringify(nestedPart.kind)} - expected shape, layer, potentia or live`);
@@ -867,10 +1107,132 @@ fluid.tldraw.ai.planShapeChange = function (part, widgetIds, shapeIds, problems)
     return togo;
 };
 
+// Elements which are visible without holding any text or child elements
+fluid.tldraw.ai.visibleElements = "img, svg, canvas, video, iframe, input, button, select, textarea, object, embed";
+
+// The number of characters of a widget's markup quoted in reporting that it renders nothing
+fluid.tldraw.ai.maxQuotedMarkup = 200;
+
+/**
+ * Determine whether an element onto which a widget has rendered shows nothing - it holds no text, no child elements,
+ * and is not itself an element which is visible without them. Such a widget has rendered without any failure, yet
+ * shows the user just an empty box - for example, since the template which was rendered is not the one intended.
+ * @param {Element} element - The element onto which the widget has rendered
+ * @return {Boolean} `true` if the element shows nothing
+ */
+fluid.tldraw.ai.rendersNothing = function (element) {
+    return element.textContent.trim() === "" && element.children.length === 0 && !element.matches(fluid.tldraw.ai.visibleElements);
+};
+
+/**
+ * Find the causes of an unavailable value - those it records itself, or else, since a value may be unavailable without
+ * recording why, e.g. one which was never computed since a value it depends on was unavailable, those found upstream
+ * of the cell which holds it by `fluid.cell.explainUnavailable`
+ * @param {Unavailable} unavailable - The unavailable value
+ * @param {Cell} [cell] - The cell holding the value, if known
+ * @return {UnavailableCause[]} The causes which bear messages, which is empty if none could be found
+ */
+fluid.tldraw.ai.causesOf = function (unavailable, cell) {
+    // A cause may itself hold causes, e.g. where an unavailable value was merged into another as one of its causes
+    const flatten = causes => causes.flatMap(cause => cause.causes ? flatten(cause.causes) : [cause]);
+    const recorded = flatten(fluid.unavailableToCauses(fluid.unProxy(unavailable))).filter(cause => cause.message !== undefined);
+    return recorded.length > 0 || !cell ? recorded : fluid.cell.explainUnavailable(cell);
+};
+
+/**
+ * @typedef {Object} TemplateProblem
+ * @property {String} what - A description of the part of the template which failed
+ * @property {Unavailable} [unavailable] - The unavailable value of the part, if it failed in this way
+ * @property {Cell} [cell] - The cell holding the unavailable value
+ * @property {String} [message] - A description of the failure, if it did not fail with an unavailable value
+ */
+
+/**
+ * Check whether the method designated by an event handler written in a template, e.g. `@onclick="{self}.play(1, 2)"`,
+ * can be resolved - otherwise the failure is only discovered when the user triggers the event
+ * @param {VNode} vnode - The rendered node bearing the handler
+ * @param {String} onKey - The name of the handler's event, with any modifiers, e.g. "click"
+ * @param {String} onValue - The handler as written in the template
+ * @return {TemplateProblem|null} The problem with the handler, or `null` if it is sound
+ */
+fluid.tldraw.ai.checkHandler = function (vnode, onKey, onValue) {
+    const what = `The handler @on${onKey}="${onValue}"`;
+    let togo = null;
+    try {
+        // An assignment such as `{self}.open = true` is checked through the reference on its right hand side, if any
+        const assigned = onValue.includes("=") ? onValue.split("=")[1].trim().replace(/^!/, "") : null;
+        const ref = assigned === null ? fluid.compactStringToRec(onValue, "DOMEventBind").func : assigned;
+        if (fluid.isILReference(ref)) {
+            const cell = fluid.fetchContextReference(ref, vnode.shadow);
+            const value = fluid.deSignal(cell);
+            if (fluid.isUnavailable(value)) {
+                togo = {what, unavailable: value, cell};
+            } else if (assigned === null && typeof(value) !== "function") {
+                togo = {what, message: `${ref} is not a method, but ${JSON.stringify(value)?.substring(0, 100)}`};
+            }
+        }
+    } catch (e) {
+        togo = {what, message: `It could not be parsed: ${fluid.tldraw.ai.describeError(e)}`};
+    }
+    return togo;
+};
+
+/**
+ * Find the problems in a view's rendered tree which do not prevent it from rendering, and so would otherwise pass
+ * silently - text and attributes whose references fail to resolve, which render as nothing, and event handlers
+ * designating methods which cannot be resolved, which fail only once triggered
+ * @param {VNode} vTree - The view's rendered tree
+ * @param {Boolean} includePending - If `true`, references which are still pending are reported
+ * @return {TemplateProblem[]} The problems found
+ */
+fluid.tldraw.ai.templateProblems = function (vTree, includePending) {
+    const problems = [];
+    const checkBound = function (bound, what) {
+        if (fluid.isSignal(bound)) {
+            const value = fluid.deSignal(bound);
+            if (fluid.isUnavailable(value) && (includePending || !fluid.isPending(value))) {
+                problems.push({what, unavailable: value, cell: bound});
+            }
+        }
+    };
+    const visit = function (vnode) {
+        if (vnode.text !== undefined) {
+            checkBound(vnode.text, `The text "${fluid.getSignalSource(vnode.text)}"`);
+        } else {
+            fluid.each(vnode.attrs, (value, key) => checkBound(value, `The attribute ${key}="${fluid.getSignalSource(value)}"`));
+            fluid.each(vnode["class"], (value, key) => checkBound(value, `The class ${key}`));
+            (vnode.on || []).forEach(({onKey, onValue}) => {
+                const problem = fluid.tldraw.ai.checkHandler(vnode, onKey, onValue);
+                if (problem) {
+                    problems.push(problem);
+                }
+            });
+            (vnode.children || []).forEach(visit);
+        }
+    };
+    visit(vTree);
+    return problems;
+};
+
+/**
+ * Determine whether an unavailable value of a member is a failure to be reported. Besides a member which has failed
+ * outright, this is one unavailable for reasons of configuration due to a reference which designates a member which
+ * does not exist - such a value is otherwise merely awaited, since the member might yet appear, and would go
+ * unnoticed until something reads it.
+ * @param {Unavailable} unavailable - The member's unavailable value
+ * @param {Cell} cell - The cell holding the member's value
+ * @return {Boolean} `true` if the member's value is a failure
+ */
+fluid.tldraw.ai.isFailedMember = function (unavailable, cell) {
+    const variety = fluid.unProxy(unavailable).variety;
+    return variety === "error" || variety === "config" && fluid.tldraw.ai.causesOf(unavailable, cell).some(cause => !!cause.site);
+};
+
 /**
  * Describe any problem found within a component and its subcomponents - for example a layer which is not defined, a
- * reference which does not resolve, or a template which cannot be rendered. Unless `includePending` is set, components
- * which are still waiting on I/O, e.g. for a layer which is still loading, are not reported.
+ * reference which does not resolve, a template which cannot be rendered, or a widget which renders nothing at all.
+ * Unless `includePending` is set, components which are still waiting on I/O, e.g. for a layer which is still loading,
+ * are not reported.
  * @param {fluid.component} component - The component to be diagnosed
  * @param {Boolean} [includePending] - If `true`, pending components are reported as well as failed ones
  * @return {String[]} Descriptions of each problem found
@@ -880,11 +1242,26 @@ fluid.tldraw.ai.diagnose = function (component, includePending) {
     // Each cause is reported once, at the first place it is found, rather than at every value it propagates to
     const reportedCauses = new Set();
     const reportable = value => fluid.isUnavailable(value) && (includePending || fluid.unProxy(value).variety !== "pending");
-    const report = function (shadow, unavailable, what) {
-        fluid.unavailableToCauses(fluid.unProxy(unavailable)).filter(cause => !reportedCauses.has(cause.message)).forEach(cause => {
+    // Hints accompanying the causes reported, each of which is reported once after all the problems
+    const hints = new Set();
+    // Components for which some cause has been reported, whose failures without a cause of their own need no report
+    const explainedShadows = new Set();
+    const report = function (shadow, unavailable, what, cell) {
+        const causes = fluid.tldraw.ai.causesOf(unavailable, cell);
+        if (causes.length === 0 && !reportedCauses.has(what) && !explainedShadows.has(shadow)) {
+            reportedCauses.add(what);
+            problems.push(`${what} at path ${shadow.path} failed, but no cause was recorded`);
+        }
+        if (causes.length > 0) {
+            explainedShadows.add(shadow);
+        }
+        causes.filter(cause => !reportedCauses.has(cause.message)).forEach(cause => {
             reportedCauses.add(cause.message);
+            if (cause.hint) {
+                hints.add(cause.hint);
+            }
             const site = cause.site && !Array.isArray(cause.site) && cause.site.shadow ? cause.site : null;
-            const siteText = site ? ` at ${fluid.renderSite(site)}` : "";
+            const siteText = site ? ` (at ${fluid.renderSite(site)})` : "";
             const layer = site && fluid.layerForSite(site);
             problems.push(`${what} at path ${shadow.path}${cause.variety === "pending" ? " is still pending" : " failed"}: `
                 + `${cause.message}${siteText}${layer ? " in layer " + layer : ""}`);
@@ -900,18 +1277,29 @@ fluid.tldraw.ai.diagnose = function (component, includePending) {
         // A failure to merge the component's layers explains any consequent failure of the component itself
         const merged = fluid.deSignal(shadow.flatMerged);
         if (reportable(merged)) {
-            report(shadow, merged, "Merging the layers of component");
+            report(shadow, merged, "Merging the layers of component", shadow.flatMerged);
         } else if (reportable(instance)) {
-            report(shadow, instance, "Component");
+            report(shadow, instance, "Component", shadow.availableInstance);
         } else if (!fluid.isUnavailable(instance)) {
             const that = shadow.that;
-            // Any member whose value has failed outright, e.g. a reference which designates its own value, which would
-            // otherwise go unnoticed until something reads it. The container and rendering of a view are judged below.
-            Object.keys(fluid.deSignal(merged)).forEach(memberName => {
+            // Any member whose value has failed, e.g. a reference which designates its own value, or a member which
+            // does not exist, which would otherwise go unnoticed until something reads it. The container and rendering
+            // of a view are judged below.
+            // Members defined by user layers are visited first, so that a failure is reported at the member which the
+            // user wrote, rather than one derived from it by a framework layer, e.g. at a view's template rather than
+            // its templateTree
+            const memberNames = Object.keys(fluid.deSignal(merged));
+            const userLayerMember = function (memberName) {
+                const layerName = fluid.layerForSite({shadow, segs: [memberName]});
+                return !!layerName && fluid.isUserLayer(layerName);
+            };
+            const [userMembers, otherMembers] = fluid.partition(memberNames, userLayerMember);
+            [...userMembers, ...otherMembers].forEach(memberName => {
                 if (!memberName.startsWith("$") && !shadow.childComponents?.[memberName] && !["container", "vTree"].includes(memberName)) {
-                    const value = fluid.deSignal(fluid.getForComponent(shadow, memberName));
-                    if (fluid.isUnavailable(value) && fluid.unProxy(value).variety === "error") {
-                        report(shadow, value, `Member ${memberName} of component`);
+                    const cell = fluid.getForComponent(shadow, memberName);
+                    const value = fluid.deSignal(cell);
+                    if (fluid.isUnavailable(value) && fluid.tldraw.ai.isFailedMember(value, cell)) {
+                        report(shadow, value, `Member ${memberName} of component`, cell);
                     }
                 }
             });
@@ -920,9 +1308,19 @@ fluid.tldraw.ai.diagnose = function (component, includePending) {
                 const container = fluid.deSignal(that.container);
                 const vTree = fluid.deSignal(that.vTree);
                 if (reportable(container) && !hidden) {
-                    report(shadow, container, "Container of view");
+                    report(shadow, container, "Container of view", fluid.getForComponent(shadow, "container"));
                 } else if (reportable(vTree)) {
-                    report(shadow, vTree, "Rendering of view");
+                    report(shadow, vTree, "Rendering of view", fluid.getForComponent(shadow, "vTree"));
+                } else if (!fluid.isUnavailable(vTree)) {
+                    const templateTree = fluid.deSignal(that.templateTree);
+                    (templateTree?.warnings || []).forEach(warning => problems.push(`Template of view at path ${shadow.path}: ${warning}`));
+                    fluid.tldraw.ai.templateProblems(vTree, includePending).forEach(problem => {
+                        if (problem.unavailable) {
+                            report(shadow, problem.unavailable, `${problem.what} in the template of view`, problem.cell);
+                        } else {
+                            problems.push(`${problem.what} in the template of view at path ${shadow.path} failed: ${problem.message}`);
+                        }
+                    });
                 }
                 childHidden = hidden && fluid.isUnavailable(container);
             }
@@ -938,8 +1336,158 @@ fluid.tldraw.ai.diagnose = function (component, includePending) {
             });
         }
     };
-    visit(fluid.ptf.componentToShadow(component), false);
-    return problems;
+    const rootShadow = fluid.ptf.componentToShadow(component);
+    visit(rootShadow, false);
+    // A widget which has rendered without failure may still show nothing at all, e.g. having rendered a template other
+    // than the one intended
+    const rendered = problems.length === 0 ? fluid.renderedContainerFor(rootShadow) : undefined;
+    if (rendered && !fluid.isUnavailable(rendered) && fluid.tldraw.ai.rendersNothing(rendered)) {
+        const markup = rendered.outerHTML;
+        const quoted = markup.length > fluid.tldraw.ai.maxQuotedMarkup ? markup.substring(0, fluid.tldraw.ai.maxQuotedMarkup) + "..." : markup;
+        problems.push(`The view of component at path ${rootShadow.path} rendered without failure, but shows nothing - `
+            + `its rendered markup ${quoted} holds no text, child elements or images`);
+    }
+    hints.forEach(hint => problems.push("Hint: " + hint));
+    return problems.map(problem => fluid.tldraw.ai.relativisePaths(problem, rootShadow.path));
+};
+
+/**
+ * Render the paths of components within a widget, as they appear in a description of a problem, relative to the
+ * widget, as the parts of the PTF document transmitting it are - e.g. the widget's view is at `/view`, and the widget
+ * itself at `/`, wherever it is constructed
+ * @param {String} text - The description
+ * @param {String} rootPath - The path of the widget's root component
+ * @return {String} The description, with every path within the widget made relative to it
+ */
+fluid.tldraw.ai.relativisePaths = function (text, rootPath) {
+    const escaped = rootPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // A path continues through any further member names, each preceded by "."
+    const pathRE = new RegExp(escaped + "((?:\\.[\\w$-]+)*)(?![\\w$-])", "g");
+    return text.replace(pathRE, (match, rest) => fluid.ptf.segsToFilename(rest.split(".").filter(seg => seg !== "")));
+};
+
+// The longest that `fluid.tldraw.ai.awaitSettled` will wait for the reactive graph to settle - work which is pending
+// forever, e.g. a request which never completes, would otherwise leave it unsettled
+fluid.tldraw.ai.settleTimeout = 8000;
+
+/**
+ * Await the settling of the reactive graph - see `fluid.cell.settle` - once nothing is queued and no work issued from
+ * within it is pending, nothing further can happen without some external event, and so the state of each widget is
+ * final and can be diagnosed. The settling is begun in a fresh task, so that this may be called from within an effect.
+ * @param {Number} [timeout] - The longest to wait, in milliseconds
+ * @return {Promise<Boolean>} A promise resolving to `true` once the graph has settled, or to `false` if it did not
+ * within `timeout`
+ */
+fluid.tldraw.ai.awaitSettled = function (timeout = fluid.tldraw.ai.settleTimeout) {
+    let timer = null;
+    const timedOut = new Promise(resolve => {
+        timer = setTimeout(() => resolve(false), timeout);
+    });
+    const settled = new Promise(resolve => setTimeout(resolve, 0)).then(() => fluid.cell.settle()).then(() => true);
+    return Promise.race([settled, timedOut]).finally(() => clearTimeout(timer));
+};
+
+/**
+ * Await the definition of a layer - e.g. a layer's creator function will not exist until its SFC has been parsed and
+ * its script evaluated. Whilst its SFC is being parsed or injected, the layer store holds a pending record for it, which
+ * holds the graph unsettled. A layer which is not available once the graph has settled never will be, e.g. since its
+ * SFC was rejected, and the reason is resolved straight away rather than after any timeout.
+ * @param {String} layerName - The name of the layer to wait for
+ * @param {Number} [timeout] - The longest to wait for the graph to settle, in milliseconds
+ * @return {Promise<Unavailable|null>} A promise resolving to `null` once the layer is available, or to the reason it
+ * is not once the graph has settled without its becoming so
+ */
+fluid.tldraw.ai.awaitLayer = function (layerName, timeout) {
+    const layerSignal = fluid.readLayer(layerName);
+    let togo;
+    if (fluid.layerRecToUnavailable(layerSignal.get()) === null) {
+        togo = Promise.resolve(null);
+    } else {
+        togo = new Promise(resolve => {
+            // Pending whilst the layer is, so that the graph does not settle before it is defined
+            const watcher = fluid.cell.effect(layerRec => {
+                const unavailable = fluid.layerRecToUnavailable(layerRec);
+                if (unavailable === null) {
+                    resolve(null);
+                }
+                return fluid.isPending(unavailable) ? unavailable : true;
+            }, [layerSignal], {name: `awaitLayer for ${layerName}`, isFree: true});
+            watcher.get();
+            fluid.tldraw.ai.awaitSettled(timeout).then(() => {
+                watcher.dispose();
+                resolve(fluid.layerRecToUnavailable(layerSignal.get()));
+            });
+        });
+    }
+    return togo;
+};
+
+/**
+ * Diagnose a widget as it is hosted - as by `fluid.tldraw.ai.diagnose`, save that a widget which is not available
+ * although it has no problem other than waiting, e.g. on a request which never completes, has what it waits on reported
+ * @param {fluid.component} component - The widget's root component
+ * @return {String[]} Descriptions of each problem found
+ */
+fluid.tldraw.ai.diagnoseHosted = function (component) {
+    const problems = fluid.tldraw.ai.diagnose(component, false);
+    const available = !fluid.isUnavailable(fluid.ptf.componentToShadow(component).availableInstance.get());
+    let togo;
+    if (problems.length === 0 && !available) {
+        const pending = fluid.tldraw.ai.diagnose(component, true);
+        togo = pending.length > 0 ? pending : ["The widget did not become available, although no problem with it could be diagnosed"];
+    } else {
+        togo = problems;
+    }
+    return togo;
+};
+
+/**
+ * @typedef {Object} BoundDiagnosis
+ * @property {Function} refresh - Reports the diagnosis once more once the reactive graph has settled, whether or not
+ * it has changed
+ * @property {Function} dispose - Ends the diagnosis, which must be done before the component is destroyed
+ */
+
+/**
+ * Keep a widget diagnosed by `fluid.tldraw.ai.diagnoseHosted`, reporting its problems whenever they change. The
+ * diagnosis is held in a computed cell, which is reevaluated whenever anything it read changes, and is reported once
+ * the reactive graph has settled, so that the transient states of a widget under construction are not reported, and
+ * the problems of one which can progress no further are reported at once.
+ * @param {fluid.component} component - The widget's root component
+ * @param {Function} onProblems - Called with the {String[]} problems diagnosed each time they change, beginning with
+ * the first diagnosis, which may be empty
+ * @param {Number} [timeout] - The longest to wait for the graph to settle before reporting, in milliseconds
+ * @return {BoundDiagnosis} The diagnosis, which may be refreshed and must be disposed
+ */
+fluid.tldraw.ai.bindDiagnosis = function (component, onProblems, timeout) {
+    const path = fluid.ptf.componentToShadow(component).path;
+    const diagnosis = fluid.cell(undefined, {name: `Diagnosis of component at path ${path}`})
+        .computed(() => fluid.tldraw.ai.diagnoseHosted(component));
+    let disposed = false;
+    let reported = null;
+    const reportSettled = function (force) {
+        fluid.tldraw.ai.awaitSettled(timeout).then(() => {
+            if (!disposed) {
+                // Read afresh, since the diagnosis may have changed again whilst the graph settled
+                const problems = diagnosis.get();
+                const key = JSON.stringify(problems);
+                if (force || key !== reported) {
+                    reported = key;
+                    onProblems(problems);
+                }
+            }
+        });
+    };
+    const reporter = fluid.cell.effect(() => reportSettled(false), [diagnosis], {
+        name: `Reporter of diagnosis of component at path ${path}`
+    });
+    return {
+        refresh: () => reportSettled(true),
+        dispose: () => {
+            disposed = true;
+            reporter.dispose();
+        }
+    };
 };
 
 /**
@@ -987,19 +1535,23 @@ output tokens, before it was complete. Reason more briefly, and send only the pa
  * prompt is assembled afresh for each request, so that it reflects any changes already made.
  * @param {Object} options - The exchange's options
  * @param {String} options.direction - The user's direction
- * @param {ChatMessage[]} options.history - Earlier messages of the conversation
+ * @param {ChatExchange[]} options.history - The earlier exchanges of the conversation
+ * @param {String} [options.model] - The id of the model being conversed with, recorded in the `<provenance>` block of
+ * any layer which it defines - see `fluid.tldraw.ai.stampProvenance`
  * @param {AIBridge} options.bridge - The bridge to the workspace, as constructed by `makeAIBridge` in tldraw-ai.js
  * @param {Function} options.call - Accepts a {ChatMessage[]} and returns a {Promise<AIReply|String>} for the AI's
  * response, a String being taken as its content
  * @param {Function} options.report - Accepts a {ChatEntry} to be shown to the user
  * @param {Function} [options.getDocs] - Returns a {Promise<String[]>} for the documentation to be included in the
  * prompt, defaulting to `fluid.tldraw.ai.fetchDocs`
- * @return {Promise<ChatMessage[]>} A promise for the conversation's history including this exchange, which rejects if
+ * @return {Promise<ChatExchange[]>} A promise for the conversation's history including this exchange, which rejects if
  * a request fails
  */
-fluid.tldraw.ai.converse = async function ({direction, history, bridge, call, report, getDocs = fluid.tldraw.ai.fetchDocs}) {
+fluid.tldraw.ai.converse = async function ({direction, history, model, bridge, call, report, getDocs = fluid.tldraw.ai.fetchDocs}) {
     const docs = await getDocs();
     const messages = fluid.tldraw.ai.buildMessages("", history, direction);
+    // The messages of this exchange begin with the direction, following the system prompt and earlier exchanges
+    const exchangeStart = messages.length - 1;
     let repairs = 0;
     let done = false;
     while (!done) {
@@ -1024,6 +1576,7 @@ fluid.tldraw.ai.converse = async function ({direction, history, bridge, call, re
             const widgetIds = workspace.widgets.map(widget => widget.shapeId);
             const shapeIds = [...widgetIds, ...workspace.canvasShapes.map(shape => shape.id)];
             const plan = fluid.tldraw.ai.planChanges(response.parts, widgetIds, shapeIds);
+            fluid.tldraw.ai.stampProvenance(plan, {model, prompt: direction, datestamp: new Date().toISOString()});
             const applied = await bridge.applyPlan(plan);
             problems = [...plan.problems, ...applied.problems];
             report({
@@ -1044,5 +1597,5 @@ fluid.tldraw.ai.converse = async function ({direction, history, bridge, call, re
             done = true;
         }
     }
-    return messages.slice(1);
+    return [...history, messages.slice(exchangeStart)];
 };

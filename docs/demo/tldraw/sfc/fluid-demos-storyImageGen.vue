@@ -42,7 +42,7 @@ fluid.demos.storyImageGen.buttonLabel = isGenerating => isGenerating ? "Generati
 /**
  * Generate an illustration from the current prompt and place it on the canvas to the right of the widget.
  * @param {Object} state - The storyTime component's reactive state
- * @param {Editor} editor - The tldraw editor, resolved from the root-scoped tldrawHost component
+ * @param {Editor} editor - The tldraw editor, resolved from the tldrawHost component within which the widget is hosted
  * @param {ShapeBounds|null} bounds - The bounds of the storyTime widget as hosted, as received from its tldraw view
  * @return {Promise} A promise which resolves when generation has finished, successfully or not
  */

@@ -120,3 +120,20 @@ QUnit.test("Component instantiated from SFC layer renders and responds", async f
     assert.equal(fluid.tests.sfc.executions, 1, "Instantiation did not re-execute SFC script");
     that.destroy();
 });
+
+QUnit.test("SFC defining its template twice is rejected", function (assert) {
+    const layerName = "fluid.tests.sfc.twoTemplates";
+    const script = "<script>\nfluid.def(\"" + layerName + "\", {\n    $layers: \"fluid.component\",\n    view: {\n        $component: {\n"
+        + "            $layers: \"fluid.templateViewComponent\",\n            template: \"$compute:fluid.identity(<div>Computed</div>)\"\n"
+        + "        }\n    }\n});\n</script>\n";
+    const conflicting = fluid.parseHTMLToTree(script + "<template><div class=\"placeholder\"></div></template>");
+    const sniFor = vTree => fluid.parseSFCScripts(fluid.querySelectorAll(vTree, "script"))[0];
+    assert.ok(fluid.hasSFCTemplateConflict(conflicting, sniFor(conflicting), layerName), "Conflict detected");
+    const withoutBlock = fluid.parseHTMLToTree(script);
+    assert.notOk(fluid.hasSFCTemplateConflict(withoutBlock, sniFor(withoutBlock), layerName), "No conflict without <template> block");
+    const injRecs = fluid.sfcToInjRecs(conflicting, layerName);
+    assert.deepEqual(injRecs, {}, "Nothing injected from conflicting SFC");
+    const unavailable = fluid.layerRecToUnavailable(fluid.readLayer(layerName).get());
+    assert.ok(fluid.isUnavailable(unavailable) && unavailable.message === fluid.sfcTemplateConflictMessage(layerName),
+        "Layer defined as unavailable, with the conflict described");
+});

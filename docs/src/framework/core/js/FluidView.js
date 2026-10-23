@@ -681,6 +681,141 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Describe the error of a Single File Component which defines its view's template twice - see
+     * `fluid.hasSFCTemplateConflict`
+     * @param {String} layerName - The name of the layer defined by the SFC
+     * @return {String} The description of the error
+     */
+    fluid.sfcTemplateConflictMessage = layerName => `Error in SFC for ${layerName}: Its layer defines `
+        + "view.$component.template, but the SFC also has a <template> block, which would replace it - remove one or "
+        + "the other. A template which is computed, e.g. by \"$compute:...\", should be held in view.$component.template, "
+        + "with no <template> block";
+
+    /**
+     * Determine whether a Single File Component defines its view's template twice - both as a `<template>` block and
+     * as `view.$component.template` in the definition of its own layer. The block would be written over the member,
+     * silently discarding it. A partial view, whose `<template>` block is written elsewhere, is not affected.
+     * @param {VNode} vTree - The virtual DOM tree representing the Single File Component
+     * @param {ScriptNodeInfo} ourSNI - The parsed script holding the definition of the SFC's own layer
+     * @param {String} layerName - The name of the layer defined by the SFC
+     * @return {Boolean} `true` if the template is defined twice
+     */
+    fluid.hasSFCTemplateConflict = function (vTree, ourSNI, layerName) {
+        const docTemplate = fluid.querySelectorAll(vTree, "template")[0];
+        const ownTemplate = fluid.get(ourSNI.defMaps, [layerName, "view", "$component", "template", $m]);
+        const viewLayers = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, ["view", "$component", "$layers"]);
+        return !!docTemplate && !!ownTemplate && !fluid.makeArray(viewLayers).includes("fluid.partialViewComponent");
+    };
+
+    /**
+     * The provenance of a Single File Component, recorded in a top-level `<provenance>` block holding an element for
+     * each of its fields, e.g. by an AI integration recording how the layer it defines was generated. The block takes
+     * no part in defining the layer, and is carried through verbatim with the rest of the SFC's text.
+     * @typedef {Object} SFCProvenance
+     * @property {String} [model] - The id of the AI model which generated the SFC
+     * @property {String} [prompt] - The user's prompt from which it was generated
+     * @property {String} [datestamp] - The ISO date at which it was generated
+     */
+
+    // The fields of an SFC's provenance, in the order in which they are written
+    fluid.sfcProvenanceFields = ["model", "prompt", "datestamp"];
+
+    /**
+     * Escape text for inclusion as the text content of an HTML element
+     * @param {String} text - The text to be escaped
+     * @return {String} The escaped text
+     */
+    fluid.encodeHtmlText = text => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    /**
+     * Find the top-level `<provenance>` blocks of a Single File Component
+     * @param {VNode} vTree - The virtual DOM tree representing the Single File Component
+     * @return {VNode[]} The blocks, in document order
+     */
+    fluid.sfcProvenanceNodes = vTree => vTree.children.filter(child => child.tag === "provenance");
+
+    /**
+     * Read the provenance recorded in the text of a Single File Component
+     * @param {String} text - The text of the SFC
+     * @return {SFCProvenance|null} The provenance recorded in its first `<provenance>` block, or `null` if it has none
+     */
+    fluid.readSFCProvenance = function (text) {
+        const node = fluid.sfcProvenanceNodes(fluid.parseHTMLToTree(text))[0];
+        return node ? fluid.provenanceFromNode(node) : null;
+    };
+
+    /**
+     * Read the fields of provenance from a parsed `<provenance>` block
+     * @param {VNode} node - The block
+     * @return {SFCProvenance} The provenance it records
+     */
+    fluid.provenanceFromNode = function (node) {
+        const togo = {};
+        node.children.forEach(child => {
+            if (fluid.sfcProvenanceFields.includes(child.tag)) {
+                togo[child.tag] = child.children.map(textNode => textNode.text ?? "").join("");
+            }
+        });
+        return togo;
+    };
+
+    /**
+     * Render provenance as the markup of a `<provenance>` block. Fields whose values are absent are omitted.
+     * @param {SFCProvenance} provenance - The provenance to be rendered
+     * @return {String} The markup of the block, ending with a newline
+     */
+    fluid.renderProvenanceBlock = function (provenance) {
+        const fields = fluid.sfcProvenanceFields.filter(field => typeof(provenance[field]) === "string")
+            .map(field => `    <${field}>${fluid.encodeHtmlText(provenance[field])}</${field}>\n`);
+        return "<provenance>\n" + fields.join("") + "</provenance>\n";
+    };
+
+    /**
+     * Write provenance into the text of a Single File Component, as a `<provenance>` block at its end replacing any
+     * which it already holds. Fields whose values are absent are omitted from the block.
+     * @param {String} text - The text of the SFC
+     * @param {SFCProvenance} provenance - The provenance to be written
+     * @return {String} The text of the SFC holding the provenance
+     */
+    fluid.writeSFCProvenance = function (text, provenance) {
+        const existing = fluid.sfcProvenanceNodes(fluid.parseHTMLToTree(text));
+        // Remove existing blocks from the last, so that the offsets of earlier ones remain valid
+        const stripped = existing.reduceRight((acc, node) => acc.slice(0, node.start) + acc.slice(node.end), text);
+        return stripped.trimEnd() + "\n\n" + fluid.renderProvenanceBlock(provenance);
+    };
+
+    // Matches a `<provenance>` block held in line comments, as written by fluid.writeJSProvenance
+    fluid.jsProvenancePattern = /^\/\/ <provenance>\n(?:\/\/.*\n)*?\/\/ <\/provenance>\n?/gm;
+
+    /**
+     * Read the provenance recorded in the text of a JavaScript layer, as a `<provenance>` block held in line comments
+     * @param {String} text - The text of the layer
+     * @return {SFCProvenance|null} The provenance recorded in its first such block, or `null` if it has none
+     */
+    fluid.readJSProvenance = function (text) {
+        const match = text.match(fluid.jsProvenancePattern)?.[0];
+        let togo = null;
+        if (match) {
+            const markup = match.split("\n").map(line => line.replace(/^\/\/ ?/, "")).join("\n");
+            togo = fluid.readSFCProvenance(markup);
+        }
+        return togo;
+    };
+
+    /**
+     * Write provenance into the text of a JavaScript layer, as a `<provenance>` block held in line comments at its end,
+     * replacing any which it already holds - a JavaScript layer has no other place to hold it
+     * @param {String} text - The text of the layer
+     * @param {SFCProvenance} provenance - The provenance to be written
+     * @return {String} The text of the layer holding the provenance
+     */
+    fluid.writeJSProvenance = function (text, provenance) {
+        const stripped = text.replace(fluid.jsProvenancePattern, "");
+        const block = fluid.renderProvenanceBlock(provenance).trimEnd().split("\n").map(line => "// " + line).join("\n");
+        return stripped.trimEnd() + "\n\n" + block + "\n";
+    };
+
+    /**
      * Processes a vTree to extract and prepare injection records for scripts and styles.
      * This function validates the presence of required script nodes, parses their definitions, and updates
      * the layer definition with appropriate metadata. It also handles template blocks and style nodes.
@@ -708,6 +843,8 @@ const fluidViewScope = function (fluid) {
             const layerDefIndex = fluid.indexLayerDefs(defMapList);
             if (!layerDefIndex[layerName]) {
                 reject(`Error in SFC: Expected definition for layer ${layerName} but found ${Object.keys(layerDefIndex).join(", ")} instead`);
+            } else if (fluid.hasSFCTemplateConflict(vTree, defMapList[layerDefIndex[layerName].scriptIndex], layerName)) {
+                reject(fluid.sfcTemplateConflictMessage(layerName));
             } else {
                 /** @type {LayerDefLocation} */
                 const ourDef = layerDefIndex[layerName];
@@ -1190,7 +1327,7 @@ const fluidViewScope = function (fluid) {
                 const togo = fluid.cell.effect( function (element, text) {
                     if (!fluid.isUnavailable(element)) {
                         if (fluid.isUnavailable(text)) {
-                            fluid.renderError(element, text);
+                            fluid.reportRenderError({shadow: vnode.shadow, container: element, unavailable: text});
                         } else {
                             applyFunc(element, text);
                         }
@@ -1723,6 +1860,9 @@ const fluidViewScope = function (fluid) {
             if (vnode.text !== undefined) {
                 const tokens = fluid.parseAtStringTemplate(vnode.text);
                 const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+                if (fluid.isSignal(rendered)) {
+                    rendered.$source = vnode.text;
+                }
                 fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
                 return Object.assign(vnode, {text: rendered});
             } else {
@@ -2096,13 +2236,51 @@ const fluidViewScope = function (fluid) {
     });
 
     /**
+     * Parse markup supplied as a view's template, recording any problems with it which would otherwise pass silently -
+     * tags left unclosed or closed without being opened, which the parser repairs as best it can, and top-level nodes
+     * beyond the first, which are not rendered since the root of a template is elided onto its container. These are
+     * held as the member `warnings` of the parsed tree, as reported by diagnostic tools.
+     * @param {String} markup - The template's markup
+     * @return {VNode} The parsed template, a fragment, bearing `warnings` if any problems were found
+     */
+    fluid.parseTemplateMarkup = function (markup) {
+        const warnings = [];
+        const warn = (message, range) => warnings.push(range?.start === undefined ? message :
+            `${message} - at character ${range.start}: ${JSON.stringify(markup.substring(range.start, range.start + 60))}`);
+        const tree = fluid.parseHTMLToTree(markup, {fragment: true, skipWhitespace: true, warn});
+        const roots = tree.children.filter(child => !child.isComment);
+        if (roots.length > 1) {
+            warnings.push(`The template has ${roots.length} top-level nodes, but only the first is rendered - wrap them `
+                + "in a single element");
+        }
+        if (warnings.length > 0) {
+            tree.warnings = warnings;
+        }
+        return tree;
+    };
+
+    /**
      * Resolve the template held by a view to its parsed tree
      * @param {String|Object} template - The view's template - either markup, or a reference `{sfcLayer}` to the template
      * of the named Single File Component layer, held in the template store
-     * @return {VNode} The parsed template
+     * @return {VNode|Unavailable} The parsed template, or an unavailable value if the template is neither of these
      */
     fluid.templateToTree = function (template) {
-        return typeof(template) === "string" ? fluid.parseHTMLToTree(template) : fluid.fetchParsedTemplate(template.sfcLayer);
+        let togo;
+        if (typeof(template) === "string") {
+            togo = fluid.parseTemplateMarkup(template);
+        } else if (fluid.isPlainObject(template, true) && typeof(template.sfcLayer) === "string") {
+            togo = fluid.fetchParsedTemplate(template.sfcLayer);
+        } else {
+            const described = template === undefined ? "undefined" : JSON.stringify(template)?.substring(0, 100) ?? String(template);
+            togo = fluid.unavailable({
+                message: "The template of a view must be markup held as a String, or a reference {sfcLayer} to the "
+                    + `template of a Single File Component, but it was ${described} - if it is computed, check that the `
+                    + "function computing it returns its markup",
+                variety: "error"
+            });
+        }
+        return togo;
     };
 
     // Tag layer applied by fluid.sfcToInjRecs to every layer which was loaded from a Single File Component, allowing
@@ -2143,25 +2321,93 @@ const fluidViewScope = function (fluid) {
     };
 
     fluid.renderError = function (container, unavailable) {
-        const errors = unavailable.causes.map(fluid.renderOneCause).join("\n");
+        // An unavailable value with a single cause holds it directly
+        const errors = (unavailable.causes || [unavailable]).map(fluid.renderOneCause).join("\n");
         const markup = `<ul class="fl-error">${errors}</ul>`;
         // OK to flash this in since it will be replaced when proper rendering happens and has no browser state
         container.innerHTML = markup;
     };
 
+    /**
+     * @typedef {Object} RenderErrorReport
+     * @property {Shadow} shadow - The shadow of the component which failed to render
+     * @property {Element} container - The element where the failed material would have been rendered
+     * @property {Unavailable} unavailable - Why it failed
+     */
+
+    /**
+     * Render an error report in place, as the default policy of an error boundary
+     * @param {RenderErrorReport} report - The report of the error
+     */
+    fluid.renderErrorReport = function (report) {
+        fluid.renderError(report.container, report.unavailable);
+    };
+
+    // A component which takes responsibility for the presentation of errors in rendering the components within its
+    // scope, e.g. a host which reports them alongside the widgets it hosts. Its policy is its `reportError` method,
+    // which accepts a {RenderErrorReport} - by default the error is rendered in place, as it is where there is no
+    // boundary. It is found by ordinary context resolution as {errorBoundary}, and so is not a "framework" layer, whose
+    // names are not entered into scope.
+    fluid.def("fluid.errorBoundary", {
+        $layers: "fluid.component",
+        reportError: "$method:fluid.renderErrorReport({0})",
+        $variety: "frameworkAux"
+    });
+
+    /**
+     * Find the error boundary responsible for the errors of a component - the component resolved as {errorBoundary}
+     * from its parent, if it is available. Resolution starts from the parent since a boundary which has failed cannot be
+     * responsible for its own errors.
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {fluid.component|null} The error boundary, or `null` if there is none or it is not available
+     */
+    fluid.findErrorBoundary = function (shadow) {
+        // As for fluid.resolveContext, but yielding the boundary's shadow rather than the signal of its instance
+        const boundaryShadow = shadow.parentShadow?.ownScope.errorBoundary?.value;
+        return boundaryShadow && !fluid.isUnavailable(boundaryShadow.availableInstance.get()) ?
+            fluid.proxyMat(boundaryShadow.computer, boundaryShadow, []) : null;
+    };
+
+    /**
+     * Report an error in rendering a component to its error boundary, or render it in place if it has none
+     * @param {RenderErrorReport} report - The report of the error
+     */
+    fluid.reportRenderError = function (report) {
+        // Finding the boundary reads the availability of ancestors, which must not become dependencies of the caller
+        const boundary = fluid.cell.untracked(() => fluid.findErrorBoundary(report.shadow));
+        if (boundary) {
+            boundary.reportError(report);
+        } else {
+            fluid.renderErrorReport(report);
+        }
+    };
+
+    /**
+     * Find the container supplied to the view of a component through its potentia, e.g. by a host constructing it,
+     * which can be found even when the component has failed to merge
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {Element|null} The container, or `null` if none was supplied
+     */
+    fluid.potentiaContainer = function (shadow) {
+        const mergeRecords = shadow.potentia._value.mergeRecords;
+        return mergeRecords.reduce((acc, record) => record.layer?.view?.$component?.container || record.layer?.container || acc, null);
+    };
+
     fluid.possiblyRenderError = function (shadow) {
-        if (shadow.that) {
-            const that = shadow.that;
-            if (that.$layers.includes("fluid.viewComponent")) {
-                const vTree = fluid.deSignal(that.vTree);
-                if (fluid.isErrorUnavailable(vTree)) {
-                    fluid.renderError(fluid.deSignal(that.container), vTree);
-                }
+        const that = shadow.that;
+        const unavailableLayers = Object.values(shadow.unavailableLayerMap._value);
+        if (unavailableLayers.length > 0) {
+            // A component whose layers failed has no view of its own to render into, but may have been supplied a
+            // container for one - e.g. one hosting a widget whose layer was rejected
+            const container = fluid.potentiaContainer(shadow);
+            const unavailable = fluid.mergeUnavailables(unavailableLayers);
+            if (container && fluid.isErrorUnavailable(unavailable)) {
+                fluid.reportRenderError({shadow, container, unavailable});
             }
-        } else if (fluid.isErrorUnavailable(shadow.that)) {
-            const container = shadow.mergeRecords.reduce((acc, record) => record.layer?.view?.$component?.container || acc, null);
-            if (container) {
-                fluid.renderError(container, shadow.that);
+        } else if (that?.$layers.includes("fluid.viewComponent")) {
+            const vTree = fluid.deSignal(that.vTree);
+            if (fluid.isErrorUnavailable(vTree)) {
+                fluid.reportRenderError({shadow, container: fluid.deSignal(that.container), unavailable: vTree});
             }
         }
     };

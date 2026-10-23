@@ -1112,3 +1112,92 @@ QUnit.test("Widget nested within another takes the bounds of the widget enclosin
     assert.equal(inner.hostBounds, null, "Nested widget's bounds revert to the placeholder once its enclosing widget is unhosted");
     that.destroy();
 });
+
+QUnit.test("Problems with the markup of a template are recorded as warnings", function (assert) {
+    const sound = fluid.parseTemplateMarkup("<div class=\"a\"><span>Text</span></div>");
+    assert.equal(sound.warnings, undefined, "Sound markup bears no warnings");
+    const unclosed = fluid.parseTemplateMarkup("<div class=\"a\"><span>Text</div>");
+    assert.equal(unclosed.warnings.length, 1, "One warning for unclosed tag");
+    assert.ok(unclosed.warnings[0].startsWith("tag <span> has no matching end tag") && unclosed.warnings[0].includes("at character 15"),
+        "Unclosed tag and its location described");
+    const twoRoots = fluid.parseTemplateMarkup("<div>One</div><div>Two</div>");
+    assert.deepEqual(twoRoots.warnings, ["The template has 2 top-level nodes, but only the first is rendered - wrap them in a single element"],
+        "Surplus top-level nodes described");
+    const notMarkup = fluid.templateToTree(undefined);
+    assert.ok(fluid.isUnavailable(notMarkup), "Template which is not markup is unavailable");
+    assert.ok(notMarkup.message.includes("must be markup held as a String") && notMarkup.message.includes("but it was undefined"),
+        "Template which is not markup described");
+    assert.ok(fluid.templateToTree({tag: "div"}).message.includes("but it was {\"tag\":\"div\"}"), "Template which is an object described");
+});
+
+// Error boundaries - a component taking responsibility for the presentation of errors in rendering its descendants
+
+fluid.tests.throwTemplate = function () {
+    throw new Error("Template could not be computed");
+};
+
+fluid.def("fluid.tests.failingRender", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "$compute:fluid.tests.throwTemplate()"
+        }
+    }
+});
+
+fluid.def("fluid.tests.rejectedLayer", fluid.unavailable("Layer rejected for testing"));
+
+fluid.def("fluid.tests.errorBoundary", {
+    $layers: "fluid.errorBoundary",
+    reportError: "$method:fluid.tests.recordErrorReport({0})"
+});
+
+fluid.tests.errorReports = [];
+
+// An unavailable value with a single cause holds it directly
+fluid.tests.causesOf = unavailable => unavailable.causes || [unavailable];
+
+fluid.tests.recordErrorReport = function (report) {
+    fluid.tests.errorReports.push(report);
+};
+
+QUnit.test("Errors in rendering are reported to the nearest error boundary, or rendered in place", function (assert) {
+    const container = qs(".container");
+    const unbounded = fluid.initFreeComponent("fluid.tests.failingRender", {container});
+    fluid.cell.stabilize();
+    assert.ok(qs(".fl-error", container)?.textContent.includes("Template could not be computed"),
+        "Error rendered in place where there is no boundary");
+    unbounded.destroy();
+    container.replaceChildren();
+
+    const boundary = fluid.tests.errorBoundary();
+    const bounded = fluid.initChildComponent(boundary, "fluid.tests.failingRender", {container});
+    fluid.cell.stabilize();
+    const boundedShadow = bounded[fluid.metadataSymbol];
+    assert.equal(boundedShadow.parentShadow, boundary[fluid.metadataSymbol], "Child component constructed within its parent");
+    assert.equal(container.childNodes.length, 0, "Error not rendered in place within a boundary");
+    assert.equal(fluid.tests.errorReports.length, 1, "Error reported to the boundary");
+    const [report] = fluid.tests.errorReports;
+    assert.equal(report.container, container, "Report holds the container in which the error would have been rendered");
+    assert.ok(report.shadow.path.startsWith(boundedShadow.path) && fluid.tests.causesOf(report.unavailable).some(cause =>
+        cause.message.includes("Template could not be computed")), "Report holds the failed component and the error");
+    bounded.destroy();
+    fluid.tests.errorReports.length = 0;
+
+    const rejected = fluid.initChildComponent(boundary, "fluid.tests.rejectedLayer", {view: {$component: {container}}});
+    fluid.cell.stabilize();
+    assert.equal(fluid.tests.errorReports.length, 1, "Failure of component's own layer reported to the boundary");
+    assert.ok(fluid.tests.errorReports[0].container === container && fluid.tests.causesOf(fluid.tests.errorReports[0].unavailable).some(cause =>
+        cause.message.includes("Layer rejected for testing")), "Report holds the container supplied to its view, and the failure");
+    fluid.destroyComponent(rejected);
+    boundary.destroy();
+    fluid.tests.errorReports.length = 0;
+
+    const rejectedFree = fluid.initFreeComponent("fluid.tests.rejectedLayer", {view: {$component: {container}}});
+    fluid.cell.stabilize();
+    assert.ok(qs(".fl-error", container)?.textContent.includes("Layer rejected for testing"),
+        "Failure of component's own layer rendered in place where there is no boundary");
+    fluid.destroyComponent(rejectedFree);
+    container.replaceChildren();
+});
