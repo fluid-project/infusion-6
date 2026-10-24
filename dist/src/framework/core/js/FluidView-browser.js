@@ -10,6 +10,47 @@ const $fluidViewBrowserScope = function (fluid) {
     // an avatar - in the browser there is just the one. Left undefined on the server, which may host several.
     fluid.defaultDocument = document;
 
+    /**
+     * Retrieve the root element of this document, as the container of a `fluid.outputDocumentView` - provided that
+     * the location of the output document is that of this document. Given a site's base URL, a relative location is
+     * resolved against it, and the locations are compared by their paths relative to the site's root - as served here,
+     * that recorded in this document when it was rendered, bearing `fluid.siteRootAttribute`, and otherwise the base
+     * URL's path - so that the page is recognised wherever the site is served, even from files. Otherwise the
+     * locations are compared whole.
+     * @param {String} location - The location of the output document
+     * @param {String} [baseURL] - The base URL of the site to which the output document belongs, if any
+     * @return {Element|Unavailable} The root element of this document, or an unavailable value if the output document
+     * is not this one
+     */
+    fluid.hostDocumentElement = function (location, baseURL) {
+        const here = document.location.href, base = document.baseURI || here;
+        let matches;
+        if (baseURL) {
+            const siteBase = fluid.siteDirectoryOf(baseURL);
+            const sitePath = fluid.sitePathOf(location, siteBase, siteBase);
+            const recordedRoot = document.documentElement.getAttribute(fluid.siteRootAttribute);
+            const localRoot = recordedRoot === null ? siteBase : new URL(recordedRoot, here).href;
+            matches = sitePath !== undefined && sitePath === fluid.sitePathOf(here, base, localRoot);
+        } else {
+            matches = fluid.pageUrlOf(location, base) === fluid.pageUrlOf(here, base);
+        }
+        return matches ? document.documentElement :
+            fluid.unavailable({cause: `Output document at ${location} is not this document`, variety: "config"});
+    };
+
+    // Client version of fluid.outputDocumentView from FluidView-node.js. The client observes at most one document, its
+    // own, and so rather than creating a fresh document, the view renders into this one should it be at
+    // `documentLocation` - e.g. once a page rendered on the server is made live again - and otherwise does not render.
+    // A site rendering its pages as output documents supplies its `baseURL`, so that a page recognises itself wherever
+    // the site is served - see fluid.hostDocumentElement
+    fluid.def("fluid.outputDocumentView", {
+        $layers: "fluid.viewComponent",
+        documentLocation: fluid.unavailable({cause: "Location of output document not configured", variety: "config"}),
+        baseURL: "",
+        container: "$compute:fluid.hostDocumentElement({self}.documentLocation, {self}.baseURL)",
+        $variety: "framework"
+    });
+
     // Currently disused
     /**
      * Parses an HTML string into a DOM element.

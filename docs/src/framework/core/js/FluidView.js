@@ -270,6 +270,7 @@ const fluidViewScope = function (fluid) {
      * @param {Element} fresh - The fresh node, which must already carry the injection's id.
      */
     fluid.swapInjectedNode = function (dokkument, existing, fresh) {
+        fresh.flInjected = true;
         if (existing) {
             existing.replaceWith(fresh);
         } else {
@@ -356,7 +357,8 @@ const fluidViewScope = function (fluid) {
     fluid.cssInjectionStyles = {
         literal: {
             apply: ({dokkument, injRec, url}, existing) => {
-                const text = injRec.text + `\n/*# sourceURL=${url}*/`;
+                // An output document is to be published, and so does not reveal the location of the SFC's source
+                const text = injRec.text + (fluid.isOutputDocument(dokkument) ? "" : `\n/*# sourceURL=${url}*/`);
                 if (existing?.localName === "style") {
                     existing.textContent = text;
                 } else {
@@ -370,7 +372,7 @@ const fluidViewScope = function (fluid) {
         },
         link: {
             apply: ({dokkument, injRec}, existing) => {
-                const resolved = fluid.module.resolveRelativePath(dokkument.location, injRec.url);
+                const resolved = fluid.module.resolveRelativePath(fluid.documentLocation(dokkument), injRec.url);
                 if (existing?.localName === "link") {
                     if (existing.href === resolved && existing.sheet) {
                         return true; // Unchanged and already loaded - no load event would fire
@@ -426,6 +428,38 @@ const fluidViewScope = function (fluid) {
      * @property {Boolean} [ownLayer] - For a "script", `true` if it holds the definition of the SFC's own layer
      */
 
+    /**
+     * Determine whether a DOM node was injected into its document for a Single File Component, e.g. its style. Such
+     * nodes are ignored when reconciling an element's children with a template, e.g. when a component renders the
+     * document's head - see `fluid.patchChildren`. A node held in a document loaded from markup, e.g. one written by
+     * an earlier rendering, is recognised by its id.
+     * @param {Node} node - The node to be tested
+     * @return {Boolean} `true` if the node was injected
+     */
+    fluid.isInjectedNode = function (node) {
+        return !!node.flInjected || node.nodeType === 1 /* Node.ELEMENT_NODE */ && /^fl-(script|style)-/.test(node.id);
+    };
+
+    /**
+     * Classify a script element of a document by its role, e.g. so that a writer may decide which to keep:
+     * - "framework" - a script booting Infusion itself, bearing `fluid-hydrated`, e.g. `fluid-hydrated="%infusion-6"`
+     * - "injection" - a script injected for a Single File Component, or an inert record of one in an output document
+     * - "client" - a script which is payload for the browser, bearing `fluid-client`, e.g. one loading a widget library.
+     *   Such a script is never evaluated by the server, whether it is in a booted document or one rendered by a template
+     * - "page" - any other script
+     * @param {Element} node - The script element
+     * @return {String} The role of the script
+     */
+    fluid.classifyScriptNode = function (node) {
+        return node.hasAttribute("fluid-hydrated") ? "framework" :
+            fluid.isInjectedNode(node) || node.getAttribute("type") === fluid.inertScriptType ? "injection" :
+                node.hasAttribute("fluid-client") ? "client" : "page";
+    };
+
+    // The type borne by inert records of the scripts of Single File Components injected into output documents, which
+    // a client recognises so that it may make the document live again
+    fluid.inertScriptType = "text/x-fluid-layer";
+
     fluid.clearInjRec = function (dokkument, nodeId) {
         dokkument.getElementById(nodeId)?.remove();
     };
@@ -438,7 +472,7 @@ const fluidViewScope = function (fluid) {
      * @param {String} url - The URL to resolve.
      * @return {String} The absolute URL.
      */
-    fluid.toAbsoluteUrl = (dokkument, url) => /^\w+:\/\//.test(url) ? url : new URL(url, dokkument.location.href).href;
+    fluid.toAbsoluteUrl = (dokkument, url) => /^\w+:\/\//.test(url) ? url : new URL(url, fluid.documentLocation(dokkument).href).href;
 
     /**
      * @typedef {Object} DocInjectionRecord
@@ -681,6 +715,17 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Find the top-level blocks of a Single File Component with a given tag - e.g. its `<script>` blocks, but not any
+     * `<script>` element within its `<template>`, which is markup to be rendered
+     * @param {VNode} vTree - The virtual DOM tree representing the Single File Component
+     * @param {String} tag - The tag of the blocks
+     * @return {VNode[]} The blocks, in document order
+     */
+    fluid.sfcBlocks = function (vTree, tag) {
+        return vTree.children.filter(child => child.tag === tag);
+    };
+
+    /**
      * Describe the error of a Single File Component which defines its view's template twice - see
      * `fluid.hasSFCTemplateConflict`
      * @param {String} layerName - The name of the layer defined by the SFC
@@ -701,7 +746,7 @@ const fluidViewScope = function (fluid) {
      * @return {Boolean} `true` if the template is defined twice
      */
     fluid.hasSFCTemplateConflict = function (vTree, ourSNI, layerName) {
-        const docTemplate = fluid.querySelectorAll(vTree, "template")[0];
+        const docTemplate = fluid.sfcBlocks(vTree, "template")[0];
         const ownTemplate = fluid.get(ourSNI.defMaps, [layerName, "view", "$component", "template", $m]);
         const viewLayers = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, ["view", "$component", "$layers"]);
         return !!docTemplate && !!ownTemplate && !fluid.makeArray(viewLayers).includes("fluid.partialViewComponent");
@@ -833,7 +878,7 @@ const fluidViewScope = function (fluid) {
 
         /** @type {Object<String, InjectRecord>} */
         const injRecs = {};
-        const scriptNodes = fluid.querySelectorAll(vTree, "script");
+        const scriptNodes = fluid.sfcBlocks(vTree, "script");
         if (scriptNodes.length === 0) {
             reject(`Error in SFC: Expected definition for layer ${layerName} but no script node was found`);
         } else {
@@ -859,26 +904,17 @@ const fluidViewScope = function (fluid) {
                 let patchedText = ourSNI.text;
 
                 /** @type {VNode} */
-                const docTemplate = fluid.querySelectorAll(vTree, "template")[0];
+                const docTemplate = fluid.sfcBlocks(vTree, "template")[0];
 
                 let addLayers = ["fluid.templateViewComponent"];
 
                 // If a <template> block is present, store it in the template registry and add a definition to resolve it
                 if (docTemplate) {
                     addLayers = ["fluid.sfcTemplateViewComponent"];
-                    // Template configuration is written onto the component's view
-                    if (partial) {
-                        const relativeContainer = fluid.defFromMap(ourSNI.text, ourSNI.defMaps, layerName, ["view", "$component", "relativeContainer"]);
-                        if (!relativeContainer) {
-                            reject(`Error in SFC for ${layerName}: Didn't find view.$component.relativeContainer property for partial component`);
-                        }
-                        const ptl = {
-                            [layerName]: {
-                                relativeContainer
-                            }
-                        };
-                        patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "partialTemplateLayers"], ptl, "last");
-                    } else {
+                    // Template configuration is written onto the component's view. The template of a partial is found
+                    // in the template store by fluid.partialContributions, together with the cutpoint configured in the
+                    // layer's own definition or overridden by another layer
+                    if (!partial) {
                         // The template is written as the view's template member, referring to the template store, so
                         // that a template supplied by any stronger layer, e.g. a layer derived from this one, overrides it
                         patchedText = fluid.patchDefMapPath(patchedText, ourDef, ["view", "$component", "template"], {sfcLayer: layerName}, "last");
@@ -917,7 +953,7 @@ const fluidViewScope = function (fluid) {
                     injRecs[nodeId] = injRec;
                 });
 
-                const styleNodes = fluid.querySelectorAll(vTree, "style");
+                const styleNodes = fluid.sfcBlocks(vTree, "style");
                 styleNodes.forEach((styleNode, index) => {
                     const nodeId = `fl-style-${layerName}-${index}`;
                     const src = styleNode.attrs?.src;
@@ -1033,9 +1069,9 @@ const fluidViewScope = function (fluid) {
         } else {
             /** @type {DocLayerInjectionRec} **/
             const rec = {
-                injRecsSignal: fluid.cell([injDone], {name: `Document injections for ${injDone.dokkument.location}`})
+                injRecsSignal: fluid.cell([injDone], {name: `Document injections for ${fluid.documentLocation(injDone.dokkument)}`})
             };
-            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${injDone.dokkument.location}`})
+            rec.injectionsComplete = fluid.cell(undefined, {name: `Injections complete for ${fluid.documentLocation(injDone.dokkument)}`})
                 // Read each layer's injDone signal here, rather than returning a signal for them, which would itself be
                 // an available value
                 .computed( injRecs => fluid.processSignalArgs(injRecs).unavailable || true, [rec.injRecsSignal]);
@@ -1136,9 +1172,10 @@ const fluidViewScope = function (fluid) {
             const newDocEffect = fluid.cell.effect(async function docInjectEffect(injRecs) {
                 try {
                     /** @type {DocInjectionRecord[]} */
+                    const scriptStyles = fluid.scriptInjectionStylesFor(dokkument);
                     const docInjRecs = Object.values(injRecs).map(injRec =>
                         fluid.decodeInjectSFCElement(dokkument, injRec, rec.url, oldInjRecs,
-                            injRec.variety === "script" ? fluid.scriptInjectionStyles : fluid.cssInjectionStyles)
+                            injRec.variety === "script" ? scriptStyles : fluid.cssInjectionStyles)
                     ).filter(injRec => injRec);
                     // Load phase - acquire all material, executing nothing
                     const prepared = await Promise.all(docInjRecs.map(fluid.prepareSFCElement));
@@ -1188,6 +1225,118 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    // Hooks through which output documents participate in rendering and injection. An output document is one which
+    // views render into without executing any script in it, e.g. each page of a site rendered as one component tree.
+    // Only the server creates them - see FluidView-node.js, which overrides these hooks - whereas the client observes
+    // at most one document, its own, and so here they describe a document which is never an output document.
+
+    /**
+     * Determine whether a document is an output document. Overridden in FluidView-node.js
+     * @param {Document} dokkument - The document
+     * @return {Boolean} `true` if it is an output document
+     */
+    fluid.isOutputDocument = function (dokkument) { // eslint-disable-line no-unused-vars
+        return false;
+    };
+
+    /**
+     * Determine the location of a document, against which relative URLs within it resolve. Overridden in
+     * FluidView-node.js for output documents, which may have no location of their own
+     * @param {Document} dokkument - The document
+     * @return {URL|Location} The document's location
+     */
+    fluid.documentLocation = function (dokkument) {
+        return dokkument.location;
+    };
+
+    /**
+     * Determine the injection styles with which the scripts of Single File Components are injected into a document.
+     * Overridden in FluidView-node.js, so that scripts are recorded in output documents without being executed
+     * @param {Document} dokkument - The document
+     * @return {Object<String, InjectionStyle>} The injection styles, keyed by `literal` and `link`
+     */
+    fluid.scriptInjectionStylesFor = function (dokkument) { // eslint-disable-line no-unused-vars
+        return fluid.scriptInjectionStyles;
+    };
+
+    /**
+     * Record in the document into which a view renders the injections of the Single File Components of its layers,
+     * should the document be one into which no injection has otherwise been made. Does nothing here, and is
+     * overridden in FluidView-node.js for output documents
+     * @param {ComponentComputer} view - The view of the component which is rendering
+     * @param {Document} dokkument - The document into which it renders
+     */
+    fluid.subscribeOutputDocumentInjections = function (view, dokkument) { // eslint-disable-line no-unused-vars
+    };
+
+    /**
+     * Retrieve the root element of a document, as the container of a view rendering the whole of it
+     * @param {Document} dokkument - The document
+     * @return {Element} Its root element
+     */
+    fluid.documentElementOf = function (dokkument) {
+        return dokkument.documentElement;
+    };
+
+    /**
+     * Resolve a location to the path of the page which it designates, so that locations naming the same page compare
+     * equal - any query and fragment are dropped, and a final `index.html` is taken as naming its directory
+     * @param {String} location - The location, which may be relative
+     * @param {String} base - The URL against which a relative location is resolved
+     * @return {String} The path of the page, e.g. "/post/x/"
+     */
+    fluid.pagePathOf = function (location, base) {
+        return new URL(location, base).pathname.replace(/\/index\.html$/, "/");
+    };
+
+    /**
+     * Resolve a location to the URL of the page which it designates, as by `fluid.pagePathOf`
+     * @param {String} location - The location, which may be relative
+     * @param {String} base - The URL against which a relative location is resolved
+     * @return {String} The URL of the page, without query or fragment
+     */
+    fluid.pageUrlOf = function (location, base) {
+        return new URL(location, base).origin + fluid.pagePathOf(location, base);
+    };
+
+    /**
+     * Express a site's base URL as the URL of its root directory, whether or not it ends with a slash
+     * @param {String} baseURL - The site's base URL, e.g. "https://example.org/blog"
+     * @return {String} The URL of the site's root directory, e.g. "https://example.org/blog/"
+     */
+    fluid.siteDirectoryOf = function (baseURL) {
+        return baseURL.replace(/\/?$/, "/");
+    };
+
+    /**
+     * Resolve a location to the path of the page which it designates relative to the path of a site's root directory,
+     * whatever the origin of either - so that a page is recognised wherever the site is served
+     * @param {String} location - The location, which may be relative
+     * @param {String} base - The URL against which a relative location is resolved
+     * @param {String} siteRoot - The URL of the site's root directory, e.g. "https://example.org/blog/"
+     * @return {String|undefined} The path of the page relative to the site's root, e.g. "post/x/", or `undefined` if the
+     * page does not lie within it
+     */
+    fluid.sitePathOf = function (location, base, siteRoot) {
+        const rootPath = new URL(siteRoot).pathname.replace(/\/?$/, "/");
+        const pagePath = fluid.pagePathOf(location, base);
+        return pagePath.startsWith(rootPath) ? pagePath.substring(rootPath.length) : undefined;
+    };
+
+    /**
+     * Compute the relative URL of a site's root directory from a page of the site
+     * @param {String} sitePath - The path of the page relative to the site's root, as by `fluid.sitePathOf`
+     * @return {String} The relative URL of the site's root, e.g. "../../" from "post/x/", or "./" from the root itself
+     */
+    fluid.relativeSiteRoot = function (sitePath) {
+        return "../".repeat((sitePath.match(/\//g) ?? []).length) || "./";
+    };
+
+    // The attribute recording on the root element of a page rendered as an output document of a site the relative URL
+    // of the site's root - by which the page, once live on the client, recognises its own location wherever the site
+    // is served - see fluid.hostDocumentElement in FluidView-browser.js
+    fluid.siteRootAttribute = "fluid-site-root";
+
     // TODO: need equivalent for server-style injections where there is no document - this would use "require" or "import".
     // Also: In future this will be the point that fluid.layerLoaders is actually triggered
     /**
@@ -1197,7 +1346,9 @@ const fluidViewScope = function (fluid) {
      * @return {Signal<true>} A signal which resolves when imports are done
      */
     fluid.ensureImportsLoaded = function (shadow, layerName) {
-        const dokkument = fluid.findDocument(shadow) ?? fluid.defaultDocument;
+        // A layer cannot be defined by injecting its SFC into an output document, in which nothing executes
+        const found = fluid.findDocument(shadow);
+        const dokkument = found && !fluid.isOutputDocument(found) ? found : fluid.defaultDocument;
         const importRec = fluid.importMap[layerName];
         if (importRec && dokkument === undefined) {
             // A component with no document, e.g. an avatar or a free component with no container on the server, cannot
@@ -1356,9 +1507,10 @@ const fluidViewScope = function (fluid) {
      * @param {ComponentComputer} view - The view subcomponent of `self`
      */
     fluid.bindContainer = function (templateEffects, vnode, self, view) {
+        const shadow = self[$m];
         const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
             const togo = fluid.cell.effect(function (element) {
-                fluid.noteViewContainerRegistry(element, self[$m]);
+                fluid.noteViewContainerRegistry(element, shadow);
             }, [vnode.elementSignal], {name: "fluid.bindContainer effect"});
             togo.$variety = "bindContainer";
             togo.$vnode = vnode;
@@ -1407,7 +1559,8 @@ const fluidViewScope = function (fluid) {
      * @type {Set<String>}
      */
     fluid.booleanAttrs = new Set(["disabled", "checked", "selected", "readonly", "required", "hidden", "multiple",
-        "open", "inert", "autofocus", "novalidate", "indeterminate"]);
+        "open", "inert", "autofocus", "novalidate", "indeterminate", "defer", "async", "nomodule", "itemscope", "autoplay",
+        "loop", "muted", "playsinline", "controls", "allowfullscreen", "reversed"]);
 
     /**
      * @typedef {Object} LiveStateRecord
@@ -1622,6 +1775,32 @@ const fluidViewScope = function (fluid) {
         }, [sig], {mapArg: fluid.deproxyAndDesignal});
 
     /**
+     * Resolve a function call interpolated into a template, e.g. `@{fluid.tests.urlize({self}.tag)}`, into a signal
+     * for its result. As for a `$compute` record, the function is invoked afresh whenever any of its arguments changes.
+     * @param {AtTemplateToken} token - The parsed token holding the call
+     * @param {Shadow} shadow - The shadow of the component against which the call's references are resolved
+     * @return {Signal<any>} A signal for the result of the call
+     */
+    fluid.expandTemplateCall = function (token, shadow) {
+        const {func, resolvedArgs} = fluid.resolveFuncRecord(token.call, shadow, ["$template"]);
+        const name = `template call ${token.raw} at path ${shadow.path}`;
+        const togo = fluid.cell(undefined, {name}).computed(fluid.makeFuncDispatcher(func),
+            fluid.flattenedArgCells(resolvedArgs, name));
+        togo.$variety = "$compute";
+        return togo;
+    };
+
+    /**
+     * Resolve a token interpolated into a template into a signal for its value
+     * @param {AtTemplateToken} token - The parsed token - a reference or a function call
+     * @param {Shadow} shadow - The shadow of the component against which the token is resolved
+     * @return {Signal<any>} A signal for the token's value
+     */
+    fluid.templateTokenSignal = function (token, shadow) {
+        return token.call ? fluid.expandTemplateCall(token, shadow) : fluid.fetchContextReference(token.parsed, shadow);
+    };
+
+    /**
      * Renders a parsed string template against the local component tree by replacing tokens with their corresponding values.
      * Tokens that are primitives remain unchanged, while signal tokens are resolved and then the resulting token
      * string concatenated.
@@ -1637,7 +1816,7 @@ const fluidViewScope = function (fluid) {
         } else if (tokens.length === 1 && typeof(tokens[0]) === "string") {
             return tokens[0];
         } else {
-            const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.fetchContextReference(token.parsed, shadow));
+            const liveTokens = tokens.map(token => fluid.isPrimitive(token) ? token : fluid.templateTokenSignal(token, shadow));
             const togo = fluid.cell(undefined, {name: "renderComputedStringTemplate"}).computed(function (...tokens) {
                 return tokens.join("");
             }, liveTokens, {mapArg: fluid.deSignal});
@@ -1681,10 +1860,16 @@ const fluidViewScope = function (fluid) {
                 vnode["class"] = clazz;
             }
             delete vnode.attrs[key];
-        } else if (key !== "class") {
+        } else {
             const tokens = fluid.parseAtStringTemplate(value);
             const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
-            if (fluid.isSignal(rendered)) {
+            // A class attribute alongside @class is rendered together with it, by the allClass computer allocated in
+            // fluid.activateTemplate
+            const withClassDirective = key === "class" && (vnode["class"] !== undefined || "@class" in vnode.attrs);
+            if (fluid.isSignal(rendered) && withClassDirective) {
+                rendered.$source = value;
+                vnode.attrs[key] = rendered;
+            } else if (fluid.isSignal(rendered)) {
                 rendered.$source = value;
                 // A template consisting of a single reference binds its raw value so that booleans survive
                 const token = tokens.length === 1 ? rendered.$tokens[0] : null;
@@ -1698,6 +1883,9 @@ const fluidViewScope = function (fluid) {
                     // The textarea's value is materialised as its content, which the reconciler must leave alone
                     delete vnode.children;
                 }
+            } else {
+                // A literal value, which may differ from the template's if it held an escaped "@@{"
+                vnode.attrs[key] = rendered;
             }
         }
     };
@@ -1713,59 +1901,229 @@ const fluidViewScope = function (fluid) {
         return elideParent ? (vTree.children[0] || vTree) : vTree;
     };
 
-    fluid.isSimpleClassSelectorCutpoint = function (tree) { // Glorified utility from 2010
-        return tree.length === 1 && tree[0].predList.length === 1 && tree[0].predList[0].clazz;
+    /**
+     * Determine whether a node of a template matches the predicates of one compound of a selector parsed with
+     * `fluid.templateCSSMatcher`
+     * @param {VNode} vnode - The node to be tested
+     * @param {Object[]} predList - The predicates of the compound, each holding one of `tag`, `clazz`, `id` or `member`
+     * @return {Boolean} `true` if the node matches every predicate
+     */
+    fluid.matchVNodePredicates = function (vnode, predList) {
+        const attrs = vnode.attrs || {};
+        return vnode.tag !== undefined && predList.every(pred =>
+            pred.tag !== undefined ? vnode.tag === pred.tag :
+                pred.clazz !== undefined ? (attrs["class"] || "").split(/\s+/).includes(pred.clazz) :
+                    pred.id !== undefined ? attrs.id === pred.id :
+                        pred.member !== undefined ? attrs["@id"] === pred.member : true);
     };
 
     /**
-     * Matches virtual DOM nodes with a specific class and collects them into a results array.
-     * This function recursively traverses the virtual DOM tree to find nodes with the specified class.
-     *
-     * @param {VNode} tree - The root virtual DOM node to start the search from.
-     * @param {String} clazz - The class name to match.
-     * @param {VNode[]} [results=[]] - An array to collect matching nodes.
-     * @return {VNode[]} The array of matching virtual DOM nodes.
+     * Determine whether a node of a template matches a selector parsed with `fluid.templateCSSMatcher`, whose compounds
+     * other than the last are matched against the node's ancestors as for CSS descendant and child combinators. The
+     * tree's nodes must have their `parentNode` members assigned.
+     * @param {VNode} vnode - The node to be tested
+     * @param {ParsedSelector[]} parsed - The parsed selector
+     * @param {Number} [index] - The index of the compound to be matched against `vnode`, by default the last
+     * @return {Boolean} `true` if the node matches the selector
      */
-    fluid.matchSimpleClass = function (tree, clazz, results = []) {
-        const thisClazz = tree.attrs?.["class"];
-        if (thisClazz && thisClazz.split(" ").includes(clazz)) {
-            results.push(tree);
+    fluid.matchVNodeSelector = function (vnode, parsed, index = parsed.length - 1) {
+        let togo = false;
+        if (fluid.matchVNodePredicates(vnode, parsed[index].predList)) {
+            if (index === 0) {
+                togo = true;
+            } else if (parsed[index - 1].child) {
+                togo = !!vnode.parentNode && fluid.matchVNodeSelector(vnode.parentNode, parsed, index - 1);
+            } else {
+                for (let ancestor = vnode.parentNode; ancestor && !togo; ancestor = ancestor.parentNode) {
+                    togo = fluid.matchVNodeSelector(ancestor, parsed, index - 1);
+                }
+            }
         }
-        if (tree.children) {
-            tree.children.forEach(child => fluid.matchSimpleClass(child, clazz, results));
-        }
+        return togo;
+    };
+
+    /**
+     * Find all nodes of a template tree matching a selector, which may designate a node by tag, `.class`, `#id` or, as
+     * `@member`, by the member name it bears as `@id`, and combine these with descendant and child (`>`) combinators
+     * @param {VNode} tree - The root of the tree, whose nodes have their `parentNode` members assigned
+     * @param {String} selector - The selector, e.g. `.ponder-title`, `@postMeta` or `header h1.title`
+     * @return {VNode[]} The matching nodes, in document order
+     */
+    fluid.queryVTree = function (tree, selector) {
+        const parsed = fluid.parseSelector(selector, fluid.templateCSSMatcher);
+        const results = [];
+        const visit = function (vnode) {
+            if (fluid.matchVNodeSelector(vnode, parsed)) {
+                results.push(vnode);
+            }
+            if (vnode.children) {
+                vnode.children.forEach(visit);
+            }
+        };
+        visit(tree);
         return results;
     };
 
-    const relDispositions = {
-        before: 0,
-        after: 1
+    // The dispositions in which a partial template's nodes may be composited relative to the node matching its selector
+    fluid.partialDispositions = ["before", "after", "first", "last", "replace", "remove"];
+
+    /**
+     * @typedef {Object} PartialContribution
+     * @property {String} layerName - The layer contributing the partial template
+     * @property {String} relativeContainer - Its default cutpoint, of the form `disposition: selector`
+     * @property {VNode|Unavailable|null} template - Its parsed template, a tree whose top-level nodes are composited, or
+     * `null` if it has none, as for a contribution which only removes a node
+     */
+
+    /**
+     * Collect the partial templates contributed by the layers of a component, in order of the precedence of those
+     * layers, weakest first. A layer contributes a partial template if the view record in its own definition, i.e.
+     * `view.$component`, holds `relativeContainer` - its template is then either that of its Single File Component, or
+     * the markup held as `partialTemplate` in that record. The cutpoint of any layer's partial may be overridden by any
+     * other layer through the view's merged member `partialTemplateLayers`, as
+     * `partialTemplateLayers: {"layer.name": {relativeContainer: "after: .cutpoint"}}`.
+     * @param {ComponentComputer} self - The component whose layers are inspected
+     * @param {ComponentComputer} view - Its view, a `fluid.partialViewComponent`
+     * @return {PartialContribution[]} The partial templates contributed by the component's layers
+     */
+    fluid.partialContributions = function (self, view) {
+        const overrides = view.partialTemplateLayers || {};
+        const contributions = self.$layers.map(layerName => {
+            const layerRec = fluid.readLayer(layerName).get();
+            const def = fluid.layerRecToUnavailable(layerRec) === null ? fluid.deSignal(layerRec.raw) : {};
+            const ownView = def.view?.$component || {};
+            const relativeContainer = overrides[layerName]?.relativeContainer ?? ownView.relativeContainer;
+            const sfcTemplate = fluid.templateStore[layerName];
+            const template = typeof(ownView.partialTemplate) === "string" ? fluid.parseTemplateMarkup(ownView.partialTemplate) :
+                sfcTemplate && ownView.relativeContainer !== undefined ? sfcTemplate.get() : null;
+            const isPartial = ownView.relativeContainer !== undefined || overrides[layerName] !== undefined;
+            return isPartial ? {layerName, relativeContainer, template} : null;
+        });
+        return contributions.filter(contribution => contribution);
     };
 
-    fluid.compositeVTree = function (compositedTree, rec, layerName) {
-        const [disposition, selector] = rec.relativeContainer.split(":");
-        const parsedSelector = fluid.parseSelector(selector, fluid.simpleCSSMatcher);
-        const clazz = fluid.isSimpleClassSelectorCutpoint(parsedSelector);
-        if (!clazz) {
-            return fluid.unavailable(`Error in partial template for ${layerName}: Support for complex selector ${selector} is not implemented`);
+    /**
+     * Parse a cutpoint of the form `disposition: selector`
+     * @param {String} relativeContainer - The cutpoint
+     * @param {String} layerName - The layer contributing the partial, for error reporting
+     * @return {Object|Unavailable} A record holding `disposition` and `selector`, or an unavailable value if the cutpoint
+     * is malformed
+     */
+    fluid.parseCutpoint = function (relativeContainer, layerName) {
+        const colPos = typeof(relativeContainer) === "string" ? relativeContainer.indexOf(":") : -1;
+        const disposition = colPos === -1 ? null : relativeContainer.substring(0, colPos).trim();
+        let togo;
+        if (colPos === -1) {
+            togo = fluid.unavailable(`Error in partial template for ${layerName}: cutpoint ${JSON.stringify(relativeContainer)} is not `
+                + "of the form \"disposition: selector\"");
+        } else if (!fluid.partialDispositions.includes(disposition)) {
+            togo = fluid.unavailable(`Error in partial template for ${layerName}: Unrecognised disposition ${disposition} which should be `
+                + "one of " + fluid.partialDispositions.join(", "));
         } else {
-            const nodes = fluid.matchSimpleClass(compositedTree, clazz);
-            if (nodes.length !== 1) {
-                return fluid.unavailable(`Error in partial template for ${layerName}: No exact match (${nodes.length}) for class selector .${clazz}`);
-            } else {
-                const target = nodes[0];
-                const relDisposition = relDispositions[disposition];
-                if (relDisposition === undefined) {
-                    return fluid.unavailable(`Error in partial template for ${layerName}: Unrecognised disposition ${disposition} which should be "after" or "before"`);
-                }
-                const templateTree = fluid.copy(fluid.fetchParsedTemplate(layerName));
-                const parentNode = target.parentNode;
-                const index = parentNode.children.indexOf(target);
-                parentNode.children.splice(index + relDisposition, 0, fluid.effVTree(templateTree, true));
+            togo = {disposition, selector: relativeContainer.substring(colPos + 1).trim()};
+        }
+        return togo;
+    };
+
+    /**
+     * Composite one group of nodes of a partial template at a cutpoint within a template tree
+     * @param {VNode} compositedTree - The tree being composited, whose nodes have their `parentNode` members assigned
+     * @param {VNode[]} nodes - The nodes to be composited, as a group
+     * @param {String} relativeContainer - The cutpoint, of the form `disposition: selector`
+     * @param {String} layerName - The layer contributing the nodes, for error reporting
+     * @param {Map<VNode, Object>} cursors - For each node which has received nodes after it or at its start, how many
+     * it has received, so that later groups follow earlier ones in document order
+     * @return {VNode|Unavailable} The composited tree, or an unavailable value describing why it could not be composited
+     */
+    fluid.compositeAtCutpoint = function (compositedTree, nodes, relativeContainer, layerName, cursors) {
+        const cutpoint = fluid.parseCutpoint(relativeContainer, layerName);
+        const matches = fluid.isUnavailable(cutpoint) ? [] : fluid.queryVTree(compositedTree, cutpoint.selector);
+        let togo = compositedTree;
+        if (fluid.isUnavailable(cutpoint)) {
+            togo = cutpoint;
+        } else if (matches.length !== 1) {
+            togo = fluid.unavailable(`Error in partial template for ${layerName}: No exact match (${matches.length}) for selector ${cutpoint.selector}`);
+        } else {
+            const target = matches[0];
+            const parentNode = target.parentNode;
+            const {disposition} = cutpoint;
+            const cursor = cursors.get(target) || {after: 0, first: 0};
+            cursors.set(target, cursor);
+            nodes.forEach(node => node.parentNode = ["first", "last"].includes(disposition) ? target : parentNode);
+            if ((disposition === "first" || disposition === "last") && !target.children) {
+                togo = fluid.unavailable(`Error in partial template for ${layerName}: Cannot composite into node matching ${cutpoint.selector} which is rendered by a subcomponent`);
+            } else if (!parentNode && !["first", "last"].includes(disposition)) {
+                togo = fluid.unavailable(`Error in partial template for ${layerName}: Cannot composite at ${disposition} the root of the template`);
+            } else if (disposition === "before") {
+                parentNode.children.splice(parentNode.children.indexOf(target), 0, ...nodes);
+            } else if (disposition === "after") {
+                parentNode.children.splice(parentNode.children.indexOf(target) + 1 + cursor.after, 0, ...nodes);
+                cursor.after += nodes.length;
+            } else if (disposition === "first") {
+                target.children.splice(cursor.first, 0, ...nodes);
+                cursor.first += nodes.length;
+            } else if (disposition === "last") {
+                target.children.push(...nodes);
+            } else if (disposition === "replace") {
+                parentNode.children.splice(parentNode.children.indexOf(target), 1, ...nodes);
+            } else { // remove
+                parentNode.children.splice(parentNode.children.indexOf(target), 1);
             }
         }
-        return compositedTree;
+        return togo;
+    };
 
+    /**
+     * Composite the partial templates contributed by a component's layers onto the tree of its template. Partial
+     * templates are composited in order of the precedence of the layers contributing them, weakest first, and those
+     * composited at the same cutpoint appear in that order in the document. Each top-level node of a partial template
+     * is composited at the cutpoint of its layer, or at its own cutpoint if it bears one as `@relative`, e.g.
+     * `<div @relative="after: @navbar">`. Since the selectors of later partials are matched against the tree composited
+     * so far, a partial may designate nodes contributed by a weaker one.
+     * @param {VNode} compositedTree - The tree of the component's template, whose nodes have their `parentNode` members
+     * assigned, which will be modified
+     * @param {ComponentComputer} self - The component whose layers contribute partial templates
+     * @param {ComponentComputer} view - Its view, a `fluid.partialViewComponent`
+     * @return {VNode|Unavailable} The composited tree, or an unavailable value describing why it could not be composited
+     */
+    fluid.compositePartials = function (compositedTree, self, view) {
+        const cursors = new Map();
+        return fluid.partialContributions(self, view).reduce((tree, {layerName, relativeContainer, template}) => {
+            let togo = tree;
+            if (fluid.isUnavailable(tree)) {
+                togo = tree;
+            } else if (fluid.isUnavailable(template)) {
+                togo = template;
+            } else if (template === null) {
+                togo = fluid.compositeAtCutpoint(tree, [], relativeContainer, layerName, cursors);
+            } else {
+                const roots = fluid.copy(template).children.filter(child => !child.isComment && !(child.text !== undefined && fluid.isWhitespace(child.text)));
+                const defaultGroup = roots.filter(root => !root.attrs?.["@relative"]);
+                const ownGroups = roots.filter(root => root.attrs?.["@relative"]).map(root => {
+                    const {"@relative": ownCutpoint, ...attrs} = root.attrs;
+                    return {nodes: [{...root, attrs}], relativeContainer: ownCutpoint};
+                });
+                const groups = [...(defaultGroup.length > 0 ? [{nodes: defaultGroup, relativeContainer}] : []), ...ownGroups];
+                togo = groups.reduce((acc, group) => fluid.isUnavailable(acc) ? acc :
+                    fluid.compositeAtCutpoint(acc, group.nodes.map(node => fluid.assignVTreeParents(node, null)),
+                        group.relativeContainer, layerName, cursors), tree);
+            }
+            return togo;
+        }, compositedTree);
+    };
+
+    /**
+     * Assign the `parentNode` member of every node in a tree, as required for matching selectors against it
+     * @param {VNode} vnode - The root of the tree
+     * @param {VNode|null} [parentNode] - The parent of the root
+     * @return {VNode} The same tree
+     */
+    fluid.assignVTreeParents = function (vnode, parentNode = null) {
+        vnode.parentNode = parentNode;
+        if (vnode.children) {
+            vnode.children.forEach(child => fluid.assignVTreeParents(child, vnode));
+        }
+        return vnode;
     };
 
     // Sort of hack to allow unprocessed part of vtree to form a template for a selfTemplated child component by removing
@@ -1827,19 +2185,118 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Determine the component against which the references of a template rendered by a component's view are resolved.
+     * This is the component itself, unless it is a `fluid.templateBlock` rendering the markup of an element bearing
+     * `@if` or `@else` within another template, in which case it is the component whose template that is.
+     * @param {ComponentComputer} self - The component whose view renders the template
+     * @return {ComponentComputer} The component against which the template's references are resolved
+     */
+    fluid.templateScopeOf = function (self) {
+        let shadow = self[$m];
+        while (shadow.parentShadow && fluid.hasLayer(shadow.that, "fluid.templateBlock")) {
+            shadow = shadow.parentShadow;
+        }
+        return shadow === self[$m] ? self : fluid.proxyMat(shadow.computer, shadow, []);
+    };
+
+    /**
+     * Parse the condition of an element bearing `@if` in a template into a signal for its truth. The condition is an
+     * expression as interpolated by `@{...}`, which may also be written enclosed in `@{` and `}` - a context reference,
+     * a function call or a bare path - optionally preceded by `!` to negate it. As for `$if`, an unavailable value is
+     * false.
+     * @param {String} condition - The value of the `@if` attribute
+     * @param {Shadow} shadow - The shadow of the component against which the condition is resolved
+     * @return {Signal<Boolean>} A signal for the truth of the condition
+     */
+    fluid.parseBlockCondition = function (condition, shadow) {
+        const trimmed = condition.trim();
+        const negate = trimmed.startsWith("!");
+        const body = (negate ? trimmed.substring(1) : trimmed).trim();
+        const exp = body.startsWith("@{") && body.endsWith("}") ? body.substring(2, body.length - 1).trim() : body;
+        const signal = fluid.templateTokenSignal(fluid.parseAtExpression(exp), shadow);
+        return fluid.cell(undefined, {name: `@if condition ${condition} at path ${shadow.path}`}).computed(value => {
+            const truthy = !!value && !fluid.isUnavailable(value);
+            return negate ? !truthy : truthy;
+        }, [signal], {mapArg: fluid.deproxyAndDesignal, isFree: true});
+    };
+
+    /**
+     * Assign conditions to those of a list of sibling template nodes which bear `@if` or `@else`. An element bearing
+     * `@else` takes the negation of the condition of the element bearing `@if` which precedes it, separated from it by
+     * nothing but whitespace.
+     * @param {VNode[]} children - The sibling nodes
+     * @param {Shadow} shadow - The shadow of the component against which conditions are resolved
+     */
+    fluid.assignBlockConditions = function (children, shadow) {
+        let lastCondition = null;
+        children.forEach(child => {
+            const attrs = child.attrs;
+            if (attrs && "@if" in attrs) {
+                lastCondition = fluid.parseBlockCondition(attrs["@if"], shadow);
+                child.blockCondition = lastCondition;
+                child.blockKind = "if";
+            } else if (attrs && "@else" in attrs) {
+                if (lastCondition === null) {
+                    fluid.fail(`Element <${child.tag}> bearing @else in template at path ${shadow.path} does not follow an element bearing @if`);
+                }
+                child.blockCondition = fluid.mapSignal(lastCondition, value => !value);
+                child.blockKind = "else";
+                lastCondition = null;
+            } else if (child.text === undefined || !fluid.isWhitespace(child.text)) {
+                lastCondition = null;
+            }
+        });
+    };
+
+    /**
+     * Convert the attributes of an element into the form of its DOM `dataset` - the values of its `data-` attributes
+     * keyed by the camel-cased remainder of their names
+     * @param {Object<String, String>} attrs - The attributes of the element
+     * @return {Object<String, String>} The element's data attributes in the form of its dataset
+     */
+    fluid.attrsToDataset = function (attrs) {
+        const entries = Object.entries(attrs || {}).filter(([key]) => key.startsWith("data-"))
+            .map(([key, value]) => [key.substring(5).replace(/-([a-z])/g, (match, letter) => letter.toUpperCase()), value]);
+        return Object.fromEntries(entries);
+    };
+
+    /**
+     * Withdraw the template record pushed to a child component by the template of its parent, if the child exists. A
+     * child configured by nothing else, e.g. an anonymous `fluid.templateBlock`, is then destroyed.
+     * @param {Shadow} parentShadow - The shadow of the parent component
+     * @param {String} memberName - The member name of the child
+     */
+    fluid.withdrawTemplateRecord = function (parentShadow, memberName) {
+        if (parentShadow.childComponents[memberName]) {
+            fluid.pushPotentia(parentShadow, memberName, [{mergeRecordType: "template"}]);
+        }
+    };
+
+    /**
      * Process a vTree to parse text and attribute templates, creating effects to bind to markup during the later renderView stage.
      *
      * Template references, e.g. to `{self}`, are resolved in the context of the view's parent, since a template has no
      * reason to refer to the view machinery which renders it.
      *
+     * Nodes marked `verbatim`, as parsed by `fluid.parseVerbatimMarkup`, are not scanned for bindings, but any element
+     * among them bearing `fluid-layers` is an island - it is rendered by a child component of `self` bearing those
+     * layers, whose member `dataset` holds the element's `data-` attributes.
+     *
+     * An element bearing `@if` (or `@else`, following one bearing `@if`) is rendered only whilst its condition holds,
+     * by a child component of `self` which exists only whilst it does - see `fluid.templateBlock`.
+     *
      * @param {VNode} vtemplate - The vTree representing the template which will be parsed
-     * @param {ComponentComputer} self - The component in the context of which template references are to be parsed
+     * @param {ComponentComputer} self - The component whose view renders the template, which receives any components
+     * allocated for conditional elements and islands
      * @param {ComponentComputer} view - The view subcomponent of `self` which will render the template, and which holds
      * its configuration and the effects binding it to markup
+     * @param {ComponentComputer} [scope] - The component in the context of which template references are to be parsed,
+     * and which receives the subcomponents designated by `@id` - by default, `self`
      * @return {VNode} The processed vTree with rendered text and attributes.
      */
-    fluid.activateTemplate = function (vtemplate, self, view) {
-        const shadow = self[$m];
+    fluid.activateTemplate = function (vtemplate, self, view, scope = self) {
+        const shadow = scope[$m];
+        const selfShadow = self[$m];
         const viewShadow = view[$m];
         // Awful hack to get around surplus notification problem for now
         const selfEditingRef = fluid.editorRootRef || (fluid.editorRootRef = fluid.fetchContextReference("{fluid.editorRoot}.selfEditing", shadow));
@@ -1849,6 +2306,95 @@ const fluidViewScope = function (fluid) {
         shadow.flatMerged.get();
 
         const templateEffects = viewShadow.frameworkEffects.templateEffects = viewShadow.frameworkEffects.templateEffects || [];
+        // Names of the members of self allocated for conditional elements and islands by this activation
+        const jointNames = [];
+        const jointCounts = {};
+        const allocateJointName = kind => `${kind}-${jointCounts[kind] = (jointCounts[kind] || 0) + 1}`;
+
+        /**
+         * Allocate the child component of `self` rendering an element of the template which bears `@if` or `@else`.
+         * Unless the element also bears `@id`, the child is an anonymous `fluid.templateBlock`. The element is omitted
+         * from the rendered markup whilst its condition is false.
+         * @param {VNode} vnode - The element
+         */
+        function allocateTemplateBlock(vnode) {
+            const idValue = vnode.attrs["@id"];
+            const memberName = idValue || allocateJointName(vnode.blockKind);
+            const parentTemplate = {
+                tag: vnode.tag,
+                attrs: fluid.filterObjKeys(vnode.attrs, key => key !== "@if" && key !== "@else" && key !== "@id"),
+                children: vnode.children.map(fluid.retemplatise)
+            };
+            vnode.elementSignal ||= fluid.cell(fluid.unavailableElement, {name: `Element signal for vnode ${vnode._id}`});
+            const view = {
+                $component: {
+                    container: vnode.elementSignal,
+                    parentTemplate
+                }
+            };
+            // An element bearing @id renders its member just as it would without @if - otherwise its markup is
+            // rendered by an anonymous block, against our scope
+            const templateRecord = {
+                mergeRecordType: "template",
+                layer: idValue ? {
+                    $layers: "fluid.component",
+                    view: {$component: {...view.$component, $layers: "fluid.viewComponent"}}
+                } : {
+                    $layers: "fluid.templateBlock",
+                    view
+                }
+            };
+            delete vnode.children;
+            vnode.attrs = {};
+            vnode.ifSignal = vnode.blockCondition;
+            vnode.blockKey = memberName;
+            const pushShadow = idValue ? shadow : selfShadow;
+            const blockEffect = fluid.cell.effect(function () {
+                if (vnode.ifSignal.get()) {
+                    fluid.pushPotentia(pushShadow, memberName, [templateRecord]);
+                } else {
+                    fluid.withdrawTemplateRecord(pushShadow, memberName);
+                }
+            }, [], {name: `@${vnode.blockKind} block effect for member ${memberName} at path ${pushShadow.path}`});
+            blockEffect.$variety = "templateBlock";
+            templateEffects.push(blockEffect);
+            if (!idValue) {
+                jointNames.push(memberName);
+            }
+        }
+
+        /**
+         * Allocate the child component of `self` rendering an island within verbatim markup
+         * @param {VNode} vnode - The element bearing `fluid-layers`
+         */
+        function allocateIsland(vnode) {
+            const layers = vnode.attrs["fluid-layers"].split(/\s+/).filter(layer => layer);
+            const memberName = vnode.attrs["fluid-id"] || allocateJointName("island");
+            const parentTemplate = {
+                tag: vnode.tag,
+                attrs: {...vnode.attrs},
+                children: vnode.children.map(fluid.retemplatise),
+                verbatim: true
+            };
+            vnode.elementSignal ||= fluid.cell(fluid.unavailableElement, {name: `Element signal for vnode ${vnode._id}`});
+            delete vnode.children;
+            fluid.pushPotentia(selfShadow, memberName, [{
+                mergeRecordType: "template",
+                layer: {
+                    $layers: ["fluid.component", ...layers],
+                    dataset: fluid.attrsToDataset(vnode.attrs),
+                    view: {
+                        $component: {
+                            $layers: "fluid.viewComponent",
+                            container: vnode.elementSignal,
+                            parentTemplate
+                        }
+                    }
+                }
+            }]);
+            jointNames.push(memberName);
+        }
+
         /**
          * Recursively processes a VNode by rendering any template strings found in its text or attributes
          * @param {VNode} vnode - The VNode to be processed.
@@ -1858,13 +2404,23 @@ const fluidViewScope = function (fluid) {
             vnode.shadow = shadow;
             vnode._id = vnode._id || vnode_id++;
             if (vnode.text !== undefined) {
-                const tokens = fluid.parseAtStringTemplate(vnode.text);
-                const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
-                if (fluid.isSignal(rendered)) {
-                    rendered.$source = vnode.text;
+                if (!vnode.verbatim) {
+                    const tokens = fluid.parseAtStringTemplate(vnode.text);
+                    const rendered = fluid.renderComputedStringTemplate(tokens, shadow);
+                    if (fluid.isSignal(rendered)) {
+                        rendered.$source = vnode.text;
+                    }
+                    fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
+                    Object.assign(vnode, {text: rendered});
                 }
-                fluid.bindDomTokens(templateEffects, vnode, rendered, (node, text) => node.nodeValue = text);
-                return Object.assign(vnode, {text: rendered});
+            } else if (vnode.verbatim) {
+                if (vnode.attrs?.["fluid-layers"]) {
+                    allocateIsland(vnode);
+                } else if (vnode.children !== undefined) {
+                    vnode.children = vnode.children.map(processVNode);
+                }
+            } else if (vnode.blockCondition) {
+                allocateTemplateBlock(vnode);
             } else {
                 // Process id attribute first since it may cause others to be slung to another component
                 const idValue = vnode.attrs?.["@id"];
@@ -1884,9 +2440,15 @@ const fluidViewScope = function (fluid) {
                         }, {name: `parentTemplate signal for vnode ${vnode._id}`});
                         delete vnode.children;
                         vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
+                        // The element bears the id derived from the subcomponent's path even when the subcomponent
+                        // renders nothing of its own, so that it is clear in the markup which member it holds
+                        vnode.defaultAttrs = {...vnode.defaultAttrs, id: fluid.containerIdPrefix + fluid.composeSegment(shadow.path, idValue)};
 
                         // The template record ensures that the child has a view, rendering into the container supplied
-                        // here - if the child is a component list, its view renders its members' views in sequence
+                        // here - if the child is a component list, its view renders its members' views in sequence. A
+                        // <fluid-fragment> slot has no element - the child's view renders no container of its own, and
+                        // its tree is spliced into ours in place of the slot by fluid.patchChildren
+                        const isFragment = vnode.tag === fluid.fragmentSlotTag;
                         const viewLayer = fluid.isComponentListMember(shadow, idValue) ? "fluid.listViewComponent" : "fluid.viewComponent";
                         const templateRecord = {
                             mergeRecordType: "template",
@@ -1895,7 +2457,7 @@ const fluidViewScope = function (fluid) {
                                 view: {
                                     $component: {
                                         $layers: viewLayer,
-                                        container: vnode.elementSignal,
+                                        container: isFragment ? fluid.fragmentSlotContainer : vnode.elementSignal,
                                         parentTemplate
                                     }
                                 }
@@ -1903,6 +2465,10 @@ const fluidViewScope = function (fluid) {
                         };
 
                         const childShadow = fluid.pushPotentia(shadow, idValue, [templateRecord]);
+                        if (isFragment) {
+                            vnode.fragmentOf = childShadow;
+                            delete vnode.defaultAttrs;
+                        }
                         // Establish dependency on availability of child component so we re-render if its availability changes
                         childShadow.availableInstance.get();
                         return disposable;
@@ -1913,14 +2479,17 @@ const fluidViewScope = function (fluid) {
                 });
                 // Special marker put on the VNode by fluid.processVNodeAttribute for @class
                 if (vnode["class"]) {
-                    // Grab a reference to any static source of classes before this node was signalised
-                    const clazzSource = fluid.getSignalSource(vnode.attrs["class"]) || "";
+                    // Grab a reference to any source of classes before this node was signalised - a static class
+                    // attribute, or one interpolating references, which is rendered here
+                    const clazzAttr = vnode.attrs["class"];
+                    const clazzSource = fluid.getSignalSource(clazzAttr) || "";
                     const allClass = fluid.cell(undefined, {name: `allClass computer for vnode ${vnode._id}`})
                         .computed( () => {
                             const classes = Object.entries(vnode["class"]).map( ([key, value]) => [key, fluid.deSignal(value)])
                                 .filter(([, value]) => value && !fluid.isUnavailable(value))
                                 .map(([key]) => key);
-                            return [clazzSource, ...classes].filter(clazz => clazz).join(" ");
+                            const renderedSource = fluid.isSignal(clazzAttr) ? fluid.deSignal(clazzAttr) : clazzSource;
+                            return [fluid.isUnavailable(renderedSource) ? "" : renderedSource, ...classes].filter(clazz => clazz).join(" ");
                         });
                     allClass.$variety = "$allClass";
                     allClass.$source = clazzSource;
@@ -1928,6 +2497,7 @@ const fluidViewScope = function (fluid) {
                     vnode.attrs["class"] = allClass;
                 }
                 if (vnode.children !== undefined) {
+                    fluid.assignBlockConditions(vnode.children, shadow);
                     vnode.children = vnode.children.map(processVNode);
                 }
             }
@@ -1944,16 +2514,13 @@ const fluidViewScope = function (fluid) {
             // Use layer imports for now until we can have a big reform - either do this processing on parse, or attach machinery to templates directly etc.
             fluid.acquireLoadDirectives(fluid.findDocument(shadow), vtemplate);
             templateEffects.forEach(effect => effect.$site = self);
+            // Destroy any conditional element or island allocated by a previous activation which is no longer in the template
+            (viewShadow.templateJointNames || []).filter(name => !jointNames.includes(name)).forEach(name =>
+                fluid.withdrawTemplateRecord(selfShadow, name));
+            viewShadow.templateJointNames = jointNames;
             return togo;
         };
 
-        const assignParents = (vnode, parentNode = null) => {
-            vnode.parentNode = parentNode;
-            if (vnode.children) {
-                vnode.children.forEach(child => assignParents(child, vnode));
-            }
-            return vnode;
-        };
         if (!vtemplate) {
             // TODO: looks like this can only occur through reference like {self}.parentTemplate which should produce unavailable by itself
             return fluid.unavailable("Template not configured");
@@ -1961,23 +2528,26 @@ const fluidViewScope = function (fluid) {
 
         const tree = fluid.copy(vtemplate);
         const useTree = fluid.effVTree(tree, view.elideParent);
-        let compositedTree = assignParents(useTree);
+        let compositedTree = fluid.assignVTreeParents(useTree);
 
         if (fluid.hasLayer(view, "fluid.partialViewComponent")) {
-            fluid.each(view.partialTemplateLayers, (rec, layerName) => {
-                compositedTree = fluid.compositeVTree(compositedTree, rec, layerName);
-            });
+            compositedTree = fluid.compositePartials(compositedTree, self, view);
         }
 
-        // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
-        const activatedTree = activateTemplate(compositedTree);
+        let togo;
+        if (fluid.isUnavailable(compositedTree)) {
+            togo = compositedTree;
+        } else {
+            // Currently returns its argument, but historical "tag-singularity" branch did funky stuff folding "virtual virtual DOM nodes" together
+            const activatedTree = activateTemplate(compositedTree);
 
-        const filteredTree = !fluid.isUnavailable(selfEditing) && selfEditing ? selfEditingRef.get().site.shadow.that.filterForSelfEditing(activatedTree, self) : activatedTree;
+            const filteredTree = !fluid.isUnavailable(selfEditing) && selfEditing ? selfEditingRef.get().site.shadow.that.filterForSelfEditing(activatedTree, self) : activatedTree;
 
-        fluid.assignContainerId(filteredTree, shadow);
-        fluid.bindContainer(templateEffects, filteredTree, self, view);
-        return filteredTree;
-
+            fluid.assignContainerId(filteredTree, selfShadow);
+            fluid.bindContainer(templateEffects, filteredTree, self, view);
+            togo = filteredTree;
+        }
+        return togo;
     };
 
     fluid.containerIdPrefix = "fl-id-";
@@ -2015,6 +2585,32 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    // The tag of a slot designating a subcomponent by @id which is rendered as the subcomponent's markup alone, with no
+    // element of its own, e.g. a list of <link>s within <head> - <fluid-fragment @id="stylesheetTags">
+    fluid.fragmentSlotTag = "fluid-fragment";
+
+    // The container of the view of a subcomponent rendered into a <fluid-fragment> slot, which renders nothing itself
+    fluid.fragmentSlotContainer = fluid.unavailable({cause: "View rendered into a fragment slot by its parent", variety: "config"});
+
+    /**
+     * Expand a vnode for patching - a <fluid-fragment> slot is replaced by the nodes of the tree currently rendered by
+     * the view of its subcomponent, which are thereby patched as children of the slot's parent. A view whose root is
+     * elided contributes that root; a list view, or one whose root is not elided, contributes its root's children.
+     * Whilst the subcomponent's tree is unavailable, the slot contributes nothing. Any other vnode is returned as is.
+     * @param {VNode} vnode - The vnode
+     * @return {VNode[]} The vnodes to be patched in its place
+     */
+    fluid.expandFragmentSlot = function (vnode) {
+        let togo;
+        if (vnode.fragmentOf) {
+            const tree = fluid.deSignal(fluid.getForComponent(vnode.fragmentOf, ["view", "vTree"]));
+            togo = !tree || fluid.isUnavailable(tree) ? [] : fluid.isTemplateRootTag(tree.tag) ? tree.children : [tree];
+        } else {
+            togo = [vnode];
+        }
+        return togo;
+    };
+
     /**
      * Cause the attributes of the supplied DOM node to agree with the `attrs` member of the supplied VNode. Any
      * attributes in its `defaultAttrs` member are applied only if the node does not already have them.
@@ -2024,12 +2620,17 @@ const fluidViewScope = function (fluid) {
      * @param {Boolean} isRoot - `true` if this rendering is of a container root - if so, this will skip deleting mismatching attributes
      */
     fluid.patchAttrs = function (vnode, element, isRoot) {
-        if (!isRoot) {
-            for (let i = element.attributes.length - 1; i >= 0; i--) {
-                const attrName = element.attributes[i].name;
-                if (!(attrName in (vnode.attrs ?? {})) && !(attrName in (vnode.defaultAttrs ?? {})) && !attrName.startsWith("data-fl-transient")) {
-                    fluid.applyAttr(element, attrName, null);
-                }
+        // The attributes of a container are written both by the template in which it appears, e.g. as an element
+        // bearing @id, and by the root of the template rendered into it. Each removes only those attributes which it
+        // wrote itself and no longer writes, recorded as flJointAttrs and flRootAttrs respectively
+        const owned = new Set([...Object.keys(vnode.attrs ?? {}), ...Object.keys(vnode.defaultAttrs ?? {})]);
+        const ownedByOther = isRoot ? element.flJointAttrs : element.flRootAttrs;
+        const removable = attrName => !owned.has(attrName) && !attrName.startsWith("data-fl-transient") && !ownedByOther?.has(attrName) &&
+            (!isRoot || !!element.flRootAttrs?.has(attrName));
+        for (let i = element.attributes.length - 1; i >= 0; i--) {
+            const attrName = element.attributes[i].name;
+            if (removable(attrName)) {
+                fluid.applyAttr(element, attrName, null);
             }
         }
         for (const [key, value] of Object.entries(vnode.attrs ?? {})) {
@@ -2037,10 +2638,19 @@ const fluidViewScope = function (fluid) {
                 fluid.applyAttr(element, key, value);
             }
         }
+        // A default attribute is only written, and so only owned, if the element does not already have it
+        const ownedDefaults = Object.keys(vnode.defaultAttrs ?? {}).filter(key =>
+            !element.hasAttribute(key) || (isRoot ? element.flRootAttrs : element.flJointAttrs)?.has(key));
         for (const [key, value] of Object.entries(vnode.defaultAttrs ?? {})) {
             if (!element.hasAttribute(key)) {
                 fluid.applyAttr(element, key, value);
             }
+        }
+        const written = new Set([...Object.keys(vnode.attrs ?? {}), ...ownedDefaults]);
+        if (isRoot) {
+            element.flRootAttrs = written;
+        } else {
+            element.flJointAttrs = written;
         }
     };
 
@@ -2075,24 +2685,39 @@ const fluidViewScope = function (fluid) {
 
         // It may be undefined because this is a joint to a subcomponent as applied in fluid.processAttributeDirective
         if (vnode.children !== undefined) {
-            const vcount = vnode.children.length;
+            // An element bearing @if is omitted whilst its condition is false. Its node is marked with the key of its
+            // block, so that it is removed whilst absent, and so that a node is reused only by its own block, even
+            // across activations of the template - other nodes are then matched up with their vnodes by position
+            const isAbsent = vchild => vchild.ifSignal !== undefined && !vchild.ifSignal.get();
+            const absentKeys = new Set(vnode.children.filter(isAbsent).map(vchild => vchild.blockKey));
+            [...element.childNodes].filter(node => absentKeys.has(node.flBlockKey)).forEach(node => node.remove());
+            // Nodes injected for Single File Components, e.g. into the head, are not ours to reconcile
+            const nodes = [...element.childNodes].filter(node => !fluid.isInjectedNode(node));
+            const vchildren = vnode.children.filter(vchild => !isAbsent(vchild)).flatMap(fluid.expandFragmentSlot);
+            const vcount = vchildren.length;
             for (let i = 0; i < vcount; ++i) {
-                const vchild = vnode.children[i];
-                let other = element.childNodes[i];
-                if (!other || !fluid.matchNodeToVNode(other, vchild)) {
+                const vchild = vchildren[i];
+                let other = nodes[i];
+                // An element which has just become present is inserted rather than taking over its successor's node
+                const freshlyPresent = vchild.blockKey !== undefined && other && other.flBlockKey !== vchild.blockKey;
+                if (!other || freshlyPresent || !fluid.matchNodeToVNode(other, vchild)) {
                     const fresh = fluid.nodeFromVNode(element.ownerDocument, vchild);
-                    if (other) {
+                    fresh.flBlockKey = vchild.blockKey;
+                    if (freshlyPresent) {
+                        element.insertBefore(fresh, other);
+                        nodes.splice(i, 0, fresh);
+                    } else if (other) {
                         other.replaceWith(fresh);
+                        nodes[i] = fresh;
                     } else {
                         element.appendChild(fresh);
+                        nodes.push(fresh);
                     }
                     other = fresh;
                 }
                 fluid.patchChildren(vchild, other);
             }
-            for (let i = element.childNodes.length - 1; i >= vcount; --i) {
-                element.childNodes[i].remove();
-            }
+            nodes.slice(vcount).forEach(node => node.remove());
             const boundValue = vnode.boundAttrs?.value;
             if (boundValue && element.localName === "select") {
                 // Patching the options may have disturbed the value materialised onto them, so restore it
@@ -2113,6 +2738,7 @@ const fluidViewScope = function (fluid) {
      */
     fluid.renderView = function (self, container, vTree) {
         fluid.allocateDomId(container);
+        fluid.subscribeOutputDocumentInjections(self, container.ownerDocument);
         console.log(`renderView beginning for ${self[$m].path} with vTree ${vTree._id} container `, container.flDomId);
         fluid.patchChildren(vTree, container, true);
     };
@@ -2133,6 +2759,10 @@ const fluidViewScope = function (fluid) {
     fluid.def("fluid.viewComponent", {
         $layers: "fluid.component",
         elideParent: true,
+        // If true, a template supplied as markup is taken verbatim - it is not scanned for bindings, may have any number
+        // of top-level nodes, all of which are rendered within the container, and keeps its whitespace. Elements within
+        // it bearing `fluid-layers` are rendered as islands - see fluid.activateTemplate
+        verbatim: false,
         container: "$compute:fluid.unavailable(Container not specified)",
         // The markup at our container in our parent's template, supplied by the template record of a parent whose
         // template designates our container with @id
@@ -2231,9 +2861,52 @@ const fluidViewScope = function (fluid) {
     // template of a Single File Component, as written by fluid.sfcToInjRecs
     fluid.def("fluid.templateViewComponent", {
         $layers: "fluid.viewComponent",
-        templateTree: "$compute:fluid.templateToTree({self}.template)",
+        templateTree: "$compute:fluid.templateToTree({self}.template, {self}.verbatim)",
         $variety: "framework"
     });
+
+    // An anonymous component rendering the markup of an element bearing @if or @else in another component's template,
+    // which exists only whilst its condition holds - see fluid.activateTemplate. References within its markup, and
+    // subcomponents designated within it by @id, are resolved against the component whose template it is part of.
+    fluid.def("fluid.templateBlock", {
+        $layers: "fluid.component",
+        view: {
+            $component: {
+                $layers: "fluid.templateBlockView"
+            }
+        },
+        $variety: "framework"
+    });
+
+    fluid.def("fluid.templateBlockView", {
+        $layers: "fluid.viewComponent",
+        elideParent: false,
+        templateTree: "$compute:fluid.blockTemplateTree({self}.parentTemplate)",
+        vTree: "$compute:fluid.activateBlockTemplate({self}.templateTree, {$parent}, {self})",
+        $variety: "framework"
+    });
+
+    /**
+     * Activate the template of a `fluid.templateBlock`, resolving its references against the component whose template
+     * it is part of
+     * @param {VNode} vtemplate - The block's template
+     * @param {ComponentComputer} block - The block
+     * @param {ComponentComputer} view - The block's view
+     * @return {VNode} The activated tree
+     */
+    fluid.activateBlockTemplate = function (vtemplate, block, view) {
+        return fluid.activateTemplate(vtemplate, block, view, fluid.templateScopeOf(block));
+    };
+
+    /**
+     * Produce the template of a `fluid.templateBlock` - the markup of the element bearing @if or @else, which is marked
+     * as a placeholder so that it does not acquire a default id
+     * @param {VNode} parentTemplate - The markup of the element
+     * @return {VNode} The block's template
+     */
+    fluid.blockTemplateTree = function (parentTemplate) {
+        return {...parentTemplate, isPlaceholder: true};
+    };
 
     /**
      * Parse markup supplied as a view's template, recording any problems with it which would otherwise pass silently -
@@ -2260,14 +2933,43 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Mark every node of a parsed tree as verbatim, so that it is not scanned for bindings by `fluid.activateTemplate`
+     * @param {VNode} vnode - The root of the tree
+     * @return {VNode} The same tree
+     */
+    fluid.markVerbatim = function (vnode) {
+        vnode.verbatim = true;
+        if (vnode.children) {
+            vnode.children.forEach(fluid.markVerbatim);
+        }
+        return vnode;
+    };
+
+    /**
+     * Parse markup to be rendered verbatim, e.g. HTML produced by a content pipeline. All of its top-level nodes are
+     * held by a single root, which is elided onto the view's container, so that they are rendered within it. Whitespace
+     * is kept, and no node is scanned for bindings - see `fluid.activateTemplate`.
+     * @param {String} markup - The markup to be rendered
+     * @return {VNode} The parsed tree, a fragment
+     */
+    fluid.parseVerbatimMarkup = function (markup) {
+        const parsed = fluid.parseHTMLToTree(markup, {fragment: true, skipWhitespace: false});
+        const root = fluid.markVerbatim({tag: "verbatim", attrs: {}, children: parsed.children});
+        return {tag: "fragment", children: [root]};
+    };
+
+    /**
      * Resolve the template held by a view to its parsed tree
      * @param {String|Object} template - The view's template - either markup, or a reference `{sfcLayer}` to the template
      * of the named Single File Component layer, held in the template store
+     * @param {Boolean} [verbatim] - If `true`, markup is parsed by `fluid.parseVerbatimMarkup` rather than as a template
      * @return {VNode|Unavailable} The parsed template, or an unavailable value if the template is neither of these
      */
-    fluid.templateToTree = function (template) {
+    fluid.templateToTree = function (template, verbatim) {
         let togo;
-        if (typeof(template) === "string") {
+        if (typeof(template) === "string" && verbatim) {
+            togo = fluid.parseVerbatimMarkup(template);
+        } else if (typeof(template) === "string") {
             togo = fluid.parseTemplateMarkup(template);
         } else if (fluid.isPlainObject(template, true) && typeof(template.sfcLayer) === "string") {
             togo = fluid.fetchParsedTemplate(template.sfcLayer);
@@ -2478,6 +3180,14 @@ const fluidViewScope = function (fluid) {
     });
 
     /**
+     * Determine whether a tag is that of the synthetic root of a parsed template - the fragment holding the top-level
+     * nodes of a template, or the <template> block of an SFC - which is not itself rendered as an element
+     * @param {String} tag - The tag
+     * @return {Boolean} `true` if it is the tag of a template's root
+     */
+    fluid.isTemplateRootTag = tag => tag === "fragment" || tag === "template" || tag === fluid.fragmentSlotTag;
+
+    /**
      * Compute the vTree for a list of view components by concatenating the vTrees rendered by their views
      * @param {ComponentComputer} self - The component list
      * @param {Signal<ComponentComputer[]>} list - The list of view components
@@ -2495,9 +3205,11 @@ const fluidViewScope = function (fluid) {
                     designalArgs: childTrees,
                     unavailable: treesUnavailable
                 } = fluid.processSignalArgs(componentList.map(component => component.view.vTree));
+                // A member whose view does not elide its template's root renders the root's children - e.g. several
+                // top-level nodes of a template, or the contents of an SFC's <template> - which are spliced in its place
                 return treesUnavailable || {
                     tag: "template",
-                    children: childTrees,
+                    children: childTrees.flatMap(childTree => fluid.isTemplateRootTag(childTree.tag) ? childTree.children : [childTree]),
                     _id: vnode_id++
                 };
             }

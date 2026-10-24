@@ -154,7 +154,7 @@ QUnit.assert.assertNode = function (node, expected, message, segs = []) {
  */
 QUnit.hooks.afterEach(function (assert) {
     if (fluid.cell?.isQuiescent && !fluid.cell.isQuiescent()) {
-        const openFits = fluid.cell.CurrentFits.filter(fit => !fit.staticFit).map(fit => fit.fitId);
+        const openFits = [...fluid.cell.CurrentFits].filter(fit => !fit.staticFit).map(fit => fit.fitId);
         assert.pushResult({
             result: false,
             actual: {openFits, queuedEffects: fluid.cell.EffectQueue.map(effect => effect.name)},

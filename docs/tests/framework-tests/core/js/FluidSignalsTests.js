@@ -150,6 +150,74 @@ QUnit.test("Bidirectional tests - three nodes, circularly linked", assert => {
     assert.nearEqual(kelvinCell.get(), 373.15, "Spread from Fahrenheit to Kelvin");
 });
 
+/**
+ * Construct a bidirectional pair whose reverse leg is a dynamic dependency, only discovered part way through the
+ * update which traverses its forward leg. B is computed from A and a further source X. A is computed from `seed`
+ * until `mode` becomes "linked", whereupon it is computed from B instead - the reverse leg. A single update sets `seed`
+ * and links the pair, and within the same stabilization an effect on `mode` changes X.
+ * @param {Number} offset - Added by the reverse leg to its inverse of the forward leg, which is faithful if it is 0
+ * @return {Object} The number of times each leg was traversed by the update, the values seen by effects on A and B,
+ * and their final values
+ */
+fluid.tests.lateReverseArc = function (offset) {
+    const seed = fluid.cell(1, {name: "seed"}), mode = fluid.cell("own", {name: "mode"}), x = fluid.cell(0, {name: "X"});
+    const a = fluid.cell(undefined, {name: "A"}), b = fluid.cell(undefined, {name: "B"});
+    const runs = {forward: 0, reverse: 0};
+    b.computed((aValue, xValue) => {
+        runs.forward++;
+        return aValue * 10 + xValue;
+    }, [a, x]);
+    a.computed(() => {
+        let togo;
+        if (mode.get() === "linked") {
+            runs.reverse++;
+            // Guard against a cycle, which would otherwise never terminate for an unfaithful inverse
+            togo = runs.reverse > 10 ? fluid.unavailable("Runaway reverse leg") : (b.get() - x.get()) / 10 + offset;
+        } else {
+            togo = seed.get();
+        }
+        return togo;
+    }, []);
+    const bSeen = [], aSeen = [];
+    const effects = [
+        fluid.cell.effect(bValue => bSeen.push(bValue), [b], {name: "bEffect"}),
+        fluid.cell.effect(aValue => aSeen.push(aValue), [a], {name: "aEffect"}),
+        fluid.cell.effect(modeValue => {
+            if (modeValue === "linked") {
+                x.set(5);
+            }
+        }, [mode], {name: "modeEffect"})
+    ];
+    fluid.cell.stabilize();
+    runs.forward = 0;
+    runs.reverse = 0;
+    bSeen.length = 0;
+    aSeen.length = 0;
+
+    seed.set(2);
+    mode.set("linked");
+    fluid.cell.stabilize();
+    const togo = {runs: {...runs}, bSeen, aSeen, a: a.get(), b: b.get()};
+    effects.forEach(effect => effect.dispose());
+    return togo;
+};
+
+QUnit.test("Bidirectional tests - reverse leg discovered late in the update", assert => {
+    // Whether the forward leg was traversed in a fit is decided as it is traversed, by whether the leg has a reverse
+    // arc - see fluid.cell.needsFit. Here the reverse arc only appears once A is recomputed from B, after B was first
+    // computed from A in the same update. B's further update from X must then still not be relayed back to A.
+    const faithful = fluid.tests.lateReverseArc(0);
+    assert.deepEqual(faithful.runs, {forward: 1, reverse: 1}, "Each leg traversed once - no cyclic activation of the reverse leg");
+    assert.deepEqual([faithful.aSeen, faithful.bSeen], [[], [15]], "A's value is unchanged, so only B's effect is notified, once");
+    assert.deepEqual([faithful.a, faithful.b], [1, 15], "Values consistent across the pair");
+
+    // An unfaithful inverse would change A, and so B, on each traversal of the cycle
+    const unfaithful = fluid.tests.lateReverseArc(1);
+    assert.deepEqual(unfaithful.runs, {forward: 2, reverse: 1}, "Reverse leg traversed once, forward leg once on either side of it");
+    assert.deepEqual([unfaithful.aSeen, unfaithful.bSeen], [[2], [20, 25]], "Effects notified of each value once");
+    assert.deepEqual([unfaithful.a, unfaithful.b], [2, 25], "Cycle broken after one traversal of the reverse leg");
+});
+
 /*
 QUnit.test("Genuine cyclicity with monotonicity is acceptable", assert => {
 
@@ -230,6 +298,36 @@ QUnit.test("Source tracking and source exclusion", assert => {
 
 // kairo's "avoidable computation" test at https://github.com/milomg/js-reactivity-benchmark/blob/main/packages/core/src/benches/kairo/avoidable.ts
 // Which was ported to knockout (passes) and adapton (fails), probably fails in S as well.
+
+QUnit.test("An observer of the same source several times observes it until removed as often", assert => {
+    const source = fluid.cell(1, {name: "source"}), reads = fluid.cell(2, {name: "reads"});
+    let runs = 0;
+    // The edge's sources are not deduplicated, so that the source is observed once for each read
+    const observer = fluid.cell(undefined, {name: "observer"}).computed(() => {
+        runs++;
+        let sum = 0;
+        for (let i = 0; i < reads.get(); ++i) {
+            sum += source.get();
+        }
+        return sum;
+    }, []);
+    assert.equal(observer.get(), 2, "Source read twice");
+    assert.equal(source._observers.get(observer), 2, "Observer counted once for each read");
+
+    reads.set(1);
+    assert.equal(observer.get(), 1, "Source now read once");
+    assert.equal(source._observers.get(observer), 1, "One count withdrawn");
+    source.set(5);
+    assert.equal(observer.get(), 5, "Still notified of the source, which it still reads once");
+
+    reads.set(0);
+    assert.equal(observer.get(), 0, "Source no longer read");
+    assert.notOk(source._observers.has(observer), "No longer an observer");
+    const before = runs;
+    source.set(6);
+    assert.equal(observer.get(), 0, "Value unchanged");
+    assert.equal(runs, before, "Not notified of a source it no longer reads");
+});
 
 QUnit.test("Early cutoff", assert => {
 

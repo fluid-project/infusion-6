@@ -1867,6 +1867,41 @@ const $fluidScope = function (fluid) {
         }
     };
 
+    /**
+     * Determine whether a layer is defined, or will be once loaded since it is listed in `fluid.importMap`. Unlike
+     * naming the layer amongst a component's layers, this never makes anything unavailable. When called within a
+     * reactive computation, e.g. a `$compute`, the computation is reevaluated when the layer's definition changes.
+     * @param {String} layerName - The name of the layer
+     * @return {Boolean} `true` if the layer is defined or is to be loaded
+     */
+    fluid.isLayerDefined = function (layerName) {
+        // Read the store itself so as to be notified if the layer is deleted, which removes its signal from the store
+        fluid.layerStore.get();
+        const layerRec = fluid.readLayer(layerName).get();
+        return fluid.layerRecToUnavailable(layerRec) === null || !!fluid.importMap[layerName];
+    };
+
+    /**
+     * Filter a list of candidate layer names to those which are defined - see `fluid.isLayerDefined`. Suitable as the
+     * function of a `$compute` producing dynamic layers, e.g. `$layers: ["fluid.component", "{self}.kindLayers"]`
+     * with `kindLayers: "$compute:fluid.definedLayers({self}.candidates)"`.
+     * @param {...(String|String[])} candidates - The candidate layer names, as Strings or arrays of them
+     * @return {String[]} Those candidates which are defined, in order
+     */
+    fluid.definedLayers = function (...candidates) {
+        return candidates.flat().filter(candidate => typeof(candidate) === "string" && fluid.isLayerDefined(candidate));
+    };
+
+    /**
+     * Select the first of a list of candidate layer names which is defined, as for a lookup trying several layers in
+     * turn - e.g. one for a page's type, then one for its kind
+     * @param {...(String|String[])} candidates - The candidate layer names, as Strings or arrays of them, in order of preference
+     * @return {String[]} An array holding the first candidate which is defined, or an empty array if none is
+     */
+    fluid.firstDefinedLayer = function (...candidates) {
+        return fluid.definedLayers(...candidates).slice(0, 1);
+    };
+
     // Layer definitions which have arrived while their layer was gated on a pending signal, keyed by layer name
     fluid.gatedLayers = new Map();
 
@@ -2135,6 +2170,25 @@ const $fluidScope = function (fluid) {
     };
 
     /**
+     * Merge the material of several layers at a path into a fresh layer object - see `fluid.mergeLayers`
+     * @param {Object} target - The merged object of which this is a member
+     * @param {String} key - The member's key
+     * @param {String[]} segs - The path of the member within the root being merged
+     * @param {LayerMap} layerMap - The layer map of the root being merged
+     * @param {Array} newLayers - The material of each layer at the member, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @return {Object} The merged member
+     */
+    fluid.mergeFreshMaterial = function (target, key, segs, layerMap, newLayers, mergeRecords) {
+        const merged = fluid.makeLayer(key, target);
+        // Record the material merged here, so that a fresh merge of the same material may be recognised as
+        // equivalent - see fluid.isSameSignalRecord
+        merged[$m].contributions = newLayers;
+        fluid.mergeLayers(merged, segs, layerMap, newLayers, mergeRecords);
+        return merged;
+    };
+
+    /**
      * Recursively merge multiple layers into a target object, maintaining a mapping of values to their originating layers.
      *
      * @param {Object} target - The target object where merged results will be stored.
@@ -2144,8 +2198,17 @@ const $fluidScope = function (fluid) {
      * @param {MergeRecord[]} mergeRecords - An array of `MergeRecord` objects providing metadata for the layers.
      */
     fluid.mergeLayers = function (target, segs, layerMap, layers, mergeRecords) {
-        const clayers = layers.length;
+        // Test each layer once, rather than once for each of the keys merged from it
+        const plainLayers = layers.map(layer => fluid.isPlainObject(layer));
+        fluid.mergedKeys(layers).forEach(key => fluid.mergeLayerKey(target, segs, layerMap, layers, mergeRecords, plainLayers, key));
+    };
 
+    /**
+     * Determine the keys of a set of layers which are to be merged, i.e. those other than local policies
+     * @param {Object[]} layers - The layers being merged
+     * @return {String[]} The keys to be merged
+     */
+    fluid.mergedKeys = function (layers) {
         const allKeysRec = {};
         layers.forEach(layer => {
             if (fluid.isPlainObject(layer, true)) {
@@ -2153,36 +2216,167 @@ const $fluidScope = function (fluid) {
             }
         });
         delete allKeysRec["$variety"]; // Delete any keys which represent local policies
-        const allKeys = Object.keys(allKeysRec);
+        return Object.keys(allKeysRec);
+    };
 
-        allKeys.forEach(key => {
-            let count = 0;
-            let last, newTarget;
-            let lastIndex = -1;
-            for (let i = 0; i < clayers; ++i) {
-                const layer = layers[i];
-                if (fluid.isPlainObject(layer) && key in layer) {
-                    ++count;
-                    last = layer[key];
-                    lastIndex = i;
+    /**
+     * Merge the material of a set of layers at one key into a target object - see `fluid.mergeLayers`
+     * @param {Object} target - The target object where merged results will be stored.
+     * @param {String[]} segs - The path of the target within the root being merged.
+     * @param {LayerMap} layerMap - The layer map of the root being merged
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @param {Boolean[]} plainLayers - For each layer, whether it is a plain object or array
+     * @param {String} key - The key to be merged
+     */
+    fluid.mergeLayerKey = function (target, segs, layerMap, layers, mergeRecords, plainLayers, key) {
+        let count = 0;
+        let last, newTarget;
+        let lastIndex = -1;
+        let holdsComponent = false;
+        for (let i = 0; i < layers.length; ++i) {
+            const layer = layers[i];
+            if (plainLayers[i] && key in layer) {
+                ++count;
+                last = layer[key];
+                lastIndex = i;
+                holdsComponent = holdsComponent || fluid.isComponentRecordHolder(last);
+            }
+        }
+        if (holdsComponent) {
+            newTarget = fluid.collectComponentRecords(layers, key, segs, mergeRecords);
+        } else if (count > 1 && fluid.isPlainObject(last, true)) {
+            segs.push(key);
+            newTarget = fluid.mergeFreshMaterial(target, key, segs, layerMap, layers.map(layer => layer?.[key]), mergeRecords);
+            segs.pop();
+        } else {
+            newTarget = last;
+        }
+        target[key] = newTarget;
+        fluid.set(layerMap, [...segs, key, $m, "source"], mergeRecords[lastIndex].mergeRecordName);
+    };
+
+    // Merges of the members of chains of layer definitions, keyed by the strongest definition of the chain - see
+    // fluid.mergeRootLayers
+    /** @type {WeakMap<Object, DefinitionChainMerge[]>} */
+    fluid.definitionChainCache = new WeakMap();
+
+    /**
+     * @typedef {Object} DefinitionChainMerge
+     * @property {Object[]} layers - The layer definitions of the chain, weakest first
+     * @property {String[]} names - The names of their merge records
+     * @property {MergeRecord[]} mergeRecords - Merge records naming each definition, as consumed by `fluid.mergeLayerKey`
+     * @property {Boolean[]} plainLayers - For each definition, `true`, since only plain definitions form a chain
+     * @property {String[]} keys - The keys of the members of the chain, as found by `fluid.mergedKeys`
+     * @property {Set<String>} keySet - The same keys, as a set
+     * @property {Object} target - The object holding the merged members of the chain which have been demanded
+     * @property {LayerMap} layerMap - The layer map of those merged members - their provenance, and any reactive roots
+     * within them together with their links - each of whose members is shared by the layer maps of the chain's instances
+     */
+
+    /**
+     * Find, or else allocate, the record of merges of the members of a chain of layer definitions. A chain which cannot
+     * be shared - see `fluid.isShareableChain` - receives a fresh record.
+     * @param {Object[]} layers - The layer definitions of the chain, weakest first
+     * @param {String[]} names - The names of their merge records
+     * @return {DefinitionChainMerge} The record of merges of the chain's members
+     */
+    fluid.definitionChainMerge = function (layers, names) {
+        const shareable = fluid.isShareableChain(layers);
+        const strongest = layers[layers.length - 1];
+        const entries = shareable && fluid.definitionChainCache.get(strongest) || [];
+        let entry = entries.find(entry => fluid.arrayEqual(entry.layers, layers) && fluid.arrayEqual(entry.names, names));
+        if (!entry) {
+            const keys = fluid.mergedKeys(layers);
+            entry = {layers, names, keys, keySet: new Set(keys),
+                mergeRecords: names.map(mergeRecordName => ({mergeRecordType: "def", mergeRecordName})),
+                plainLayers: layers.map(() => true),
+                target: fluid.makeLayer("definitions", null), layerMap: Object.create(null)};
+            if (shareable) {
+                entries.push(entry);
+                fluid.definitionChainCache.set(strongest, entries);
+            }
+        }
+        return entry;
+    };
+
+    /**
+     * Merge, if it has not been already, the member of a chain of layer definitions at a key, as it is merged for each of
+     * the chain's instances to which only the chain's definitions contribute it - see `fluid.mergeLayerRecords`
+     * @param {DefinitionChainMerge} chain - The record of merges of the chain's members
+     * @param {String} key - The key of the member
+     * @return {LayerMap} The layer map of the merged member, held at `chain.layerMap[key]`
+     */
+    fluid.chainMember = function (chain, key) {
+        if (!(key in chain.target)) {
+            chain.layers.forEach(layer => fluid.reactiveRootPaths(layer).forEach(rootSegs => {
+                if (rootSegs[0] === key) {
+                    fluid.set(chain.layerMap, [...rootSegs, $m, "reactiveRoot"], true);
                 }
+            }));
+            if (chain.layerMap[key]) {
+                const memberMap = Object.create(null);
+                memberMap[key] = chain.layerMap[key];
+                fluid.extractReactiveLinks(chain.layers, chain.mergeRecords, memberMap);
             }
-            if (layers.some(layer => fluid.isPlainObject(layer) && fluid.isComponentRecordHolder(layer[key]))) {
-                newTarget = fluid.collectComponentRecords(layers, key, segs, mergeRecords);
-            } else if (count > 1 && fluid.isPlainObject(last, true)) {
-                newTarget = fluid.makeLayer(key, target);
-                const newLayers = layers.map(layer => layer?.[key]);
-                // Record the material merged here, so that a fresh merge of the same material may be recognised as
-                // equivalent - see fluid.isSameSignalRecord
-                newTarget[$m].contributions = newLayers;
-                segs.push(key);
-                fluid.mergeLayers(newTarget, segs, layerMap, newLayers, mergeRecords);
-                segs.pop();
+            fluid.mergeLayerKey(chain.target, [], chain.layerMap, chain.layers, chain.mergeRecords, chain.plainLayers, key);
+        }
+        return chain.layerMap[key];
+    };
+
+    /**
+     * @typedef {Object} RootMergePlan
+     * @property {Boolean[]} plainLayers - For each layer, whether it is a plain object or array
+     * @property {DefinitionChainMerge|null} chain - The record of merges of the chain of the layers' definitions, if any
+     * @property {Set<String>|null} sharedKeys - The keys of the chain's members to which no other layer contributes
+     * @property {String[]} keys - The keys of all the layers to be merged, in order
+     */
+
+    /**
+     * Plan the merge of the layers of a component. Many components are instances of the same few chains of layer
+     * definitions, e.g. the components of a site rendered as one tree, each adding a few members of its own, e.g. from
+     * its parent's subcomponent record. A member to which only layer definitions contribute merges to the same value for
+     * every instance of the chain, with the same layer map - it is merged once, by `fluid.chainMember`, and the merged
+     * value and its layer map are shared by each instance. Other members are merged afresh from all the layers.
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @return {RootMergePlan} The plan of the merge
+     */
+    fluid.planRootMerge = function (layers, mergeRecords) {
+        const plainLayers = layers.map(layer => fluid.isPlainObject(layer));
+        const isDef = mergeRecords.map(mergeRecord => mergeRecord.mergeRecordType === "def");
+        const defIndices = isDef.map((def, i) => def && plainLayers[i] ? i : -1).filter(i => i !== -1);
+        let togo;
+        if (defIndices.length > 0) {
+            const chain = fluid.definitionChainMerge(defIndices.map(i => layers[i]), defIndices.map(i => mergeRecords[i].mergeRecordName));
+            // The keys to which layers other than definitions contribute - since definitions are the weakest layers, and
+            // so come first, the keys of all the layers are those of the chain followed by any others of these
+            const ownKeys = fluid.mergedKeys(layers.filter((layer, i) => !isDef[i]));
+            const ownKeySet = new Set(ownKeys);
+            togo = {plainLayers, chain, sharedKeys: new Set(chain.keys.filter(key => !ownKeySet.has(key))),
+                keys: [...chain.keys, ...ownKeys.filter(key => !chain.keySet.has(key))]};
+        } else {
+            togo = {plainLayers, chain: null, sharedKeys: null, keys: fluid.mergedKeys(layers)};
+        }
+        return togo;
+    };
+
+    /**
+     * Merge the layers of a component according to a plan - see `fluid.planRootMerge` and `fluid.mergeLayers`
+     * @param {Object} target - The root object where merged results will be stored.
+     * @param {LayerMap} layerMap - The layer map of the root being merged
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @param {RootMergePlan} plan - The plan of the merge
+     */
+    fluid.mergeRootLayers = function (target, layerMap, layers, mergeRecords, plan) {
+        plan.keys.forEach(key => {
+            if (plan.sharedKeys?.has(key)) {
+                layerMap[key] = fluid.chainMember(plan.chain, key);
+                target[key] = plan.chain.target[key];
             } else {
-                newTarget = last;
+                fluid.mergeLayerKey(target, [], layerMap, layers, mergeRecords, plan.plainLayers, key);
             }
-            target[key] = newTarget;
-            fluid.set(layerMap, [...segs, key, $m, "source"], mergeRecords[lastIndex].mergeRecordName);
         });
     };
 
@@ -2210,6 +2404,36 @@ const $fluidScope = function (fluid) {
         } else if (Array.isArray(layer)) {
             layer.forEach(recurse);
         }
+    };
+
+    // The paths of the reactive roots of layer definitions, which are immutable - see fluid.reactiveRootPaths
+    /** @type {WeakMap<Object, Array<String[]>>} */
+    fluid.reactiveRootPathCache = new WeakMap();
+
+    /**
+     * Determine the paths of the reactive roots of a layer definition, as marked by `fluid.extractPolicy`. Since a
+     * layer definition is immutable, these are found once for each definition, rather than for each of its instances.
+     * @param {Object} layer - The layer definition
+     * @return {Array<String[]>} The paths of its reactive roots
+     */
+    fluid.reactiveRootPaths = function (layer) {
+        let paths = fluid.reactiveRootPathCache.get(layer);
+        if (!paths) {
+            const policyMap = {};
+            fluid.extractPolicy(layer, policyMap);
+            paths = [];
+            const visit = function (node, segs) {
+                if (node[$m]?.reactiveRoot) {
+                    paths.push(segs);
+                }
+                Object.keys(node).forEach(key => visit(node[key], [...segs, key]));
+            };
+            visit(policyMap, []);
+            if (fluid.isPlainObject(layer, true)) {
+                fluid.reactiveRootPathCache.set(layer, paths);
+            }
+        }
+        return paths;
     };
 
     /**
@@ -2258,8 +2482,10 @@ const $fluidScope = function (fluid) {
      * @param {Object[]} layers - The layers being merged, weakest first
      * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
      * @param {LayerMap} layerMap - The layer map, already populated with `reactiveRoot` markers by fluid.extractPolicy
+     * @param {Set<String>} [sharedKeys] - Keys of the layer map whose members are shared with a chain of layer
+     * definitions, whose links have already been extracted - see `fluid.chainMember`
      */
-    fluid.extractReactiveLinks = function (layers, mergeRecords, layerMap) {
+    fluid.extractReactiveLinks = function (layers, mergeRecords, layerMap, sharedKeys) {
         const definedLayers = layers.filter((layer, i) => mergeRecords[i].mergeRecordType !== "live");
         const linksAt = function (rootSegs) {
             // Map of path within the reactive root, rendered as a string, to the strongest member supplied there
@@ -2320,7 +2546,7 @@ const $fluidScope = function (fluid) {
                 }
             } else {
                 fluid.each(mapNode, (child, key) => {
-                    if (key !== $m) {
+                    if (key !== $m && !(segs.length === 0 && sharedKeys?.has(key))) {
                         visit(child, [...segs, key]);
                     }
                 });
@@ -2337,7 +2563,7 @@ const $fluidScope = function (fluid) {
      * @return {LayerMap} `layerMap`: A structured map of paths to the names of the layers contributing values at those paths, with records held at key `$m`
      */
     fluid.mergeLayerRecords = function (root, mergeRecords) {
-        const layerMap = {}, segs = [];
+        const layerMap = {};
         mergeRecords.forEach(mergeRecord => {
             if (!mergeRecord.priority) {
                 mergeRecord.priority = fluid.mergeRecordTypes[mergeRecord.mergeRecordType];
@@ -2345,10 +2571,26 @@ const $fluidScope = function (fluid) {
         });
         mergeRecords.sort((a, b) => b.priority - a.priority);
         const layers = mergeRecords.map(mergeRecord => mergeRecord.layer);
-        layers.forEach(layer => fluid.extractPolicy(layer, layerMap));
-        fluid.extractReactiveLinks(layers, mergeRecords, layerMap);
+        const plan = fluid.planRootMerge(layers, mergeRecords);
+        layers.forEach((layer, i) => {
+            if (mergeRecords[i].mergeRecordType === "def") {
+                fluid.reactiveRootPaths(layer).forEach(rootSegs => {
+                    const key = rootSegs[0];
+                    if (plan.sharedKeys?.has(key)) {
+                        // The member's layer map, with its reactive roots and their links, is shared with the chain - it
+                        // is placed here so that the layer map's members keep the order in which they are encountered
+                        layerMap[key] = fluid.chainMember(plan.chain, key);
+                    } else {
+                        fluid.set(layerMap, [...rootSegs, $m, "reactiveRoot"], true);
+                    }
+                });
+            } else {
+                fluid.extractPolicy(layer, layerMap);
+            }
+        });
+        fluid.extractReactiveLinks(layers, mergeRecords, layerMap, plan.sharedKeys);
 
-        fluid.mergeLayers(root, segs, layerMap, layers, mergeRecords);
+        fluid.mergeRootLayers(root, layerMap, layers, mergeRecords, plan);
 
         return layerMap;
     };
@@ -2364,14 +2606,19 @@ const $fluidScope = function (fluid) {
     /**
      * @typedef {Object} MergedHierarchyResolution
      * @property {MergeRecord[]} mergeRecords - The array of merge records representing the merged layers and their priorities.
-     * @property {LayerDef} merged - The final merged object representing the composite component definition.
-     * @property {LayerMap} layerMap - A map of all paths in the merged object to their source layers.
      */
 
     /**
      * @typedef {Object} LayerLinkageRecord
-     * @property {String[]} inputLayers - An array of layer names that must be present together to trigger the linkage.
-     * @property {String[]} outputLayers - An array of layer names that should be applied when the inputLayers co-occur.
+     * @property {String[]} [inputLayers] - An array of layer names that must be present together to trigger the linkage.
+     * @property {String} [selector] - Alternatively, an IL selector matching the components to which the linkage
+     * applies, whose last compound names layers of the component itself and whose earlier compounds name layers of its
+     * ancestors, e.g. "ponder.type.post ponder.header" for a header within a component bearing ponder.type.post, or
+     * "ponder.type.post > ponder.header" for one which is its direct child. A compound may also name a component's
+     * member name, or its layer's nickname.
+     * @property {String|String[]} outputLayers - Layer names that should be applied when the linkage applies.
+     * @property {String|null} [scopePath] - If set, the path of the component to whose subtree the linkage is confined,
+     * as resolved from the `scope` of the record held in a component's `$linkage`
      */
 
     // Lightweight version of
@@ -2379,6 +2626,30 @@ const $fluidScope = function (fluid) {
     // Should really be materialised in a component
     /** @type {Object.<String, LayerLinkageRecord>} A hash of co-occurrence names to rules rules describing how input layer names should give rise to output layer names */
     fluid.coOccurrenceRegistry = {};
+
+    // Cache of selectors of linkage records parsed by fluid.parseLinkageSelector
+    fluid.linkageSelectorCache = Object.create(null);
+
+    /**
+     * Parse the selector of a linkage record, caching the result
+     * @param {String} selector - The selector, e.g. "ponder.type.post ponder.header"
+     * @return {ParsedSelector[]} The parsed selector
+     */
+    fluid.parseLinkageSelector = function (selector) {
+        return fluid.linkageSelectorCache[selector] ||= fluid.parseSelector(selector, fluid.ILSSMatcher);
+    };
+
+    /**
+     * Determine the layers of which a change in co-occurrence is to be signalled when a linkage record is registered
+     * or deregistered - its input layers, or the layers named by the last compound of its selector, which matches the
+     * components to which it applies
+     * @param {LayerLinkageRecord} record - The linkage record
+     * @return {String[]} The names of the layers to be invalidated
+     */
+    fluid.linkageTargetLayers = function (record) {
+        return record.selector ? fluid.peek(fluid.parseLinkageSelector(record.selector)).predList.map(pred => pred.context).filter(context => context) :
+            fluid.makeArray(record.inputLayers);
+    };
 
     /**
      * Registers a co-occurrence rule in the `fluid.coOccurrenceRegistry`.
@@ -2391,7 +2662,7 @@ const $fluidScope = function (fluid) {
     fluid.registerCoOccurrence = function (coOcName, record) {
         fluid.coOccurrenceRegistry[coOcName] = record;
         // TODO: Could be more efficient by finding just those components matching co-occurrence
-        record.inputLayers.forEach(fluid.invalidateLayer);
+        fluid.linkageTargetLayers(record).forEach(fluid.invalidateLayer);
     };
 
     /**
@@ -2404,27 +2675,81 @@ const $fluidScope = function (fluid) {
     fluid.deregisterCoOccurrence = function (coOcName) {
         const record = fluid.coOccurrenceRegistry[coOcName];
         delete fluid.coOccurrenceRegistry[coOcName];
-        record.inputLayers.forEach(fluid.invalidateLayer);
+        fluid.linkageTargetLayers(record).forEach(fluid.invalidateLayer);
+    };
+
+    /**
+     * Determine whether a component matches one compound of a linkage selector - each of the compound's contexts must
+     * be one of its layers, the nickname of one of them, or its member name
+     * @param {Object[]} predList - The predicates of the compound
+     * @param {Set<String>} layerNames - The names of the component's layers
+     * @param {Shadow} shadow - The component's shadow
+     * @return {Boolean} `true` if the component matches
+     */
+    fluid.matchLinkageCompound = function (predList, layerNames, shadow) {
+        return predList.every(pred => !pred.context || pred.context === "*" || layerNames.has(pred.context) ||
+            shadow.memberName === pred.context || [...layerNames].some(layerName => fluid.computeNickName(layerName) === pred.context));
+    };
+
+    /**
+     * Determine whether a component which is merging matches a linkage selector. The selector's last compound is
+     * matched against the layers the component is resolving, and its earlier ones against the layers of its ancestors,
+     * read from their merged definitions so that the component is remerged if they change.
+     * @param {ParsedSelector[]} parsed - The parsed selector
+     * @param {Set<String>} layerNames - The names of the layers the component is resolving
+     * @param {Shadow} shadow - The component's shadow
+     * @return {Boolean} `true` if the component matches
+     */
+    fluid.matchLinkageSelector = function (parsed, layerNames, shadow) {
+        let matched = fluid.matchLinkageCompound(fluid.peek(parsed).predList, layerNames, shadow);
+        let ancestor = shadow.parentShadow;
+        for (let index = parsed.length - 2; index >= 0 && matched; --index) {
+            const mustMatchHere = parsed[index].child;
+            let found = false;
+            while (ancestor && !found) {
+                const ancestorLayers = new Set(fluid.makeArray(ancestor.flatMerged?.get()?.$layers));
+                found = fluid.matchLinkageCompound(parsed[index].predList, ancestorLayers, ancestor);
+                ancestor = mustMatchHere && !found ? null : ancestor.parentShadow;
+            }
+            matched = found;
+        }
+        return matched;
+    };
+
+    /**
+     * Determine whether a linkage record applies to a component which is merging
+     * @param {LayerLinkageRecord} record - The linkage record
+     * @param {Set<String>} layerNames - The names of the layers the component is resolving
+     * @param {Shadow} [shadow] - The component's shadow, if it has a place in a component tree - a record with a
+     * `selector` or `scopePath` applies only to such a component
+     * @return {Boolean} `true` if the record applies
+     */
+    fluid.linkageApplies = function (record, layerNames, shadow) {
+        const scopePath = record.scopePath;
+        const inScope = scopePath === undefined || scopePath === null ||
+            !!shadow && (shadow.path === scopePath || shadow.path.startsWith(scopePath + "."));
+        const matches = record.selector ? !!shadow && fluid.matchLinkageSelector(fluid.parseLinkageSelector(record.selector), layerNames, shadow) :
+            !!record.inputLayers && fluid.makeArray(record.inputLayers).every(name => layerNames.has(name));
+        return inScope && matches;
     };
 
     /**
      * Determine and return any new layer names that should be derived by co-occurrence rules from the supplied set of layer names.
-     * This scans the global `fluid.coOccurrenceRegistry` for entries whose `inputLayers` are all present in `layerNames`,
-     * and returns the corresponding `outputLayers` that are not already present in `layerNames`.
+     * This scans the global `fluid.coOccurrenceRegistry` for entries which apply - see `fluid.linkageApplies` - and
+     * returns the corresponding `outputLayers` that are not already present in `layerNames`.
      *
      * @param {String[]} layerNames - The current set of layer names in the hierarchy.
+     * @param {Shadow} [shadow] - The shadow of the component whose layers are being resolved, if any
      * @return {String[]} An array of derived layer names that should be added based on co-occurrence rules.
      */
-    fluid.resolveCoOccurrences = function (layerNames) {
+    fluid.resolveCoOccurrences = function (layerNames, shadow) {
         const togo = [];
         const existing = new Set(layerNames);
 
         Object.values(fluid.coOccurrenceRegistry).forEach(record => {
-            const {inputLayers, outputLayers} = record;
-            const allPresent = inputLayers.every(name => existing.has(name));
-            if (allPresent) {
-                for (const outputLayer of outputLayers) {
-                    if (!existing.has(outputLayer)) {
+            if (fluid.linkageApplies(record, existing, shadow)) {
+                for (const outputLayer of fluid.makeArray(record.outputLayers)) {
+                    if (!existing.has(outputLayer) && !togo.includes(outputLayer)) {
                         togo.push(outputLayer);
                     }
                 }
@@ -2546,6 +2871,104 @@ const $fluidScope = function (fluid) {
         return null;
     };
 
+    // Cache of layers stripped of their dynamic parents by fluid.staticParentsLayer, so that an unchanged layer always
+    // yields the same object, as for fluid.readerExpandLayer
+    fluid.staticParentsCache = new WeakMap();
+
+    /**
+     * Produce a version of a reader-expanded layer whose `$layers` holds only its static parents, i.e. excluding any
+     * references to dynamic layers
+     * @param {LayerDef} readerExpanded - The layer, as expanded by `fluid.readerExpandLayer`
+     * @param {String[]} staticParents - The names of its static parents
+     * @return {LayerDef} The layer with only its static parents
+     */
+    fluid.staticParentsLayer = function (readerExpanded, staticParents) {
+        let togo = fluid.staticParentsCache.get(readerExpanded);
+        if (!togo) {
+            togo = {...readerExpanded, $layers: staticParents};
+            fluid.staticParentsCache.set(readerExpanded, togo);
+        }
+        return togo;
+    };
+
+    // Layers standing in for definitions which are unavailable during a resolution - see fluid.placeholderLayer
+    /** @type {WeakSet<LayerDef>} */
+    fluid.placeholderLayers = new WeakSet();
+
+    /**
+     * Allocate an empty layer standing in for a definition which is unavailable, or circularly referenced, during the
+     * resolution of a component's layers. Each is fresh, and a chain holding one is never shared between components,
+     * since it is resolved again once the definition is available - see `fluid.definitionMergeRecords`
+     * @return {LayerDef} The placeholder layer
+     */
+    fluid.placeholderLayer = function () {
+        const togo = {$layers: []};
+        fluid.placeholderLayers.add(togo);
+        return togo;
+    };
+
+    /**
+     * Determine whether a chain of layer definitions can be shared between the components which resolve it, i.e. it
+     * holds no placeholder for an unavailable definition - see `fluid.placeholderLayer`
+     * @param {LayerDef[]} layers - The definitions of the chain
+     * @return {Boolean} `true` if the chain can be shared
+     */
+    fluid.isShareableChain = function (layers) {
+        const strongest = layers[layers.length - 1];
+        return fluid.isPlainObject(strongest, true) && !layers.some(layer => fluid.placeholderLayers.has(layer));
+    };
+
+    // The merge records of resolved chains of layer definitions, keyed by the strongest definition of the chain - see
+    // fluid.definitionMergeRecords
+    /** @type {WeakMap<LayerDef, DefinitionRecords[]>} */
+    fluid.definitionRecordsCache = new WeakMap();
+
+    /**
+     * @typedef {Object} DefinitionRecords
+     * @property {String[]} order - The names of the layers of the chain, weakest first
+     * @property {LayerDef[]} layers - Their definitions
+     * @property {MergeRecord[]} mergeRecords - The merge records of the definitions, followed by that of the resolved
+     * `$layers` member
+     */
+
+    /**
+     * Find, or else allocate, the merge records of a resolved chain of layer definitions. Since a layer definition is
+     * immutable, every component resolving the same chain of the same definitions shares the same records, and the same
+     * array of them - the resolved `$layers` member of each is the same array, `order`. A record is never modified once
+     * allocated - see `fluid.upgradeDynamicLayers`.
+     * @param {String[]} order - The names of the layers of the chain, weakest first
+     * @param {Object<String, LayerDef>} flatDefs - The definitions of the layers, keyed by name
+     * @return {MergeRecord[]} The merge records of the chain
+     */
+    fluid.definitionMergeRecords = function (order, flatDefs) {
+        const layers = order.map(layerName => flatDefs[layerName]);
+        const shareable = fluid.isShareableChain(layers);
+        const strongest = layers[layers.length - 1];
+        const entries = shareable && fluid.definitionRecordsCache.get(strongest) || [];
+        let entry = entries.find(entry => fluid.arrayEqual(entry.order, order) && fluid.arrayEqual(entry.layers, layers));
+        if (!entry) {
+            const mergeRecords = order.map((oneLayerName, i) => ({
+                mergeRecordType: "def",
+                mergeRecordName: oneLayerName,
+                // Towards the right of here, stronger records
+                priority: fluid.mergeRecordTypes.def - i,
+                layer: layers[i]
+            })).concat({
+                // Definition just holding the resolved $layers member, overriding all previous entries
+                mergeRecordType: "defParents",
+                mergeRecordName: "defParents",
+                priority: fluid.mergeRecordTypes.defParents,
+                layer: {$layers: order}
+            });
+            entry = {order, layers, mergeRecords};
+            if (shareable) {
+                entries.push(entry);
+                fluid.definitionRecordsCache.set(strongest, entries);
+            }
+        }
+        return entry.mergeRecords;
+    };
+
     /**
      * A resolver for computing and caching layered component definitions and their hierarchies.
      * It evaluates layer definitions via signals, computes parent relationships, and produces fully
@@ -2556,12 +2979,17 @@ const $fluidScope = function (fluid) {
          * Create a new HierarchyResolver.
          *
          * @param {Function} [layerFetcher] - Function which will initiate fetching of demanded layers which are unavailable
+         * @param {Shadow} [shadow] - The shadow of the component whose layers are resolved, if it has a place in a
+         * component tree, against which linkages with a selector or scope are matched
          */
-        constructor(layerFetcher) {
+        constructor(layerFetcher, shadow) {
             this.layerFetcher = layerFetcher || (() => {});
+            this.shadow = shadow;
             // A local store, so that we can use C3_precedence with direct lookups
             this.flatDefs = Object.create(null);
             this.unavailableLayers = Object.create(null);
+            // References to dynamic layers, e.g. "{self}.typeLayers", found amongst the parents of stored layers
+            this.dynamicLayerNames = [];
         }
 
         /**
@@ -2577,7 +3005,7 @@ const $fluidScope = function (fluid) {
                     this.unavailableLayers[layerName] =
                     // TODO: Eventually we will have some kind of cursor into the layer which will allow us to refer to the reference location
                         fluid.unavailable(`Layer name ${layerName} circularly refers to layer ${rootLayer}`);
-                    return {$layers: []};
+                    return fluid.placeholderLayer();
                 } else {
                     return this.storeLayer(layerName, rootLayer);
                 }
@@ -2612,11 +3040,15 @@ const $fluidScope = function (fluid) {
                 }
                 if (unavailableLayer !== null) {
                     this.unavailableLayers[layerName] = unavailableLayer;
-                    layerDef = {$layers: []};
+                    layerDef = fluid.placeholderLayer();
                 } else {
                     const readerExpanded = fluid.readerExpandLayer(fluid.deSignal(layer.raw));
-                    this.storeParents(readerExpanded, rootLayer || layerName);
-                    layerDef = readerExpanded;
+                    // A reference amongst a layer's parents names dynamic layers, resolved against the component
+                    // being merged once it is available - it takes no part in the layer's static hierarchy
+                    const [dynamicParents, staticParents] = fluid.partition(readerExpanded.$layers, fluid.isILReference);
+                    this.dynamicLayerNames.push(...dynamicParents);
+                    layerDef = dynamicParents.length === 0 ? readerExpanded : fluid.staticParentsLayer(readerExpanded, staticParents);
+                    this.storeParents(layerDef, rootLayer || layerName);
                 }
             }
             this.flatDefs[layerName] = layerDef;
@@ -2632,7 +3064,7 @@ const $fluidScope = function (fluid) {
          * @return {Boolean} `true` if new co-occurring layers were found and added, `false` otherwise.
          */
         resolveHierarchyRound = function (layerHierarchy, layerNames) {
-            const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy);
+            const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy, this.shadow);
             newCoOccurrences.map(layerName => this.storeLayer(layerName));
             // Highest precedence (most derived, lowest down) class is at left of list in this ordering
             layerNames.unshift(...newCoOccurrences);
@@ -2640,11 +3072,11 @@ const $fluidScope = function (fluid) {
         };
 
         /**
-         * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map,
-         * computing precedence, and producing merge records and a layer map suitable for instantiating the component.
+         * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map, and computing
+         * precedence, producing the merge records of its definitions in order of decreasing priority.
          *
          * @param {String[]} layerNames - The names of the top-level layer to resolve.
-         * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`, `merged`, and `layerMap`,
+         * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`,
          *     or an `unavailable` signal if resolution could not be completed.
          */
         resolve(layerNames) {
@@ -2654,24 +3086,9 @@ const $fluidScope = function (fluid) {
                 if (this.resolveHierarchyRound(order, useLayerNames)) {
                     continue;
                 }
-                const mergeRecords = order.map((oneLayerName, i) => ({
-                    mergeRecordType: "def",
-                    mergeRecordName: oneLayerName,
-                    // Towards the right of here, stronger records
-                    priority: fluid.mergeRecordTypes.def - i,
-                    layer: this.flatDefs[oneLayerName]
-                })).concat({
-                    // Definition just holding the resolved $layers member, overriding all previous entries
-                    mergeRecordType: "defParents",
-                    mergeRecordName: "defParents",
-                    priority: fluid.mergeRecordTypes.defParents,
-                    layer: {$layers: order}
-                });
-                const merged = {};
-                return {
-                    // Note merged is currently only read by fluid.readDef
-                    mergeRecords, merged, layerMap: fluid.mergeLayerRecords(merged, mergeRecords)
-                };
+                // The records are merged, together with those of the component itself, by fluid.flatMergedComputer -
+                // they are not merged here, since that merge would be discarded
+                return {mergeRecords: fluid.definitionMergeRecords(order, this.flatDefs)};
 
             }
         };
@@ -2833,6 +3250,18 @@ const $fluidScope = function (fluid) {
         }
     };
 
+    /** @type {SelectorParseStrategy} A strategy for selectors matching nodes of a template, which may also designate
+     * the element of a subcomponent by its member name, as `@member` for the element bearing `@id="member"` */
+    fluid.templateCSSMatcher = {
+        regexp: new RegExp("([#.@]?)(" + charStart + "]|\\\\.)+)", "g"),
+        charToTag: {
+            "": "tag",
+            "#": "id",
+            ".": "clazz",
+            "@": "member"
+        }
+    };
+
     const childSeg = new RegExp("\\s*(>)?\\s*", "g");
 
     /**
@@ -2970,8 +3399,6 @@ const $fluidScope = function (fluid) {
         return {context, path, name, selector};
     };
 
-    const atTemplateRE = /@\{((?:.)+?)\}/g;
-
     /**
      * Renders a parsed context reference object back into its string representation.
      * @param {Object} parsed - The parsed context reference object containing context, selector, and path
@@ -2982,53 +3409,115 @@ const $fluidScope = function (fluid) {
     };
 
     /**
+     * Find the brace which closes an interpolated expression in a template string, passing over any braces and
+     * parentheses nested within it, e.g. those of a context reference or of a function call, and the contents of any
+     * quoted strings
+     * @param {String} template - The template string
+     * @param {Number} start - The index of the first character of the expression, following its opening brace
+     * @return {Number} The index of the closing brace, or -1 if the expression is not closed
+     */
+    fluid.findClosingBrace = function (template, start) {
+        let depth = 0, quote = null, togo = -1;
+        for (let i = start; i < template.length && togo === -1; ++i) {
+            const c = template.charAt(i);
+            if (quote) {
+                if (c === quote) {
+                    quote = null;
+                }
+            } else if (c === "\"" || c === "'") {
+                quote = c;
+            } else if (c === "{" || c === "(") {
+                ++depth;
+            } else if (c === ")") {
+                --depth;
+            } else if (c === "}") {
+                if (depth === 0) {
+                    togo = i;
+                } else {
+                    --depth;
+                }
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * @typedef {Object} AtTemplateToken
+     * @property {String} raw - The text of the interpolated expression, without its enclosing `@{` and `}`
+     * @property {ParsedContext} [parsed] - For an expression which is a reference, the parsed reference
+     * @property {FuncRec} [call] - For an expression which is a function call, the record of the call, as for a compact
+     * `$compute` record
+     */
+
+    /**
+     * Parse an expression interpolated into a template string - either a context reference `{context}.path`, a function
+     * call in the compact syntax of `$compute`, e.g. `fluid.tests.urlize({self}.tag)`, or a bare path, which is
+     * resolved against `{self}`
+     * @param {String} exp - The expression, without its enclosing `@{` and `}`
+     * @return {AtTemplateToken} The parsed token
+     */
+    fluid.parseAtExpression = function (exp) {
+        let togo;
+        if (exp.startsWith("{")) {
+            togo = {raw: exp, parsed: fluid.parseContextReference(exp)};
+        } else if (/^[\w$.]+\s*\(/.test(exp) && exp.endsWith(")")) {
+            togo = {raw: exp, call: fluid.compactStringToRec(exp, "$compute")};
+        } else {
+            togo = {raw: exp, parsed: {context: "self", path: exp}};
+        }
+        return togo;
+    };
+
+    /**
      * Takes a template string containing tokens in the form of "@{value}", "@{deep.path.to.value}",
-     * or "@{{layerRec}.layerName}". Returns an array of token segments which are either plain strings
-     * or objects holding the parsed token paths. For tokens of the form "@{{layerRec}.layerName}",
-     * the full body is sent to `fluid.parseContextReference`.
+     * "@{{layerRec}.layerName}" or "@{func(args)}". Returns an array of token segments which are either plain strings
+     * or objects holding the parsed tokens - see `fluid.parseAtExpression`. The sequence "@@{" stands for a literal
+     * "@{", which is not interpolated, and an expression which is not closed is taken literally.
      *
      * @param {String} template - A string that contains placeholders for tokens of the form `@{token}` embedded into it.
-     * @return {Array<String|Object>} An array of token values.
+     * @return {Array<String|AtTemplateToken>} An array of token values, in which no two strings are adjacent
      */
     fluid.parseAtStringTemplate = function (template) {
         const tokens = [];
-        let lastIndex = 0;
-        let match;
-
-        const upgradeSimpleKey = key => ({context: "self", path: key});
-
-        while ((match = atTemplateRE.exec(template))) {
-            const index = match.index;
-            // Push text token
-            if (index > lastIndex) {
-                tokens.push(template.slice(lastIndex, index));
-            }
-            // Interpolated token
-            const exp = match[1].trim();
-            if (exp.startsWith("{")) {
-                // Handle tokens of the form "@{{context}.path}"
-                const endIndex = template.indexOf("}", atTemplateRE.lastIndex);
-                if (endIndex === -1) {
-                    throw new Error("Unmatched '{' in template: " + template);
+        let text = "";
+        let index = 0;
+        while (index < template.length) {
+            const atPos = template.indexOf("@", index);
+            if (atPos === -1) {
+                text += template.substring(index);
+                index = template.length;
+            } else if (template.startsWith("@@{", atPos)) {
+                text += template.substring(index, atPos) + "@{";
+                index = atPos + 3;
+            } else if (template.charAt(atPos + 1) === "{") {
+                const closePos = fluid.findClosingBrace(template, atPos + 2);
+                if (closePos === -1) {
+                    text += template.substring(index);
+                    index = template.length;
+                } else {
+                    text += template.substring(index, atPos);
+                    if (text) {
+                        tokens.push(text);
+                        text = "";
+                    }
+                    tokens.push(fluid.parseAtExpression(template.substring(atPos + 2, closePos).trim()));
+                    index = closePos + 1;
                 }
-                const fullBody = template.slice(index + 2, endIndex); // Include the full body
-                tokens.push({raw: fullBody, parsed: fluid.parseContextReference(fullBody)});
-                atTemplateRE.lastIndex = endIndex + 1; // Move past the closing "}"
             } else {
-                // Handle tokens of the form "@{value}" or "@{deep.path.to.value}"
-                tokens.push({raw: exp, parsed: upgradeSimpleKey(exp)});
+                text += template.substring(index, atPos + 1);
+                index = atPos + 1;
             }
-            lastIndex = atTemplateRE.lastIndex;
         }
-        if (lastIndex < template.length) {
-            tokens.push(template.slice(lastIndex));
+        if (text) {
+            tokens.push(text);
         }
         return tokens;
     };
 
     fluid.atStringTemplate = function (template, model) {
         const tokens = fluid.parseAtStringTemplate(template);
-        const segs = tokens.map(token => typeof(token) === "string" ? token : fluid.get(model, token.parsed.path, "error"));
+        const segs = tokens.map(token => typeof(token) === "string" ? token :
+            token.parsed ? fluid.get(model, token.parsed.path, "error") : "@{" + token.raw + "}");
         return segs.join("");
     };
 

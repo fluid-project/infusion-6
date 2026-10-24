@@ -24,6 +24,173 @@ QUnit.test("Basic live merging", function (assert) {
     assert.strictEqual(testDef.events.onCreate, 0, "Merged value unchanged");
 });
 
+fluid.def("fluid.tests.chainBase", {
+    $layers: "fluid.component",
+    settings: {
+        colour: "red",
+        size: {width: 10, height: 20}
+    },
+    label: "base"
+});
+
+fluid.def("fluid.tests.chainDerived", {
+    $layers: "fluid.tests.chainBase",
+    settings: {
+        size: {width: 30}
+    }
+});
+
+QUnit.test("Members merged from the same chain of layer definitions are shared", function (assert) {
+    const plain = that => ({colour: that.settings.colour, width: that.settings.size.width, height: that.settings.size.height});
+    const shadowOf = that => that[fluid.proxySymbol].shadow;
+    const sourceOf = (that, segs) => fluid.get(shadowOf(that).layerMap, [...segs, fluid.metadataSymbol, "source"]);
+    const first = fluid.tests.chainDerived();
+    const second = fluid.tests.chainDerived();
+    const coloured = fluid.tests.chainDerived({settings: {colour: "blue"}});
+
+    assert.deepEqual(plain(first), {colour: "red", width: 30, height: 20}, "Members merged from the chain of definitions");
+    assert.deepEqual(plain(coloured), {colour: "blue", width: 30, height: 20}, "Member supplied by a user record merged over the chain");
+    const merged = that => fluid.deSignal(shadowOf(that).flatMerged);
+    assert.strictEqual(merged(first).settings, merged(second).settings, "Member merged only from definitions is shared by instances of the chain");
+    assert.notStrictEqual(merged(first).settings, merged(coloured).settings, "Member to which a user record contributes is merged afresh");
+    assert.strictEqual(merged(first).label, "base", "Member of a single definition held directly");
+
+    assert.equal(sourceOf(second, ["settings", "size", "width"]), "fluid.tests.chainDerived", "Provenance of a shared member retained for each instance");
+    assert.equal(sourceOf(second, ["settings", "size", "height"]), "fluid.tests.chainBase", "Provenance of a weaker definition retained");
+    assert.notEqual(sourceOf(coloured, ["settings", "colour"]), "fluid.tests.chainBase", "Provenance of a member supplied by a user record");
+    assert.equal(sourceOf(coloured, ["settings", "size", "height"]), "fluid.tests.chainBase", "Provenance beneath a member merged afresh");
+
+    // A redefinition is a fresh layer, whose chain is merged afresh
+    fluid.def("fluid.tests.chainBase", {
+        $layers: "fluid.component",
+        settings: {
+            colour: "green",
+            size: {width: 10, height: 40}
+        },
+        label: "base"
+    });
+    fluid.cell.stabilize();
+    assert.deepEqual(plain(first), {colour: "green", width: 30, height: 40}, "Instance updated on redefinition of a layer of its chain");
+    assert.deepEqual(plain(coloured), {colour: "blue", width: 30, height: 40}, "Instance with its own member updated on redefinition");
+    assert.strictEqual(merged(first).settings, merged(second).settings, "Member merged from the redefined chain is shared");
+    [first, second, coloured].forEach(that => that.destroy());
+});
+
+fluid.def("fluid.tests.assocBase", {
+    $layers: "fluid.component",
+    shape: {p: 1}
+});
+
+fluid.def("fluid.tests.assocDerived", {
+    $layers: "fluid.tests.assocBase",
+    shape: 5
+});
+
+// Merging is not associative - a plain value overrides weaker material only where it is the strongest value merged, and
+// so a chain of definitions cannot be premerged into a single layer over which a component's own records are merged
+QUnit.test("Member of a user record merged over a chain whose definitions do not associate", function (assert) {
+    const merge = function (layers) {
+        const target = fluid.makeLayer("root", null);
+        const mergeRecords = layers.map((layer, i) => ({mergeRecordType: "user", mergeRecordName: "layer" + i}));
+        fluid.mergeLayers(target, [], {}, layers, mergeRecords);
+        return target;
+    };
+    const A = {shape: {p: 1}}, B = {shape: 5}, C = {shape: {q: 2}};
+    assert.deepEqual({...merge([A, B, C]).shape}, {p: 1, q: 2}, "All layers merged together");
+    assert.deepEqual({...merge([merge([A, B]), C]).shape}, {q: 2}, "Weaker layers merged first lose the weakest material");
+
+    const plain = fluid.tests.assocDerived();
+    const shaped = fluid.tests.assocDerived({shape: {q: 2}});
+    assert.strictEqual(plain.shape, 5, "Member merged only from definitions");
+    assert.deepEqual({...shaped.shape}, {p: 1, q: 2}, "Member of a user record merged over every definition of the chain, as if all were merged together");
+    [plain, shaped].forEach(that => that.destroy());
+});
+
+fluid.def("fluid.tests.sharedRootSource", {
+    $layers: "fluid.component",
+    text: "First"
+});
+
+fluid.def("fluid.tests.sharedRoot", {
+    $layers: "fluid.component",
+    source: {
+        $component: {
+            $layers: "fluid.tests.sharedRootSource"
+        }
+    },
+    settings: {
+        size: {width: 10}
+    },
+    state: {
+        $reactiveRoot: {
+            colour: "red"
+        },
+        prompt: "{source}.text"
+    }
+});
+
+// A reactive root is first merged from the chain's shared layer map - once its value is written into the live layer of
+// each instance, as it is on creation, it is merged afresh for each
+QUnit.test("Layer maps of members merged only from definitions are shared by instances of the chain", function (assert) {
+    const shadowOf = that => that[fluid.proxySymbol].shadow;
+    const first = fluid.tests.sharedRoot();
+    const second = fluid.tests.sharedRoot({source: {$component: {text: "Second"}}});
+    fluid.cell.stabilize();
+    const firstMap = shadowOf(first).layerMap, secondMap = shadowOf(second).layerMap;
+    assert.strictEqual(firstMap.settings, secondMap.settings, "Layer map of a member merged only from definitions shared by instances");
+    assert.equal(fluid.get(firstMap, ["settings", fluid.metadataSymbol, "source"]), "fluid.tests.sharedRoot", "Provenance held in the shared map");
+    assert.notStrictEqual(firstMap.source, secondMap.source, "Layer map of a member supplied by a user record not shared");
+    assert.notStrictEqual(firstMap.state, secondMap.state, "Layer map of a reactive root held in the live layer not shared");
+    assert.equal(firstMap.state[fluid.metadataSymbol].reactiveLinks.length, 1, "Link of the reactive root recorded");
+    assert.equal(first.state.prompt, "First", "Link resolved against the first instance");
+    assert.equal(second.state.prompt, "Second", "Link resolved against the second instance");
+
+    first.state.colour = "blue";
+    first.source.text = "Changed";
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(first.state), {colour: "blue", prompt: "Changed"}, "Reactive root of the first instance written, and its link followed");
+    assert.deepEqual(fluid.unwrapProxy(second.state), {colour: "red", prompt: "Second"}, "Reactive root of the second instance unaffected");
+    [first, second].forEach(that => that.destroy());
+});
+
+fluid.def("fluid.tests.sharedRecordsBase", {
+    $layers: "fluid.component",
+    label: "base"
+});
+
+fluid.def("fluid.tests.sharedRecordsExtra", {
+    $layers: "fluid.component",
+    label: "extra"
+});
+
+fluid.def("fluid.tests.sharedRecordsHost", {
+    $layers: ["fluid.tests.sharedRecordsBase", "{self}.extraLayers"],
+    extraLayers: []
+});
+
+QUnit.test("Merge records of definitions shared by components resolving the same chain", function (assert) {
+    const shadowOf = that => that[fluid.proxySymbol].shadow;
+    const recordOf = (that, name) => shadowOf(that).mergeRecords.find(mergeRecord => mergeRecord.mergeRecordName === name);
+    const first = fluid.tests.sharedRecordsHost({$layers: "fluid.tests.sharedRecordsExtra"});
+    const second = fluid.tests.sharedRecordsHost({$layers: "fluid.tests.sharedRecordsExtra"});
+    fluid.cell.stabilize();
+    assert.strictEqual(recordOf(first, "fluid.tests.sharedRecordsBase"), recordOf(second, "fluid.tests.sharedRecordsBase"),
+        "Merge record of a definition shared");
+    assert.strictEqual(first.$layers, second.$layers, "Resolved layers shared");
+
+    // The same chain, with its extra layer supplied dynamically, which upgrades the priority of that layer's record
+    const dynamic = fluid.tests.sharedRecordsHost({extraLayers: ["fluid.tests.sharedRecordsExtra"], label: "user"});
+    fluid.cell.stabilize();
+    assert.equal(dynamic.label, "extra", "Dynamically supplied layer beats a user record");
+    assert.equal(recordOf(dynamic, "fluid.tests.sharedRecordsExtra").mergeRecordType, "dynamicLayers", "Record of the dynamic layer upgraded");
+
+    const later = fluid.tests.sharedRecordsHost({$layers: "fluid.tests.sharedRecordsExtra", label: "user"});
+    fluid.cell.stabilize();
+    assert.equal(recordOf(later, "fluid.tests.sharedRecordsExtra").mergeRecordType, "def", "Shared record of the definition not upgraded");
+    assert.equal(later.label, "user", "User record beats the definition of a later instance of the same chain");
+    [first, second, dynamic, later].forEach(that => that.destroy());
+});
+
 fluid.def("fluid.tests.basicTestComponent", {
     $layers: "fluid.component",
     testValue: 0
@@ -2066,5 +2233,249 @@ QUnit.test("Value computed from a reference to a missing member is explained", f
     assert.ok(doubledCauses[0].message.endsWith("has no member count, although its parent component at path "
         + that[fluid.metadataSymbol].path + " does"), "Parent's member noted");
     assert.equal(doubledCauses[0].hint, fluid.parentMemberHintText, "Hint explains the meaning of {self}");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.keyedFor", {
+    $layers: "fluid.component",
+    assets: {
+        bootstrap: {href: "b.css"},
+        main: {href: "m.css"},
+        katex: {priority: 10, href: "k.css"},
+        late: {priority: "last", href: "l.css"},
+        print: {priority: "after:main", href: "p.css"}
+    },
+    tags: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{keyedFor}.assets",
+                valueAs: "asset",
+                keyAs: "key"
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.keyedForAdapted", {
+    $layers: "fluid.tests.keyedFor",
+    assets: {
+        early: {priority: "before:bootstrap", href: "e.css"},
+        main: null
+    }
+});
+
+QUnit.test("$for over a keyed collection honours priorities and skips removed entries", function (assert) {
+    const that = fluid.tests.keyedFor();
+    fluid.cell.stabilize();
+    assert.deepEqual(that.tags.list.map(member => member.key), ["katex", "bootstrap", "main", "print", "late"],
+        "Entries ordered by numeric, relative and extremal priorities, otherwise by key order");
+    assert.deepEqual(that.tags.list.map(member => member.asset.href), ["k.css", "b.css", "m.css", "p.css", "l.css"],
+        "Iteration variables follow their entries");
+    that.destroy();
+
+    const adapted = fluid.tests.keyedForAdapted();
+    fluid.cell.stabilize();
+    // print's target has been removed, and so it keeps its place amongst the entries with constraints
+    assert.deepEqual(adapted.tags.list.map(member => member.key), ["katex", "early", "bootstrap", "late", "print"],
+        "Entry contributed by a stronger layer placed by constraint, and entry removed by null skipped");
+    adapted.destroy();
+});
+
+fluid.def("fluid.tests.typeLookup", {
+    $layers: ["fluid.component", "{self}.typeLayers"],
+    type: "post",
+    candidates: "$compute:fluid.tests.typeLookup.candidates({self}.type)",
+    typeLayers: "$compute:fluid.firstDefinedLayer({self}.candidates)"
+});
+
+fluid.tests.typeLookup.candidates = type => ["fluid.tests.lookupType." + type, "fluid.tests.lookupType.default"];
+
+fluid.def("fluid.tests.lookupType.default", {
+    label: "default"
+});
+
+QUnit.test("Dynamic layers chosen from those which are defined", function (assert) {
+    assert.deepEqual(fluid.definedLayers("fluid.component", ["fluid.tests.lookupType.nonexistent", "fluid.tests.lookupType.default"]),
+        ["fluid.component", "fluid.tests.lookupType.default"], "Undefined layer filtered from candidates");
+    const that = fluid.tests.typeLookup();
+    fluid.cell.stabilize();
+    assert.equal(that.label, "default", "Fallback layer applied when preferred layer is not defined");
+    assert.notOk(fluid.isUnavailable(that), "Component is available");
+
+    fluid.def("fluid.tests.lookupType.post", {
+        label: "post"
+    });
+    fluid.cell.stabilize();
+    assert.equal(that.label, "post", "Preferred layer applied once it is defined");
+
+    that.type = "other";
+    fluid.cell.stabilize();
+    assert.equal(that.label, "default", "Fallback layer applied when type changes");
+
+    that.type = "post";
+    fluid.cell.stabilize();
+    fluid.deleteLayer("fluid.tests.lookupType.post");
+    fluid.cell.stabilize();
+    assert.equal(that.label, "default", "Fallback layer applied once preferred layer is deleted");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.linkTarget", {
+    $layers: "fluid.component",
+    adapted: false
+});
+
+fluid.def("fluid.tests.linkTarget.adapted", {
+    adapted: true
+});
+
+fluid.def("fluid.tests.conditionalLinkageHost", {
+    $layers: "fluid.component",
+    enabled: false,
+    holderLinkage: {
+        $linkage: [{
+            $if: "{self}.enabled",
+            inputLayers: "fluid.tests.linkTarget",
+            outputLayers: "fluid.tests.linkTarget.adapted"
+        }]
+    }
+});
+
+QUnit.test("$if on an entry of a $linkage record", function (assert) {
+    const host = fluid.tests.conditionalLinkageHost();
+    const target = fluid.tests.linkTarget();
+    fluid.cell.stabilize();
+    assert.equal(target.adapted, false, "Linkage whose condition is false is not applied");
+    host.enabled = true;
+    fluid.cell.stabilize();
+    assert.equal(target.adapted, true, "Linkage applied once its condition holds");
+    host.enabled = false;
+    fluid.cell.stabilize();
+    assert.equal(target.adapted, false, "Linkage withdrawn once its condition fails");
+    host.enabled = true;
+    fluid.cell.stabilize();
+    host.destroy();
+    fluid.cell.stabilize();
+    assert.equal(target.adapted, false, "Linkage withdrawn on destruction of its holder");
+    target.destroy();
+});
+
+fluid.def("fluid.tests.linkType.page", {});
+fluid.def("fluid.tests.linkType.post", {});
+
+fluid.def("fluid.tests.linkHeader", {
+    $layers: "fluid.component",
+    kind: "plain"
+});
+
+fluid.def("fluid.tests.linkHeader.post", {
+    kind: "post"
+});
+
+fluid.def("fluid.tests.linkDoc", {
+    $layers: ["fluid.component", "{self}.typeLayer"],
+    typeLayer: "fluid.tests.linkType.page",
+    header: {
+        $component: {
+            $layers: "fluid.tests.linkHeader"
+        }
+    },
+    inner: {
+        $component: {
+            $layers: "fluid.component",
+            header: {
+                $component: {
+                    $layers: "fluid.tests.linkHeader"
+                }
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.linkSite", {
+    $layers: "fluid.component",
+    docA: {
+        $component: {
+            $layers: "fluid.tests.linkDoc"
+        }
+    },
+    docB: {
+        $component: {
+            $layers: "fluid.tests.linkDoc",
+            typeLayer: "fluid.tests.linkType.post"
+        }
+    }
+});
+
+fluid.def("fluid.tests.linkSiteWithLinkage", {
+    $layers: "fluid.tests.linkSite",
+    headerLinkage: {
+        $linkage: [{
+            selector: "fluid.tests.linkType.post > fluid.tests.linkHeader",
+            outputLayers: "fluid.tests.linkHeader.post",
+            scope: "{self}"
+        }]
+    }
+});
+
+QUnit.test("Linkage by ancestor selector, confined to a scope", function (assert) {
+    const site = fluid.tests.linkSiteWithLinkage();
+    const other = fluid.tests.linkSite();
+    fluid.cell.stabilize();
+    assert.equal(site.docA.header.kind, "plain", "Header within page document not adapted");
+    assert.equal(site.docB.header.kind, "post", "Header which is child of post document adapted");
+    assert.equal(site.docB.inner.header.kind, "plain", "Header which is not a direct child of post document not adapted");
+    assert.equal(other.docB.header.kind, "plain", "Header of post document outside linkage's scope not adapted");
+
+    site.docA.typeLayer = "fluid.tests.linkType.post";
+    fluid.cell.stabilize();
+    assert.equal(site.docA.header.kind, "post", "Header adapted once its parent acquires the layer matched by the selector");
+    site.docA.typeLayer = "fluid.tests.linkType.page";
+    fluid.cell.stabilize();
+    assert.equal(site.docA.header.kind, "plain", "Adaptation withdrawn once its parent loses the layer");
+
+    site.destroy();
+    fluid.cell.stabilize();
+    assert.equal(other.docB.header.kind, "plain", "Header outside scope unaffected by destruction of linkage");
+    other.destroy();
+});
+
+fluid.def("fluid.tests.precedence.base", {
+    $layers: "fluid.component",
+    kind: "base"
+});
+
+fluid.def("fluid.tests.precedence.post", {
+    kind: "post"
+});
+
+fluid.def("fluid.tests.precedence.doc", {
+    $layers: "fluid.component",
+    header: {
+        $component: {
+            $layers: "fluid.tests.precedence.base"
+        }
+    }
+});
+
+fluid.def("fluid.tests.precedence.type", {
+    header: {
+        $component: {
+            $layers: ["fluid.tests.precedence.post", "fluid.tests.precedence.base"]
+        }
+    }
+});
+
+fluid.def("fluid.tests.precedence.typedDoc", {
+    $layers: ["fluid.tests.precedence.type", "fluid.tests.precedence.doc"]
+});
+
+QUnit.test("Layers named by a stronger subcomponent record are stronger, in the order it lists them", function (assert) {
+    const that = fluid.tests.precedence.typedDoc();
+    fluid.cell.stabilize();
+    assert.equal(that.header.kind, "post", "Layer listed first by the stronger record wins");
+    assert.deepEqual(that.header.$layers, ["fluid.component", "fluid.tests.precedence.base", "fluid.tests.precedence.post"],
+        "Layers ordered weakest first");
     that.destroy();
 });

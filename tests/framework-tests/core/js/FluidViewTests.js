@@ -674,10 +674,12 @@ QUnit.test("Conditional rendering", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.assigneeIf({container});
     fluid.cell.stabilize();
-    // Unfortunately we can't prevent allocation of the "outer container", even if there is no component
-    assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
-    // The conditional component's container acquires a default id derived from its path whilst it is rendered
+    // The conditional component's container acquires a default id derived from its path, which it bears even whilst
+    // the component renders nothing - its element remains, since the record of a conditional subcomponent does not
+    // govern its element in the template, as an element bearing @if does
     const assigneeId = `fl-id-${that[fluid.metadataSymbol].path}.assignee`;
+    const emptyMarkup = `<div id="${assigneeId}"></div>`;
+    assert.equal(container.innerHTML, emptyMarkup, "Initial render correct");
 
     that.enabled = true;
     fluid.cell.stabilize();
@@ -685,7 +687,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = false;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+    assert.equal(container.innerHTML, emptyMarkup, "Restored initial render");
 
     that.enabled = true;
     fluid.cell.stabilize();
@@ -693,7 +695,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = false;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+    assert.equal(container.innerHTML, emptyMarkup, "Restored initial render");
 });
 
 fluid.def("fluid.tests.longFormIf", {
@@ -727,8 +729,9 @@ QUnit.test("Conditional rendering with long-form $if record - fluid-project/infu
     const container = qs(".container");
     const that = fluid.tests.longFormIf({container});
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, "<div></div>", "Initial render correct");
     const distanceId = `fl-id-${that[fluid.metadataSymbol].path}.distanceLine`;
+    const emptyMarkup = `<div id="${distanceId}"></div>`;
+    assert.equal(container.innerHTML, emptyMarkup, "Initial render correct");
 
     that.distance = 0;
     fluid.cell.stabilize();
@@ -740,7 +743,7 @@ QUnit.test("Conditional rendering with long-form $if record - fluid-project/infu
 
     that.distance = null;
     fluid.cell.stabilize();
-    assert.equal(container.innerHTML, "<div></div>", "Restored initial render");
+    assert.equal(container.innerHTML, emptyMarkup, "Restored initial render");
 });
 
 fluid.def("fluid.tests.containerIds", {
@@ -1200,4 +1203,431 @@ QUnit.test("Errors in rendering are reported to the nearest error boundary, or r
         "Failure of component's own layer rendered in place where there is no boundary");
     fluid.destroyComponent(rejectedFree);
     container.replaceChildren();
+});
+
+/**
+ * Summarise the element children of a node as their tag names, each followed by its classes
+ * @param {Element} element - The node whose children are summarised
+ * @return {String[]} A summary of each child, e.g. "h2.sub"
+ */
+fluid.tests.childSummary = element => [...element.children].map(child =>
+    child.localName + [...child.classList].map(clazz => "." + clazz).join(""));
+
+fluid.tests.urlize = text => text.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+fluid.tests.joinWith = (a, separator, b) => a + separator + b;
+
+fluid.def("fluid.tests.templateCall", {
+    $layers: "fluid.component",
+    tag: "Hello World",
+    other: "there",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div>
+                <a href="/tags/@{fluid.tests.urlize({self}.tag)}/" title="@{fluid.tests.urlize({self}.tag)}">@{tag}</a>
+                <span class="joined">@{fluid.tests.joinWith({self}.tag, -, {templateCall}.other)}</span>
+                <span class="literal" title="@@{tag}">count is @@{count} and @{other}</span>
+            </div>`
+        }
+    }
+});
+
+QUnit.test("Function calls and escaped references in template bindings", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.templateCall({container});
+    fluid.cell.stabilize();
+    const link = qs("a", container);
+    assert.equal(link.getAttribute("href"), "/tags/hello-world/", "Call interpolated into attribute");
+    assert.equal(link.getAttribute("title"), "hello-world", "Call alone bound as attribute value");
+    assert.equal(qs(".joined", container).textContent, "Hello World-there", "Call with several arguments interpolated into text");
+    assert.equal(qs(".literal", container).textContent, "count is @{count} and there", "@@{ renders a literal @{ in text");
+    assert.equal(qs(".literal", container).getAttribute("title"), "@{tag}", "@@{ renders a literal @{ in an attribute");
+
+    that.tag = "Other Tag";
+    fluid.cell.stabilize();
+    assert.equal(link.getAttribute("href"), "/tags/other-tag/", "Call recomputed when its argument changes");
+    assert.equal(qs(".joined", container).textContent, "Other Tag-there", "Text call recomputed when its argument changes");
+    assert.equal(qs("a", container), link, "Element undisturbed by update");
+    that.destroy();
+});
+
+QUnit.test("Parsing of interpolated expressions", function (assert) {
+    const tokens = fluid.parseAtStringTemplate("a @{x.y} @{{ctx}.p.q} @{f.g({self}.h, 3)} @@{lit} @{unclosed");
+    assert.deepEqual(tokens.map(token => typeof(token) === "string" ? token : token.call ? {call: token.call} : {parsed: token.parsed}), [
+        "a ", {parsed: {context: "self", path: "x.y"}}, " ",
+        {parsed: {context: "ctx", path: "p.q", name: undefined, selector: undefined}}, " ",
+        {call: {func: "f.g", args: ["{self}.h", 3]}}, " @{lit} @{unclosed"
+    ], "Paths, references, calls, escapes and unclosed expressions parsed");
+});
+
+fluid.def("fluid.tests.island", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<figure class="island"><img src="@{dataset.src}"/><figcaption>@{dataset.caption}</figcaption></figure>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.verbatimContent", {
+    $layers: "fluid.component",
+    html: `<p class="first">count is @{count} <em>a</em> <em>b</em></p><pre>x  y
+
+z</pre><div fluid-layers="fluid.tests.island" data-src="a.png" data-image-caption="A caption"></div><p class="last">after</p>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            verbatim: true,
+            template: "{$parent}.html"
+        }
+    }
+});
+
+fluid.def("fluid.tests.islandCaption", {
+    $layers: "fluid.tests.island",
+    view: {
+        $component: {
+            template: `<figure class="island"><img src="@{dataset.src}"/><figcaption>@{dataset.imageCaption}</figcaption></figure>`
+        }
+    }
+});
+
+QUnit.test("Verbatim markup with component islands", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.verbatimContent({container});
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["p.first", "pre", "div.island", "p.last"],
+        "All top-level nodes of verbatim markup rendered within the container");
+    assert.equal(qs(".first", container).textContent, "count is @{count} a b", "Text not interpolated, and whitespace kept");
+    assert.equal(qs("pre", container).textContent, "x  y\n\nz", "Whitespace within pre kept");
+    assert.equal(qs(".island img", container).getAttribute("src"), "a.png", "Island rendered by its layers, reading its dataset");
+    const islandShadow = that[fluid.metadataSymbol].childComponents["island-1"];
+    assert.ok(islandShadow && fluid.hasLayer(islandShadow.that, "fluid.tests.island"), "Island is a child component bearing its layers");
+    assert.equal(qs(".island", container).getAttribute("fluid-layers"), "fluid.tests.island", "Island element keeps its attributes");
+
+    that.html = `<p class="changed">Changed</p><span fluid-layers="fluid.tests.islandCaption" data-src="b.png" data-image-caption="B"></span>`;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["p.changed", "span.island"], "Changed markup rendered");
+    assert.equal(qs(".island figcaption", container).textContent, "B", "Island with different layers rendered");
+    assert.ok(fluid.hasLayer(that[fluid.metadataSymbol].childComponents["island-1"].that, "fluid.tests.islandCaption"),
+        "Island component bears the layers of its new element");
+
+    that.html = `<p>No islands</p>`;
+    fluid.cell.stabilize();
+    assert.notOk(that[fluid.metadataSymbol].childComponents["island-1"], "Island component destroyed once its element is gone");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.ifElse", {
+    $layers: "fluid.component",
+    subtitle: null,
+    showRule: true,
+    showMeta: false,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div>
+                <h1>Title</h1>
+                <hr @if="showRule" class="rule"/>
+                <h2 @if="{self}.subtitle" class="sub">@{subtitle}</h2>
+                <p @else class="nosub">No subtitle</p>
+                <div @if="!@{showRule}" class="norule"><span @id="meta"></span></div>
+                <span class="end">end</span>
+            </div>`
+        }
+    },
+    meta: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<span class="meta">@{{ifElse}.subtitle}</span>`
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Element-level conditionals with @if and @else", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.ifElse({container});
+    fluid.cell.stabilize();
+    const end = qs(".end", container);
+    assert.deepEqual(fluid.tests.childSummary(container), ["h1", "hr.rule", "p.nosub", "span.end"], "Initial render");
+    assert.notOk(qs(".rule", container).hasAttribute("id"), "Anonymous block acquires no default id");
+
+    that.subtitle = "Sub";
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["h1", "hr.rule", "h2.sub", "span.end"], "@else replaced by @if");
+    assert.equal(qs(".sub", container).textContent, "Sub", "Reference within block resolved against the template's component");
+
+    that.showRule = false;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["h1", "h2.sub", "div.norule", "span.end"], "Elements omitted and inserted");
+    assert.equal(qs(".norule .meta", container)?.textContent, "Sub", "Subcomponent designated by @id within block rendered");
+
+    that.subtitle = null;
+    that.showRule = true;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["h1", "hr.rule", "p.nosub", "span.end"], "Initial render restored");
+    assert.equal(qs(".end", container), end, "Unconditional element undisturbed throughout");
+    const childNames = Object.keys(that[fluid.metadataSymbol].childComponents).filter(name => name !== "view" && name !== "meta");
+    assert.deepEqual(childNames.sort(), ["else-1", "if-1"], "Only blocks whose conditions hold exist");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.partialBase", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: ["fluid.templateViewComponent", "fluid.partialViewComponent"],
+            template: `<header><h1 class="title">Title</h1><nav @id="navbar"></nav><p class="doomed">Doomed</p><div class="old">Old</div></header>`
+        }
+    },
+    navbar: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: "<nav>Nav</nav>"
+                }
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.partialMeta", {
+    view: {
+        $component: {
+            relativeContainer: "last: h1.title",
+            partialTemplate: `<span class="meta">Meta</span>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.partialMeta2", {
+    view: {
+        $component: {
+            relativeContainer: "last: h1.title",
+            partialTemplate: `<span class="meta2">Meta2</span>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.partialTwoPlaces", {
+    view: {
+        $component: {
+            relativeContainer: "after: @navbar",
+            partialTemplate: `<div class="modal">Modal</div><div class="modal2">Modal2</div><b @relative="first: header" class="first">First</b>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.partialRemove", {
+    view: {
+        $component: {
+            relativeContainer: "remove: .doomed"
+        }
+    }
+});
+
+fluid.def("fluid.tests.partialReplace", {
+    view: {
+        $component: {
+            relativeContainer: "replace: header > .old",
+            partialTemplate: `<div class="new">New</div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.partialAll", {
+    $layers: ["fluid.tests.partialBase", "fluid.tests.partialMeta", "fluid.tests.partialMeta2", "fluid.tests.partialTwoPlaces",
+        "fluid.tests.partialRemove", "fluid.tests.partialReplace"]
+});
+
+fluid.def("fluid.tests.partialRedirect", {
+    $layers: "fluid.tests.partialAll",
+    view: {
+        $component: {
+            partialTemplateLayers: {
+                "fluid.tests.partialMeta2": {
+                    relativeContainer: "before: @navbar"
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Partial templates composited by selector, in order of layer precedence", function (assert) {
+    const container = qs(".container");
+    const that = fluid.initFreeComponent("fluid.tests.partialAll", {container});
+    fluid.cell.stabilize();
+    const path = that[fluid.metadataSymbol].path;
+    assert.deepEqual(fluid.tests.childSummary(container), ["b.first", "h1.title", "nav", "div.modal", "div.modal2", "div.new"],
+        "Partials composited first, after, by member, replacing and removing");
+    // Of the layers listed as parents of fluid.tests.partialAll, those listed earlier are stronger
+    assert.deepEqual(fluid.tests.childSummary(qs("h1", container)), ["span.meta2", "span.meta"],
+        "Partials at the same cutpoint follow in order of layer precedence, weakest first");
+    assert.equal(qs("nav", container).id, `fl-id-${path}.navbar`, "Element of subcomponent bears id derived from its path");
+    assert.notOk(qs(".first", container).hasAttribute("@relative"), "Own cutpoint of partial node not rendered");
+    that.destroy();
+
+    const redirected = fluid.initFreeComponent("fluid.tests.partialRedirect", {container});
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["b.first", "h1.title", "span.meta2", "nav", "div.modal", "div.modal2", "div.new"],
+        "Cutpoint of a partial overridden by another layer");
+    redirected.destroy();
+});
+
+fluid.def("fluid.tests.hostedOutputPage", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: ["fluid.templateViewComponent", "fluid.outputDocumentView"],
+            documentLocation: "elsewhere/index.html",
+            template: `<html><body><h1>Elsewhere</h1></body></html>`
+        }
+    }
+});
+
+QUnit.test("An output document view on the client renders only into its own document", function (assert) {
+    const here = document.location.href;
+    assert.equal(fluid.hostDocumentElement(here), document.documentElement, "Output document at this location is this document");
+    assert.equal(fluid.pageUrlOf("dir/index.html?q=1#top", "http://example.org/site/"), fluid.pageUrlOf("dir/", "http://example.org/site/"),
+        "Final index.html, query and fragment do not distinguish a page");
+    assert.ok(fluid.isUnavailable(fluid.hostDocumentElement("elsewhere/index.html")), "Output document elsewhere is not this document");
+    assert.notOk(fluid.isOutputDocument(document), "The client's own document is not an output document");
+
+    // A site whose base URL is on another origin, but whose path is that of this document's directory - as when a site
+    // published at https://example.org/... is served locally
+    const dirPath = new URL("./", here).pathname;
+    const fileName = new URL(here).pathname.substring(dirPath.length);
+    const baseURL = "https://example.org" + dirPath.replace(/\/$/, "");
+    assert.equal(fluid.sitePathOf("https://example.org/blog/post/x/index.html", undefined, "https://example.org/blog"), "post/x/",
+        "Path of page relative to site");
+    assert.equal(fluid.sitePathOf("https://example.org/other/", undefined, "https://example.org/blog"), undefined,
+        "Page outside the site's path has no path within it");
+    assert.equal(fluid.hostDocumentElement(baseURL + "/" + fileName, baseURL), document.documentElement,
+        "Output document at this path relative to the site's base is this document, whatever its origin");
+    assert.equal(fluid.hostDocumentElement(fileName, baseURL), document.documentElement,
+        "Relative location resolved against the site's base URL");
+    assert.ok(fluid.isUnavailable(fluid.hostDocumentElement(baseURL + "/", baseURL)),
+        "The site's home page is not this document");
+    assert.ok(fluid.isUnavailable(fluid.hostDocumentElement(baseURL + "/elsewhere/" + fileName, baseURL)),
+        "Output document at another path of the site is not this document");
+
+    // A page recording the site's root as its parent directory, as when a site published at https://example.org/blog/
+    // is previewed from files in some other directory
+    const dirName = dirPath.split("/").filter(segment => segment).pop();
+    const html = document.documentElement;
+    html.setAttribute(fluid.siteRootAttribute, "../");
+    assert.equal(fluid.hostDocumentElement("https://example.org/blog/" + dirName + "/" + fileName, "https://example.org/blog"),
+        html, "Output document at this path relative to the site's root recorded in this document is this document");
+    assert.ok(fluid.isUnavailable(fluid.hostDocumentElement("https://example.org/blog/" + fileName, "https://example.org/blog")),
+        "Output document at another path relative to the recorded root is not this document");
+    html.removeAttribute(fluid.siteRootAttribute);
+    assert.deepEqual(["post/x/", "404.html", ""].map(fluid.relativeSiteRoot), ["../../", "./", "./"],
+        "Relative URL of the site's root from pages of the site");
+
+    const that = fluid.tests.hostedOutputPage();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(that.view.container), "View of output document elsewhere has no container");
+    assert.notOk(document.querySelector("h1")?.textContent === "Elsewhere", "Nothing rendered into this document");
+    that.destroy();
+});
+
+QUnit.test("Scripts classified by their role", function (assert) {
+    const holder = document.createElement("div");
+    holder.innerHTML = `<script src="FluidCore.js" fluid-hydrated="%infusion-6"></script>
+        <script id="fl-script-some.layer-0">fluid.def("some.layer", {});</script>
+        <script type="${fluid.inertScriptType}">fluid.def("other.layer", {});</script>
+        <script src="katex.js" fluid-client defer></script>
+        <script>console.log("page");</script>`;
+    assert.deepEqual([...holder.querySelectorAll("script")].map(fluid.classifyScriptNode),
+        ["framework", "injection", "injection", "client", "page"], "Each script classified");
+});
+
+fluid.def("fluid.tests.fragmentSlots", {
+    $layers: "fluid.component",
+    links: ["a.css", "b.css"],
+    tags: ["x", "y"],
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><span class="first">First</span><fluid-fragment @id="linkTags"></fluid-fragment><fluid-fragment @id="single"></fluid-fragment><p @id="tagLinks" class="tags"></p><span class="last">Last</span></div>`
+        }
+    },
+    linkTags: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{fragmentSlots}.links",
+                valueAs: "link"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<link rel="stylesheet" href="@{link}">`
+                }
+            }
+        }
+    },
+    single: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<em>one</em><em>two</em>`
+                }
+            }
+        }
+    },
+    tagLinks: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{fragmentSlots}.tags",
+                valueAs: "tag"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<a href="/tags/@{tag}/">@{tag}</a>&nbsp;`
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Fragment slots and list members with several top-level nodes render no wrapping elements", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.fragmentSlots({container});
+    fluid.cell.stabilize();
+    const first = qs(".first", container);
+    assert.deepEqual(fluid.tests.childSummary(container), ["span.first", "link", "link", "em", "em", "p.tags", "span.last"],
+        "Members of a list and nodes of a child rendered in place of their fragment slots");
+    assert.deepEqual(qsa("link", container).map(link => link.getAttribute("href")), ["a.css", "b.css"], "List members rendered");
+    assert.deepEqual([fluid.tests.childSummary(qs(".tags", container)), qs(".tags", container).textContent], [["a", "a"], "x\u00a0y\u00a0"],
+        "Both top-level nodes of each list member rendered, without wrapping elements");
+
+    that.links = ["c.css"];
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["span.first", "link", "em", "em", "p.tags", "span.last"],
+        "Fragment slot updated when its list changes");
+    assert.equal(qs("link", container).getAttribute("href"), "c.css", "Updated member rendered");
+    assert.equal(qs(".first", container), first, "Other nodes undisturbed");
+    that.destroy();
+});
+
+QUnit.test("Only top-level blocks of an SFC define it", function (assert) {
+    const vTree = fluid.parseHTMLToTree(`<script>fluid.def("x", {});</script><template><div><script src="client.js"></script><style>.a {}</style></div></template>`);
+    assert.equal(fluid.sfcBlocks(vTree, "script").length, 1, "Script within the template is not a block of the SFC");
+    assert.equal(fluid.sfcBlocks(vTree, "style").length, 0, "Style within the template is not a block of the SFC");
 });

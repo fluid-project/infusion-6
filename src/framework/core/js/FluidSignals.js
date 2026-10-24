@@ -144,7 +144,8 @@ const $fluidSignalsScope = function (fluid) {
      * @property {CacheState} _state - The cache state of the cell (clean, check, or dirty).
      * @property {CacheState} _prePendingState - A "high watermark" of our _state at the point we went into a pending state
      * @property {Cell|null} _dirtyFrom - Cell from along which we were dirtied
-     * @property {Cell[]|null} _observers - Cells that have us as sources (out links)
+     * @property {Map<Cell, Number>|null} _observers - Cells that have us as sources (out links), in the order in which
+     * they began to observe us, each with the number of times it does so - see fluid.cell.addObserver
      * @property {Edge[]|null} _inEdges - Array of incoming edges which could update this node
      * @property {Cell[]|null} _consumedSources - Sources from which arcs have been traversed during this fit
      * @property {CellTrackingRecord|null} _trackingRecord - Captures dynamic dependency tracking information for an update which is in progress
@@ -211,6 +212,36 @@ const $fluidSignalsScope = function (fluid) {
 
     fluid.cell.cellId = 0;
 
+    /**
+     * Record that a cell observes a source, once more. Since an edge's sources are not deduplicated, a cell may observe
+     * the same source several times, and is counted each time, so that it remains an observer until it has been
+     * removed as many times as it was added. A map is used rather than an array of observers since a widely-shared
+     * source, e.g. the definition of a base layer, may acquire tens of thousands of observers, from which each removal
+     * would otherwise be a linear search.
+     * @param {Cell} source - The cell which is observed
+     * @param {Cell} observer - The cell which observes it
+     */
+    fluid.cell.addObserver = function (source, observer) {
+        if (!source._observers) {
+            source._observers = new Map();
+        }
+        source._observers.set(observer, (source._observers.get(observer) || 0) + 1);
+    };
+
+    /**
+     * Withdraw one record that a cell observes a source - see fluid.cell.addObserver
+     * @param {Cell} source - The cell which is observed
+     * @param {Cell} observer - The cell which observes it
+     */
+    fluid.cell.removeObserver = function (source, observer) {
+        const count = source._observers?.get(observer);
+        if (count === 1) {
+            source._observers.delete(observer);
+        } else if (count !== undefined) {
+            source._observers.set(observer, count - 1);
+        }
+    };
+
     // Separately capture this so that calls to fluid.cell can be wrapped
     fluid.cellPrototype = fluid.cell.prototype;
 
@@ -219,7 +250,8 @@ const $fluidSignalsScope = function (fluid) {
     }, "config"));
 
     /** @type {Fit[]} Array of all currently active fits */
-    fluid.cell.CurrentFits = [];
+    // The fits currently open, in the order they were started - a Set so that ending one is cheap with many open
+    fluid.cell.CurrentFits = new Set();
 
     fluid.cell.fitId = 0;
 
@@ -248,7 +280,7 @@ const $fluidSignalsScope = function (fluid) {
      */
     fluid.cell.startFit = () => {
         const fit = fluid.cell.makeFit(false);
-        fluid.cell.CurrentFits.push(fit);
+        fluid.cell.CurrentFits.add(fit);
         fluid.cell.idleSignal.set(false);
         return fit;
     };
@@ -276,8 +308,8 @@ const $fluidSignalsScope = function (fluid) {
             fluid.cell.flushFit(fit, coalesce, true);
 
             fit.isActive = false;
-            fluid.removeArrayElement(fluid.cell.CurrentFits, fit);
-            if (fluid.cell.CurrentFits.length === 0) {
+            fluid.cell.CurrentFits.delete(fit);
+            if (fluid.cell.CurrentFits.size === 0) {
                 fluid.cell.idleSignal.set(true);
             }
         }
@@ -287,7 +319,7 @@ const $fluidSignalsScope = function (fluid) {
         const pendingFits = [];
         fluid.cell.untracked( () => {
             // Iterate over a copy, since endFit removes the fit from fluid.cell.CurrentFits, which may be the argument
-            touchedFits.slice().forEach(oneFit => {
+            [...touchedFits].forEach(oneFit => {
                 const pendingEffects = fluid.cell.filterPendingEffects(oneFit.targetsConsumed);
                 if (pendingEffects.length === 0) {
                     fluid.cell.endFit(oneFit);
@@ -345,6 +377,26 @@ const $fluidSignalsScope = function (fluid) {
      * @param {Cell} target - The target cell for which sources are being culled.
      * @param {Array[Cell]} inSources - The array of source cells to be added to the culled sources list.
      */
+    /**
+     * Determine whether an update of a cell along an edge needs to be enlisted in a fit before it is computed. A fit
+     * serves to record the traversal of one leg of a bidirectional arc, so that the reverse leg is not traversed within
+     * the same update, and to carry the source markers supplied to `cell.set`. Neither is needed by an update which
+     * touches no active fit and whose edge has no reverse arc, e.g. the first pull of a freshly constructed computed
+     * cell, which is then not enlisted - other than an asynchronous update, which always is. An effect so updated is
+     * enlisted afterwards should it then be pending, so that it holds a fit open - see fluid.cell.update.
+     * @param {Cell} target - The cell which is to be updated
+     * @param {Edge} inEdge - The edge along which it is to be updated
+     * @return {Boolean} `true` if the update is to be enlisted in a fit
+     */
+    fluid.cell.needsFit = function (target, inEdge) {
+        const sources = inEdge.sources;
+        const isActive = cell => cell._fit !== null && cell._fit.isActive;
+        // A source which observes the target, or will once its edge is first computed, is the far end of a reverse arc
+        const hasReverseArc = source => !!source._inEdges && source._inEdges.some(edge =>
+            edge.sources?.includes(target) || edge.staticSources?.includes(target));
+        return inEdge.isAsync || isActive(target) || !!sources && (sources.some(isActive) || sources.some(hasReverseArc));
+    };
+
     fluid.cell.enlistInFit = function (target, inSources) {
         const sourceFits = [];
         const storeFit = function (sourceFit) {
@@ -439,13 +491,8 @@ const $fluidSignalsScope = function (fluid) {
             }
 
             for (let i = $t.CurrentGetsIndex; i < inEdge.sources.length; i++) {
-                // Add ourselves to the end of the parent .observers array
-                const source = inEdge.sources[i];
-                if (!source._observers) {
-                    source._observers = [cell];
-                } else {
-                    source._observers.push(cell);
-                }
+                // Add ourselves to the end of the parent's observers
+                fluid.cell.addObserver(inEdge.sources[i], cell);
             }
         } else if (inEdge.sources && $t.CurrentGetsIndex < inEdge.sources.length) {
             // We didn't diverge but demanded strictly fewer sources than our predecessor, trim the excess
@@ -605,11 +652,7 @@ const $fluidSignalsScope = function (fluid) {
                 for (let i = 0; i < staticSources.length; i++) {
                     const source = staticSources[i];
                     if (source instanceof fluid.cell) {
-                        if (!source._observers) {
-                            source._observers = [this];
-                        } else {
-                            source._observers.push(this);
-                        }
+                        fluid.cell.addObserver(source, this);
                     }
                 }
             }
@@ -713,8 +756,7 @@ const $fluidSignalsScope = function (fluid) {
             markedSources.push(cell);
             if (cell._observers) {
                 const consumedSources = cell._consumedSources;
-                for (let i = 0; i < cell._observers.length; i++) {
-                    const observer = cell._observers[i];
+                for (const observer of cell._observers.keys()) {
                     if (!consumedSources?.includes(observer) && !markedSources.includes(observer)) {
                         fluid.cell.markStale(observer, CacheCheck, markedSources, cell, toPending, false, earlyCutoff);
                     }
@@ -764,8 +806,7 @@ const $fluidSignalsScope = function (fluid) {
             if (cell._observers) {
                 const consumedSources = cell._consumedSources;
                 // We've changed value, so mark our children as dirty so they'll reevaluate
-                for (let i = 0; i < cell._observers.length; i++) {
-                    const observer = cell._observers[i];
+                for (const observer of cell._observers.keys()) {
                     if (!consumedSources?.includes(observer)) {
                         // Milo's implementation for some reason did this directly rather than recursively
                         fluid.cell.markStale(observer, CacheDirty, [cell], cell, toPending, fromPending, earlyCutoff);
@@ -822,13 +863,14 @@ const $fluidSignalsScope = function (fluid) {
     fluid.cell.prototype.set = function (value, options) {
         this._state = CacheClean;
         if (!fluid.cell.equals(this._value, value)) {
-            if (!this._fit || !this._fit.isActive) {
+            const source = options?.source || fluid.cell.ambientSource;
+            // A fit is only started to carry a source marker - see fluid.cell.needsFit
+            if (source && (!this._fit || !this._fit.isActive)) {
                 this._fit = fluid.cell.startFit();
             }
             if (this._fit && this._fit.isActive && !this._fit.staticFit) {
                 fluid.cell.flushFit(this._fit, false, true);
             }
-            const source = options?.source || fluid.cell.ambientSource;
             if (source && !this._fit.sources.includes(source)) {
                 this._fit.sources.push(source);
             }
@@ -908,13 +950,23 @@ const $fluidSignalsScope = function (fluid) {
     };
 
     // Utility temporarily required because fits are not properly propagating across linked updates
+    /**
+     * Find the fit in which a cell is enlisted, or else that of the nearest cell along the chain from which it was
+     * dirtied. The chain may be cyclic, e.g. across a bidirectional arc, of whose cells none is enlisted.
+     * @param {Cell} cell - The cell whose fit is to be found
+     * @return {Fit|undefined} The fit, if any
+     */
     fluid.cell.findFit = function (cell) {
-        while (cell) {
+        const visited = new Set();
+        let togo;
+        while (cell && togo === undefined && !visited.has(cell)) {
+            visited.add(cell);
             if (cell._fit !== null) {
-                return cell._fit;
+                togo = cell._fit;
             }
             cell = cell._dirtyFrom;
         }
+        return togo;
     };
 
     /**
@@ -931,7 +983,10 @@ const $fluidSignalsScope = function (fluid) {
 
         fluid.cell.beginTracking(cell, inEdge);
 
-        fluid.cell.enlistInFit(cell, inEdge.sources);
+        const enlisted = fluid.cell.needsFit(cell, inEdge);
+        if (enlisted) {
+            fluid.cell.enlistInFit(cell, inEdge.sources);
+        }
 
         const oldValue = fluid.isUnavailable(cell._value) ? cell._value.staleValue : cell._value;
 
@@ -947,7 +1002,7 @@ const $fluidSignalsScope = function (fluid) {
             const args = inEdge.staticSources ? inEdge.staticSources.map(mapArg) : [];
             const {unavailable} = fluid.cell.mapSignalArgs(args, cell._value);
 
-            const fit = fluid.cell.findFit(cell);
+            const fit = inEdge.excludeSource || inEdge.includeSource ? fluid.cell.findFit(cell) : undefined;
 
             // Skip notification if the fit has an excluded source
             if (inEdge.excludeSource) {
@@ -993,6 +1048,10 @@ const $fluidSignalsScope = function (fluid) {
 
             fluid.cell.updateDynamicDependencies(cell, inEdge);
             fluid.cell.endTracking(cell);
+        }
+        // A pending effect holds open the fit in which it is enlisted until it is no longer pending - see fluid.cell.settle
+        if (!enlisted && cell._isEffect && fluid.isPending(cell._value)) {
+            fluid.cell.enlistInFit(cell, inEdge.sources);
         }
     };
 
@@ -1103,14 +1162,7 @@ const $fluidSignalsScope = function (fluid) {
         }
         for (let i = index; i < edge.sources.length; i++) {
             // Misleading former comment:  // We don't actually delete sources here because we're replacing the entire array soon
-            const source = edge.sources[i];
-            if (!source._observers) {
-                continue;
-            }
-            const ourIndex = source._observers.findIndex(v => v === cell);
-            if (ourIndex !== -1) {
-                fluid.removeAtIndex(source._observers, ourIndex);
-            }
+            fluid.cell.removeObserver(edge.sources[i], cell);
         }
     };
 
@@ -1342,7 +1394,7 @@ const $fluidSignalsScope = function (fluid) {
      * @return {Boolean} `true` if the graph is quiescent
      */
     fluid.cell.isQuiescent = function () {
-        return fluid.cell.EffectQueue.length === 0 && fluid.cell.CurrentFits.every(fit => fit.staticFit);
+        return fluid.cell.EffectQueue.length === 0 && [...fluid.cell.CurrentFits].every(fit => fit.staticFit);
     };
 
     /**
@@ -1351,7 +1403,7 @@ const $fluidSignalsScope = function (fluid) {
      * @return {Cell[]} The pending effects in open fits
      */
     fluid.cell.pendingEffects = function () {
-        return fluid.cell.untracked(() => fluid.cell.CurrentFits.flatMap(fit => fluid.cell.filterPendingEffects(fit.targetsConsumed)));
+        return fluid.cell.untracked(() => [...fluid.cell.CurrentFits].flatMap(fit => fluid.cell.filterPendingEffects(fit.targetsConsumed)));
     };
 
     /**

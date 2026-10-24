@@ -41,7 +41,8 @@
         "start": "serve",
         "test": "node tests/test-core/qunit/js/fqunit-cli.js",
         "test:browser": "node tests/test-core/browser/js/demo-runner.js",
-        "hydrate-test": "node tests/framework-tests/server/hydrate-test.js"
+        "hydrate-test": "node tests/framework-tests/server/hydrate-test.js",
+        "output-documents-test": "node tests/framework-tests/server/output-documents-test.js"
     },
     "engines": {
         "node": ">=16"

@@ -281,20 +281,56 @@ const $fluidILScope = function (fluid) {
      */
     fluid.layerNamesToScope = function (targetScope, layerNames, shadow) {
         fluid.clear(targetScope);
-        fluid.each(layerNames, function (layerName) {
-            if (!fluid.isReferenceOrExpander(layerName)) {
-                const def = fluid.readLayer(layerName)._value.raw;
-                if (def && def.$variety !== "framework") {
-                    const rec = {value: shadow, priority: fluid.contextName};
-                    targetScope[layerName] = rec;
-                    targetScope[fluid.computeNickName(layerName)] = rec;
-                }
-                if (layerName === "fluid.resolveRoot") {
-                    shadow.resolveRoot = true;
-                }
-            }
-        });
+        const {contextNames, resolveRoot} = fluid.layerScopeNames(layerNames);
+        if (contextNames.length > 0) {
+            // A single record serves for all of the names - records in a scope are replaced, never modified
+            const rec = {value: shadow, priority: fluid.contextName};
+            contextNames.forEach(contextName => targetScope[contextName] = rec);
+        }
+        if (resolveRoot) {
+            shadow.resolveRoot = true;
+        }
         return targetScope;
+    };
+
+    // The context names of resolved lists of layer names, as found by fluid.layerScopeNames
+    /** @type {WeakMap<String[], LayerScopeNames>} */
+    fluid.layerScopeNamesCache = new WeakMap();
+
+    /**
+     * @typedef {Object} LayerScopeNames
+     * @property {String[]} contextNames - The context names under which a component with the layers is placed in scope
+     * @property {Boolean} resolveRoot - `true` if one of the layers is `fluid.resolveRoot`
+     */
+
+    /**
+     * Determine the context names contributed by a list of layer names - each name of a layer which is not of the
+     * framework's variety, together with its nickname. A component's resolved `$layers` member is the same array for
+     * every component resolving the same chain of the same definitions - see `fluid.definitionMergeRecords` - and so
+     * these are found once for each such chain.
+     * @param {String[]} layerNames - The layer names
+     * @return {LayerScopeNames} The context names, and whether the layers include `fluid.resolveRoot`
+     */
+    fluid.layerScopeNames = function (layerNames) {
+        let togo = Array.isArray(layerNames) ? fluid.layerScopeNamesCache.get(layerNames) : undefined;
+        if (!togo) {
+            togo = {contextNames: [], resolveRoot: false};
+            fluid.each(layerNames, function (layerName) {
+                if (!fluid.isReferenceOrExpander(layerName)) {
+                    const def = fluid.readLayer(layerName)._value.raw;
+                    if (def && def.$variety !== "framework") {
+                        togo.contextNames.push(layerName, fluid.computeNickName(layerName));
+                    }
+                    if (layerName === "fluid.resolveRoot") {
+                        togo.resolveRoot = true;
+                    }
+                }
+            });
+            if (Array.isArray(layerNames)) {
+                fluid.layerScopeNamesCache.set(layerNames, togo);
+            }
+        }
+        return togo;
     };
 
     /**
@@ -1716,9 +1752,13 @@ const $fluidILScope = function (fluid) {
     /**
      * Expands a linkage record into an effect which registers its co-occurrence as an effect whose lifetime coincides
      * with the instantiation of the record in the component surface.
-     * The function and its arguments are resolved from the record, and an effect is created that runs in response to changes.
+     * Each entry of the record may bear `$if`, as for a subcomponent record, in which case it is registered only whilst
+     * its condition holds, and `scope`, a reference to a component to whose subtree its effect is confined - e.g.
+     * `scope: "{site}"` - in which case it is registered only whilst that component exists. Otherwise its effect is
+     * global.
      *
-     * @param {LayerLinkageRecord} record - A linkage record holding one or more entries including inputLayers/outputLayers
+     * @param {LayerLinkageRecord|LayerLinkageRecord[]} record - A linkage record holding one or more entries including
+     * inputLayers or selector, and outputLayers
      * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
      * @param {String[]} segs - The path where this effect record appears in its component
      * @return {Function} A disposer function for the created effect. The function object includes a `$variety` property set to `"$effect"`.
@@ -1727,20 +1767,42 @@ const $fluidILScope = function (fluid) {
         const site = {shadow, segs};
         const siteString = fluid.renderSite(site);
         const array = Array.isArray(record);
+        const entries = (array ? record : [record]).map((linkage, i) => {
+            const entrySegs = array ? [...segs, "$linkage", i] : [...segs, "$linkage"];
+            const {$if, scope, ...rest} = linkage;
+            return {
+                coOcName: array ? `${siteString}-${i}` : siteString,
+                linkage: rest,
+                condition: $if === undefined ? null : fluid.expandIfRecord($if, shadow, entrySegs),
+                scope: scope === undefined ? null : fluid.fetchContextReference(scope, shadow, entrySegs),
+                registered: null
+            };
+        });
+        const deregister = function (entry) {
+            if (entry.registered) {
+                fluid.deregisterCoOccurrence(entry.coOcName);
+                entry.registered = null;
+            }
+        };
         const togo = fluid.cell.effect( () => {
-            if (array) {
-                record.forEach( (linkage, i) => fluid.registerCoOccurrence(`${siteString}-${i}`, linkage));
-            } else {
-                fluid.registerCoOccurrence(siteString, record);
-            }
-        }, null, {
-            onDispose: () => {
-                if (array) {
-                    record.forEach( (linkage, i) => fluid.deregisterCoOccurrence(`${siteString}-${i}`));
+            entries.forEach(entry => {
+                const condition = entry.condition === null ? true : fluid.deSignal(entry.condition);
+                const scopeShadow = entry.scope === null ? null : fluid.componentShadowForSignal(entry.scope);
+                const scopeAvailable = entry.scope === null || !!scopeShadow && !fluid.isDestroyedShadow(scopeShadow);
+                if (condition && !fluid.isUnavailable(condition) && scopeAvailable) {
+                    const scopePath = scopeShadow ? scopeShadow.path : null;
+                    if (!entry.registered || entry.registered.scopePath !== scopePath) {
+                        deregister(entry);
+                        entry.registered = {...entry.linkage, scopePath};
+                        fluid.registerCoOccurrence(entry.coOcName, entry.registered);
+                    }
                 } else {
-                    fluid.deregisterCoOccurrence(siteString);
+                    deregister(entry);
                 }
-            }
+            });
+        }, null, {
+            onDispose: () => entries.forEach(deregister),
+            name: `$linkage at path ${segs.join(".")} of component at path ${shadow.path}`
         });
         togo.$variety = "$linkage";
         return togo;
@@ -1801,7 +1863,8 @@ const $fluidILScope = function (fluid) {
             priority: fluid.mergeRecordTypes.subcomponent + (count - 1 - i),
             layer: expanded
         }));
-        const layerNames = [...new Set(contributions.flatMap(({expanded}) => expanded.$layers))];
+        // Strongest contribution first, as for the parents listed in any $layers
+        const layerNames = [...new Set([...contributions].reverse().flatMap(({expanded}) => expanded.$layers))];
         // TODO: detect injected reference and take direct path to instantiator
         return fluid.pushPotentia(shadow, memberName, subLayerRecords, layerNames, variables).computer;
     };
@@ -2028,6 +2091,27 @@ const $fluidILScope = function (fluid) {
     };
 
     /**
+     * Order the entries of a keyed collection over which a `$for` iterates. Collections are keyed so that layers may
+     * contribute, override and remove entries by the ordinary rules of merging - an entry whose value is `null` or
+     * `undefined`, e.g. one removed by a stronger layer, is skipped. Entries are ordered by their member `priority`,
+     * if any, as for the priorities of Infusion's listeners: either a Number, higher numbers sorting first, or a
+     * constraint relative to the key of another entry, e.g. "before:katex" or "after:katex", or "first" or "last".
+     * Entries of equal priority, including all those without one, keep the order of their keys.
+     * @param {Object} records - The collection
+     * @return {Array<Array>} The entries of the collection as `[key, value]` pairs, in order
+     */
+    fluid.orderKeyedRecords = function (records) {
+        const prioritised = Object.entries(records).filter(([, value]) => value !== null && value !== undefined)
+            .map(([key, value]) => ({
+                namespace: key,
+                value,
+                priority: fluid.parsePriority(fluid.isPlainObject(value, true) ? value.priority : undefined, 0, false, "$for")
+            }));
+        fluid.sortByPriority(prioritised);
+        return prioritised.map(({namespace, value}) => [namespace, value]);
+    };
+
+    /**
      * Expands a subcomponent-style function record into a component instantiation.
      * Produces a `subcomponent`-type layer record and pushes it into the component tree at the given `key` under the `shadow`.
      *
@@ -2076,7 +2160,7 @@ const $fluidILScope = function (fluid) {
                     if (Array.isArray(source)) {
                         togo = source.map(pushSubcomponentPotentia);
                     } else if (fluid.isPlainObject(source)) {
-                        togo = Object.entries(source).map(([key, value]) => pushSubcomponentPotentia(value, key));
+                        togo = fluid.orderKeyedRecords(source).map(([key, value]) => pushSubcomponentPotentia(value, key));
                     } else if (fluid.isUnavailable(source)) {
                         return source;
                     } else {
@@ -2414,14 +2498,15 @@ const $fluidILScope = function (fluid) {
     };
 
     // The user will be expecting the priority of any layers supplied dynamically to be high, and in particular to beat
-    // any definitions arriving as a result of a subcomponent declaration
+    // any definitions arriving as a result of a subcomponent declaration. The records of definitions are shared by all
+    // components resolving the same chain - see fluid.definitionMergeRecords - and so an upgraded record replaces its
+    // definition's record in the component's own array rather than modifying it
     fluid.upgradeDynamicLayers = function (resolvedMergeRecords, dynamicMergeRecord) {
         const dynamicLayers = dynamicMergeRecord.layer.$layers;
         if (dynamicLayers) {
-            resolvedMergeRecords.forEach(mergeRecord => {
+            resolvedMergeRecords.forEach((mergeRecord, i) => {
                 if (mergeRecord.mergeRecordType === "def" && dynamicLayers.includes(mergeRecord.mergeRecordName)) {
-                    mergeRecord.mergeRecordType = "dynamicLayers";
-                    mergeRecord.priority = fluid.mergeRecordTypes.dynamicLayers;
+                    resolvedMergeRecords[i] = {...mergeRecord, mergeRecordType: "dynamicLayers", priority: fluid.mergeRecordTypes.dynamicLayers};
                 }
             });
         }
@@ -2443,15 +2528,14 @@ const $fluidILScope = function (fluid) {
             const allMergeRecords = [...mergeRecords, dynamicMergeRecord];
             shadow.mergeRecords = allMergeRecords; // Put this in early so we can resolve container if there is an error
 
-            const mergeRecordLayerNames = allMergeRecords.map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers))
-                .flat().filter(name => name);
-            const allLayerNames = [...layerNames, ...mergeRecordLayerNames].reverse();
+            // The layers named by our merge records, strongest record first - within each record, as in any $layers
+            // list, an earlier layer is stronger than a later one
+            const recordPriority = mergeRecord => mergeRecord.priority ?? fluid.mergeRecordTypes[mergeRecord.mergeRecordType] ?? 0;
+            const mergeRecordLayerNames = [...allMergeRecords].sort((a, b) => recordPriority(a) - recordPriority(b))
+                .map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat().filter(name => name);
+            const allLayerNames = [...mergeRecordLayerNames, ...[...layerNames].reverse()];
 
             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
-            const uniqueDynamicNames = [...new Set(dynamicNames)];
-            if (!fluid.arrayEqual(uniqueDynamicNames, shadow.dynamicLayerNames._value)) {
-                shadow.dynamicLayerNames.set(uniqueDynamicNames);
-            }
 
             // TODO: We notice layerNames now routinely duplicates mergedRecordLayerNames - C3 doesn't in fact make a problem of this
             // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
@@ -2459,17 +2543,23 @@ const $fluidILScope = function (fluid) {
 
             const hierarchyResolver = new fluid.HierarchyResolver(layerName => {
                 fluid.ensureImportsLoaded(shadow, layerName);
-            });
+            }, shadow);
             const resolved = fluid.flatMergedRound(shadow, hierarchyResolver, uniqueStaticNames); // <= WILL READ LAYER REGISTRY
+
+            // Dynamic layers may be named by our merge records, or amongst the parents of any of our layers
+            const uniqueDynamicNames = [...new Set([...dynamicNames, ...hierarchyResolver.dynamicLayerNames])];
+            if (!fluid.arrayEqual(uniqueDynamicNames, shadow.dynamicLayerNames._value)) {
+                shadow.dynamicLayerNames.set(uniqueDynamicNames);
+            }
             // Copy in any layers the resolver marked unavailable, either through circularity or defs being unavailable
             fluid.each(hierarchyResolver.unavailableLayers, (value, layerName) => unavailableLayerMap[layerName] = value);
 
             // Our merge is a pure function of these inputs - if they are unchanged, e.g. because we have been reevaluated
             // only through our parent turning over, our previous merge is returned so that we do not turn over ourselves.
             // Note that the resolution above must still run on every evaluation since its reads of the layer registry
-            // are our dependencies on the definitions of our layers
-            const mergeInputs = [potentia, dynamicMergeRecord, ...resolved.mergeRecords.map(mergeRecord =>
-                mergeRecord.mergeRecordType === "defParents" ? mergeRecord.layer.$layers.join(",") : mergeRecord.layer)];
+            // are our dependencies on the definitions of our layers. The resolved records are the same array whenever
+            // the same chain of the same definitions is resolved - see fluid.definitionMergeRecords
+            const mergeInputs = [potentia, dynamicMergeRecord, resolved.mergeRecords];
             const previous = shadow.lastMerge;
             if (previous && fluid.arrayEqual(previous.mergeInputs, mergeInputs)) {
                 shadow.mergeRecords = previous.layers;
@@ -2743,38 +2833,46 @@ const $fluidILScope = function (fluid) {
 
     // Unavailable component tracking - used to determine whether server-side has stabilised and is ready to be written
 
-    fluid.unavailableComponentMap = fluid.cell(Object.create(null), {name: "Fluid global unavailable component map"});
+    // The paths of the components which are currently unavailable, maintained in place by
+    // fluid.trackComponentAvailability - each change is signalled by fluid.unavailableComponentsVersion. A system with
+    // many thousands of components, e.g. a site rendered as one tree, changes the set many times whilst it is
+    // constructed, and copying it on each change would cost time quadratic in its size
+    /** @type {Object<String, Boolean>} */
+    fluid.unavailableComponentPaths = Object.create(null);
+
+    fluid.unavailableComponentsVersion = fluid.cell(0, {name: "Fluid global unavailable components version"});
+
+    // A copy of fluid.unavailableComponentPaths, made only when read after it has changed
+    fluid.unavailableComponentMap = fluid.cell(undefined, {name: "Fluid global unavailable component map"}).computed(() =>
+        Object.assign(Object.create(null), fluid.unavailableComponentPaths), [fluid.unavailableComponentsVersion]);
 
     // Allocated with an undefined value so that it is evaluated when first read, rather than its initial value being
     // trusted until the map first changes
-    fluid.unavailableComponents = fluid.cell(undefined, {name: "Fluid global unavailable components"}).computed(unavailableComponentMap => {
-        const keys = Object.keys(unavailableComponentMap);
+    fluid.unavailableComponents = fluid.cell(undefined, {name: "Fluid global unavailable components"}).computed(() => {
+        const keys = Object.keys(fluid.unavailableComponentPaths);
         // Pending rather than an error - a component is typically unavailable whilst its layers are loading
         return keys.length === 0 ? true : fluid.unavailable({message: "Some components are unavailable", paths: keys}, "pending");
-    }, [fluid.unavailableComponentMap]);
+    }, [fluid.unavailableComponentsVersion]);
 
     /**
-     * Track whether a component is available in `fluid.unavailableComponentMap`, keyed by its path, so that
+     * Track whether a component is available in `fluid.unavailableComponentPaths`, keyed by its path, so that
      * `fluid.unavailableComponents` reports whether any component in the system is unavailable
      * @param {Shadow} shadow - The shadow of the component to be tracked
      * @return {Effect} An effect maintaining the component's entry, which removes it when disposed
      */
     fluid.trackComponentAvailability = function (shadow) {
         const updateAvailability = function (instance) {
-            const currentMap = fluid.unavailableComponentMap._value;
-            const currentEntry = currentMap[shadow.path];
+            const paths = fluid.unavailableComponentPaths;
+            const currentEntry = !!paths[shadow.path];
             const isUnavailable = fluid.isUnavailable(instance);
-            let newMap = currentMap;
-            if (currentEntry && !isUnavailable) {
-                // eslint-disable-next-line no-unused-vars
-                const { [shadow.path]: _ignored, ...rest } = currentMap;
-                newMap = rest;
-            } else if (!currentEntry && isUnavailable) {
-                newMap = {...currentMap, ...{
-                    [shadow.path] : true
-                }};
+            if (currentEntry !== isUnavailable) {
+                if (isUnavailable) {
+                    paths[shadow.path] = true;
+                } else {
+                    delete paths[shadow.path];
+                }
+                fluid.unavailableComponentsVersion.set(fluid.unavailableComponentsVersion._value + 1);
             }
-            fluid.unavailableComponentMap.set(newMap);
         };
         return fluid.cell.effect(() => {
             // Read the value of availableInstance - a simple component, e.g. the root, has none and is always available
