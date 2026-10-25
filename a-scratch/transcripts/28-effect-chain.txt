@@ -1,0 +1,1691 @@
+ ▐▛███▛█   Claude Code v2.1.310
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
+
+
+❯ Look at https://github.com/fluid-project/infusion-6/issues/28 and see if the  
+  proposed implementation is feasible and would correctly resolve the poor      
+  factoring in the libreMap.js implementation linked. If so, implemented it     
+  here and edit libreMap.js accordingly and validate the fix.                   
+
+  Read 1 file, ran 4 shell commands (ctrl+o to expand)
+
+● I've read the issue and the downloaded libreMap.js. Next I'm looking at how
+  $effect, merging and fluid.honourConstraint work in the framework, to judge
+  whether the proposal is feasible.
+
+  Searched for 2 patterns, listed 1 directory, ran 3 shell commands (ctrl+o to expand)
+
+● Still studying the framework's layer-merging code (Fluid.js
+  fluid.mergeLayerKey) to see where same-path $effect records could be combined.
+
+  Searched for 2 patterns, read 1 file, ran 2 shell commands (ctrl+o to expand)
+
+● Background command "cd /mnt/outer-source/gits/ && ls; find . -maxdepth 6 -name
+libreMap.js -path "*i6*" 2>/dev/null | head" completed (exit code 0)
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● I found a local checkout containing src/client/js/i6/libreMap.js (in
+  bagatelle). I'm checking whether it's the same repo as the one the issue
+  links.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Baseline: the IMERSS map tests pass 21/21 against this working copy. Reading
+  the test file to see what it checks.
+
+  Searched for 3 patterns, listed 1 directory, ran 4 shell commands (ctrl+o to expand)
+
+● Design is settled; now checking existing $effect tests and docs so the new
+  feature fits alongside them.
+
+  Searched for 1 pattern, listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● Writing the merge support in Fluid.js first.
+
+● Update(src/framework/core/js/Fluid.js)
+  ⎿  Added 105 lines
+      2170      };
+      2171  
+      2172      /**
+      2173 +     * @typedef {Object} EffectMaterial                      
+      2174 +     * @property {Boolean} composite - `true` if the effect w
+           +as written in composite form, as an array of listener records
+      2175 +     * @property {FuncRecord[]} records - The listener record
+           +s of the effect - a single one if it was written in simple fo
+           +rm                                                           
+      2176 +     */                                                      
+      2177 +                                                             
+      2178 +    /**                                                      
+      2179 +     * Determine whether a layer's value at a path holds an e
+           +ffect, written either as a compact "$effect:..." String or   
+      2180 +     * as a record `{$effect: ...}`, whose member may be a si
+           +ngle listener record or, for a composite effect, an array of 
+      2181 +     * them - see `fluid.collectEffectRecords`.              
+      2182 +     * @param {any} value - The value to be tested           
+      2183 +     * @return {EffectMaterial|null} The effect's listener re
+           +cords, or `null` if the value does not hold an effect        
+      2184 +     */                                                      
+      2185 +    fluid.effectMaterial = function (value) {                
+      2186 +        const expanded = typeof(value) === "string" && value.
+           +startsWith("$effect:") ? fluid.expandCompactElement(value) : 
+           +value;                                                       
+      2187 +        let togo = null;                                     
+      2188 +        if (fluid.isPlainObject(expanded, true) && "$effect" 
+           +in expanded) {                                               
+      2189 +            const record = expanded.$effect;                 
+      2190 +            const composite = Array.isArray(record);         
+      2191 +            togo = {composite, records: composite ? record : 
+           +[record]};                                                   
+      2192 +        }                                                    
+      2193 +        return togo;                                         
+      2194 +    };                                                       
+      2195 +                                                             
+      2196 +    /**                                                      
+      2197 +     * Determine the namespace of a listener record of an eff
+           +ect - a record without one, including that of any effect     
+      2198 +     * written in simple form, has the empty namespace.      
+      2199 +     * @param {FuncRecord} record - The listener record      
+      2200 +     * @return {String} Its namespace                        
+      2201 +     */                                                      
+      2202 +    fluid.effectNamespace = function (record) {              
+      2203 +        return record.namespace ?? "";                       
+      2204 +    };                                                       
+      2205 +                                                             
+      2206 +    /**                                                      
+      2207 +     * Verify that no two listener records of an effect suppl
+           +ied together share a namespace.                              
+      2208 +     * @param {FuncRecord[]} records - The listener records  
+      2209 +     * @param {String} site - A description of where the reco
+           +rds were found, for any error message                        
+      2210 +     */                                                      
+      2211 +    fluid.checkEffectNamespaces = function (records, site) { 
+      2212 +        const namespaces = records.map(fluid.effectNamespace)
+           +;                                                            
+      2213 +        const duplicate = namespaces.find((namespace, i) => n
+           +amespaces.indexOf(namespace) !== i);                         
+      2214 +        if (duplicate !== undefined) {                       
+      2215 +            fluid.fail(`Duplicate namespace "${duplicate}" in
+           + listener records of composite $effect ${site} - each listene
+           +r ` +                                                        
+      2216 +                "record of an effect must have a distinct nam
+           +espace, and at most one may have none");                     
+      2217 +        }                                                    
+      2218 +    };                                                       
+      2219 +                                                             
+      2220 +    /**                                                      
+      2221 +     * Merge the effects supplied by several layers at a path
+           +. Rather than the strongest effect displacing all others, as 
+      2222 +     * for any other value, the listener records of each are 
+           +merged together by namespace, a stronger record displacing a 
+      2223 +     * weaker one of the same namespace in place, as for the 
+           +namespaced listeners of Infusion 4 - see FLUID-7028. Any     
+      2224 +     * value other than an effect displaces all weaker effect
+           +s. If just one listener record survives the merge and it was 
+      2225 +     * supplied by an effect in simple form, that effect is t
+           +he result just as written, otherwise the result is a         
+      2226 +     * composite effect holding the surviving records - see `
+           +fluid.expandCompositeEffectRecord`.                          
+      2227 +     * @param {Object[]} layers - The layers being merged, we
+           +akest first                                                  
+      2228 +     * @param {String} key - The key at which the effects are
+           + held                                                        
+      2229 +     * @param {String[]} segs - The path of the layers' paren
+           +t within the root being merged                               
+      2230 +     * @param {Boolean[]} plainLayers - For each layer, wheth
+           +er it is a plain object or array                             
+      2231 +     * @return {String|Object} The merged effect             
+      2232 +     */                                                      
+      2233 +    fluid.collectEffectRecords = function (layers, key, segs,
+           + plainLayers) {                                              
+      2234 +        let contributions = [];                              
+      2235 +        layers.forEach((layer, i) => {                       
+      2236 +            if (plainLayers[i] && key in layer) {            
+      2237 +                const value = layer[key];                    
+      2238 +                const material = fluid.effectMaterial(value);
+      2239 +                if (material) {                              
+      2240 +                    contributions.push({value, material});   
+      2241 +                } else {                                     
+      2242 +                    contributions = [];                      
+      2243 +                }                                            
+      2244 +            }                                                
+      2245 +        });                                                  
+      2246 +        let togo;                                            
+      2247 +        if (contributions.length === 1) {                    
+      2248 +            togo = contributions[0].value;                   
+      2249 +        } else {                                             
+      2250 +            const site = "at path " + [...segs, key].join("."
+           +);                                                           
+      2251 +            // Each entry holds a surviving listener record t
+           +ogether with the contribution which supplied it              
+      2252 +            const merged = [];                               
+      2253 +            contributions.forEach(contribution => {          
+      2254 +                fluid.checkEffectNamespaces(contribution.mate
+           +rial.records, site);                                         
+      2255 +                contribution.material.records.forEach(record 
+           +=> {                                                         
+      2256 +                    const index = merged.findIndex(entry => f
+           +luid.effectNamespace(entry.record) === fluid.effectNamespace(
+           +record));                                                    
+      2257 +                    const entry = {record, contribution};    
+      2258 +                    if (index === -1) {                      
+      2259 +                        merged.push(entry);                  
+      2260 +                    } else {                                 
+      2261 +                        merged[index] = entry;               
+      2262 +                    }                                        
+      2263 +                });                                          
+      2264 +            });                                              
+      2265 +            if (merged.length === 1 && !merged[0].contributio
+           +n.material.composite) {                                      
+      2266 +                togo = merged[0].contribution.value;         
+      2267 +            } else {                                         
+      2268 +                togo = {$effect: merged.map(entry => entry.re
+           +cord)};                                                      
+      2269 +                // Record the material merged here, so that a
+           + fresh merge of the same material may be recognised as       
+      2270 +                // equivalent - see fluid.isSameSignalRecord 
+      2271 +                togo[$m] = {contributions: contributions.map(
+           +contribution => contribution.value)};                        
+      2272 +            }                                                
+      2273 +        }                                                    
+      2274 +        return togo;                                         
+      2275 +    };                                                       
+      2276 +                                                             
+      2277 +    /**                                                      
+      2278       * Merge the material of several layers at a path into a 
+            fresh layer object - see `fluid.mergeLayers`
+      2279       * @param {Object} target - The merged object of which th
+            is is a member
+      2280       * @param {String} key - The member's key
+
+● Update(src/framework/core/js/Fluid.js)
+  ⎿  Added 2 lines
+      2350          }
+      2351          if (holdsComponent) {
+      2352              newTarget = fluid.collectComponentRecords(layers,
+             key, segs, mergeRecords);
+      2353 +        } else if (count > 1 && fluid.effectMaterial(last)) {
+      2354 +            newTarget = fluid.collectEffectRecords(layers, ke
+           +y, segs, plainLayers);                                       
+      2355          } else if (count > 1 && fluid.isPlainObject(last, tru
+            e)) {
+      2356              segs.push(key);
+      2357              newTarget = fluid.mergeFreshMaterial(target, key,
+             segs, layerMap, layers.map(layer => layer?.[key]), mergeReco
+            rds);
+
+● Now the composite expansion in FluidIL.js.
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 98 lines
+      1749          return togo;
+      1750      };
+      1751  
+      1752 +    // Marks the position of a `{$payload}` argument of a lis
+           +tener record of a composite effect                           
+      1753 +    fluid.payloadArgument = Object.freeze({$variety: "$payloa
+           +d"});                                                        
+      1754 +                                                             
+      1755      /**
+      1756 +     * Expands a composite effect, written as an array of lis
+           +tener records, or merged together from the effects of        
+      1757 +     * several layers by `fluid.collectEffectRecords`, into a
+           + cell which runs the records as a chain, as for the          
+      1758 +     * transforming promise events of Infusion 4 - see FLUID-
+           +7028. Each record may bear a `namespace`, and a `priority`   
+      1759 +     * such as "before:namespace" or "after:namespace" orderi
+           +ng it with respect to the others, which otherwise run in the 
+      1760 +     * order supplied, weakest layer first. An argument of a 
+           +record written as `{$payload}` receives the value returned by
+      1761 +     * the previous record of the chain, or the value it reso
+           +lves to if it returned a promise - a record returning        
+      1762 +     * `undefined` passes on the payload it received. The cha
+           +in stops at any record returning an unavailable value.       
+      1763 +     * Whilst the chain runs, the cell is pending, and it the
+           +n holds the final payload. As for a `$bindable`, the cell    
+      1764 +     * is evaluated eagerly as soon as all of the records' ar
+           +guments are available, and is run afresh whenever any of     
+      1765 +     * them changes.                                         
+      1766 +     *                                                       
+      1767 +     * @param {FuncRecord[]} records - The listener records, 
+           +each holding `func` and optionally `args`, `namespace` and   
+      1768 +     * `priority`                                            
+      1769 +     * @param {Shadow} shadow - The current component's shado
+           +w record used for resolving context references within the arg
+           +uments.                                                      
+      1770 +     * @param {String[]} segs - The path where this record ap
+           +pears in its component                                       
+      1771 +     * @return {Cell<any>} A cell holding the final payload o
+           +f the chain. Includes a `$variety` property set to `"$composi
+           +teEffect"`.                                                  
+      1772 +     */                                                      
+      1773 +    fluid.expandCompositeEffectRecord = function (records, sh
+           +adow, segs) {                                                
+      1774 +        const name = `composite $effect at path ${segs} of co
+           +mponent at path ${shadow.path}`;                             
+      1775 +        fluid.checkEffectNamespaces(records, name);          
+      1776 +        // The arguments of all records other than payloads, 
+           +from which the cell is computed                              
+      1777 +        const argMaterials = [];                             
+      1778 +        const listeners = records.map((record, i) => {       
+      1779 +            const listenerSegs = [...segs, "$effect", i];    
+      1780 +            const args = fluid.makeArray(record.args).map((ar
+           +g, j) => arg === "{$payload}" ? fluid.payloadArgument :      
+      1781 +                fluid.resolveArgMaterial(arg, shadow, [...lis
+           +tenerSegs, "args", j]));                                     
+      1782 +            return {                                         
+      1783 +                namespace: fluid.effectNamespace(record),    
+      1784 +                priority: fluid.parsePriority(record.priority
+           +, i, false, name),                                           
+      1785 +                dispatch: fluid.makeFuncDispatcher(fluid.reso
+           +lveFuncReference(record, shadow, listenerSegs)),             
+      1786 +                // Index of each argument within argMaterials
+           +, or -1 for a payload                                        
+      1787 +                argIndices: args.map(arg => arg === fluid.pay
+           +loadArgument ? -1 : argMaterials.push(arg) - 1)              
+      1788 +            };                                               
+      1789 +        });                                                  
+      1790 +        fluid.sortByPriority(listeners);                     
+      1791 +                                                             
+      1792 +        let selfObserveEffect;                               
+      1793 +        // Incremented on each run of the chain, so that a ru
+           +n which has been superseded whilst awaiting a promise        
+      1794 +        // dispatches no further records                     
+      1795 +        let generation = 0;                                  
+      1796 +        // The result of the latest run of the chain, which a
+           +ny superseded run resolves to                                
+      1797 +        let latest;                                          
+      1798 +                                                             
+      1799 +        const runChain = function (...values) {              
+      1800 +            const thisGeneration = ++generation;             
+      1801 +            const runFrom = function (start, payload) {      
+      1802 +                let current = payload;                       
+      1803 +                let pending = null;                          
+      1804 +                for (let i = start; i < listeners.length && p
+           +ending === null && !fluid.isUnavailable(current); ++i) {     
+      1805 +                    const listener = listeners[i];           
+      1806 +                    const result = listener.dispatch.apply(nu
+           +ll, listener.argIndices.map(index => index === -1 ? current :
+           + values[index]));                                            
+      1807 +                    if (fluid.isPromise(result)) {           
+      1808 +                        const received = current;            
+      1809 +                        pending = result.then(value => thisGe
+           +neration === generation ?                                    
+      1810 +                            runFrom(i + 1, value === undefine
+           +d ? received : value) : latest);                             
+      1811 +                    } else if (result !== undefined) {       
+      1812 +                        current = result;                    
+      1813 +                    }                                        
+      1814 +                }                                            
+      1815 +                return pending === null ? current : pending; 
+      1816 +            };                                               
+      1817 +            latest = runFrom(0, undefined);                  
+      1818 +            return latest;                                   
+      1819 +        };                                                   
+      1820 +                                                             
+      1821 +        const dispatcher = (func, args, unavailable) => {    
+      1822 +            let togo;                                        
+      1823 +            if (shadow.inert) {                              
+      1824 +                // As for a bindable, an inert component, e.g
+           +. an avatar, must never run its chain                        
+      1825 +                togo = fluid.unavailable({message: `Composite
+           + effect of inert component at ${shadow.path} is not run`, var
+           +iety: "config"});                                            
+      1826 +            } else if (unavailable) {                        
+      1827 +                togo = unavailable;                          
+      1828 +            } else {                                         
+      1829 +                togo = func.apply(null, args);               
+      1830 +            }                                                
+      1831 +            return togo;                                     
+      1832 +        };                                                   
+      1833 +                                                             
+      1834 +        const togo = fluid.cell(undefined, {name}).asyncCompu
+           +ted(runChain, fluid.flattenedArgCells(argMaterials, name), {d
+           +ispatcher});                                                 
+      1835 +        togo.$variety = "$compositeEffect";                  
+      1836 +        togo.dispose = () => {                               
+      1837 +            ++generation;                                    
+      1838 +            if (selfObserveEffect) {                         
+      1839 +                selfObserveEffect.dispose();                 
+      1840 +            }                                                
+      1841 +        };                                                   
+      1842 +        togo.selfObserve = () => {                           
+      1843 +            if (!selfObserveEffect) {                        
+      1844 +                selfObserveEffect = fluid.cell.effect(() => t
+           +ogo.get());                                                  
+      1845 +            }                                                
+      1846 +        };                                                   
+      1847 +        return togo;                                         
+      1848 +    };                                                       
+      1849 +                                                             
+      1850 +    /**                                                      
+      1851       * Expands a linkage record into an effect which register
+            s its co-occurrence as an effect whose lifetime coincides
+      1852       * with the instantiation of the record in the component 
+            surface.
+      1853       * Each entry of the record may bear `$if`, as for a subc
+            omponent record, in which case it is registered only whilst
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 1 line, removed 1 line
+      2344      }, {
+      2345          key: "$bindable",
+      2346          handler: fluid.expandBindableRecord,
+      2347 -        isBindable: true                                     
+      2347 +        isEager: true                                        
+      2348      }, {
+      2349          key: "$linkage",
+      2350          handler: fluid.expandLinkageRecord,
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 8 lines
+      2360          // TODO: Need to turn this record into an effect so t
+            hat effect (potentia) can be withdrawn
+      2361      }].map(rec => Object.assign(Object.create(fluid.elementEx
+            panderRecord.prototype), rec));
+      2362  
+      2363 +    // Handler for an $effect record holding an array of list
+           +ener records, which is expanded into a cell holding the      
+      2364 +    // payload of their chain rather than into a plain effect
+      2365 +    fluid.compositeEffectExpanderRecord = Object.assign(Objec
+           +t.create(fluid.elementExpanderRecord.prototype), {           
+      2366 +        key: "$effect",                                      
+      2367 +        handler: fluid.expandCompositeEffectRecord,          
+      2368 +        isEager: true                                        
+      2369 +    });                                                      
+      2370 +                                                             
+      2371      // Handler for the links of members of reactive roots, wh
+            ich are mounted by fluid.transferShadowMap rather than found
+      2372      // in a component's merged material
+      2373      fluid.reactiveLinkExpanderRecord = Object.assign(Object.c
+            reate(fluid.elementExpanderRecord.prototype), {
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 2 lines, removed 1 line
+      2471  
+      2472      fluid.expandElement = function (shadow, element, segs) {
+      2473          if (fluid.isPlainObject(element, true)) {
+      2474 -            const handlerRecord = fluid.expandElementTypes.fi
+           -nd(record => element[record.key]);                           
+      2474 +            const typeRecord = fluid.expandElementTypes.find(
+           +record => element[record.key]);                              
+      2475 +            const handlerRecord = typeRecord?.key === "$effec
+           +t" && Array.isArray(element.$effect) ? fluid.compositeEffectE
+           +xpanderRecord : typeRecord;                                  
+      2476              if (handlerRecord) {
+      2477                  return fluid.mountSignalRecord(handlerRecord,
+             handlerRecord.wholeElement ? element : element[handlerRecord
+            .key], shadow, segs);
+      2478              } else {
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 2 lines, removed 2 lines
+      2853                      } else if (oldRecord && newRecord.signalR
+            ecord === oldRecord.signalRecord) {
+      2854                          newRecord.signalProduct = oldRecord.s
+            ignalProduct;
+      2855                      }
+      2856 -                } else if (newRecord.handlerRecord?.isBindabl
+           -e) {                                                         
+      2857 -                    // Ensure this bindable value is allocate
+           -d if it hasn't been already                                  
+      2856 +                } else if (newRecord.handlerRecord?.isEager) 
+           +{                                                            
+      2857 +                    // Ensure this bindable value or composit
+           +e effect is allocated if it hasn't been already              
+      2858                      newRecord.signalProduct.selfObserve();
+      2859                  }
+      2860              });
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p="src/framework/core/js/FluidIL.js"…)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+2 -0)
+      2320       * @property {String} key - The type of element being pro
+            cessed, such as "$method", "$compute", "$effect", "$component
+            ", etc.
+      2321       * @property {Function} handler - A function responsible 
+            for handling the record expansion, such as `fluid.expandMetho
+            dRecord`, `fluid.expandComputeRecord`, etc.
+      2322       * @property {Boolean} [isEffect=false] - A flag indicati
+            ng whether the handler is related to an effect, typically use
+            d for $effect records.
+      2323 +     * @property {Boolean} [isEager=false] - A flag indicatin
+           +g that the handler's product, e.g. that of a $bindable record
+           +, is to be                                                   
+      2324 +     * evaluated eagerly once its component is instantiated, 
+           +rather than only when read.                                  
+      2325       */
+      2326  
+      2327      fluid.elementExpanderRecord = function () {};
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Adding tests to FluidILTests.js after the existing effect tests.
+
+● Update(tests/framework-tests/core/js/FluidILTests.js)
+  ⎿  Added 179 lines
+      299      "Error thrown accessing destroyed component");
+      300  });
+      301  
+      302 +// Composite effects - FLUID-7028                             
+      303 +                                                              
+      304 +fluid.tests.appendStage = function (payload, stage, log) {    
+      305 +    const togo = [...fluid.makeArray(payload), stage];        
+      306 +    log(stage, togo);                                         
+      307 +    return togo;                                              
+      308 +};                                                            
+      309 +                                                              
+      310 +fluid.tests.asyncStage = async function (payload, stage, log) 
+          +{                                                             
+      311 +    await fluid.tests.wait(1);                                
+      312 +    return fluid.tests.appendStage(payload, stage, log);      
+      313 +};                                                            
+      314 +                                                              
+      315 +fluid.tests.logStage = function (stage, log) {                
+      316 +    log(stage);                                               
+      317 +};                                                            
+      318 +                                                              
+      319 +fluid.tests.wait = delay => new Promise(resolve => setTimeout(
+          +resolve, delay));                                             
+      320 +                                                              
+      321 +fluid.def("fluid.tests.compositeBase", {                      
+      322 +    $layers: "fluid.component",                               
+      323 +    log: () => {},                                            
+      324 +    initial: "start",                                         
+      325 +    ready: {                                                  
+      326 +        $effect: [{                                           
+      327 +            namespace: "load",                                
+      328 +            func: "fluid.tests.appendStage",                  
+      329 +            args: ["{self}.initial", "load", "{self}.log"]    
+      330 +        }, {                                                  
+      331 +            namespace: "style",                               
+      332 +            func: "fluid.tests.appendStage",                  
+      333 +            args: ["{$payload}", "style", "{self}.log"]       
+      334 +        }, {                                                  
+      335 +            namespace: "notify",                              
+      336 +            priority: "after:style",                          
+      337 +            func: "fluid.tests.logStage",                     
+      338 +            args: ["notify", "{self}.log"]                    
+      339 +        }]                                                    
+      340 +    },                                                        
+      341 +    consumer: "$effect:fluid.tests.logValue({self}.ready, {sel
+          +f}.log)"                                                      
+      342 +});                                                           
+      343 +                                                              
+      344 +fluid.def("fluid.tests.compositeDerived", {                   
+      345 +    $layers: "fluid.tests.compositeBase",                     
+      346 +    ready: {                                                  
+      347 +        $effect: [{                                           
+      348 +            namespace: "patterns",                            
+      349 +            priority: "before:style",                         
+      350 +            func: "fluid.tests.appendStage",                  
+      351 +            args: ["{$payload}", "patterns", "{self}.log"]    
+      352 +        }, {                                                  
+      353 +            namespace: "load",                                
+      354 +            func: "fluid.tests.appendStage",                  
+      355 +            args: ["{self}.initial", "reload", "{self}.log"]  
+      356 +        }]                                                    
+      357 +    }                                                         
+      358 +});                                                           
+      359 +                                                              
+      360 +QUnit.test("Composite effect runs its listener records as a ch
+          +ain", function (assert) {                                     
+      361 +    const log = [];                                           
+      362 +    const that = fluid.tests.compositeBase({                  
+      363 +        log: (...args) => log.push(args)                      
+      364 +    });                                                       
+      365 +    fluid.cell.stabilize();                                   
+      366 +    assert.deepEqual(log, [                                   
+      367 +        ["load", ["start", "load"]],                          
+      368 +        ["style", ["start", "load", "style"]],                
+      369 +        ["notify"],                                           
+      370 +        [["start", "load", "style"]]                          
+      371 +    ], "Records run in order, each receiving the payload of th
+          +e last, and the final payload consumed by a downstream effect"
+          +);                                                            
+      372 +    assert.deepEqual(that.ready, ["start", "load", "style"], "
+          +Final payload held at the composite effect's path");          
+      373 +    log.length = 0;                                           
+      374 +    that.initial = "again";                                   
+      375 +    fluid.cell.stabilize();                                   
+      376 +    assert.deepEqual(log.map(entry => entry[0]), ["load", "sty
+          +le", "notify", ["again", "load", "style"]], "Chain run afresh 
+          +on change in an argument");                                   
+      377 +    that.destroy();                                           
+      378 +});                                                           
+      379 +                                                              
+      380 +QUnit.test("Composite effects merged across layers by namespac
+          +e", function (assert) {                                       
+      381 +    const log = [];                                           
+      382 +    const that = fluid.tests.compositeDerived({               
+      383 +        log: (...args) => log.push(args)                      
+      384 +    });                                                       
+      385 +    fluid.cell.stabilize();                                   
+      386 +    assert.deepEqual(log.map(entry => entry[0]), ["reload", "p
+          +atterns", "style", "notify", ["start", "reload", "patterns", "
+          +style"]],                                                     
+      387 +        "Stronger record displaces weaker of the same namespac
+          +e in place, and new record is ordered by its priority");      
+      388 +    that.destroy();                                           
+      389 +});                                                           
+      390 +                                                              
+      391 +fluid.def("fluid.tests.compositeSimpleOverride", {            
+      392 +    $layers: "fluid.component",                               
+      393 +    log: () => {},                                            
+      394 +    value: 1,                                                 
+      395 +    logged: {                                                 
+      396 +        $effect: {                                            
+      397 +            func: "fluid.tests.logValue",                     
+      398 +            args: ["{self}.value", "{self}.log"]              
+      399 +        }                                                     
+      400 +    },                                                        
+      401 +    added: "$effect:fluid.tests.logStage(base, {self}.log)"   
+      402 +});                                                           
+      403 +                                                              
+      404 +fluid.def("fluid.tests.compositeSimpleOverrideDerived", {     
+      405 +    $layers: "fluid.tests.compositeSimpleOverride",           
+      406 +    logged: {                                                 
+      407 +        $effect: {                                            
+      408 +            func: "fluid.tests.logStage",                     
+      409 +            args: ["derived"]                                 
+      410 +        }                                                     
+      411 +    },                                                        
+      412 +    added: {                                                  
+      413 +        $effect: [{                                           
+      414 +            namespace: "extra",                               
+      415 +            func: "fluid.tests.logStage",                     
+      416 +            args: ["extra", "{self}.log"]                     
+      417 +        }]                                                    
+      418 +    }                                                         
+      419 +});                                                           
+      420 +                                                              
+      421 +QUnit.test("Simple effects merged as listener records with the
+          + empty namespace", function (assert) {                        
+      422 +    const log = [];                                           
+      423 +    const that = fluid.tests.compositeSimpleOverrideDerived({ 
+      424 +        log: value => log.push(value)                         
+      425 +    });                                                       
+      426 +    fluid.cell.stabilize();                                   
+      427 +    // logStage with a single argument has no log - the strong
+          +er simple record displaces the weaker one as a whole,         
+      428 +    // rather than having its arguments merged with it        
+      429 +    assert.deepEqual(log, ["base", "extra"], "Stronger simple 
+          +effect displaces weaker, and composite record accumulates with
+          + simple effect");                                             
+      430 +    that.destroy();                                           
+      431 +});                                                           
+      432 +                                                              
+      433 +fluid.def("fluid.tests.compositeAsync", {                     
+      434 +    $layers: "fluid.component",                               
+      435 +    log: () => {},                                            
+      436 +    initial: "start",                                         
+      437 +    ready: {                                                  
+      438 +        $effect: [{                                           
+      439 +            namespace: "load",                                
+      440 +            func: "fluid.tests.asyncStage",                   
+      441 +            args: ["{self}.initial", "load", "{self}.log"]    
+      442 +        }, {                                                  
+      443 +            namespace: "notify",                              
+      444 +            func: "fluid.tests.logStage",                     
+      445 +            args: ["notify", "{self}.log"]                    
+      446 +        }, {                                                  
+      447 +            namespace: "style",                               
+      448 +            priority: "after:notify",                         
+      449 +            func: "fluid.tests.asyncStage",                   
+      450 +            args: ["{$payload}", "style", "{self}.log"]       
+      451 +        }]                                                    
+      452 +    },                                                        
+      453 +    consumer: "$effect:fluid.tests.logValue({self}.ready, {sel
+          +f}.log)"                                                      
+      454 +});                                                           
+      455 +                                                              
+      456 +QUnit.test("Composite effect with asynchronous listener record
+          +s", async function (assert) {                                 
+      457 +    const log = [];                                           
+      458 +    const that = fluid.tests.compositeAsync({                 
+      459 +        log: (...args) => log.push(args[0])                   
+      460 +    });                                                       
+      461 +    fluid.cell.stabilize();                                   
+      462 +    assert.deepEqual(log, [], "Nothing logged before first pro
+          +mise resolves");                                              
+      463 +    const shadow = that[fluid.proxySymbol].shadow;            
+      464 +    const readyCell = fluid.get(shadow.shadowMap, ["ready", fl
+          +uid.metadataSymbol, "signalProduct"]);                        
+      465 +    assert.ok(fluid.isPending(readyCell.get()), "Composite eff
+          +ect pending whilst its chain runs");                          
+      466 +    const ready = await fluid.cell.waitFor(readyCell);        
+      467 +    assert.deepEqual(ready, ["start", "load", "style"], "Compo
+          +site effect can be awaited for its final payload, passed throu
+          +gh a listener returning undefined");                          
+      468 +    await fluid.cell.settle();                                
+      469 +    assert.deepEqual(log, ["load", "notify", "style", ["start"
+          +, "load", "style"]], "Downstream effect notified once chain co
+          +mpletes");                                                    
+      470 +                                                              
+      471 +    log.length = 0;                                           
+      472 +    that.initial = "first";                                   
+      473 +    fluid.cell.stabilize();                                   
+      474 +    that.initial = "second";                                  
+      475 +    await fluid.cell.settle();                                
+      476 +    assert.deepEqual(that.ready, ["second", "load", "style"], 
+          +"Final payload is that of the latest run");                   
+      477 +    assert.notOk(log.includes("notify") && log.indexOf("notify
+          +") !== log.lastIndexOf("notify"), "Superseded run dispatches n
+          +o further records");                                          
+      478 +    that.destroy();                                           
+      479 +});                                                           
+      480 +                                                              
+      481  // Identical to the previous test only using the signals API t
+           o interact with the component rather than the
+      482  // convenient but slower proxy API
+      483  QUnit.test("Effects resolution II - read/write and dispose via
+            signals API", function (assert) {
+
+  Ran 1 shell command (ctrl+o to expand)
+● Found two issues despite all 337 tests passing: a "log is not a function"
+  error in the simple-override test, and an asyncIterator TypeError from a run
+  ending with an undefined payload. Fixing both now.
+
+● Bash(python3 - <<'EOF'
+      p="src/framework/core/js/FluidIL.js"…)
+  ⎿  Allocated instanceId 0 at site compositeBase-30
+     Disposing unallocated effects for path compositeBase-30 at end of comp
+     uteInstance
+     … +20 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+2 -1)
+      1812                          current = result;
+      1813                      }
+      1814                  }
+      1815 -                return pending === null ? current : pending; 
+      1815 +                // As for a plain effect, a chain whose final
+           + payload is empty holds `true`                               
+      1816 +                return pending === null ? current ?? true : p
+           +ending;                                                      
+      1817              };
+      1818              latest = runFrom(0, undefined);
+      1819              return latest;
+  ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+10 -7)
+      388      that.destroy();
+      389  });
+      390  
+      391 +fluid.tests.logArgCount = function (log, ...args) {           
+      392 +    log(args.length);                                         
+      393 +};                                                            
+      394 +                                                              
+      395  fluid.def("fluid.tests.compositeSimpleOverride", {
+      396      $layers: "fluid.component",
+      397      log: () => {},
+      398      value: 1,
+      399      logged: {
+      400          $effect: {
+      397 -            func: "fluid.tests.logValue",                     
+      398 -            args: ["{self}.value", "{self}.log"]              
+      401 +            func: "fluid.tests.logArgCount",                  
+      402 +            args: ["{self}.log", "{self}.value", "{self}.value
+          +"]                                                            
+      403          }
+      404      },
+      405      added: "$effect:fluid.tests.logStage(base, {self}.log)"
+     ...
+      409      $layers: "fluid.tests.compositeSimpleOverride",
+      410      logged: {
+      411          $effect: {
+      408 -            func: "fluid.tests.logStage",                     
+      409 -            args: ["derived"]                                 
+      412 +            func: "fluid.tests.logArgCount",                  
+      413 +            args: ["{self}.log"]                              
+      414          }
+      415      },
+      416      added: {
+     ...
+      428          log: value => log.push(value)
+      429      });
+      430      fluid.cell.stabilize();
+      427 -    // logStage with a single argument has no log - the strong
+          -er simple record displaces the weaker one as a whole,         
+      428 -    // rather than having its arguments merged with it        
+      429 -    assert.deepEqual(log, ["base", "extra"], "Stronger simple 
+          -effect displaces weaker, and composite record accumulates with
+          - simple effect");                                             
+      431 +    assert.deepEqual(log, [0, "base", "extra"], "Stronger simp
+          +le effect displaces weaker as a whole rather than having its "
+          + +                                                            
+      432 +        "arguments merged with it, and composite record accumu
+          +lates with simple effect");                                   
+      433      that.destroy();
+      434  });
+     … 1 more lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 337 pass and the two errors are gone (the remaining ASSERTION FAILED lines
+  come from existing negative tests). Checking that the new merge tests
+  actually fail without the merge change:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The merge tests fail without the change, as they should. Tightening the weak
+  "superseded run" assertion:
+
+● Bash(python3 - <<'EOF'
+      p="tests/framework-tests/core/js/FluidILTests.js"…)
+  ⎿  09:21:39.554:   fq:  Test concluded - Module "Fluid IL Tests" Test nam
+     e "Composite effect runs its listener records as a chain": 3/3 passed
+     - PASS
+     … +11 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+2 -1)
+      477      that.initial = "second";
+      478      await fluid.cell.settle();
+      479      assert.deepEqual(that.ready, ["second", "load", "style"], 
+           "Final payload is that of the latest run");
+      480 -    assert.notOk(log.includes("notify") && log.indexOf("notify
+          -") !== log.lastIndexOf("notify"), "Superseded run dispatches n
+          -o further records");                                          
+      480 +    assert.deepEqual(log, ["load", "load", "notify", "style", 
+          +["second", "load", "style"]],                                 
+      481 +        "Superseded run dispatches no further records once its
+          + pending record completes, and downstream effect notified once
+          +");                                                           
+      482      that.destroy();
+      483  });
+      484  
+
+● Framework side is done and tested. Now refactoring libreMap.js in the local
+  imerss-bioinfo checkout (../bagatelle, branch infusion-6-port).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Refactor applied (git status showed the i6 files were clean beforehand).
+  Running all four IMERSS i6 test drivers:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 147 IMERSS tests pass. Now I'll add a map test that inserts a stage from
+  another layer and awaits readyMap, as the issue requested—first checking for a
+  public way to get a member's cell.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● No public accessor for a member's cell, so the test awaits through
+  fluid.cell.settle() instead. That works because the pending readyMap keeps its
+  fit open.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The new map test passes too. Now the full framework suite and lint:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The proposal is feasible and does fix the libreMap.js factoring, with one gap
+  in it that I had to fill. I've implemented it in the framework and refactored
+  libreMap.js. All tests pass: 1875/1875 under npm test, 25/25 in the IMERSS map
+  tests, and the other three IMERSS i6 drivers (126 tests). eslint is clean.
+  Nothing is committed.
+
+  Feasibility, and the gap
+
+  The ordering part works as the issue describes. Merging namespaced listener
+  records happens in fluid.mergeLayerKey, and the existing
+  fluid.parsePriority/fluid.sortByPriority handle before:/after: unchanged.
+
+  The gap is that today an $effect has no value anyone else can read: effects
+  are only created after the component is built, and nothing is stored at their
+  path. So "a stable top-level construct which can be awaited on" needed one
+  more step. I build a composite effect the way a $bindable is built: a cell
+  stored at its path and run eagerly once the component exists. It is pending
+  while the chain runs and then holds the final {$payload}. Other effects take
+  it as an argument, and fluid.cell.settle() / fluid.cell.waitFor can await it.
+
+  Where I departed from or added to the issue
+
+  - An effect written as an array is always composite, even with one record. The
+    issue says a single surviving record becomes a plain effect. I kept that
+    only for effects written in simple form, so a consumer of {self}.readyMap
+    doesn't break when a merge leaves just one record.
+  - A listener that returns undefined passes on the payload it received. The
+    chain stops at any listener that returns an unavailable value. If a run is
+    overtaken by a newer one while it waits on a promise, it calls no further
+    listeners.
+  - {$payload} only works as a whole argument, not as {$payload}.path.
+  - Behaviour change: before, two layers' {$effect: {...}} records were
+    deep-merged, so their args arrays got combined element by element (a bug).
+    Now the stronger one replaces the weaker as a whole. A test covers this.
+
+  Changes
+
+  - Fluid.js: fluid.collectEffectRecords merges listener records by namespace. A
+    stronger record replaces a weaker one in place, and any value other than an
+    effect replaces all weaker effects.
+  - FluidIL.js: fluid.expandCompositeEffectRecord builds the chain, chosen in
+    fluid.expandElement when $effect is an array. I also renamed the handler
+    flag isBindable to isEager, since bindables and composite effects now share
+    it.
+  - FluidILTests.js: four new tests cover synchronous chains, merging across
+    layers with priorities, simple-effect replacement, and async chains
+    including awaiting the result and a run being overtaken. I checked that the
+    merge tests fail without the merge change.
+  - ../bagatelle/src/client/js/i6/libreMap.js: loadedMap, fillPatternsLoaded and
+    styledMap are replaced by one composite effect, readyMap, with stages load,
+    loadFillPatterns and applyStyle. Each stage now returns the map or a
+    promise for it, instead of hand-building pending cells.
+  - Other IMERSS files:
+    - polygonDraw.js: I changed one reference to {libreMap}.readyMap.
+    - BbeaMapTests.js: I added a test where a user record inserts a
+      before:applyStyle stage and start-up is awaited.
+
+  One thing to watch
+
+  styledMap was onceOnly, and composite effects have no equivalent yet. If style
+  or the fill-pattern settings changed at runtime, the chain would re-run and
+  setStyle would wipe all sources and layers. Because readyMap still holds the
+  same map object, the effects downstream wouldn't fire to add them back.
+  Before, such a change was simply ignored. These settings are fixed in
+  practice, but a onceOnly option for composite effects would be the follow-up
+  if you want that guarantee.
+
+  The generated copies under docs/src weren't regenerated.
+
+✻ Cooked for 13m 26s · done 9:24
+
+❯ Eliminate the existing implementation of fluid.makeEventFirer in favour of    
+  this implementation, turning that utility into a wrapper for a free component 
+  constructor for a "fluid.event", a component which just has a single member,  
+  "eventArgs" which is set to the args to be dispatched to each effect.         
+  event.addListener becomes a wrapper for pushing a potentia record holding a   
+  new-style $effect record onto the component, which wraps the supplied         
+  listener to spread the "args" back onto the function. We can axe facilities   
+  like "softNamespace", "removeListener" etc. all we require to support for now 
+  is the existing two clients of loggingEvent and failureEvent.                 
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● I'll check how a free component receives extra merge records, the cost of
+  writing a member, and how cell equality works, since logging and failures
+  happen during merging and will determine if this approach is safe.
+
+  Searched for 2 patterns, ran 2 shell commands (ctrl+o to expand)
+
+● I've confirmed that only the first write triggers a component turnover, so
+  firing doesn't need a re-merge. Next I'll check which legacy event helpers
+  still have callers and review the existing API tests.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● The test harness itself depends on this API: qunit-fluid.js adds and removes
+  failure listeners in expectFluidError, and fqunit-node.js uses makeEventFirer
+  for onAllTestsDone. Reading both:
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● I need to check two risks before writing this: log arguments flattening when
+  routed through a component member, and firing during a component's
+  mid-computation state. Let me inspect fluid.flattenSignals first.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll wrap each firing's arguments in an opaque holder since logged values
+  can't be stored directly as eventArgs without being unsafely traversed by
+  flattenSignals, and the firer also needs a fallback for re-entrant firings
+  during framework logging. Next I'll check the legacy code to remove.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Removing the legacy event system from Fluid.js. The two events get created in
+  FluidIL.js once the component system exists, and fluid.log falls back to the
+  console before then.
+
+● Bash(python3 - <<'EOF'
+      p="src/framework/core/js/Fluid.js"…)
+  ⎿       */
+         fluid.doDestroy = function (instantiator, destroyRec) {
+             const shadow = destroyRec.childShadow;
+     … +14 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+0 -3)
+      602          // fluid.clearDistributions(shadow);
+      603  
+      604          shadow.lifecycleStatus = "destroyed"; // This will cau
+           se proxies to be nulled
+      605 -        const child = destroyRec.childShadow.that;            
+      606 -                                                              
+      607 -        fluid.fireEvent(child, "afterDestroy", [child, destroy
+          -Rec.name, destroyRec.shadow.that]);                           
+      605      };
+      606  
+      607      fluid.instantiator = function () {
+  ⎿  … 1 more file changed
+
+● Now writing the component-based firer at the end of FluidIL.js, after the root
+  components are constructed:
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Update(src/framework/core/js/FluidIL.js)
+  ⎿  Added 149 lines
+      3399  
+      3400      fluid.constructRootComponents(fluid.globalInstantiator); 
+            // currently a singleton - in future, alternative instantiato
+            rs might come back
+      3401  
+      3402 +    /*** THE FLUID EVENT SYSTEM ***/                         
+      3403 +                                                             
+      3404 +    // An event, whose listeners are the namespaced listener 
+           +records of the composite effect `dispatch`, each supplied    
+      3405 +    // by a merge record of its own - see fluid.makeEventFire
+           +r and fluid.expandCompositeEffectRecord                      
+      3406 +    fluid.def("fluid.event", {                               
+      3407 +        $layers: "fluid.component",                          
+      3408 +        // The current firing of the event, whose arguments a
+           +re spread onto each listener                                 
+      3409 +        eventArgs: null,                                     
+      3410 +        $variety: "framework"                                
+      3411 +    });                                                      
+      3412 +                                                             
+      3413 +    /**                                                      
+      3414 +     * The arguments of one firing of an event. These are hel
+           +d in an opaque record rather than as a bare array, since     
+      3415 +     * the arguments to the listeners of the composite effect
+           + dispatching the event are flattened, and the arguments of   
+      3416 +     * an event may hold arbitrary material, e.g. unavailable
+           + values supplied to `fluid.fail`, which must reach the       
+      3417 +     * listeners untouched.                                  
+      3418 +     * @param {any[]} args - The arguments with which the eve
+           +nt was fired                                                 
+      3419 +     */                                                      
+      3420 +    fluid.event.firing = function (args) {                   
+      3421 +        this.args = args;                                    
+      3422 +    };                                                       
+      3423 +                                                             
+      3424 +    /**                                                      
+      3425 +     * @typedef {Object} EventFirer                          
+      3426 +     * @property {String} name - A readable name for the even
+           +t, for diagnostics                                           
+      3427 +     * @property {fluid.event} component - The `fluid.event` 
+           +component dispatching the event                              
+      3428 +     * @property {Function} addListener - Adds a listener, wi
+           +th signature `(listener, namespace, priority)`               
+      3429 +     * @property {Function} fire - Fires the event, with a fr
+           +ee signature, which is spread onto each listener             
+      3430 +     */                                                      
+      3431 +                                                             
+      3432 +    /**                                                      
+      3433 +     * Construct an event firer, a wrapper for a free `fluid.
+           +event` component. Each listener added to the firer is        
+      3434 +     * pushed onto the component as a merge record of its own
+           +, holding a composite `$effect` record with a single         
+      3435 +     * listener record. These are merged into one composite e
+           +ffect, whose listeners are notified in the order given by    
+      3436 +     * their priorities - see FLUID-7028. A listener added wi
+           +th the namespace of an existing one displaces it. Firing     
+      3437 +     * the event writes its arguments into the component's me
+           +mber `eventArgs`, and then synchronously reads the           
+      3438 +     * composite effect, which dispatches them to each listen
+           +er in turn. An exception thrown by a listener halts the      
+      3439 +     * dispatch, and is rethrown from `fire`.                
+      3440 +     * @param {Object} [options] - Options configuring the fi
+           +rer                                                          
+      3441 +     * @param {String} [options.name] - A readable name for t
+           +he event, for diagnostics                                    
+      3442 +     * @param {Function} [options.fallback] - A function rece
+           +iving the arguments of any firing which cannot be            
+      3443 +     * dispatched through the component since the event is al
+           +ready firing - for example, logging issued by the            
+      3444 +     * framework whilst it updates the component dispatching 
+           +the logging event                                            
+      3445 +     * @return {EventFirer} The event firer                  
+      3446 +     */                                                      
+      3447 +    fluid.makeEventFirer = function (options = {}) {         
+      3448 +        const that = fluid.event();                          
+      3449 +        const shadow = that[$m];                             
+      3450 +        // Upgrade the event's arguments to a live signal imm
+           +ediately, since upgrading turns the component over           
+      3451 +        const eventArgs = fluid.pathToLive(shadow, "eventArgs
+           +");                                                          
+      3452 +        let firing = false;                                  
+      3453 +        let listenerCount = 0;                               
+      3454 +        // Any exception thrown by a listener during the curr
+           +ent firing                                                   
+      3455 +        let caught = null;                                   
+      3456 +                                                             
+      3457 +        const firer = {                                      
+      3458 +            name: options.name || "<anonymous>",             
+      3459 +            component: that,                                 
+      3460 +            /**                                              
+      3461 +             * Adds a listener to this event.                
+      3462 +             * @param {Function} listener - The listener, who
+           +se signature matches that supplied to `fire`                 
+      3463 +             * @param {String} [namespace] - A namespace for 
+           +the listener, displacing any existing listener with the same 
+      3464 +             * namespace. If omitted, the listener receives a
+           + unique namespace.                                           
+      3465 +             * @param {String|Number} [priority] - A priority
+           + for the listener relative to others, perhaps expressed with 
+           +a                                                            
+      3466 +             * constraint relative to the namespace of anothe
+           +r, e.g. "before:log"                                         
+      3467 +             */                                              
+      3468 +            addListener: function (listener, namespace, prior
+           +ity) {                                                       
+      3469 +                const listenerNamespace = namespace || "liste
+           +ner-" + fluid.allocateGuid();                                
+      3470 +                const dispatchListener = function (firingArgs
+           +) {                                                          
+      3471 +                    let togo;                                
+      3472 +                    if (firing) {                            
+      3473 +                        try {                                
+      3474 +                            listener.apply(null, firingArgs.a
+           +rgs);                                                        
+      3475 +                        } catch (e) {                        
+      3476 +                            caught = e;                      
+      3477 +                            // Halt dispatch to the remaining
+           + listeners                                                   
+      3478 +                            togo = fluid.unavailable({message
+           +: `Listener ${listenerNamespace} of ${firer.name} threw an ex
+           +ception`, variety: "error"});                                
+      3479 +                        }                                    
+      3480 +                    }                                        
+      3481 +                    return togo;                             
+      3482 +                };                                           
+      3483 +                ++listenerCount;                             
+      3484 +                fluid.pushPotentia(shadow.parentShadow, shado
+           +w.memberName, [{                                             
+      3485 +                    mergeRecordType: "listener-" + listenerNa
+           +mespace,                                                     
+      3486 +                    // Listeners added later are stronger, an
+           +d so notified later amongst those of equal priority          
+      3487 +                    priority: fluid.mergeRecordTypes.user - l
+           +istenerCount / 1024,                                         
+      3488 +                    layer: {                                 
+      3489 +                        dispatch: {                          
+      3490 +                            $effect: [{                      
+      3491 +                                namespace: listenerNamespace,
+      3492 +                                priority,                    
+      3493 +                                func: dispatchListener,      
+      3494 +                                args: "{self}.eventArgs"     
+      3495 +                            }]                               
+      3496 +                        }                                    
+      3497 +                    }                                        
+      3498 +                }]);                                         
+      3499 +            },                                               
+      3500 +            /**                                              
+      3501 +             * Fires this event to its listeners, in order of
+           + priority. The signature of this method is free.             
+      3502 +             * @param {...any} args - The arguments to be sup
+           +plied to each listener                                       
+      3503 +             */                                              
+      3504 +            fire: function (...args) {                       
+      3505 +                if (firing) {                                
+      3506 +                    if (options.fallback) {                  
+      3507 +                        options.fallback.apply(null, args);  
+      3508 +                    }                                        
+      3509 +                } else {                                     
+      3510 +                    firing = true;                           
+      3511 +                    try {                                    
+      3512 +                        fluid.cell.untracked(() => {         
+      3513 +                            eventArgs.set(new fluid.event.fir
+           +ing(args));                                                  
+      3514 +                            // Reading the composite effect d
+           +ispatches the firing to its listeners                        
+      3515 +                            return that.dispatch;            
+      3516 +                        });                                  
+      3517 +                    } finally {                              
+      3518 +                        firing = false;                      
+      3519 +                    }                                        
+      3520 +                    if (caught) {                            
+      3521 +                        const toThrow = caught;              
+      3522 +                        caught = null;                       
+      3523 +                        throw toThrow;                       
+      3524 +                    }                                        
+      3525 +                }                                            
+      3526 +            }                                                
+      3527 +        };                                                   
+      3528 +        return firer;                                        
+      3529 +    };                                                       
+      3530 +                                                             
+      3531 +    // This event represents the process of resolving the act
+           +ion of a request to fluid.log. Each listener shares          
+      3532 +    // access to an array, shallow-copied from the original a
+           +rguments list to fluid.log, which is assumed writeable       
+      3533 +    // and which they may splice, transform, etc. before it i
+           +s dispatched to the listener with namespace "log" which      
+      3534 +    // actually performs the logging action                  
+      3535 +    fluid.loggingEvent = fluid.makeEventFirer({name: "logging
+           + event", fallback: fluid.doBrowserLog});                     
+      3536 +                                                             
+      3537 +    fluid.loggingEvent.addListener(fluid.doBrowserLog, "log")
+           +;                                                            
+      3538 +    // Not intended to be overridden - just a positional plac
+           +eholder so that the priority of                              
+      3539 +    // actions filtering the log arguments before dispatching
+           + may be referred to it                                       
+      3540 +    fluid.loggingEvent.addListener(fluid.identity, "filterArg
+           +s", "before:log");                                           
+      3541 +    fluid.loggingEvent.addListener(fluid.addTimestampArg, "ad
+           +dTimestampArg", "after:filterArgs");                         
+      3542 +                                                             
+      3543 +    fluid.failureEvent = fluid.makeEventFirer({name: "failure
+           + event", fallback: function (args, activity) {               
+      3544 +        fluid.logFailure(args, activity);                    
+      3545 +        fluid.builtinFail(args, activity);                   
+      3546 +    }});                                                     
+      3547 +                                                             
+      3548 +    fluid.failureEvent.addListener(fluid.builtinFail, "fail")
+           +;                                                            
+      3549 +    fluid.failureEvent.addListener(fluid.logFailure, "log", "
+           +before:fail");                                               
+      3550 +                                                             
+      3551  };
+      3552  
+      3553  if (typeof(fluid) !== "undefined") {
+  Ran 1 shell command (ctrl+o to expand)
+
+● The failures point to fluid.makeEventFirer being undefined, likely because
+  that driver doesn't load FluidIL.js. I also need to re-check FluidIL.js since
+  it changed on disk since I last read it.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed the note came from my earlier Python edit—the real issue is that
+  FluidJSTests.html loads Fluid.js without FluidIL.js, so those events are
+  missing. I'll check what the IL driver loads before adding FluidIL.js to this
+  test file.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll update the harness and event tests now, replacing the
+  removal/namespace-stack tests with ones covering listener displacement,
+  exceptions, and re-entrant firing since removeListener is gone.
+
+● Bash(python3 - <<'EOF'
+      import re…)
+  ⎿  09:54:20.969:   fq:  Expected:  1
+     09:54:20.970:   fq:  Actual:  2
+     09:54:20.970:   fq:  Source:     at Object.<anonymous> (/mnt/outer-sou
+     … +6 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/html/FluidJSTests.html (+2 -0)
+       9          <script src="../../../../src/framework/core/js/FluidCor
+          e.js"></script>
+      10          <script src="../../../../src/framework/core/js/FluidSig
+          nals.js"></script>
+      11          <script src="../../../../src/framework/core/js/Fluid.js
+          "></script>
+      12 +        <!-- Required for fluid.makeEventFirer, and hence fluid
+         +.loggingEvent and fluid.failureEvent -->                       
+      13 +        <script src="../../../../src/framework/core/js/FluidIL.
+         +js"></script>                                                  
+      14  
+      15          <script src="../../../lib/qunit/js/qunit.js"></script>
+      16          <script src="../../../test-core/qunit/js/qunit-fluid.js
+          "></script>
+  ⎿  Updated tests/test-core/qunit/js/qunit-fluid.js (+1 -3)
+      25      };
+      26  
+      27      try {
+      28 -        fluid.failureEvent.addListener(x => x, "QUnit");       
+      28 +        // Displaces the listener added by any previous call   
+      29          fluid.failureEvent.addListener(captureActivity, "captur
+          eActivity", "before:fail");
+      30          this.expect(1);
+      31          toInvoke();
+     ...
+      46          if (!gotFailure) {
+      47              assert.ok(false, "No failure received for test " + 
+          message);
+      48          }
+      49 -        fluid.failureEvent.removeListener("QUnit");            
+      50 -        fluid.failureEvent.removeListener("captureActivity");  
+      49      }
+      50  };
+      51  
+  ⎿  Updated tests/framework-tests/core/js/FluidJSTests.js (+44 -35)
+      203      assert.expectFluidError("Configurable failure handler", fu
+           nction () {
+      204          fluid.fail.apply(null, testArgs);
+      205      }, "thingit");
+      206 -    fluid.failureEvent.removeListener("fail");                
+      206 +    // Restore the framework's handler by displacing ours     
+      207 +    fluid.failureEvent.addListener(fluid.builtinFail, "fail");
+      208  });
+      209  
+      210  QUnit.test("FLUID-5807 tests - identify fluid.FluidError", ass
+           ert => {
+     ...
+      264          ["Zis guy", 42],
+      265          "Logged to memory with interception"
+      266      );
+      266 -    fluid.loggingEvent.removeListener(fluid.tests.doMemoryLog)
+          -;                                                             
+      267 -    fluid.loggingEvent.removeListener("42");                  
+      268 -    const listeners = fluid.loggingEvent.sortedListeners.map(r
+          -ec => rec.listener);                                          
+      269 -    assert.false(listeners.includes(fluid.tests.insert42), "In
+          -tercepting listener removed");                                
+      270 -    assert.false(listeners.includes(fluid.tests.doMemoryLog), 
+          -"Memory log listener removed");                               
+      271 -    assert.true(listeners.includes(fluid.doBrowserLog), "Brows
+          -er log listener restored");                                   
+      267 +    // Restore the framework's logging by displacing our liste
+          +ners                                                          
+      268 +    fluid.loggingEvent.addListener(fluid.doBrowserLog, "log");
+      269 +    fluid.loggingEvent.addListener(fluid.identity, "42", "befo
+          +re:log");                                                     
+      270 +    fluid.log("Zis other guy");                               
+      271 +    assert.equal(fluid.tests.memoryLog.length, 1, "Memory log 
+          +listener displaced");                                         
+      272  });
+      273  
+      274  QUnit.test("Globals", assert => {
+     ...
+      307      assert.deepEqual(accumulate, [1, 2, 3, 4], "Listeners fire
+            in priority order");
+      308  });
+      309  
+      310 -QUnit.test("Attach and remove listeners", assert => {         
+      311 -    const testListener = function (shouldExecute) {           
+      312 -        assert.ok(shouldExecute, "Listener firing " + (shouldE
+          -xecute ? "" : "not ") + "expected");                          
+      313 -    };                                                        
+      314 -                                                              
+      315 -    assert.expect(2);                                         
+      310 +QUnit.test("Namespaced listener displaces earlier one", assert
+          + => {                                                         
+      311      const firer = fluid.makeEventFirer();
+      317 -    firer.addListener(testListener);                          
+      318 -    firer.fire(true);                                         
+      319 -    firer.removeListener(testListener);                       
+     … 68 more lines (ctrl+o to expand)
+
+● Found a single failing test caused by a timing issue, not a real bug:
+  addListener's own log reached the memory listener before it got displaced.
+  I'll fix this by asserting on the later log message directly instead of
+  relying on a count.
+
+● Bash(python3 - <<'EOF'
+      p="tests/framework-tests/core/js/FluidJSTests.js"…)
+  ⎿  09:54:36.346:   fq:  All tests concluded: 112/112 total passed in 308m
+     s - PASS
+     09:54:55.567:   fq:  All tests concluded: 1876/1876 total passed in 13
+     … +5 lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/js/FluidJSTests.js (+1 -1)
+      268      fluid.loggingEvent.addListener(fluid.doBrowserLog, "log");
+      269      fluid.loggingEvent.addListener(fluid.identity, "42", "befo
+           re:log");
+      270      fluid.log("Zis other guy");
+      271 -    assert.equal(fluid.tests.memoryLog.length, 1, "Memory log 
+          -listener displaced");                                         
+      271 +    assert.notOk(fluid.tests.memoryLog.some(args => args.inclu
+          +des("Zis other guy")), "Memory log listener displaced");      
+      272  });
+      273  
+      274  QUnit.test("Globals", assert => {
+
+● All 1876 tests pass. The run took 13.6s, against 12.0s after the previous
+  change. Now the IMERSS tests, eslint, and a quick measurement of what one
+  firing costs:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The benchmark's result line isn't in the tail. Checking whether it ran to
+  completion:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I've replaced fluid.makeEventFirer with a wrapper around a free fluid.event
+  component whose listeners run through the new composite $effect.
+  fluid.loggingEvent and fluid.failureEvent work on it unchanged for their
+  callers. All 1876 framework tests pass, the four IMERSS i6 drivers pass (25 +
+  65 + 49 + 12), and eslint is clean. Nothing is committed.
+
+  How it works
+
+  - The component: fluid.def("fluid.event") has the single member eventArgs.
+    makeEventFirer constructs one, and the firer returned has just name,
+    component, addListener and fire.
+  - addListener(listener, namespace, priority): pushes a merge record onto the
+    component holding dispatch: {$effect: [{namespace, priority, func, args: 
+    "{self}.eventArgs"}]}. func wraps the listener and spreads the args back
+    onto it. Records from separate pushes merge into one composite effect.
+    Re-using a namespace displaces the earlier listener, and a listener without
+    a namespace gets a unique one.
+  - fire(...args): writes the args into eventArgs, then reads that.dispatch,
+    which runs the listener chain synchronously.
+
+  Changes I had to make to your design
+
+  - eventArgs holds the args inside a small wrapper record, not as a bare array.
+    The framework expands an effect's arguments by recursing into plain arrays.
+    fluid.fail is often passed unavailable values, and expanding those would
+    make the whole firing unavailable, so the failure would be silently
+    swallowed.
+  - Listeners only run inside fire(). Adding a listener rebuilds the component,
+    and the composite effect runs as soon as it's rebuilt. Without a guard,
+    every addListener would replay the last firing.
+  - Exceptions are caught and rethrown from fire. The framework turns an
+    exception inside a cell into an unavailable value, which would stop
+    fluid.builtinFail from throwing. The wrapper catches the exception, stops
+    the remaining listeners, and fire rethrows it.
+  - There's a fallback option for re-entrant firings. The framework logs while
+    it rebuilds the logging component, and a nested firing can't be dispatched
+    through the cell that is already running. The logging fallback is
+    fluid.doBrowserLog. The failure fallback is logFailure plus builtinFail,
+    which is what fluid.fail already did before the event existed.
+  - The two events are now created at the end of FluidIL.js, because they need
+    the component system. Before that point, fluid.log writes straight to the
+    console and fluid.fail uses its existing pre-setup path.
+
+  Removed
+
+  removeListener, soft namespaces, the namespace stack, preventable and promise
+  events, and listeners given as global names. Listener return values are
+  ignored. Also gone from Fluid.js:
+  - fluid.event.identifyListener, impersonateListener, sortListeners,
+    resolveListener, nameEvent, firer, addListenerToFirer, resolveListenerRecord
+  - fluid.nameComponent, fluid.fireEvent, fluid.expandImmediate,
+    fluid.mergeListeners, fluid.eventFromRecord, fluid.mergeListenerPolicy,
+    fluid.makeMergeListenersPolicy, fluid.validateListenersImplemented,
+    fluid.arrayConcatPolicy
+
+  None of these had callers outside Fluid.js except fluid.fireEvent. Its one
+  call, an afterDestroy notification in fluid.doDestroy, was already a no-op and
+  is removed too.
+
+  Tests and harness
+
+  - qunit-fluid.js: expectFluidError used to add and then remove two failure
+    listeners. It now adds only captureActivity, which displaces the previous
+    call's copy and stays installed. I dropped the no-op "QUnit" listener.
+  - FluidJSTests.html: now loads FluidIL.js.
+  - FluidJSTests.js:
+    - The soft-failure and log-interception tests restore the framework
+      listeners by adding them again under the same namespaces.
+    - Two tests only exercised removal and the namespace stack, and they're
+      replaced by tests of:
+      - a namespaced listener displacing an earlier one
+      - an exception halting dispatch and being rethrown
+      - re-entrant firing going to the fallback
+  - fqunit-node.js needed no change: it creates onAllTestsDone with
+    makeEventFirer() and only fires it.
+
+  Cost
+
+  One firing with 3 listeners takes about 60 µs (measured over 20,000 firings,
+  with no spurious dispatches). That's far slower than the old direct loop. With
+  logging on it adds up: the full test run went from 12.0s to 13.6s. It doesn't
+  matter for failures, but it's worth knowing for logging-heavy runs.
+
+✻ Worked for 7m 14s · done 9:56
+
+❯ OK, can we then just revert to a simplified version of the previous           
+  implementation which skips anything not directly required for loggingEvent    
+  and failureEvent? No need for preventable, promise, softNamespace and the     
+  like, and put it back in Fluid.js again, just concentrate on simplicity and   
+  performance. Continue with the simplified tests                               
+
+● I'll put a plain firer back in Fluid.js: namespaced listeners sorted once when
+  a listener is added, with fire as a direct loop. The component-based version
+  comes out of FluidIL.js, and the composite $effect work stays.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(python3 - <<'EOF'
+      p="src/framework/core/js/FluidIL.js"…)
+  ⎿   .editorconfig                                      |     0
+      .eslintignore                                      |     0
+      .eslintrc.json                                     |     0
+     … +496 lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/FluidIL.js (+0 -149)
+      3399  
+      3400      fluid.constructRootComponents(fluid.globalInstantiator); 
+            // currently a singleton - in future, alternative instantiato
+            rs might come back
+      3401  
+      3402 -    /*** THE FLUID EVENT SYSTEM ***/                         
+      3403 -                                                             
+      3404 -    // An event, whose listeners are the namespaced listener 
+           -records of the composite effect `dispatch`, each supplied    
+      3405 -    // by a merge record of its own - see fluid.makeEventFire
+           -r and fluid.expandCompositeEffectRecord                      
+      3406 -    fluid.def("fluid.event", {                               
+      3407 -        $layers: "fluid.component",                          
+      3408 -        // The current firing of the event, whose arguments a
+           -re spread onto each listener                                 
+      3409 -        eventArgs: null,                                     
+      3410 -        $variety: "framework"                                
+      3411 -    });                                                      
+      3412 -                                                             
+      3413 -    /**                                                      
+      3414 -     * The arguments of one firing of an event. These are hel
+           -d in an opaque record rather than as a bare array, since     
+      3415 -     * the arguments to the listeners of the composite effect
+           - dispatching the event are flattened, and the arguments of   
+      3416 -     * an event may hold arbitrary material, e.g. unavailable
+           - values supplied to `fluid.fail`, which must reach the       
+      3417 -     * listeners untouched.                                  
+      3418 -     * @param {any[]} args - The arguments with which the eve
+           -nt was fired                                                 
+      3419 -     */                                                      
+      3420 -    fluid.event.firing = function (args) {                   
+      3421 -        this.args = args;                                    
+      3422 -    };                                                       
+      3423 -                                                             
+      3424 -    /**                                                      
+      3425 -     * @typedef {Object} EventFirer                          
+      3426 -     * @property {String} name - A readable name for the even
+           -t, for diagnostics                                           
+      3427 -     * @property {fluid.event} component - The `fluid.event` 
+           -component dispatching the event                              
+      3428 -     * @property {Function} addListener - Adds a listener, wi
+           -th signature `(listener, namespace, priority)`               
+      3429 -     * @property {Function} fire - Fires the event, with a fr
+           -ee signature, which is spread onto each listener             
+      3430 -     */                                                      
+      3431 -                                                             
+      3432 -    /**                                                      
+      3433 -     * Construct an event firer, a wrapper for a free `fluid.
+           -event` component. Each listener added to the firer is        
+      3434 -     * pushed onto the component as a merge record of its own
+           -, holding a composite `$effect` record with a single         
+      3435 -     * listener record. These are merged into one composite e
+           -ffect, whose listeners are notified in the order given by    
+      3436 -     * their priorities - see FLUID-7028. A listener added wi
+           -th the namespace of an existing one displaces it. Firing     
+      3437 -     * the event writes its arguments into the component's me
+           -mber `eventArgs`, and then synchronously reads the           
+      3438 -     * composite effect, which dispatches them to each listen
+           -er in turn. An exception thrown by a listener halts the      
+     … 115 more lines (ctrl+o to expand)
+  ⎿  Updated src/framework/core/js/Fluid.js (+77 -8)
+      175      fluid.fail = function (...messages) {
+      176          const activity = fluid.makeArray(fluid.getActivityStac
+           k()); // Take copy since we will destructively modify
+      177          fluid.popActivity(activity.length); // clear any curre
+           nt activity - TODO: the framework currently has no exception h
+           andlers, although it will in time
+      178 -        if (fluid.failureEvent) { // notify any framework fail
+          -ure prior to successfully setting up the failure event in Flui
+          -dIL.js                                                        
+      178 +        if (fluid.failureEvent) { // notify any framework fail
+          +ure prior to successfully setting up the failure event below  
+      179              fluid.failureEvent.fire(messages, activity);
+      180          } else {
+      181              fluid.logFailure(messages, activity);
+     ...
+      273              userLogLevel = directArgs.shift();
+      274          }
+      275          if (fluid.passLogLevel(userLogLevel)) {
+      276 -            if (fluid.loggingEvent) {                         
+      277 -                fluid.loggingEvent.fire(directArgs);          
+      278 -            } else { // log directly any message prior to succ
+          -essfully setting up the logging event in FluidIL.js           
+      279 -                fluid.doBrowserLog(directArgs);               
+      280 -            }                                                 
+      276 +            fluid.loggingEvent.fire(directArgs);              
+      277          }
+      278      };
+      279  
+     ...
+      1287          return array;
+      1288      };
+      1289  
+      1290 +    /*** The Fluid Event system. ***/                        
+      1291 +                                                             
+      1292 +    /**                                                      
+      1293 +     * @typedef {Object} EventFirer                          
+      1294 +     * @property {String} name - A readable name for the even
+           +t, for diagnostics                                           
+      1295 +     * @property {Function} addListener - Adds a listener, wi
+           +th signature `(listener, namespace, priority)`               
+      1296 +     * @property {Function} fire - Fires the event, with a fr
+           +ee signature which is supplied to each listener              
+      1297 +     */                                                      
+      1298 +                                                             
+      1299 +    /**                                                      
+      1300 +     * Construct an event firer, to which listeners may be ad
+           +ded, each of which is notified when the event is fired.      
+      1301 +     * Listeners are notified in the order given by their pri
+           +orities, and otherwise in the order they were added. This    
+      1302 +     * is a minimal form of the event system of Infusion 4, s
+           +upporting just `fluid.loggingEvent` and                      
+      1303 +     * `fluid.failureEvent` - listeners cannot be removed, bu
+           +t a listener displaces any existing one with its namespace.  
+      1304 +     * @param {Object} [options] - Options configuring the fi
+           +rer                                                          
+      1305 +     * @param {String} [options.name] - A readable name for t
+           +he event, for diagnostics                                    
+      1306 +     * @return {EventFirer} The event firer                  
+     … 78 more lines (ctrl+o to expand)
+  ⎿  Updated tests/framework-tests/core/html/FluidJSTests.html (+0 -2)
+       9          <script src="../../../../src/framework/core/js/FluidCor
+          e.js"></script>
+      10          <script src="../../../../src/framework/core/js/FluidSig
+          nals.js"></script>
+      11          <script src="../../../../src/framework/core/js/Fluid.js
+          "></script>
+      12 -        <!-- Required for fluid.makeEventFirer, and hence fluid
+         -.loggingEvent and fluid.failureEvent -->                       
+      13 -        <script src="../../../../src/framework/core/js/FluidIL.
+         -js"></script>                                                  
+      12  
+      13          <script src="../../../lib/qunit/js/qunit.js"></script>
+      14          <script src="../../../test-core/qunit/js/qunit-fluid.js
+          "></script>
+  ⎿  Updated tests/framework-tests/core/js/FluidJSTests.js (+9 -11)
+      339      assert.deepEqual(record, ["before 1", "before 2", "after 2
+           "], "Event fires normally once throwing listener is displaced"
+           );
+      340  });
+      341  
+      342 -QUnit.test("Reentrant firing is delivered to fallback", assert
+          - => {                                                         
+      343 -    const fallback = [];                                      
+      342 +QUnit.test("Reentrant firing notifies listeners in turn", asse
+          +rt => {                                                       
+      343      const record = [];
+      345 -    const firer = fluid.makeEventFirer({fallback: (...args) =>
+          - fallback.push(args)});                                       
+      346 -    firer.addListener((arg, unavailable) => {                 
+      347 -        record.push(arg);                                     
+      344 +    const firer = fluid.makeEventFirer();                     
+      345 +    firer.addListener(arg => {                                
+      346 +        record.push("first " + arg);                          
+      347          if (arg === "outer") {
+      349 -            firer.fire("inner", unavailable);                 
+      348 +            firer.fire("inner");                              
+      349          }
+      351 -    });                                                       
+      352 -    const unavailable = fluid.unavailable("Unavailable argumen
+          -t");                                                          
+      353 -    firer.fire("outer", unavailable);                         
+      354 -    assert.deepEqual(record, ["outer"], "Listener notified onc
+          -e");                                                          
+      355 -    assert.deepEqual(fallback, [["inner", unavailable]], "Reen
+          -trant firing delivered to fallback");                         
+      350 +    }, "first");                                              
+      351 +    firer.addListener(arg => record.push("second " + arg), "se
+          +cond", "after:first");                                        
+      352 +    firer.fire("outer");                                      
+      353 +    assert.deepEqual(record, ["first outer", "first inner", "s
+          +econd inner", "second outer"], "Reentrant firing completes wit
+          +hin the outer one");                                          
+      354  });
+      355  
+      356  fluid.tests.constraintTests = [{
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● FluidJSTests passes 111/111 without FluidIL.js, and I've confirmed my edits
+  are scoped to Fluid.js, FluidIL.js, FluidILTests.js, FluidJSTests.js, and
+  qunit-fluid.js (the csslint/woff2 diff entries predate this session). Now
+  running the full suite, eslint, the IMERSS tests, and the benchmark.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● fluid.makeEventFirer is back in Fluid.js as a short, simple implementation
+  that only does what fluid.loggingEvent and fluid.failureEvent need. All 1875
+  framework tests pass, the four IMERSS i6 drivers pass (25 + 65 + 49 + 12), and
+  eslint is clean. Nothing is committed.
+
+  The firer
+
+  - addListener(listener, namespace, priority): stores the listener under its
+    namespace, so adding a listener with an existing namespace replaces the old
+    one. A listener without a namespace gets a unique one. The firing order is
+    worked out once here (using fluid.parsePriority and fluid.sortByPriority),
+    not on every firing.
+  - fire(...args): a plain loop over that sorted list. An exception from a
+    listener propagates and stops the remaining listeners. A firing from inside
+    a listener runs to completion within the outer one. A listener added during
+    a firing is first called on the next firing.
+  - Speed: about 0.6 µs per firing with 3 listeners, against about 60 µs for the
+    component version. The full test run is back to 12.6s.
+
+  fluid.loggingEvent and fluid.failureEvent are created and given their
+  listeners in Fluid.js as before. fluid.log and fluid.fail are back to their
+  original code.
+
+  Removed for good
+
+  removeListener, soft namespaces, the namespace stack, preventable and promise
+  events, global-name listeners, and the Infusion 4 listener-merging helpers.
+  fluid.fireEvent also stays removed, along with its one call in
+  fluid.doDestroy, which was already doing nothing.
+
+  Tests
+
+  - The fluid.event component and the firer built on it are gone from
+    FluidIL.js. The composite $effect support and its tests stay.
+  - FluidJSTests.html no longer loads FluidIL.js.
+  - The simplified tests are kept: "Namespaced listener displaces earlier one",
+    "Exception thrown by listener halts dispatch and is rethrown", plus the
+    existing soft-failure, log-interception and sorting tests. The soft-failure
+    and log-interception tests now restore the default listeners by adding them
+    again under the same namespaces.
+  - With no fallback any more, the fallback test became "Reentrant firing
+    notifies listeners in turn", which checks that a nested firing completes
+    inside the outer one. That test has one fewer assertion, hence 1875 rather
+    than 1876.
+  - expectFluidError in qunit-fluid.js keeps the simplified form: it adds its
+    captureActivity listener each time, replacing the previous one, and no
+    longer tries to remove anything.
+
+✻ Sautéed for 2m 15s · done 10:33
+
+❯ For clarity, the libreMap definitions should have "after:" priority           
+  constraints and not rely on definition order                                  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The readyMap stages in libreMap.js now declare their order explicitly, so they
+  no longer rely on where they appear in the array:
+
+  - loadFillPatterns has priority: "after:load"
+  - applyStyle has priority: "after:loadFillPatterns"
+  - load has no constraint, since it comes first
+
+  The IMERSS map tests still pass (25/25), and eslint is clean. That includes
+  the test where a user record inserts a before:applyStyle stage, so the new
+  constraints and an inserted stage order together correctly.
+
+✻ Cogitated for 41s · done 10:44

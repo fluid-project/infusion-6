@@ -1289,361 +1289,61 @@ const $fluidScope = function (fluid) {
 
     /*** The Fluid Event system. ***/
 
-    fluid.registerNamespace("fluid.event");
-
-    fluid.event.identifyListener = function (listener, soft) {
-        if (typeof(listener) !== "string" && !listener.$$fluid_guid && !soft) {
-            listener.$$fluid_guid = fluid.allocateGuid();
-        }
-        return listener.$$fluid_guid;
-    };
-
-    fluid.event.impersonateListener = function (origListener, newListener) {
-        fluid.event.identifyListener(origListener);
-        newListener.$$fluid_guid = origListener.$$fluid_guid;
-    };
-
-    fluid.event.sortListeners = function (listeners) {
-        let togo = [];
-        Object.values(listeners).forEach(oneNamespace => {
-            let headHard; // notify only the first listener with hard namespace - or else all if all are soft
-            for (let i = 0; i < oneNamespace.length; ++i) {
-                const thisListener = oneNamespace[i];
-                if (!thisListener.softNamespace && !headHard) {
-                    headHard = thisListener;
-                }
-            }
-            if (headHard) {
-                togo.push(headHard);
-            } else {
-                togo = togo.concat(oneNamespace);
-            }
-        });
-        return fluid.sortByPriority(togo);
-    };
-
-    fluid.event.resolveListener = function (listener) {
-        const listenerName = listener.globalName || (typeof(listener) === "string" ? listener : null);
-        if (listenerName) {
-            const listenerFunc = fluid.getGlobalValue(listenerName);
-            if (!listenerFunc) {
-                fluid.fail("Unable to look up name " + listenerName + " as a global function");
-            } else {
-                listener = listenerFunc;
-            }
-        }
-        return listener;
-    };
-
-    /* Generate a name for a component for debugging purposes */
-    fluid.nameComponent = function (that) {
-        return that ? fluid.dumpComponentAndPath(that) : "[unknown component]";
-    };
-
-    fluid.event.nameEvent = function (that, eventName) {
-        return eventName + " of " + fluid.nameComponent(that);
-    };
-
-    // A function to tag the type of a Fluid event firer (primarily to mark it uncopyable)
-    fluid.event.firer = function () {
-    };
-
-    /** Construct an "event firer" object which can be used to register and deregister
-     * listeners, to which "events" can be fired. These events consist of an arbitrary
-     * function signature. General documentation on the Fluid events system is at
-     * http://docs.fluidproject.org/infusion/development/InfusionEventSystem.html .
-     *
-     * @param {Object} options - A structure to configure this event firer. Supported fields:
-     *     {String} name - a readable name for this firer to be used in diagnostics and debugging
-     *     {Boolean} preventable - If <code>true</code> the return value of each handler will
-     * be checked for <code>false</code> in which case further listeners will be shortcircuited, and this
-     * will be the return value of fire()
-     *     {Boolean} promise - If `true`, the event firer will receive a "thenable" signature allowing
-     * it to function as a promise. In this case the event should be fired with only one argument, and
-     * not more than once.
-     * @return {Object} - The newly-created event firer.
+    /**
+     * @typedef {Object} EventFirer
+     * @property {String} name - A readable name for the event, for diagnostics
+     * @property {Function} addListener - Adds a listener, with signature `(listener, namespace, priority)`
+     * @property {Function} fire - Fires the event, with a free signature which is supplied to each listener
      */
-    fluid.makeEventFirer = function (options) {
-        options = options || {};
-        const name = options.name || "<anonymous>";
-        let that;
 
-        const lazyInit = function () { // Lazy init function to economise on object references for events which are never listened to
-            // The authoritative list of all listeners, a hash indexed by namespace, looking up to a stack (array) of
-            // listener records in "burial order"
-            that.listeners = {};
-            // An index of all listeners by "id" - we should consider removing this since it is only used during removal
-            // and because that.listeners is a hash of stacks we can't really accelerate removal by much
-            that.byId = {};
-            // The "live" list of listeners which will be notified in order on any firing. Recomputed on any use of
-            // addListener/removeListener
-            that.sortedListeners = [];
-            // Very low-level destruction notification scheme primarily intended for FLUID-6445. Will be an array of nullary functions
-            that.onDestroy = null;
-            // arguments after 3rd are not part of public API
-            // listener as Object is used only by ChangeApplier to tunnel path, segs, etc as part of its "spec"
-            /** Adds a listener to this event.
-             * @param {Function|String} listener - The listener function to be added, or a global name resolving to a function. The signature of the function is arbitrary and matches that sent to event.fire()
-             * @param {String} [namespace] - (Optional) A namespace for this listener. At most one listener with a particular namespace can be active on an event at one time. Removing successively added listeners with a particular
-             * namespace will expose previously added ones in a stack idiom
-             * @param {String|Number} [priority] - A priority for the listener relative to others, perhaps expressed with a constraint relative to the namespace of another - see
+    /**
+     * Construct an event firer, to which listeners may be added, each of which is notified when the event is fired.
+     * Listeners are notified in the order given by their priorities, and otherwise in the order they were added. This
+     * is a minimal form of the event system of Infusion 4, supporting just `fluid.loggingEvent` and
+     * `fluid.failureEvent` - listeners cannot be removed, but a listener displaces any existing one with its namespace.
+     * @param {Object} [options] - Options configuring the firer
+     * @param {String} [options.name] - A readable name for the event, for diagnostics
+     * @return {EventFirer} The event firer
+     */
+    fluid.makeEventFirer = function (options = {}) {
+        // Listener records indexed by namespace
+        const byNamespace = {};
+        // The listener records in the order in which they are notified, recomputed whenever a listener is added
+        let sortedListeners = [];
+        let count = 0;
+        return {
+            name: options.name || "<anonymous>",
+            /**
+             * Adds a listener to this event.
+             * @param {Function} listener - The listener, whose signature matches that supplied to `fire`
+             * @param {String} [namespace] - A namespace for the listener, displacing any existing listener with the same
+             * namespace. If omitted, the listener receives a unique namespace.
+             * @param {String|Number} [priority] - A priority for the listener relative to others, perhaps expressed with a
+             * constraint relative to the namespace of another, e.g. "before:log" - see
              * http://docs.fluidproject.org/infusion/development/Priorities.html
-             * @param {String} [softNamespace] - An unsupported internal option that is not part of the public API.
-             * @param {String} [listenerId] - An unsupported internal option that is not part of the public API.
              */
-            that.addListener = function (listener, namespace, priority, softNamespace, listenerId) {
-                let record;
-                if (that.destroyed) {
-                    fluid.fail("Cannot add listener to destroyed event firer " + that.name);
-                }
-                if (!listener) {
-                    return;
-                }
-                if (fluid.isPlainObject(listener, true) && !fluid.isApplicable(listener)) {
-                    record = listener;
-                    listener = record.listener;
-                    namespace = record.namespace;
-                    priority = record.priority;
-                    softNamespace = record.softNamespace;
-                    listenerId = record.listenerId;
-                }
-                if (typeof(listener) === "string") {
-                    listener = {globalName: listener};
-                }
-                const id = listenerId || fluid.event.identifyListener(listener);
-                namespace = namespace || id;
-                record = Object.assign(record || {}, {
-                    namespace: namespace,
-                    listener: listener,
-                    softNamespace: softNamespace,
-                    listenerId: listenerId,
-                    priority: fluid.parsePriority(priority, that.sortedListeners.length, false, "listeners")
-                });
-                that.byId[id] = record;
-
-                const thisListeners = (that.listeners[namespace] = fluid.makeArray(that.listeners[namespace]));
-                thisListeners[softNamespace ? "push" : "unshift"](record);
-
-                that.sortedListeners = fluid.event.sortListeners(that.listeners);
-            };
-            that.addListener.apply(null, arguments);
-        };
-        that = Object.create(fluid.event.firer.prototype);
-        Object.assign(that, {
-            eventId: fluid.allocateGuid(),
-            name: name,
-            ownerId: options.ownerId,
-            typeName: "fluid.event.firer",
-            destroy: function () {
-                that.destroyed = true;
-                fluid.each(that.onDestroy, function (func) {
-                    func();
-                });
-            },
-            addListener: function () {
-                lazyInit.apply(null, arguments);
+            addListener: function (listener, namespace, priority) {
+                const listenerNamespace = namespace || "listener-" + fluid.allocateGuid();
+                byNamespace[listenerNamespace] = {
+                    namespace: listenerNamespace,
+                    listener,
+                    priority: fluid.parsePriority(priority, count++, false, "listeners")
+                };
+                sortedListeners = fluid.sortByPriority(Object.values(byNamespace));
             },
             /**
-             * Removes a listener previously registered with this event.
-             *
-             * @param {Function|String} listener - Either the listener function, the namespace of a listener
-             * (in which case a previous listener with that namespace may be uncovered) or an id sent to the
-             * undocumented `listenerId` argument of `addListener
+             * Fires this event to its listeners, in order of priority. The signature of this method is free. Any
+             * exception thrown by a listener propagates, and no further listeners are notified.
+             * @param {...any} args - The arguments to be supplied to each listener
              */
-            // Can be supplied either listener, namespace, or id (which may match either listener function's guid or original listenerId argument)
-            removeListener: function (listener) {
-                if (!that.listeners) {
-                    return;
-                }
-                let namespace, id, record;
-                if (typeof(listener) === "string") {
-                    namespace = listener;
-                    record = that.listeners[namespace];
-                    if (!record) { // it was an id and not a namespace - take the namespace from its record later
-                        id = namespace;
-                        namespace = null;
-                    }
-                } else if (typeof(listener) === "function") {
-                    id = fluid.event.identifyListener(listener, true);
-                    if (!id) {
-                        fluid.fail("Cannot remove unregistered listener function ", listener, " from event " + that.name);
-                    }
-                }
-                const rec = that.byId[id];
-                const softNamespace = rec && rec.softNamespace;
-                namespace = namespace || (rec && rec.namespace) || id;
-                delete that.byId[id];
-                record = that.listeners[namespace];
-                if (record) {
-                    if (softNamespace) {
-                        fluid.remove_if(record, function (thisLis) {
-                            return thisLis.listener.$$fluid_guid === id || thisLis.listenerId === id;
-                        });
-                    } else {
-                        record.shift();
-                    }
-                    if (record.length === 0) {
-                        delete that.listeners[namespace];
-                    }
-                }
-                that.sortedListeners = fluid.event.sortListeners(that.listeners);
-            },
-            /* Fires this event to all listeners which are active. They will be notified in order of priority. The signature of this method is free. */
-            fire: function () {
-                const listeners = that.sortedListeners;
-                if (options.promise) {
-                    that.promisePayload = arguments[0];
-                }
-                if (!listeners || that.destroyed) {
-                    return;
-                }
+            fire: function (...args) {
+                // A listener added during firing is not notified until the next firing
+                const listeners = sortedListeners;
                 for (let i = 0; i < listeners.length; ++i) {
-                    const lisrec = listeners[i];
-                    if (typeof(lisrec.listener) !== "function") {
-                        lisrec.listener = fluid.event.resolveListener(lisrec.listener);
-                    }
-                    const listener = lisrec.listener;
-                    const ret = listener.apply(null, arguments);
-                    let value;
-                    if (options.preventable && ret === false || that.destroyed) {
-                        value = false;
-                    }
-                    if (value !== undefined) {
-                        return value;
-                    }
+                    listeners[i].listener.apply(null, args);
                 }
             }
-        });
-        if (options.promise) {
-            that.then = function (func) {
-                if ("promisePayload" in that) {
-                    func(that.promisePayload);
-                } else {
-                    that.addListener(func);
-                }
-            };
-        }
-        return that;
-    };
-
-    // Fires to an event which may not be instantiated (in which case no-op) - primary modern usage is to resolve FLUID-5904
-    fluid.fireEvent = function (component, eventName, args) {
-        const firer = component.events && component.events[eventName];
-        if (firer) {
-            firer.fire.apply(null, fluid.makeArray(args));
-        }
-    };
-
-    // unsupported, NON-API function
-    fluid.event.addListenerToFirer = function (firer, value, namespace, wrapper) {
-        wrapper = wrapper || (x => x);
-        if (Array.isArray(value)) {
-            for (let i = 0; i < value.length; ++i) {
-                fluid.event.addListenerToFirer(firer, value[i], namespace, wrapper);
-            }
-        } else if (typeof(value) === "function" || typeof(value) === "string") {
-            wrapper(firer).addListener(value, namespace);
-        } else if (value && typeof(value) === "object") {
-            wrapper(firer).addListener(value.listener, namespace || value.namespace, value.priority, value.softNamespace, value.listenerId);
-        }
-    };
-
-    // unsupported, NON-API function - non-IOC passthrough
-    fluid.event.resolveListenerRecord = function (records) {
-        return {records: records};
-    };
-
-    fluid.expandImmediate = function (material) {
-        fluid.fail("fluid.expandImmediate could not be loaded - please include FluidIL.js in order to operate IL event with descriptor " + material);
-    };
-
-    fluid.mergeListeners = function (that, events, listeners) {
-        fluid.each(listeners, function (value, key) {
-            let firer, namespace;
-            if (fluid.isILReference(key)) {
-                firer = fluid.expandImmediate(key, that);
-                if (!firer) {
-                    fluid.fail("Error in listener record: key " + key + " could not be looked up to an event firer - did you miss out \"events.\" when referring to an event firer?");
-                }
-            } else {
-                const keydot = key.indexOf(".");
-
-                if (keydot !== -1) {
-                    namespace = key.substring(keydot + 1);
-                    key = key.substring(0, keydot);
-                }
-                if (!events[key]) {
-                    fluid.fail("Listener registered for event " + key + " which is not defined for this component");
-                }
-                firer = events[key];
-            }
-            const record = fluid.event.resolveListenerRecord(value, that, key, namespace, true);
-            fluid.event.addListenerToFirer(firer, record.records, namespace, record.adderWrapper);
-        });
-    };
-
-    fluid.eventFromRecord = function (eventSpec, eventKey, that) {
-        const isILEvent = eventSpec && (typeof(eventSpec) !== "string" || fluid.isILReference(eventSpec));
-        let event;
-        if (isILEvent) {
-            if (!fluid.event.resolveEvent) {
-                fluid.fail("fluid.event.resolveEvent could not be loaded - please include FluidIL.js in order to operate IL driven event with descriptor ",
-                    eventSpec);
-            } else {
-                event = fluid.event.resolveEvent(that, eventKey, eventSpec);
-            }
-        } else {
-            event = fluid.makeEventFirer({
-                name: fluid.event.nameEvent(that, eventKey),
-                preventable: eventSpec === "preventable",
-                promise: eventSpec === "promise",
-                ownerId: that.id
-            });
-        }
-        return event;
-    };
-
-    fluid.mergeListenerPolicy = function (target, source, key) {
-        if (typeof(key) !== "string") {
-            fluid.fail("Error in listeners declaration - the keys in this structure must resolve to event names - got " + key + " from ", source);
-        }
-        // cf. triage in mergeListeners
-        const hasNamespace = !fluid.isILReference(key) && key.indexOf(".") !== -1;
-        return hasNamespace ? (source || target) : fluid.arrayConcatPolicy(target, source);
-    };
-
-    fluid.makeMergeListenersPolicy = function (merger, modelRelay) {
-        return function (target, source) {
-            target = target || {};
-            if (modelRelay && (Array.isArray(source) || "target" in source && (typeof(source.target) === "string" || source.target.segs))) { // This form allowed for modelRelay
-                target[""] = merger(target[""], source, "");
-            } else {
-                fluid.each(source, function (listeners, key) {
-                    target[key] = merger(target[key], listeners, key);
-                });
-            }
-            return target;
         };
-    };
-
-    fluid.validateListenersImplemented = function (that) {
-        const errors = [];
-        fluid.each(that.events, function (event, name) {
-            fluid.each(event.sortedListeners, function (lisrec) {
-                if (lisrec.listener === fluid.notImplemented || lisrec.listener.globalName === "fluid.notImplemented") {
-                    errors.push({
-                        name: name,
-                        namespace: lisrec.namespace,
-                        componentSource: fluid.model.getSimple(that.options.listeners, [name + "." + lisrec.namespace, 0, "componentSource"])
-                    });
-                }
-            });
-        });
-        return errors;
-    };
-
-    fluid.arrayConcatPolicy = function (target, source) {
-        return fluid.makeArray(target).concat(fluid.makeArray(source));
     };
 
     /*** FLUID LOGGING SYSTEM ***/
@@ -1662,7 +1362,7 @@ const $fluidScope = function (fluid) {
     fluid.loggingEvent.addListener(fluid.doBrowserLog, "log");
     // Not intended to be overridden - just a positional placeholder so that the priority of
     // actions filtering the log arguments before dispatching may be referred to it
-    fluid.loggingEvent.addListener(x => x, "filterArgs", "before:log");
+    fluid.loggingEvent.addListener(fluid.identity, "filterArgs", "before:log");
     fluid.loggingEvent.addListener(fluid.addTimestampArg, "addTimestampArg", "after:filterArgs");
 
     /*** FLUID ERROR SYSTEM ***/
@@ -2170,6 +1870,111 @@ const $fluidScope = function (fluid) {
     };
 
     /**
+     * @typedef {Object} EffectMaterial
+     * @property {Boolean} composite - `true` if the effect was written in composite form, as an array of listener records
+     * @property {FuncRecord[]} records - The listener records of the effect - a single one if it was written in simple form
+     */
+
+    /**
+     * Determine whether a layer's value at a path holds an effect, written either as a compact "$effect:..." String or
+     * as a record `{$effect: ...}`, whose member may be a single listener record or, for a composite effect, an array of
+     * them - see `fluid.collectEffectRecords`.
+     * @param {any} value - The value to be tested
+     * @return {EffectMaterial|null} The effect's listener records, or `null` if the value does not hold an effect
+     */
+    fluid.effectMaterial = function (value) {
+        const expanded = typeof(value) === "string" && value.startsWith("$effect:") ? fluid.expandCompactElement(value) : value;
+        let togo = null;
+        if (fluid.isPlainObject(expanded, true) && "$effect" in expanded) {
+            const record = expanded.$effect;
+            const composite = Array.isArray(record);
+            togo = {composite, records: composite ? record : [record]};
+        }
+        return togo;
+    };
+
+    /**
+     * Determine the namespace of a listener record of an effect - a record without one, including that of any effect
+     * written in simple form, has the empty namespace.
+     * @param {FuncRecord} record - The listener record
+     * @return {String} Its namespace
+     */
+    fluid.effectNamespace = function (record) {
+        return record.namespace ?? "";
+    };
+
+    /**
+     * Verify that no two listener records of an effect supplied together share a namespace.
+     * @param {FuncRecord[]} records - The listener records
+     * @param {String} site - A description of where the records were found, for any error message
+     */
+    fluid.checkEffectNamespaces = function (records, site) {
+        const namespaces = records.map(fluid.effectNamespace);
+        const duplicate = namespaces.find((namespace, i) => namespaces.indexOf(namespace) !== i);
+        if (duplicate !== undefined) {
+            fluid.fail(`Duplicate namespace "${duplicate}" in listener records of composite $effect ${site} - each listener ` +
+                "record of an effect must have a distinct namespace, and at most one may have none");
+        }
+    };
+
+    /**
+     * Merge the effects supplied by several layers at a path. Rather than the strongest effect displacing all others, as
+     * for any other value, the listener records of each are merged together by namespace, a stronger record displacing a
+     * weaker one of the same namespace in place, as for the namespaced listeners of Infusion 4 - see FLUID-7028. Any
+     * value other than an effect displaces all weaker effects. If just one listener record survives the merge and it was
+     * supplied by an effect in simple form, that effect is the result just as written, otherwise the result is a
+     * composite effect holding the surviving records - see `fluid.expandCompositeEffectRecord`.
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {String} key - The key at which the effects are held
+     * @param {String[]} segs - The path of the layers' parent within the root being merged
+     * @param {Boolean[]} plainLayers - For each layer, whether it is a plain object or array
+     * @return {String|Object} The merged effect
+     */
+    fluid.collectEffectRecords = function (layers, key, segs, plainLayers) {
+        let contributions = [];
+        layers.forEach((layer, i) => {
+            if (plainLayers[i] && key in layer) {
+                const value = layer[key];
+                const material = fluid.effectMaterial(value);
+                if (material) {
+                    contributions.push({value, material});
+                } else {
+                    contributions = [];
+                }
+            }
+        });
+        let togo;
+        if (contributions.length === 1) {
+            togo = contributions[0].value;
+        } else {
+            const site = "at path " + [...segs, key].join(".");
+            // Each entry holds a surviving listener record together with the contribution which supplied it
+            const merged = [];
+            contributions.forEach(contribution => {
+                fluid.checkEffectNamespaces(contribution.material.records, site);
+                contribution.material.records.forEach(record => {
+                    const index = merged.findIndex(entry => fluid.effectNamespace(entry.record) === fluid.effectNamespace(record));
+                    const entry = {record, contribution};
+                    if (index === -1) {
+                        merged.push(entry);
+                    } else {
+                        merged[index] = entry;
+                    }
+                });
+            });
+            if (merged.length === 1 && !merged[0].contribution.material.composite) {
+                togo = merged[0].contribution.value;
+            } else {
+                togo = {$effect: merged.map(entry => entry.record)};
+                // Record the material merged here, so that a fresh merge of the same material may be recognised as
+                // equivalent - see fluid.isSameSignalRecord
+                togo[$m] = {contributions: contributions.map(contribution => contribution.value)};
+            }
+        }
+        return togo;
+    };
+
+    /**
      * Merge the material of several layers at a path into a fresh layer object - see `fluid.mergeLayers`
      * @param {Object} target - The merged object of which this is a member
      * @param {String} key - The member's key
@@ -2245,6 +2050,8 @@ const $fluidScope = function (fluid) {
         }
         if (holdsComponent) {
             newTarget = fluid.collectComponentRecords(layers, key, segs, mergeRecords);
+        } else if (count > 1 && fluid.effectMaterial(last)) {
+            newTarget = fluid.collectEffectRecords(layers, key, segs, plainLayers);
         } else if (count > 1 && fluid.isPlainObject(last, true)) {
             segs.push(key);
             newTarget = fluid.mergeFreshMaterial(target, key, segs, layerMap, layers.map(layer => layer?.[key]), mergeRecords);

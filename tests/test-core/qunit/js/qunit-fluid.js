@@ -25,7 +25,7 @@ QUnit.assert.expectFluidError = function (message, toInvoke, errorTexts) {
     };
 
     try {
-        fluid.failureEvent.addListener(x => x, "QUnit");
+        // Displaces the listener added by any previous call
         fluid.failureEvent.addListener(captureActivity, "captureActivity", "before:fail");
         this.expect(1);
         toInvoke();
@@ -46,8 +46,6 @@ QUnit.assert.expectFluidError = function (message, toInvoke, errorTexts) {
         if (!gotFailure) {
             assert.ok(false, "No failure received for test " + message);
         }
-        fluid.failureEvent.removeListener("QUnit");
-        fluid.failureEvent.removeListener("captureActivity");
     }
 };
 

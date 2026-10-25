@@ -299,6 +299,189 @@ QUnit.test("Effects resolution II - read/write and dispose", function (assert) {
     "Error thrown accessing destroyed component");
 });
 
+// Composite effects - FLUID-7028
+
+fluid.tests.appendStage = function (payload, stage, log) {
+    const togo = [...fluid.makeArray(payload), stage];
+    log(stage, togo);
+    return togo;
+};
+
+fluid.tests.asyncStage = async function (payload, stage, log) {
+    await fluid.tests.wait(1);
+    return fluid.tests.appendStage(payload, stage, log);
+};
+
+fluid.tests.logStage = function (stage, log) {
+    log(stage);
+};
+
+fluid.tests.wait = delay => new Promise(resolve => setTimeout(resolve, delay));
+
+fluid.def("fluid.tests.compositeBase", {
+    $layers: "fluid.component",
+    log: () => {},
+    initial: "start",
+    ready: {
+        $effect: [{
+            namespace: "load",
+            func: "fluid.tests.appendStage",
+            args: ["{self}.initial", "load", "{self}.log"]
+        }, {
+            namespace: "style",
+            func: "fluid.tests.appendStage",
+            args: ["{$payload}", "style", "{self}.log"]
+        }, {
+            namespace: "notify",
+            priority: "after:style",
+            func: "fluid.tests.logStage",
+            args: ["notify", "{self}.log"]
+        }]
+    },
+    consumer: "$effect:fluid.tests.logValue({self}.ready, {self}.log)"
+});
+
+fluid.def("fluid.tests.compositeDerived", {
+    $layers: "fluid.tests.compositeBase",
+    ready: {
+        $effect: [{
+            namespace: "patterns",
+            priority: "before:style",
+            func: "fluid.tests.appendStage",
+            args: ["{$payload}", "patterns", "{self}.log"]
+        }, {
+            namespace: "load",
+            func: "fluid.tests.appendStage",
+            args: ["{self}.initial", "reload", "{self}.log"]
+        }]
+    }
+});
+
+QUnit.test("Composite effect runs its listener records as a chain", function (assert) {
+    const log = [];
+    const that = fluid.tests.compositeBase({
+        log: (...args) => log.push(args)
+    });
+    fluid.cell.stabilize();
+    assert.deepEqual(log, [
+        ["load", ["start", "load"]],
+        ["style", ["start", "load", "style"]],
+        ["notify"],
+        [["start", "load", "style"]]
+    ], "Records run in order, each receiving the payload of the last, and the final payload consumed by a downstream effect");
+    assert.deepEqual(that.ready, ["start", "load", "style"], "Final payload held at the composite effect's path");
+    log.length = 0;
+    that.initial = "again";
+    fluid.cell.stabilize();
+    assert.deepEqual(log.map(entry => entry[0]), ["load", "style", "notify", ["again", "load", "style"]], "Chain run afresh on change in an argument");
+    that.destroy();
+});
+
+QUnit.test("Composite effects merged across layers by namespace", function (assert) {
+    const log = [];
+    const that = fluid.tests.compositeDerived({
+        log: (...args) => log.push(args)
+    });
+    fluid.cell.stabilize();
+    assert.deepEqual(log.map(entry => entry[0]), ["reload", "patterns", "style", "notify", ["start", "reload", "patterns", "style"]],
+        "Stronger record displaces weaker of the same namespace in place, and new record is ordered by its priority");
+    that.destroy();
+});
+
+fluid.tests.logArgCount = function (log, ...args) {
+    log(args.length);
+};
+
+fluid.def("fluid.tests.compositeSimpleOverride", {
+    $layers: "fluid.component",
+    log: () => {},
+    value: 1,
+    logged: {
+        $effect: {
+            func: "fluid.tests.logArgCount",
+            args: ["{self}.log", "{self}.value", "{self}.value"]
+        }
+    },
+    added: "$effect:fluid.tests.logStage(base, {self}.log)"
+});
+
+fluid.def("fluid.tests.compositeSimpleOverrideDerived", {
+    $layers: "fluid.tests.compositeSimpleOverride",
+    logged: {
+        $effect: {
+            func: "fluid.tests.logArgCount",
+            args: ["{self}.log"]
+        }
+    },
+    added: {
+        $effect: [{
+            namespace: "extra",
+            func: "fluid.tests.logStage",
+            args: ["extra", "{self}.log"]
+        }]
+    }
+});
+
+QUnit.test("Simple effects merged as listener records with the empty namespace", function (assert) {
+    const log = [];
+    const that = fluid.tests.compositeSimpleOverrideDerived({
+        log: value => log.push(value)
+    });
+    fluid.cell.stabilize();
+    assert.deepEqual(log, [0, "base", "extra"], "Stronger simple effect displaces weaker as a whole rather than having its " +
+        "arguments merged with it, and composite record accumulates with simple effect");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.compositeAsync", {
+    $layers: "fluid.component",
+    log: () => {},
+    initial: "start",
+    ready: {
+        $effect: [{
+            namespace: "load",
+            func: "fluid.tests.asyncStage",
+            args: ["{self}.initial", "load", "{self}.log"]
+        }, {
+            namespace: "notify",
+            func: "fluid.tests.logStage",
+            args: ["notify", "{self}.log"]
+        }, {
+            namespace: "style",
+            priority: "after:notify",
+            func: "fluid.tests.asyncStage",
+            args: ["{$payload}", "style", "{self}.log"]
+        }]
+    },
+    consumer: "$effect:fluid.tests.logValue({self}.ready, {self}.log)"
+});
+
+QUnit.test("Composite effect with asynchronous listener records", async function (assert) {
+    const log = [];
+    const that = fluid.tests.compositeAsync({
+        log: (...args) => log.push(args[0])
+    });
+    fluid.cell.stabilize();
+    assert.deepEqual(log, [], "Nothing logged before first promise resolves");
+    const shadow = that[fluid.proxySymbol].shadow;
+    const readyCell = fluid.get(shadow.shadowMap, ["ready", fluid.metadataSymbol, "signalProduct"]);
+    assert.ok(fluid.isPending(readyCell.get()), "Composite effect pending whilst its chain runs");
+    const ready = await fluid.cell.waitFor(readyCell);
+    assert.deepEqual(ready, ["start", "load", "style"], "Composite effect can be awaited for its final payload, passed through a listener returning undefined");
+    await fluid.cell.settle();
+    assert.deepEqual(log, ["load", "notify", "style", ["start", "load", "style"]], "Downstream effect notified once chain completes");
+
+    log.length = 0;
+    that.initial = "first";
+    fluid.cell.stabilize();
+    that.initial = "second";
+    await fluid.cell.settle();
+    assert.deepEqual(that.ready, ["second", "load", "style"], "Final payload is that of the latest run");
+    assert.deepEqual(log, ["load", "load", "notify", "style", ["second", "load", "style"]],
+        "Superseded run dispatches no further records once its pending record completes, and downstream effect notified once");
+    that.destroy();
+});
+
 // Identical to the previous test only using the signals API to interact with the component rather than the
 // convenient but slower proxy API
 QUnit.test("Effects resolution II - read/write and dispose via signals API", function (assert) {

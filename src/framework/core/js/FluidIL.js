@@ -602,9 +602,6 @@ const $fluidILScope = function (fluid) {
         // fluid.clearDistributions(shadow);
 
         shadow.lifecycleStatus = "destroyed"; // This will cause proxies to be nulled
-        const child = destroyRec.childShadow.that;
-
-        fluid.fireEvent(child, "afterDestroy", [child, destroyRec.name, destroyRec.shadow.that]);
     };
 
     fluid.instantiator = function () {
@@ -1749,6 +1746,105 @@ const $fluidILScope = function (fluid) {
         return togo;
     };
 
+    // Marks the position of a `{$payload}` argument of a listener record of a composite effect
+    fluid.payloadArgument = Object.freeze({$variety: "$payload"});
+
+    /**
+     * Expands a composite effect, written as an array of listener records, or merged together from the effects of
+     * several layers by `fluid.collectEffectRecords`, into a cell which runs the records as a chain, as for the
+     * transforming promise events of Infusion 4 - see FLUID-7028. Each record may bear a `namespace`, and a `priority`
+     * such as "before:namespace" or "after:namespace" ordering it with respect to the others, which otherwise run in the
+     * order supplied, weakest layer first. An argument of a record written as `{$payload}` receives the value returned by
+     * the previous record of the chain, or the value it resolves to if it returned a promise - a record returning
+     * `undefined` passes on the payload it received. The chain stops at any record returning an unavailable value.
+     * Whilst the chain runs, the cell is pending, and it then holds the final payload. As for a `$bindable`, the cell
+     * is evaluated eagerly as soon as all of the records' arguments are available, and is run afresh whenever any of
+     * them changes.
+     *
+     * @param {FuncRecord[]} records - The listener records, each holding `func` and optionally `args`, `namespace` and
+     * `priority`
+     * @param {Shadow} shadow - The current component's shadow record used for resolving context references within the arguments.
+     * @param {String[]} segs - The path where this record appears in its component
+     * @return {Cell<any>} A cell holding the final payload of the chain. Includes a `$variety` property set to `"$compositeEffect"`.
+     */
+    fluid.expandCompositeEffectRecord = function (records, shadow, segs) {
+        const name = `composite $effect at path ${segs} of component at path ${shadow.path}`;
+        fluid.checkEffectNamespaces(records, name);
+        // The arguments of all records other than payloads, from which the cell is computed
+        const argMaterials = [];
+        const listeners = records.map((record, i) => {
+            const listenerSegs = [...segs, "$effect", i];
+            const args = fluid.makeArray(record.args).map((arg, j) => arg === "{$payload}" ? fluid.payloadArgument :
+                fluid.resolveArgMaterial(arg, shadow, [...listenerSegs, "args", j]));
+            return {
+                namespace: fluid.effectNamespace(record),
+                priority: fluid.parsePriority(record.priority, i, false, name),
+                dispatch: fluid.makeFuncDispatcher(fluid.resolveFuncReference(record, shadow, listenerSegs)),
+                // Index of each argument within argMaterials, or -1 for a payload
+                argIndices: args.map(arg => arg === fluid.payloadArgument ? -1 : argMaterials.push(arg) - 1)
+            };
+        });
+        fluid.sortByPriority(listeners);
+
+        let selfObserveEffect;
+        // Incremented on each run of the chain, so that a run which has been superseded whilst awaiting a promise
+        // dispatches no further records
+        let generation = 0;
+        // The result of the latest run of the chain, which any superseded run resolves to
+        let latest;
+
+        const runChain = function (...values) {
+            const thisGeneration = ++generation;
+            const runFrom = function (start, payload) {
+                let current = payload;
+                let pending = null;
+                for (let i = start; i < listeners.length && pending === null && !fluid.isUnavailable(current); ++i) {
+                    const listener = listeners[i];
+                    const result = listener.dispatch.apply(null, listener.argIndices.map(index => index === -1 ? current : values[index]));
+                    if (fluid.isPromise(result)) {
+                        const received = current;
+                        pending = result.then(value => thisGeneration === generation ?
+                            runFrom(i + 1, value === undefined ? received : value) : latest);
+                    } else if (result !== undefined) {
+                        current = result;
+                    }
+                }
+                // As for a plain effect, a chain whose final payload is empty holds `true`
+                return pending === null ? current ?? true : pending;
+            };
+            latest = runFrom(0, undefined);
+            return latest;
+        };
+
+        const dispatcher = (func, args, unavailable) => {
+            let togo;
+            if (shadow.inert) {
+                // As for a bindable, an inert component, e.g. an avatar, must never run its chain
+                togo = fluid.unavailable({message: `Composite effect of inert component at ${shadow.path} is not run`, variety: "config"});
+            } else if (unavailable) {
+                togo = unavailable;
+            } else {
+                togo = func.apply(null, args);
+            }
+            return togo;
+        };
+
+        const togo = fluid.cell(undefined, {name}).asyncComputed(runChain, fluid.flattenedArgCells(argMaterials, name), {dispatcher});
+        togo.$variety = "$compositeEffect";
+        togo.dispose = () => {
+            ++generation;
+            if (selfObserveEffect) {
+                selfObserveEffect.dispose();
+            }
+        };
+        togo.selfObserve = () => {
+            if (!selfObserveEffect) {
+                selfObserveEffect = fluid.cell.effect(() => togo.get());
+            }
+        };
+        return togo;
+    };
+
     /**
      * Expands a linkage record into an effect which registers its co-occurrence as an effect whose lifetime coincides
      * with the instantiation of the record in the component surface.
@@ -2222,6 +2318,8 @@ const $fluidILScope = function (fluid) {
      * @property {String} key - The type of element being processed, such as "$method", "$compute", "$effect", "$component", etc.
      * @property {Function} handler - A function responsible for handling the record expansion, such as `fluid.expandMethodRecord`, `fluid.expandComputeRecord`, etc.
      * @property {Boolean} [isEffect=false] - A flag indicating whether the handler is related to an effect, typically used for $effect records.
+     * @property {Boolean} [isEager=false] - A flag indicating that the handler's product, e.g. that of a $bindable record, is to be
+     * evaluated eagerly once its component is instantiated, rather than only when read.
      */
 
     fluid.elementExpanderRecord = function () {};
@@ -2246,7 +2344,7 @@ const $fluidILScope = function (fluid) {
     }, {
         key: "$bindable",
         handler: fluid.expandBindableRecord,
-        isBindable: true
+        isEager: true
     }, {
         key: "$linkage",
         handler: fluid.expandLinkageRecord,
@@ -2261,6 +2359,14 @@ const $fluidILScope = function (fluid) {
         handler: fluid.expandComponentRecord
         // TODO: Need to turn this record into an effect so that effect (potentia) can be withdrawn
     }].map(rec => Object.assign(Object.create(fluid.elementExpanderRecord.prototype), rec));
+
+    // Handler for an $effect record holding an array of listener records, which is expanded into a cell holding the
+    // payload of their chain rather than into a plain effect
+    fluid.compositeEffectExpanderRecord = Object.assign(Object.create(fluid.elementExpanderRecord.prototype), {
+        key: "$effect",
+        handler: fluid.expandCompositeEffectRecord,
+        isEager: true
+    });
 
     // Handler for the links of members of reactive roots, which are mounted by fluid.transferShadowMap rather than found
     // in a component's merged material
@@ -2365,7 +2471,8 @@ const $fluidILScope = function (fluid) {
 
     fluid.expandElement = function (shadow, element, segs) {
         if (fluid.isPlainObject(element, true)) {
-            const handlerRecord = fluid.expandElementTypes.find(record => element[record.key]);
+            const typeRecord = fluid.expandElementTypes.find(record => element[record.key]);
+            const handlerRecord = typeRecord?.key === "$effect" && Array.isArray(element.$effect) ? fluid.compositeEffectExpanderRecord : typeRecord;
             if (handlerRecord) {
                 return fluid.mountSignalRecord(handlerRecord, handlerRecord.wholeElement ? element : element[handlerRecord.key], shadow, segs);
             } else {
@@ -2746,8 +2853,8 @@ const $fluidILScope = function (fluid) {
                     } else if (oldRecord && newRecord.signalRecord === oldRecord.signalRecord) {
                         newRecord.signalProduct = oldRecord.signalProduct;
                     }
-                } else if (newRecord.handlerRecord?.isBindable) {
-                    // Ensure this bindable value is allocated if it hasn't been already
+                } else if (newRecord.handlerRecord?.isEager) {
+                    // Ensure this bindable value or composite effect is allocated if it hasn't been already
                     newRecord.signalProduct.selfObserve();
                 }
             });
