@@ -3,7 +3,7 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
 
 
-❯ Have a go at https://github.com/fluid-project/infusion-6/issues/16 - while    
+❯ Have a go at FLUID-7016 (https://github.com/fluid-project/infusion-6/issues/16) - while    
   you are there, remove the now unnecessary copies in todoList.vue of           
     text: "{self}.todo.text",                                                   
               completed: "{self}.todo.completed" which don't need to happen now 
@@ -2476,7 +2476,7 @@
 
   Nothing is committed. A suggested message is "Writes and deletes through
   $sitedRef chains reach original data source, including via filter() projection
-  - Resolves fluid-project/infusion-6#16".
+  - Resolves FLUID-7016 (https://github.com/fluid-project/infusion-6/issues/16)".
 
 ✻ Cooked for 24m 2s · done 18:15
 

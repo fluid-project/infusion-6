@@ -1,7 +1,7 @@
 // The part of the "Ask me anything" AI passthrough which acts on the canvas - gathering the state of the workspace for
 // the AI's prompt, and applying the changes planned from a PTF document it sends back. The protocol itself, which does
 // not touch tldraw, is in ai-protocol.js.
-// See https://github.com/fluid-project/infusion-6/issues/22
+// See FLUID-7022
 
 import {createShapeId} from "tldraw";
 import {infusionInstances, registerPendingParts, awaitInstantiation, snapshotForUndo, awaitReport, describeInstantiation,

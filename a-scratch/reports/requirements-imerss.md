@@ -151,7 +151,7 @@ fluid.def("hortis.libreMap", {
 Every former `mapLoaded` gate becomes a plain dependency on `{self}.styledMap`. Each binder returns a cell which it
 sets when the maplibre event arrives, and readers see through it **(probed for a binder returning a cell)**. Writes
 from maplibre callbacks need no manual stabilization, since deferred auto-stabilization is on by default
-(fluid-project/infusion-6#17). Handlers bound to the map, such as click dispatch and grid hover, become bindables over
+([FLUID-7017](https://github.com/fluid-project/infusion-6/issues/17)). Handlers bound to the map, such as click dispatch and grid hover, become bindables over
 `{self}.map` whose unbinders call `map.off`.
 
 Three points need care:
@@ -474,8 +474,8 @@ gap, but the docs should say so, since `excludeSource: "init"` was common in Inf
 
 ### G10: packaging
 
-npm's `infusion-6@6.1.0` predates the fixes this port depends on, such as live state attributes (#14), deferred
-auto-stabilization (#17) and bindable unbinding (#21). Until a new release, the bagatelle port refers to a sibling
+npm's `infusion-6@6.1.0` predates the fixes this port depends on, such as live state attributes ([FLUID-7014](https://github.com/fluid-project/infusion-6/issues/14)), deferred
+auto-stabilization ([FLUID-7017](https://github.com/fluid-project/infusion-6/issues/17)) and bindable unbinding ([FLUID-7021](https://github.com/fluid-project/infusion-6/issues/21)). Until a new release, the bagatelle port refers to a sibling
 checkout `../fluid-infusion-6`, as ponder-infusion does. Its drivers must therefore be served from the parent
 directory, and its node tests require the checkout by path.
 

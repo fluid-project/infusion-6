@@ -6,7 +6,7 @@
 // workspace holding the closest note finder and image generator widgets, both selected, beside two sticky notes. Its
 // responses are applied by a mock of the bridge in demo/tldraw/js/tldraw-ai.js, with problems reported back to the
 // model for repair as by fluid.tldraw.ai.converse, and the widgets they produce are assessed. See run-harness.js and
-// fluid-project/infusion-6#25
+// FLUID-7025
 
 fluid.registerNamespace("fluid.harness");
 
@@ -33,7 +33,7 @@ fluid.harness.placementGap = 40;
 fluid.harness.instantiationTimeout = 5000;
 fluid.harness.settleDelay = 500;
 
-// The ideal response, as worked out in fluid-project/infusion-6#25, against which responses are compared
+// The ideal response, as worked out in FLUID-7025, against which responses are compared
 fluid.harness.idealLayer = `fluid.def("fluid.demos.ai.closestNoteImageGenerator", {
     $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
     noteFinder: {
@@ -491,7 +491,7 @@ fluid.harness.callWithRetries = async function (options) {
     return reply;
 };
 
-QUnit.test("Compose the selected widgets via the IFM - fluid-project/infusion-6#25", async function (assert) {
+QUnit.test("Compose the selected widgets via the IFM - FLUID-7025", async function (assert) {
     const io = harnessIO;
     if (io.variant === "nohint") {
         // Withdraw the hint describing the geometry of a dominant widget composed with a supplier, to judge its effect

@@ -45,7 +45,7 @@ QUnit.test("Basic static rendering test", function (assert) {
 });
 
 
-QUnit.test("Rendering machinery is hosted by a view subcomponent - fluid-project/infusion-6#19", function (assert) {
+QUnit.test("Rendering machinery is hosted by a view subcomponent - FLUID-7019", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.basicRender({container});
     fluid.cell.stabilize();
@@ -328,7 +328,7 @@ fluid.tests.checkMultiClass = function (assert, container, expected, message) {
     assert.notOk(classAttr.includes(","), `No comma in class attribute: ${message}`);
 };
 
-QUnit.test("Multiple simultaneous dynamic classes - fluid-project/infusion-6#11", function (assert) {
+QUnit.test("Multiple simultaneous dynamic classes - FLUID-7011", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.multiClass({container});
 
@@ -669,7 +669,7 @@ fluid.def("fluid.tests.assigneeIf", {
 });
 
 
-// The conditional component's content must be removed along with it - fluid-project/infusion-6#24
+// The conditional component's content must be removed along with it - FLUID-7024
 QUnit.test("Conditional rendering", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.assigneeIf({container});
@@ -725,7 +725,7 @@ fluid.def("fluid.tests.longFormIf", {
     }
 });
 
-QUnit.test("Conditional rendering with long-form $if record - fluid-project/infusion-6#13", function (assert) {
+QUnit.test("Conditional rendering with long-form $if record - FLUID-7013", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.longFormIf({container});
     fluid.cell.stabilize();
@@ -828,7 +828,7 @@ fluid.def("fluid.tests.attrBinding", {
 
 fluid.tests.attrBinding.shout = text => text.toUpperCase();
 
-QUnit.test("Binding attributes and live state properties - fluid-project/infusion-6#14", function (assert) {
+QUnit.test("Binding attributes and live state properties - FLUID-7014", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.attrBinding({container});
     fluid.cell.stabilize();
@@ -911,7 +911,7 @@ QUnit.test("Binding attributes and live state properties - fluid-project/infusio
     assert.equal(qs("select", container).value, "a", "Select value property agrees");
 });
 
-// Cross-injection of views - fluid-project/infusion-6#20
+// Cross-injection of views - FLUID-7020
 
 fluid.def("fluid.tests.crossInject.first", {
     $layers: "fluid.component",
@@ -953,7 +953,7 @@ fluid.def("fluid.tests.crossInjectView", {
     view: "{view1}.view" // Note that "proleptic scoping" works - {view1} resolves before view1 is created
 });
 
-QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Cross-injected views - FLUID-7020", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.crossInjectView({
         view1: {
@@ -997,7 +997,7 @@ QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (asser
     that.destroy();
 });
 
-// Top-level widgets, receiving host machinery broadcast onto their views - fluid-project/infusion-6#21
+// Top-level widgets, receiving host machinery broadcast onto their views - FLUID-7021
 
 fluid.def("fluid.tests.widget", {
     $layers: "fluid.topLevelWidget",
@@ -1028,7 +1028,7 @@ fluid.def("fluid.tests.widgetHost", {
     }
 });
 
-QUnit.test("Host machinery is broadcast onto the views of top-level widgets - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("Host machinery is broadcast onto the views of top-level widgets - FLUID-7021", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.widget({container, view: {$component: {hostId: 3}}});
     fluid.cell.stabilize();
@@ -1100,7 +1100,7 @@ fluid.def("fluid.tests.umbrellaWidget", {
     }
 });
 
-QUnit.test("Widget nested within another takes the bounds of the widget enclosing it - fluid-project/infusion-6#25", function (assert) {
+QUnit.test("Widget nested within another takes the bounds of the widget enclosing it - FLUID-7025", function (assert) {
     const container = qs(".container");
     const host = fluid.tests.nestingHost();
     const that = fluid.tests.umbrellaWidget({container, view: {$component: {hostId: 4}}});

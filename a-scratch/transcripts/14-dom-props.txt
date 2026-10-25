@@ -1,4 +1,4 @@
-now resolve https://github.com/fluid-project/infusion-6/issues/14
+now resolve FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)
 
   Ran 1 shell command
 
@@ -149,7 +149,7 @@ fluid.def("fluid.tests.attrBinding", {
 
 fluid.tests.attrBinding.shout = text => text.toUpperCase();
 
-QUnit.test("Binding attributes and live state properties - fluid-project/infusion-6#14", function (assert) {
+QUnit.test("Binding attributes and live state properties - FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.attrBinding({container});
     fluid.cell.stabilize();
@@ -316,10 +316,10 @@ Updated tests/framework-tests/core/js/FluidViewTests.js (+16 -0)
 Updated a-scratch/limitations.md (+1 -0)
 1. @class bug (confirmed). When two dynamic classes are true at once, they're joined with a comma, giving class="base one,two", so neither class applies. The cause is clazzS
 ource + " " + classes in FluidView.js, where classes is an array. It needs a one-line .join(" ") fix. DONE
-    * Resolved as https://github.com/fluid-project/infusion-6/issues/11
+    * Resolved as FLUID-7011 (https://github.com/fluid-project/infusion-6/issues/11)
 2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cle
 ared by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
-    * Resolved by binding absence for boolean attributes and live state properties with write-back - fluid-project/infusion-6#14
+    * Resolved by binding absence for boolean attributes and live state properties with write-back - FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)
 3. No two-way input binding. Every input needs its own $method that copies e.target.value into state.
 4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to c
 all fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
@@ -337,9 +337,9 @@ That also resolves limitation 3 (no two-way input binding), so I'll annotate it 
 Updated a-scratch/limitations.md (+1 -0)
 2. No way to set DOM properties. Templates can only set attributes through setAttribute. So disabled can't be switched off (any value at all disables), an input can't be cl
 eared by setting its value, and checked can't be bound. All three widgets fall back on classes plus guards inside methods.
-    * Resolved by binding absence for boolean attributes and live state properties with write-back - fluid-project/infusion-6#14
+    * Resolved by binding absence for boolean attributes and live state properties with write-back - FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)
 3. No two-way input binding. Every input needs its own $method that copies e.target.value into state.
-    * Resolved - a bound value, checked, selected or open attribute writes the user's change back to a writeable model site - fluid-project/infusion-6#14
+    * Resolved - a bound value, checked, selected or open attribute writes the user's change back to a writeable model site - FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)
 4. Changes from outside Infusion don't render by themselves. Auto-stabilization is off by default, so writes after an await, from a timer, or from a store listener have to
 call fluid.cell.stabilize() or deferredStabilize() by hand. Turning fluid.cell.autoStabilize() on by default would remove this class of bug.
     * Do this in the tldraw driver for the time being
@@ -392,7 +392,7 @@ Behaviour changes and limits:
 
 A git mistake I made: to get a lint baseline I ran git stash. Restoring it was refused, because on this mount every file shows a mode-only change. I restored it with core.fileMode=false and checked that the working tree now matches the stashed content exactly. Your older stash@{0} from commit 57f473b wasn't touched.
 
-Suggested commit message: "Bind DOM properties and boolean attributes with write-back - Resolves fluid-project/infusion-6#14".
+Suggested commit message: "Bind DOM properties and boolean attributes with write-back - Resolves FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)".
 
 ✻ Churned for 12m 12s · done 12:17
 

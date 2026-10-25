@@ -4,7 +4,7 @@
 // from documentation and a PTF dump of the workspace, and interpreting its response either as text for the user or
 // as a PTF document altering the workspace. Nothing here touches tldraw, so that it can be tested without it - the
 // parts of the conversation which act on the canvas are in tldraw-ai.js.
-// See https://github.com/fluid-project/infusion-6/issues/22
+// See FLUID-7022
 
 fluid.registerNamespace("fluid.tldraw.ai");
 

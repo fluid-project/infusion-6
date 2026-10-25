@@ -453,7 +453,7 @@ fluid.def("fluid.tests.tldrawAI.doubler", {
 
 fluid.tests.tldrawAI.double = x => x * 2;
 
-// An umbrella composing the counter with a doubler, taking the counter's view as its own - fluid-project/infusion-6#20
+// An umbrella composing the counter with a doubler, taking the counter's view as its own - FLUID-7020
 fluid.def("fluid.tests.tldrawAI.umbrella", {
     $layers: "fluid.topLevelWidget",
     counter: {
@@ -640,7 +640,7 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     that.destroy();
 });
 
-QUnit.test("Markdown rendered safely - fluid-project/infusion-6#24", function (assert) {
+QUnit.test("Markdown rendered safely - FLUID-7024", function (assert) {
     const element = document.createElement("div");
     fluid.demos.markdownBlock.renderInto(element, "# Title\n\n* One <script>alert(1)</script>\n* [Two](https://example.com) [Three](javascript:alert)\n\n`a<b`", true);
     assert.equal(qs("h1", element).textContent, "Title", "Heading rendered");
@@ -1116,7 +1116,7 @@ QUnit.test("Widget layers listed from the layer store, and deleted", async funct
     assert.notOk(listed().includes("fluid.demos.ai.sfcWidget"), "Deleted SFC layer no longer listed");
 });
 
-// Slop-free composition of the closest note finder with the image generator - fluid-project/infusion-6#25
+// Slop-free composition of the closest note finder with the image generator - FLUID-7025
 
 // Stands in for fluid.demos.tldrawHost, bridging the notes on the canvas and the bounds of each widget's shape. As
 // there, widgets are constructed as its children, within whose scope it may be resolved
@@ -1211,7 +1211,7 @@ fluid.def("fluid.tests.tldrawAI.retemplatedFinder", {
     }
 });
 
-QUnit.test("Further compositions chosen by the AI - fluid-project/infusion-6#25", async function (assert) {
+QUnit.test("Further compositions chosen by the AI - FLUID-7025", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const container = qs(".container");
     const host = fluid.tests.tldrawAI.tldrawHost({notes: [{id: "shape:near", x: 120, y: 90, text: "A red fox"}]});
@@ -1289,7 +1289,7 @@ QUnit.test("Worked example of composition in the strategy hints is valid", funct
     host.destroy();
 });
 
-QUnit.test("Closest note composed with image generator - fluid-project/infusion-6#25", async function (assert) {
+QUnit.test("Closest note composed with image generator - FLUID-7025", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const originalFetch = fluid.demos.pixabay.fetch;
     const requests = fluid.tests.tldrawAI.fakePixabay(() => [fluid.tests.tldrawAI.pixabayHit(1, "https://pixabay.com/get/one.jpg")]);

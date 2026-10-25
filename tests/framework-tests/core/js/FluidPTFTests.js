@@ -101,7 +101,7 @@ Trailing epilogue
     assert.ok(!fluid.ptf.isPTF("<b>Some html</b>"), "Arbitrary text not recognised as PTF");
     assert.ok(fluid.isUnavailable(fluid.ptf.decode("Some text")), "Decoding arbitrary text produces unavailable value");
 
-    // fluid-project/infusion-6#24 - material preceding the document, e.g. a covering message, is tolerated
+    // FLUID-7024 - material preceding the document, e.g. a covering message, is tolerated
     const covered = "Here is my component, please paste it into your canvas:\r\n\r\n" + text.replace(/\n/g, "\r\n");
     assert.ok(fluid.ptf.isPTF(covered), "Document preceded by other material is recognised as PTF");
     assert.deepEqual(fluid.ptf.decode(covered).map(part => [part.kind, part.filename, part.body]),
@@ -261,7 +261,7 @@ QUnit.test("SFC component transmitted and reconstructed", async function (assert
     copy.destroy();
 });
 
-// fluid-project/infusion-6#24 - a host, e.g. the tldraw demo, may await the definition of a transmitted layer before
+// FLUID-7024 - a host, e.g. the tldraw demo, may await the definition of a transmitted layer before
 // constructing anything from it, so registering its part must define it without any component demanding it
 QUnit.test("Transmitted SFC layer defined on registration", async function (assert) {
     const layerName = "fluid.tests.ptf.undemanded";
@@ -425,7 +425,7 @@ QUnit.test("Layers transmitted with the most derived first", function (assert) {
     that.destroy();
 });
 
-QUnit.test("Component injecting its grandparent transmitted and reconstructed - fluid-project/infusion-6#20", async function (assert) {
+QUnit.test("Component injecting its grandparent transmitted and reconstructed - FLUID-7020", async function (assert) {
     fluid.def("fluid.tests.ptf.loader", {
         $layers: "fluid.component",
         value: "loader",
@@ -707,7 +707,7 @@ fluid.def("${layerName}", {$layers: "fluid.component"});
     fluid.tests.ptf.clearHistories();
 });
 
-QUnit.test("Deletion of a layer recorded in the definition history - fluid-project/infusion-6#24", function (assert) {
+QUnit.test("Deletion of a layer recorded in the definition history - FLUID-7024", function (assert) {
     fluid.tests.ptf.clearHistories();
     fluid.def("fluid.tests.ptf.deleted", {$layers: "fluid.component", value: 3});
     fluid.deleteLayer("fluid.tests.ptf.deleted");

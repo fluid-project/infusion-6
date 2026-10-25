@@ -77,7 +77,7 @@ QUnit.test("remove_if index stability and target", assert => {
     assert.deepEqual(target, [1, 2], "Target contains removed elements in original order");
 });
 
-// fluid-project/infusion-6#24
+// FLUID-7024
 QUnit.test("filterKeys and censorKeys do not require jQuery", assert => {
     const source = {a: 1, b: 2, c: 3};
     assert.deepEqual(fluid.filterKeys(source, ["a", "c", "d"]), {a: 1, c: 3}, "Listed keys retained");
@@ -87,7 +87,7 @@ QUnit.test("filterKeys and censorKeys do not require jQuery", assert => {
     assert.deepEqual(fluid.filterObjKeys(source, key => key !== "a"), {b: 2, c: 3}, "Keys filtered by predicate");
 });
 
-// fluid-project/infusion-6#24
+// FLUID-7024
 QUnit.test("Unavailable proxy renders as a string", assert => {
     const proxy = fluid.unavailableProxy(fluid.unavailable({message: "Gone missing", path: "a.b"}));
     assert.equal(String(proxy.deeper.member), "[Unavailable: Gone missing at path a.b]", "Single cause rendered");

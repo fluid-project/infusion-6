@@ -1,5 +1,5 @@
 
-❯ Implement a fix for https://github.com/fluid-project/infusion-6/issues/13
+❯ Implement a fix for FLUID-7013 (https://github.com/fluid-project/infusion-6/issues/13)
 
   Ran 2 shell commands
 
@@ -97,7 +97,7 @@ fluid.def("fluid.tests.longFormIf", {
     }
 });
 
-QUnit.test("Conditional rendering with long-form $if record - fluid-project/infusion-6#13", function (assert) {
+QUnit.test("Conditional rendering with long-form $if record - FLUID-7013 (https://github.com/fluid-project/infusion-6/issues/13)", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.longFormIf({container});
     fluid.cell.stabilize();
@@ -175,7 +175,7 @@ dden.
     * Annoyance in DOM but conditionals at component level is core design principle
 10. $if only tests truthiness. Conditions like x !== null need their own boolean computed member, or a value of 0 or "" hides the block.
     *
-    * Resolved by long-form $if record {func, args} by analogy with $compute - fluid-project/infusion-6#13
+    * Resolved by long-form $if record {func, args} by analogy with $compute - FLUID-7013 (https://github.com/fluid-project/infusion-6/issues/13)
 11. No expressions in @{}. Values like total - long or a || !b have to become named $compute members backed by global functions. This is idiomatic, but verbose.
     * Is somewhat more verbose, but as designed - intermediate values should be named and exposed for integration purposes
 12. SFC styles are global and unscoped, so every class name needs a manual prefix.
@@ -196,4 +196,4 @@ Demo and notes
 - demo/tldraw/sfc/fluid-demos-closestNoteFinder.vue now uses distance => distance !== null on distance directly. I removed the extra hasDistance member that existed only to work around this problem.
 - In a-scratch/limitations.md, item 10 is marked as resolved, citing #13.
 
-I didn't touch the copies under docs/, which look like build output. Suggested commit message: "Long-form $if records - Resolves fluid-project/infusion-6#13".
+I didn't touch the copies under docs/, which look like build output. Suggested commit message: "Long-form $if records - Resolves FLUID-7013 (https://github.com/fluid-project/infusion-6/issues/13)".

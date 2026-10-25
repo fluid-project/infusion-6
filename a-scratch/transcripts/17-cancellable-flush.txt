@@ -1,4 +1,4 @@
-Now resolve https://github.com/fluid-project/infusion-6/issues/17
+Now resolve FLUID-7017 (https://github.com/fluid-project/infusion-6/issues/17)
   which should then allow autostabilization to be the global default,
   simplifying the tldraw driver
 
@@ -553,7 +553,7 @@ Now resolve https://github.com/fluid-project/infusion-6/issues/17
           that copies e.target.value into state. DONE
        8      * Resolved - a bound value, checked, selected or open attri
           bute writes the user's change back to a writeable model site -
-          fluid-project/infusion-6#14
+          FLUID-7014 (https://github.com/fluid-project/infusion-6/issues/14)
        9 -4. Changes from outside Infusion don't render by themselves. Au
          -to-stabilization is off by default, so writes after an await, f
          -rom a timer, or from a store listener have to call fluid.cell.s
@@ -672,7 +672,7 @@ Now resolve https://github.com/fluid-project/infusion-6/issues/17
   Nothing is committed. A suggested message is "Make fluid.cell.stabilize() a
   cancellable flush with deferred auto-stabilization on by default, adding
   fluid.cell.settle() and fluid.cell.waitFor() - Resolves
-  fluid-project/infusion-6#17".
+  FLUID-7017 (https://github.com/fluid-project/infusion-6/issues/17)".
 
 ✻ Baked for 12m 19s · done Friday 20:49
 
@@ -1115,7 +1115,7 @@ Now resolve https://github.com/fluid-project/infusion-6/issues/17
          -with the "fully deferred stabilisation" work.
        7 +// hydrate.js writes the document once all injections are compl
          +ete and the reactive graph has settled, as determined
-       8 +// by fluid.cell.settle() - see fluid-project/infusion-6#17
+       8 +// by fluid.cell.settle() - see FLUID-7017 (https://github.com/fluid-project/infusion-6/issues/17)
        9
       10  const childProcess = require("child_process"),
       11      fs = require("fs"),

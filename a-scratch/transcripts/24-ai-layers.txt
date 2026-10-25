@@ -3,8 +3,8 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
 
 
-❯ Address issues https://github.com/fluid-project/infusion-6/issues/23 and      
-  https://github.com/fluid-project/infusion-6/issues/24                         
+❯ Address issues FLUID-7023 (https://github.com/fluid-project/infusion-6/issues/23) and      
+  FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)                         
 
   Ran 5 shell commands (ctrl+o to expand)
 
@@ -715,7 +715,7 @@
       670  
       671  
       672 +// The conditional component's content must be removed along w
-          +ith it - fluid-project/infusion-6#24                          
+          +ith it - FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)                          
       673  QUnit.test("Conditional rendering", function (assert) {
       674      const container = qs(".container");
       675      const that = fluid.tests.assigneeIf({container});
@@ -1192,7 +1192,7 @@
            elements in original order");
        78  });
        79  
-       80 +// fluid-project/infusion-6#24                                
+       80 +// FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)                                
        81 +QUnit.test("filterKeys and censorKeys do not require jQuery", 
           +assert => {                                                   
        82 +    const source = {a: 1, b: 2, c: 3};                        
@@ -1208,7 +1208,7 @@
           += "a"), {b: 2, c: 3}, "Keys filtered by predicate");          
        88 +});                                                           
        89 +                                                              
-       90 +// fluid-project/infusion-6#24                                
+       90 +// FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)                                
        91 +QUnit.test("Unavailable proxy renders as a string", assert => 
           +{                                                             
        92 +    const proxy = fluid.unavailableProxy(fluid.unavailable({me
@@ -1473,7 +1473,7 @@
       3 // A block of text which is rendered as markdown, used by the "As
         k me anything" panel to render the AI's responses,
       4 // which it likes to write in markdown. The markdown is converted
-      5 // See https://github.com/fluid-project/infusion-6/issues/24
+      5 // See FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)
       6 
       7 /* global snarkdown */
       8 
@@ -1765,7 +1765,7 @@
 ● Bash(python3 - <<'EOF'
       p="tests/framework-tests/from-demos/js/TldrawAITests.js"…)
   ⎿  11:45:29.122:   fq:  FAIL: Module "tldraw "Ask me anything" Demo Tests
-     " Test name "Markdown rendered safely - fluid-project/infusion-6#24" -
+     " Test name "Markdown rendered safely - FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)" -
       Message: List rendered
      … +6 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+36 -3)
@@ -1970,7 +1970,7 @@
       102      assert.ok(fluid.isUnavailable(fluid.ptf.decode("Some text"
            )), "Decoding arbitrary text produces unavailable value");
       103 +                                                              
-      104 +    // fluid-project/infusion-6#24 - material preceding the do
+      104 +    // FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24) - material preceding the do
           +cument, e.g. a covering message, is tolerated                 
       105 +    const covered = "Here is my component, please paste it int
           +o your canvas:\r\n\r\n" + text.replace(/\n/g, "\r\n");        
@@ -2000,7 +2000,7 @@
       261      copy.destroy();
       262  });
       263  
-      264 +// fluid-project/infusion-6#24 - a host, e.g. the tldraw demo,
+      264 +// FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24) - a host, e.g. the tldraw demo,
           + may await the definition of a transmitted layer before       
       265 +// constructing anything from it, so registering its part must
           + define it without any component demanding it                 
@@ -2046,13 +2046,13 @@
          sion Format (PTF) whenever Infusion shapes are copied
       2 -// or cut, and sniffs pastes for PTF documents, deferring to tld
         -raw's own handling for anything else.                           
-      3 -// See https://github.com/fluid-project/infusion-6/issues/15    
+      3 -// See FLUID-7015 (https://github.com/fluid-project/infusion-6/issues/15)    
       2 +// or cut, and sniffs pastes for PTF documents. Other plain text
         + pasted onto the canvas is offered to the "Ask me               
       3 +// anything" panel, and tldraw's own handling is deferred to for
         + anything else.                                                 
-      4 +// See https://github.com/fluid-project/infusion-6/issues/15 and
-        + https://github.com/fluid-project/infusion-6/issues/24          
+      4 +// See FLUID-7015 (https://github.com/fluid-project/infusion-6/issues/15) and
+        + FLUID-7024 (https://github.com/fluid-project/infusion-6/issues/24)          
       5  
       6  /**
       7   * The live Infusion component hosted by each Infusion shape, ke
@@ -2148,7 +2148,7 @@
      45:            component: infusionInstances.get(shape.id)
      … +6 lines (ctrl+o to expand)
   ⎿  Updated demo/tldraw/js/tldraw-ai.js (+5 -33)
-       4  // See https://github.com/fluid-project/infusion-6/issues/22
+       4  // See FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)
        5  
        6  import {createShapeId} from "tldraw";
        7 -import {infusionInstances, registerPendingParts, awaitInstantia

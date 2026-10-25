@@ -2794,11 +2794,11 @@
 
 ● Implementation is complete. Now the investigations for the report-only items.
   First R9: does a stronger layer's $component record now merge member by member
-  (from #19), and what does null do?
+  (from [FLUID-7019](https://github.com/fluid-project/infusion-6/issues/19)), and what does null do?
 
   Ran 1 shell command (ctrl+o to expand)
 
-● R9's second bullet checks out as working since #19 — stronger $component
+● R9's second bullet checks out as working since [FLUID-7019](https://github.com/fluid-project/infusion-6/issues/19) — stronger $component
   records merge member-by-member, $layers accumulate, and weaker $if still
   applies, while null fails and takes down the parent. Next I'll verify whether
   a stronger layer can cancel a weaker $if.
@@ -2924,7 +2924,7 @@
     described a fix rather than making it, since R3 asked for elaboration.
   - R6: a linkage toggle only replaces the target's instance object. Its state,
     unchanged computed values, child components and DOM nodes all survive.
-  - R9: your second bullet already works since #19. What's still missing is a
+  - R9: your second bullet already works since [FLUID-7019](https://github.com/fluid-project/infusion-6/issues/19). What's still missing is a
     way to replace $layers or cancel a weaker $if, and null currently makes the
     whole parent unavailable. The R9 response sets out what accepting null would
     take.

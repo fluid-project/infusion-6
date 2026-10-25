@@ -3,7 +3,7 @@
 
 // Sends a direction to the IFM model exactly as the tldraw demo's "Ask me anything" panel would, from a mocked-up
 // workspace held in ifm-harness.html, applies its responses, and assesses the widgets they produce.
-// See fluid-project/infusion-6#25
+// See FLUID-7025
 // Run from the repository root as
 //     node a-scratch/ifm-harness/run-harness.js [samples=3]
 // Setting HARNESS_VARIANT=nohint withdraws the strategy hint describing the geometry of the composition.

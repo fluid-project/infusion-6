@@ -3034,7 +3034,7 @@ const $fluidScope = function (fluid) {
                     // Read it again - it is presumably now pending if successfully fetched, but fetching may instead have
                     // released a definition which was gated on a load that had already completed
                     // Apparently this epicycle could be removed once we reform fit tracking and not cause a get() to end a fit synchronously -
-                    // see transcript for issue #17
+                    // see transcript for issue FLUID-7017
                     layer = fluid.readLayer(layerName, true).get();
                     unavailableLayer = fluid.layerRecToUnavailable(layer);
                 }

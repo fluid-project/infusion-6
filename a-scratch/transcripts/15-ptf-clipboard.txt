@@ -3,7 +3,7 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6/a-scratch/transcripts
 
 
-❯ Try to resolve https://github.com/fluid-project/infusion-6/issues/15 - if an  
+❯ Try to resolve FLUID-7015 (https://github.com/fluid-project/infusion-6/issues/15) - if an  
   aspect appears problematic or requires considerable research/experimentation, 
   report back with a work plan and/or summary of obstacles rather than          
   spending too many cycles on it                                                
@@ -531,7 +531,7 @@
       p="FluidPTF.js"…)
   ⎿  Updated /mnt/outer-source/gits/fluid-infusion-6/src/framework/core/js/
      FluidPTF.js (+15 -4)
-       7  // See https://github.com/fluid-project/infusion-6/issues/15
+       7  // See FLUID-7015 (https://github.com/fluid-project/infusion-6/issues/15)
        8  
        9  const fluidPTFScope = function (fluid) {
       10 -    const $m = fluid.metadataSymbol;                           
@@ -882,7 +882,7 @@
      over the native clipboard format cleanly.
 
   If you commit this, a suggested message is: "Potentia Transmission Format and
-  layer MIME types - fluid-project/infusion-6#15". The issue stays open for the
+  layer MIME types - FLUID-7015 (https://github.com/fluid-project/infusion-6/issues/15)". The issue stays open for the
   tldraw part.
 
 ✻ Crunched for 11m 51s · done 14:38
@@ -1186,7 +1186,7 @@
       1 // Replaces tldraw's clipboard format with the Potentia Transmiss
         ion Format (PTF) whenever Infusion shapes are copied
       2 // or cut, and sniffs pastes for PTF documents, deferring to tldr
-      3 // See https://github.com/fluid-project/infusion-6/issues/15
+      3 // See FLUID-7015 (https://github.com/fluid-project/infusion-6/issues/15)
       4 
       5 /**
       6  * The live Infusion component hosted by each Infusion shape, key

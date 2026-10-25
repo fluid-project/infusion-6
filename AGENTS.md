@@ -31,4 +31,10 @@ tests/framework-tests/core/html/*.html in the browser
  - Don't issue commands changing git state
 
 ## Commit messages
- - Mention issue closed in form fluid-project/infusion-6#3 - this will be passed on as remin
+ - Mention issue closed in form FLUID-7003 (fluid-project/infusion-6#3) - this will be passed on as reminder. The FLUID ID is 7000 plus the GitHub issue number, and the parenthesised reference lets GitHub close the issue
+
+## Issue references
+ - Issues are titled with a prefix FLUID-7xxx, where xxx is the GitHub issue number, e.g. FLUID-7026: Improve error feedback cycle to AI
+ - In code, refer to an issue by its bare ID, e.g. FLUID-7026
+ - In Markdown, link the ID to the issue, e.g. [FLUID-7026](https://github.com/fluid-project/infusion-6/issues/26)
+ - In other text, follow the ID with the issue URL, e.g. FLUID-7026 (https://github.com/fluid-project/infusion-6/issues/26)

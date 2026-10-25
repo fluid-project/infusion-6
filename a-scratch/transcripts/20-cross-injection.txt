@@ -3,7 +3,7 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
 
 
-❯ Resolve issue https://github.com/fluid-project/infusion-6/issues/20           
+❯ Resolve issue FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)           
 
   Ran 2 shell commands (ctrl+o to expand)
 
@@ -741,8 +741,8 @@
             xplains how the record should be written");
       1136  });
       1137 +                                                             
-      1138 +// Injected component references - fluid-project/infusion-6#2
-           +0                                                            
+      1138 +// Injected component references - FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)
+           +                                                             
       1139 +                                                             
       1140 +fluid.def("fluid.tests.injection.innerType", {               
       1141 +    $layers: "fluid.component",                              
@@ -804,7 +804,7 @@
            alue property agrees");
       908  });
       909 +                                                              
-      910 +// Cross-injection of views - fluid-project/infusion-6#20     
+      910 +// Cross-injection of views - FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)     
       911 +                                                              
       912 +fluid.def("fluid.tests.crossInject.first", {                  
       913 +    $layers: "fluid.component",                               
@@ -917,7 +917,7 @@
   Suggested commit message: Components may be injected at a member through 
   {$component: "{context}.path"}, with scope and records withdrawn when the 
   injection ends; destroying a component lensed from data deletes its source 
-  item - Resolves fluid-project/infusion-6#20
+  item - Resolves FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)
 
 ✻ Brewed for 10m 29s · done Monday 17:55
 
@@ -1262,7 +1262,7 @@
           +s - {view1} resolves before view1 is created                  
       950  });
       951  
-      952  QUnit.test("Cross-injected views - fluid-project/infusion-6#20
+      952  QUnit.test("Cross-injected views - FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)
            ", function (assert) {
 
   Ran 1 shell command (ctrl+o to expand)
@@ -1442,7 +1442,7 @@
   Suggested commit message: A reference at a component member which resolves to 
   a component injects it there, with the same scope as if created in place, 
   withdrawn when the injection ceases; destroying a component lensed from data 
-  deletes its source item - Resolves fluid-project/infusion-6#20
+  deletes its source item - Resolves FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)
 
 ✻ Cooked for 5m 25s · done Monday 18:12
   ⎿  Read src/framework/core/js/FluidView-browser.js (200 lines)
@@ -1531,7 +1531,7 @@
 
 ● Bash(python3 - <<'EOF'
       import re…)
-  ⎿  1138:// Injected component references - fluid-project/infusion-6#20
+  ⎿  1138:// Injected component references - FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)
      1139-
      1140-fluid.def("fluid.tests.injection.innerType", {
      … +78 lines (ctrl+o to expand)
@@ -1704,8 +1704,8 @@
 
 ● Bash(cat >> tests/framework-tests/core/js/FluidPTFTests.js <<'EOF'…)
   ⎿  21:43:05.220:   fq:  FAIL: Module "Fluid PTF Tests" Test name "Compone
-     nt injecting its grandparent transmitted and reconstructed - fluid-pro
-     ject/infusion-6#20" - Message: Promise rejected during "Component inje
+     nt injecting its grandparent transmitted and reconstructed - 
+     FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)" - Message: Promise rejected during "Component inje
      … +4 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidPTFTests.js (+36 -0)
       296      that.destroy();
@@ -1713,7 +1713,7 @@
       298  });
       299 +                                                              
       300 +QUnit.test("Component injecting its grandparent transmitted an
-          +d reconstructed - fluid-project/infusion-6#20", async function
+          +d reconstructed - FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)", async function
           + (assert) {                                                   
       301 +    fluid.def("fluid.tests.ptf.loader", {                     
       302 +        $layers: "fluid.component",                           
@@ -1863,7 +1863,7 @@
   resolves to a component, including an ancestor, injects it there with the same
   scope as if created in place, withdrawn when the injection ceases; destroying
   a component lensed from data deletes its source item - Resolves 
-  fluid-project/infusion-6#20
+  FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20)
 
 ✻ Cooked for 4m 10s · done Monday 21:44
 

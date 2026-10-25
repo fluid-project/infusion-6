@@ -349,7 +349,7 @@ QUnit.test("Effects resolution II - no notification on unrelated update", functi
 // Crucial but somewhat arguable test - a $computed whose arg is bare {self} should not be notified on updates which
 // change the overall component contents. Future behaviour will probably restore tracking for members dereferenced.
 // Readers of members, whether computed or plain, should not be notified by turnover which leaves those members
-// unchanged - fluid-project/infusion-6#21
+// unchanged - FLUID-7021
 
 const globalHolder = {
     computedCount: 0,
@@ -473,13 +473,13 @@ QUnit.test("FLUID-5288 I: Incomplete grade definition signals unavailable", func
     fluid.deleteLayer("fluid.tests.nonexistentGrade");
 });
 
-/** FLUID-7001 circular hierarchy tests */
+/** FLUID-7002 circular hierarchy tests */
 
 fluid.def("fluid.tests.circularComponent", {
     $layers: "fluid.tests.circularComponent"
 });
 
-QUnit.test("FLUID-7001 circularity", function (assert) {
+QUnit.test("FLUID-7002 circularity", function (assert) {
     const that = fluid.tests.circularComponent();
     fluid.cell.stabilize();
     assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
@@ -495,7 +495,7 @@ fluid.def("fluid.tests.indirectCircularComponentParent", {
 });
 
 
-QUnit.test("FLUID-7001 indirect circularity", function (assert) {
+QUnit.test("FLUID-7002 indirect circularity", function (assert) {
     const that = fluid.tests.indirectCircularComponent();
     fluid.cell.stabilize();
     assert.ok(fluid.isUnavailable(that), "component with circular hierarchy is unavailable");
@@ -792,12 +792,12 @@ fluid.def("fluid.tests.FLUID7000scope", {
     }
 });
 
-QUnit.test("FLUID-7000 scoping test", function (assert) {
+QUnit.test("FLUID-7001 scoping test", function (assert) {
     const that = fluid.tests.FLUID7000scope();
     // Oddity here - we can't construct subcomponents without resolving effects! Needs FDS.
     fluid.cell.stabilize();
     assert.equal(that.joined.joinedResolution, "root", "Same-named scope resolved to root in its own material");
-    // Can't actually support this for FLUID-7000 without stopping scope chain from being a chain - would need to
+    // Can't actually support this for FLUID-7001 without stopping scope chain from being a chain - would need to
     // traverse manually which likely degrade performance a lot. See diagram from 6/5/25
     // assert.equal(that.joined.sibling.joinedResolution, "child", "Same-named scope resolved by sibling component to child");
     assert.equal(that.joined.joined.joinedResolution, "child", "Same-named scope resolved to child in double nesting");
@@ -886,7 +886,7 @@ QUnit.test("Shape cognition test", function (assert) {
     checkObnoxious(that.fromMethod.member);
 });
 
-// Arrays nested within a $reactiveRoot - fluid-project/infusion-6#24
+// Arrays nested within a $reactiveRoot - FLUID-7024
 
 fluid.def("fluid.tests.reactiveArrays", {
     $layers: "fluid.component",
@@ -932,7 +932,7 @@ QUnit.test("Mutation of arrays within reactive roots", function (assert) {
     assert.deepEqual(fluid.unwrapProxy(that.list), ["a", "b"], "Top-level reactive array holds pushed elements");
 });
 
-QUnit.test("Proxy onto material which has gone away reads as empty - fluid-project/infusion-6#24", function (assert) {
+QUnit.test("Proxy onto material which has gone away reads as empty - FLUID-7024", function (assert) {
     const that = fluid.tests.reactiveArrays();
     fluid.cell.stabilize();
     that.state.entries = [{id: 1}, {id: 2}];
@@ -979,7 +979,7 @@ QUnit.test("Only writes beneath reactive roots recorded in the history", functio
     that.destroy();
 });
 
-// Members merged alongside a $reactiveRoot, which may be links to referenced values - fluid-project/infusion-6#25
+// Members merged alongside a $reactiveRoot, which may be links to referenced values - FLUID-7025
 
 fluid.def("fluid.tests.reactiveSource", {
     $layers: "fluid.component",
@@ -1499,7 +1499,7 @@ fluid.def("fluid.tests.parentExtra", {
     }
 });
 
-QUnit.test("{$parent} reference and subcomponent merged from several layers survives turnover - fluid-project/infusion-6#19", function (assert) {
+QUnit.test("{$parent} reference and subcomponent merged from several layers survives turnover - FLUID-7019", function (assert) {
     const that = fluid.tests.parentBase({$layers: "fluid.tests.parentExtra"});
     fluid.cell.stabilize();
     const childShadow = that.child[fluid.metadataSymbol];
@@ -1553,7 +1553,7 @@ fluid.def("fluid.tests.deepB", {
     }
 });
 
-QUnit.test("Subcomponent records contributed along two paths accumulate - FLUID-5614, fluid-project/infusion-6#19", function (assert) {
+QUnit.test("Subcomponent records contributed along two paths accumulate - FLUID-5614, FLUID-7019", function (assert) {
     const that = fluid.tests.deepB({
         sub: {
             $component: {
@@ -1586,7 +1586,7 @@ fluid.def("fluid.tests.mixedRecord", {
     }
 });
 
-QUnit.test("Plain value merged with a subcomponent record is reported - fluid-project/infusion-6#19", function (assert) {
+QUnit.test("Plain value merged with a subcomponent record is reported - FLUID-7019", function (assert) {
     const that = fluid.tests.mixedRecord({sub: {value: 1}});
     assert.ok(fluid.isUnavailable(that), "Component holding malformed subcomponent record is unavailable");
     const message = fluid.deSignal(that[fluid.proxySymbol].shadow.flatMerged).message;
@@ -1594,7 +1594,7 @@ QUnit.test("Plain value merged with a subcomponent record is reported - fluid-pr
     assert.ok(message.includes("{$component: ...}"), "Error explains how the record should be written");
 });
 
-// Injected component references - fluid-project/infusion-6#20
+// Injected component references - FLUID-7020
 
 fluid.def("fluid.tests.injection.innerType", {
     $layers: "fluid.component",
@@ -1638,7 +1638,7 @@ fluid.def("fluid.tests.injection.holder", {
     selfRef: "{self}"
 });
 
-QUnit.test("Injected component reference - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Injected component reference - FLUID-7020", function (assert) {
     const that = fluid.tests.injection.holder();
     fluid.cell.stabilize();
     const shadow = that[fluid.metadataSymbol];
@@ -1672,7 +1672,7 @@ QUnit.test("Injected component reference - fluid-project/infusion-6#20", functio
     that.destroy();
 });
 
-QUnit.test("Injected component reference withdrawn when its record changes - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Injected component reference withdrawn when its record changes - FLUID-7020", function (assert) {
     const that = fluid.tests.injection.holder();
     fluid.cell.stabilize();
     const shadow = that[fluid.metadataSymbol];
@@ -1699,7 +1699,7 @@ fluid.def("fluid.tests.injection.freeHolder", {
     $layers: "fluid.component"
 });
 
-QUnit.test("Destroying a component holding an injected component leaves it intact - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Destroying a component holding an injected component leaves it intact - FLUID-7020", function (assert) {
     const target = fluid.tests.injection.innerType();
     const targetShadow = target[fluid.metadataSymbol];
     const that = fluid.tests.injection.freeHolder({
@@ -1720,7 +1720,7 @@ QUnit.test("Destroying a component holding an injected component leaves it intac
     target.destroy();
 });
 
-QUnit.test("Destroying a component lensed from a data item deletes the item - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Destroying a component lensed from a data item deletes the item - FLUID-7020", function (assert) {
     const that = fluid.tests.editorHolder();
     that.names.push("alpha");
     that.names.push("beta");
@@ -1747,7 +1747,7 @@ fluid.def("fluid.tests.injection.overridden", {
     }
 });
 
-QUnit.test("Reference overrides weaker subcomponent record and is injected - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Reference overrides weaker subcomponent record and is injected - FLUID-7020", function (assert) {
     const target = fluid.tests.injection.otherType();
     const targetShadow = target[fluid.metadataSymbol];
     const that = fluid.tests.injection.overridden({
@@ -1763,7 +1763,7 @@ QUnit.test("Reference overrides weaker subcomponent record and is injected - flu
     target.destroy();
 });
 
-QUnit.test("Subcomponent record holding a String is reported - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Subcomponent record holding a String is reported - FLUID-7020", function (assert) {
     const that = fluid.tests.injection.freeHolder({sub: {$component: "{self}"}});
     assert.ok(fluid.isUnavailable(that), "Component holding a String subcomponent record is unavailable");
     const message = fluid.deSignal(that[fluid.proxySymbol].shadow.flatMerged).message;
@@ -1790,7 +1790,7 @@ fluid.def("fluid.tests.injection.flattenedArgument", {
     }
 });
 
-QUnit.test("Reference to a component member is flattened as a component argument - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Reference to a component member is flattened as a component argument - FLUID-7020", function (assert) {
     const that = fluid.tests.injection.flattenedArgument();
     fluid.cell.stabilize();
     assert.equal(that.innerValue, "inner", "Argument designating a subcomponent through a path arrives as the component");
@@ -1833,7 +1833,7 @@ fluid.def("fluid.tests.injection.vizLoader", {
     }
 });
 
-QUnit.test("Injection of an ancestor component - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Injection of an ancestor component - FLUID-7020", function (assert) {
     const that = fluid.tests.injection.vizLoader();
     fluid.cell.stabilize();
     const shadow = that[fluid.metadataSymbol];
@@ -1872,7 +1872,7 @@ QUnit.test("Injection of an ancestor component - fluid-project/infusion-6#20", f
     assert.ok(fluid.isDestroyedShadow(filterShadow2), "Grandchild injecting it is destroyed with it");
 });
 
-// $bindable streaming a signal - fluid-project/infusion-6#21
+// $bindable streaming a signal - FLUID-7021
 
 fluid.tests.bindableSource = fluid.cell(1, {name: "fluid.tests.bindableSource"});
 fluid.tests.bindableLog = [];
@@ -1898,7 +1898,7 @@ fluid.def("fluid.tests.bindableStream", {
 
 fluid.tests.double = value => value * 2;
 
-QUnit.test("$bindable binding a signal streams its updates to readers - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("$bindable binding a signal streams its updates to readers - FLUID-7021", function (assert) {
     fluid.tests.bindableLog.length = 0;
     const that = fluid.tests.bindableStream();
     fluid.cell.stabilize();
@@ -1914,7 +1914,7 @@ QUnit.test("$bindable binding a signal streams its updates to readers - fluid-pr
     assert.deepEqual(fluid.tests.bindableLog, ["bind", "unbind true"], "Bound signal itself is supplied to unbind on destruction");
 });
 
-// Avatars - fluid-project/infusion-6#21
+// Avatars - FLUID-7021
 
 fluid.def("fluid.tests.avatar.marker", {
     $layers: "fluid.component",
@@ -1948,7 +1948,7 @@ fluid.def("fluid.tests.avatar.linker", {
     }
 });
 
-QUnit.test("Avatars accumulate the material a layer brings to a component - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("Avatars accumulate the material a layer brings to a component - FLUID-7021", function (assert) {
     const avatar = fluid.avatar("fluid.tests.avatar.derived");
     fluid.cell.stabilize();
     const shadow = avatar[fluid.proxySymbol].shadow;
@@ -2017,7 +2017,7 @@ fluid.def("fluid.tests.avatar.rootReader", {
     read: "{rootSingleton}.value"
 });
 
-QUnit.test("Avatars are inert, expose computed members and are destroyed with their layer - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("Avatars are inert, expose computed members and are destroyed with their layer - FLUID-7021", function (assert) {
     fluid.tests.avatar.log.length = 0;
     const avatar = fluid.avatar("fluid.tests.avatar.computedSize");
     fluid.cell.stabilize();
@@ -2079,7 +2079,7 @@ fluid.def("fluid.tests.rebindable", {
     }
 });
 
-QUnit.test("$bindable rebinds on genuine change of its arguments only - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("$bindable rebinds on genuine change of its arguments only - FLUID-7021", function (assert) {
     fluid.tests.rebindLog.length = 0;
     const that = fluid.tests.rebindable();
     fluid.cell.stabilize();
@@ -2107,7 +2107,7 @@ fluid.def("fluid.tests.onceOnlyBindable", {
     }
 });
 
-QUnit.test("$bindable marked onceOnly is bound exactly once during its lifetime - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("$bindable marked onceOnly is bound exactly once during its lifetime - FLUID-7021", function (assert) {
     fluid.tests.rebindLog.length = 0;
     const that = fluid.tests.onceOnlyBindable();
     fluid.cell.stabilize();
@@ -2134,7 +2134,7 @@ fluid.def("fluid.tests.availability.waiting", {
     $layers: ["fluid.component", "fluid.tests.availability.lateLayer"]
 });
 
-QUnit.test("Unavailable components are tracked until available or destroyed - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("Unavailable components are tracked until available or destroyed - FLUID-7021", function (assert) {
     const that = fluid.tests.availability.waiting();
     const path = that[fluid.proxySymbol].shadow.path;
     fluid.cell.stabilize();

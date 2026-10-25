@@ -3832,7 +3832,7 @@
             `${what}: ${problem}`) :
      … 13 more lines (ctrl+o to expand)
   ⎿  Updated demo/tldraw/js/tldraw-ai.js (+6 -7)
-       4  // See https://github.com/fluid-project/infusion-6/issues/22
+       4  // See FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)
        5  
        6  import {createShapeId} from "tldraw";
        7 -import {infusionInstances, registerPendingParts, awaitInstantia
@@ -3930,7 +3930,7 @@
      napshotForUndo, awaitReport, describeInstantiation,
      … +17 lines (ctrl+o to expand)
   ⎿  Updated demo/tldraw/js/tldraw-ai.js (+2 -1)
-       4  // See https://github.com/fluid-project/infusion-6/issues/22
+       4  // See FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)
        5  
        6  import {createShapeId} from "tldraw";
        7 -import {infusionInstances, registerPendingParts, awaitInstantia
@@ -5112,7 +5112,7 @@
   ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+9 -8)
        999  
       1000  // Slop-free composition of the closest note finder with the 
-            image generator - fluid-project/infusion-6#25
+            image generator - FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)
       1001  
       1002 -// Stands in for fluid.demos.tldrawHost, bridging the notes o
            -n the canvas and the bounds of each widget's shape           
@@ -5393,7 +5393,7 @@
       105 - * ordinarily directed at the widget's own view. However, a wi
           -dget whose view is cross-injected from one of its             
       106 - * subcomponents, e.g. by `view: "{first}.view"` as described 
-          -in fluid-project/infusion-6#20, has no view of its own,       
+          -in FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20), has no view of its own,       
       107 - * and potentia directed at its view would override the inject
           -ion. In this case, they are directed at the view of that      
       108 - * subcomponent instead, following any further such injection 
@@ -5404,7 +5404,7 @@
           +t the widget's own view. However, a widget whose view is      
       106 + * cross-injected from one of its subcomponents, e.g. by `view
           +: "{first}.view"` as described in                             
-      107 + * fluid-project/infusion-6#20, has no view of its own, and po
+      107 + * FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20), has no view of its own, and po
           +tentia directed at its view would override the injection.     
       108 + * In this case, they are directed at the view of that subcomp
           +onent instead, following any further such injection made      

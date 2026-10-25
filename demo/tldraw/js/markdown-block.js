@@ -2,7 +2,7 @@
 
 // A block of text which is rendered as markdown, used by the "Ask me anything" panel to render the AI's responses,
 // which it likes to write in markdown. The markdown is converted to HTML by snarkdown, loaded from src/lib/snarkdown.
-// See https://github.com/fluid-project/infusion-6/issues/24
+// See FLUID-7024
 
 /* global snarkdown */
 

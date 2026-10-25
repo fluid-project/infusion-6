@@ -5,7 +5,7 @@
 // that the hydrated document it writes holds the rendered markup for the demo's todo items.
 
 // hydrate.js writes the document once all injections are complete and the reactive graph has settled, as determined
-// by fluid.cell.settle() - see fluid-project/infusion-6#17
+// by fluid.cell.settle() - see FLUID-7017
 
 const childProcess = require("child_process"),
     fs = require("fs"),

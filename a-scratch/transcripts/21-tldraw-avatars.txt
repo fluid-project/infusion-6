@@ -5,7 +5,7 @@
 
 ❯ /clear                                                                        
 
-❯ Address https://github.com/fluid-project/infusion-6/issues/21                 
+❯ Address FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)                 
 
   Ran 2 shell commands (ctrl+o to expand)
 
@@ -557,7 +557,7 @@
 ● Bash(cat >> tests/framework-tests/core/js/FluidILTests.js <<'EOF'…)
   ⎿  15:20:40.987:   fq:  Test concluded - Module "Fluid IL Tests" Test nam
      e "Subcomponent records contributed along two paths accumulate - FLUID
-     -5614, fluid-project/infusion-6#19": 6/6 passed - PASS
+     -5614, FLUID-7019 (https://github.com/fluid-project/infusion-6/issues/19)": 6/6 passed - PASS
      … +60 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+109 -0)
       1412      assert.ok(fluid.isDestroyedShadow(shadow2), "Grandparent 
@@ -566,7 +566,7 @@
             hild injecting it is destroyed with it");
       1414  });
       1415 +                                                             
-      1416 +// $bindable streaming a signal - fluid-project/infusion-6#21
+      1416 +// $bindable streaming a signal - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)
       1417 +                                                             
       1418 +fluid.tests.bindableSource = fluid.cell(1, {name: "fluid.test
            +s.bindableSource"});                                         
@@ -595,7 +595,7 @@
       1440 +fluid.tests.double = value => value * 2;                     
       1441 +                                                             
       1442 +QUnit.test("$bindable binding a signal streams its updates to
-           + readers - fluid-project/infusion-6#21", function (assert) { 
+           + readers - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)", function (assert) { 
       1443 +    fluid.tests.bindableLog.length = 0;                      
       1444 +    const that = fluid.tests.bindableStream();               
       1445 +    fluid.cell.stabilize();                                  
@@ -635,7 +635,7 @@
            +estruction");                                                
       1456  });
       1457  
-      1458  // Avatars - fluid-project/infusion-6#21
+      1458  // Avatars - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)
 
 ● Unbind is never invoked: unbind() calls unbindFuncSignal.set(args), which
   overwrites the function cell rather than calling it. Let me look at
@@ -719,7 +719,7 @@
            +uction");                                                    
       1456  });
       1457  
-      1458  // Avatars - fluid-project/infusion-6#21
+      1458  // Avatars - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)
 
 ● IL tests all pass. Now a view test for the fluid.topLevelWidget → view linkage
   broadcast.
@@ -734,7 +734,7 @@
        994  });
        995 +                                                             
        996 +// Top-level widgets, receiving host machinery broadcast onto
-           + their views - fluid-project/infusion-6#21                   
+           + their views - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)                   
        997 +                                                             
        998 +fluid.def("fluid.tests.widget", {                            
        999 +    $layers: "fluid.topLevelWidget",                         
@@ -768,7 +768,7 @@
       1025 +});                                                          
       1026 +                                                             
       1027 +QUnit.test("Host machinery is broadcast onto the views of top
-           +-level widgets - fluid-project/infusion-6#21", function (asse
+           +-level widgets - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)", function (asse
            +rt) {                                                        
       1028 +    const container = qs(".container");                      
       1029 +    const that = fluid.tests.widget({container, view: {$compo
@@ -1817,7 +1817,7 @@
          +inder, which                                                   
       15 +    was never actually invoked - a bare `{boundValue}` argument
          + now receives the bound signal itself so that it can be release
-         +d - fluid-project/infusion-6#21                                
+         +d - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)                                
       16 +6. No adapter for tldraw's signals. tldraw's store is made of f
          +ine-grained signals, but the only available bridge copies the w
          +hole page-shapes array on every document change, including ever
@@ -1853,7 +1853,7 @@
       26 +    fluid.topLevelWidgetView layer which the portable fluid.top
          +LevelWidget layer contributes. This reports the shape's bounds,
          + which the widget receives as                                  
-      27 +    {self}.hostBounds - fluid-project/infusion-6#21            
+      27 +    {self}.hostBounds - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)            
       28  9. Conditionals exist only at the component level. Each conditi
           onally shown block must become a $if subcomponent, and an empty
            outer container stays in the DOM when it's hidden.
@@ -1863,7 +1863,7 @@
           their own boolean computed member, or a value of 0 or "" hides 
           the block. DONE
       31      * Resolved by long-form $if record {func, args} by analogy 
-          with $compute - fluid-project/infusion-6#13
+          with $compute - FLUID-7013 (https://github.com/fluid-project/infusion-6/issues/13)
       32  11. No expressions in @{}. Values like total - long or a || !b 
           have to become named $compute members backed by global function
           s. This is idiomatic, but verbose.
@@ -1950,7 +1950,7 @@
   Suggested commit message: "Fine-grained tldraw reactivity via a 
   fluid.tldrawViewComponent broadcast onto fluid.topLevelWidget views, layer 
   avatars for introspection, fixed $bindable unbinding - Resolves 
-  fluid-project/infusion-6#21"
+  FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)"
 
 ✻ Crunched for 19m 34s · done 15:37
 
@@ -2439,8 +2439,8 @@
 
 ● Bash(cat >> tests/framework-tests/core/js/FluidILTests.js <<'EOF'…)
   ⎿  16:09:12.500:   fq:  FAIL: Module "Fluid IL Tests" Test name "$bindabl
-     e marked onceOnly is bound exactly once during its lifetime - fluid-pr
-     oject/infusion-6#21" - Message: Value bound once only survives change
+     e marked onceOnly is bound exactly once during its lifetime - 
+     FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)" - Message: Value bound once only survives change
      … +9 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+68 -0)
       1521      assert.equal(fluid.avatarMerged("fluid.tests.avatar.deriv
@@ -2473,7 +2473,7 @@
       1543 +});                                                          
       1544 +                                                             
       1545 +QUnit.test("$bindable rebinds on genuine change of its argume
-           +nts only - fluid-project/infusion-6#21", function (assert) { 
+           +nts only - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)", function (assert) { 
       1546 +    fluid.tests.rebindLog.length = 0;                        
       1547 +    const that = fluid.tests.rebindable();                   
       1548 +    fluid.cell.stabilize();                                  
@@ -3777,7 +3777,7 @@
            l probably restore tracking for members dereferenced.
       184 +// Readers of members, whether computed or plain, should not b
           +e notified by turnover which leaves those members             
-      185 +// unchanged - fluid-project/infusion-6#21                    
+      185 +// unchanged - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)                    
       186  
       187  const globalHolder = {
       188      computedCount: 0,
@@ -3860,7 +3860,7 @@
 
 ❯ Summarise all work done in this commit                                        
 
-● The work closes fluid-project/infusion-6#21: fine-grained tldraw reactivity,
+● The work closes FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21): fine-grained tldraw reactivity,
   top-level widgets, layer avatars, a reactive SFC registry, and a rework of
   $bindable and CodeMirror binding, plus the over-notification fixes this
   exposed. The full node suite passes (1181/1181) and the compose-edit browser
@@ -3994,7 +3994,7 @@
   fluid.topLevelWidget views, layer avatars and a reactive SFC registry for 
   widget introspection, $bindable rebinding semantics with onceOnly, CodeMirror 
   binding hardened with source exclusion, and turnover no longer notifying 
-  readers of unchanged members - Resolves fluid-project/infusion-6#21
+  readers of unchanged members - Resolves FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)
 
   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
@@ -4302,7 +4302,7 @@
       p = "tests/framework-tests/core/js/FluidILTests.js"…)
   ⎿  17:17:18.268:   fq:  FAIL: Module "Fluid IL Tests" Test name "Avatars
      are inert, expose computed members and are destroyed with their layer
-     - fluid-project/infusion-6#21" - Message: Avatar lacking a prerequisit
+     - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)" - Message: Avatar lacking a prerequisit
      … +13 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+77 -0)
       1538      fluid.def("fluid.tests.avatar.base", oldDef);
@@ -4370,7 +4370,7 @@
       p = "tests/framework-tests/core/js/FluidILTests.js"…)
   ⎿  17:17:50.644:   fq:  FAIL: Module "Fluid IL Tests" Test name "Avatars
      are inert, expose computed members and are destroyed with their layer
-     - fluid-project/infusion-6#21" - Message: Computed member is readable
+     - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)" - Message: Computed member is readable
      … +6 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+9 -12)
       1541  fluid.tests.avatar.log = [];
@@ -4842,8 +4842,8 @@
 ● Bash(python3 - <<'EOF'
       p = "tests/framework-tests/core/js/FluidILTests.js"…)
   ⎿  17:38:04.489:   fq:  FAIL: Module "Fluid IL Tests" Test name "Unavaila
-     ble components are tracked until available or destroyed - fluid-projec
-     t/infusion-6#21" - Message: System reports all components available
+     ble components are tracked until available or destroyed - 
+     FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)" - Message: System reports all components available
      … +8 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+29 -0)
       1588      const missingAvatar = fluid.avatar("fluid.tests.avatar.mi
@@ -4873,7 +4873,7 @@
       1692 +});                                                          
       1693 +                                                             
       1694 +QUnit.test("Unavailable components are tracked until availabl
-           +e or destroyed - fluid-project/infusion-6#21", function (asse
+           +e or destroyed - FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)", function (asse
            +rt) {                                                        
       1695 +    const that = fluid.tests.availability.waiting();         
       1696 +    const path = that[fluid.proxySymbol].shadow.path;        
@@ -4914,8 +4914,8 @@
 ● Bash(python3 - <<'EOF'
       p = "tests/framework-tests/core/js/FluidILTests.js"…)
   ⎿  17:38:23.386:   fq:  FAIL: Module "Fluid IL Tests" Test name "Unavaila
-     ble components are tracked until available or destroyed - fluid-projec
-     t/infusion-6#21" - Message: Died on test #5: Cannot read properties of
+     ble components are tracked until available or destroyed - 
+     FLUID-7021 (https://github.com/fluid-project/infusion-6/issues/21)" - Message: Died on test #5: Cannot read properties of
      … +6 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidILTests.js (+5 -2)
       1702      fluid.def("fluid.tests.availability.lateLayer", {value: 1

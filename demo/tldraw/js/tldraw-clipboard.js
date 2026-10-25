@@ -1,7 +1,7 @@
 // Replaces tldraw's clipboard format with the Potentia Transmission Format (PTF) whenever Infusion shapes are copied
 // or cut, and sniffs pastes for PTF documents. Other plain text pasted onto the canvas is offered to the "Ask me
 // anything" panel, and tldraw's own handling is deferred to for anything else.
-// See https://github.com/fluid-project/infusion-6/issues/15 and https://github.com/fluid-project/infusion-6/issues/24
+// See FLUID-7015 and FLUID-7024
 
 /**
  * The live Infusion component hosted by each Infusion shape, keyed by shape id. Maintained by InfusionHost.
@@ -430,7 +430,7 @@ export const pasteText = function (editor, text, point) {
 /**
  * Keep copies and cuts made outside the canvas, e.g. of text selected in the "Ask me anything" panel, from reaching
  * tldraw's handlers. These are attached to the whole document and, whilst the editor holds a selection, would write
- * that selection to the clipboard in place of the text the user selected - see fluid-project/infusion-6#23.
+ * that selection to the clipboard in place of the text the user selected - see FLUID-7023.
  * @param {Element} element - An element outside the canvas, from which copies and cuts are to be left to the browser
  * @return {Function} A function which removes the guard
  */

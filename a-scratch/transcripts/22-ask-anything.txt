@@ -3,7 +3,7 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
 
 
-❯ Address issue https://github.com/fluid-project/infusion-6/issues/22
+❯ Address issue FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)
 
   Ran 5 shell commands (ctrl+o to expand)
 
@@ -795,7 +795,7 @@
       200 + * ordinarily directed at the widget's own view. However, a wi
           +dget whose view is cross-injected from one of its
       201 + * subcomponents, e.g. by `view: "{first}.view"` as described
-          +in fluid-project/infusion-6#20, has no view of its own,
+          +in FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20), has no view of its own,
       202 + * and potentia directed at its view would override the inject
           +ion. In this case, they are directed at the view of that
       203 + * subcomponent instead, following any further such injection
@@ -930,7 +930,7 @@
       200 - * ordinarily directed at the widget's own view. However, a wi
           -dget whose view is cross-injected from one of its
       201 - * subcomponents, e.g. by `view: "{first}.view"` as described
-          -in fluid-project/infusion-6#20, has no view of its own,
+          -in FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20), has no view of its own,
       202 - * and potentia directed at its view would override the inject
           -ion. In this case, they are directed at the view of that
       203 - * subcomponent instead, following any further such injection
@@ -998,7 +998,7 @@
       14 + * ordinarily directed at the widget's own view. However, a wid
          +get whose view is cross-injected from one of its
       15 + * subcomponents, e.g. by `view: "{first}.view"` as described i
-         +n fluid-project/infusion-6#20, has no view of its own,
+         +n FLUID-7020 (https://github.com/fluid-project/infusion-6/issues/20), has no view of its own,
       16 + * and potentia directed at its view would override the injecti
          +on. In this case, they are directed at the view of that
       17 + * subcomponent instead, following any further such injection m
@@ -1235,7 +1235,7 @@
        3 // widgets in the workspace - ported from the AI chat sidebar of
           the Aarhus "Stund" prototype.
        4 // The protocol is in js/ai-protocol.js and the machinery acting
-       5 // See https://github.com/fluid-project/infusion-6/issues/22
+       5 // See FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)
        6
        7 fluid.def("fluid.demos.askAnything", {
        9     state: {
@@ -1252,7 +1252,7 @@
   ⎿  Updated demo/tldraw/sfc/fluid-demos-askAnything.vue (+116 -4)
        4  // The protocol is in js/ai-protocol.js and the machinery actin
           g on the canvas in js/tldraw-ai.js.
-       5  // See https://github.com/fluid-project/infusion-6/issues/22
+       5  // See FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)
        6
        7 +fluid.registerNamespace("fluid.demos.askAnything");
        8 +
@@ -3065,7 +3065,7 @@
     demo/tldraw/index.html, package.json (registers the new test file)
 
   Nothing is committed. Suggested commit line: "Implement "Ask me anything" AI
-  passthrough in tldraw demo - Resolves fluid-project/infusion-6#22".
+  passthrough in tldraw demo - Resolves FLUID-7022 (https://github.com/fluid-project/infusion-6/issues/22)".
 
   Sources for the model id guess: IFM/K2-Think, IFM/K2-Chat
 

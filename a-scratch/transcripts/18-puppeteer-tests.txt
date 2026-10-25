@@ -3,7 +3,7 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
 
 
-❯ Look at https://github.com/fluid-project/infusion-6/issues/18 and suggest an
+❯ Look at FLUID-7018 (https://github.com/fluid-project/infusion-6/issues/18) and suggest an
   approach and technology stack. We could continue with our hoisting of demos
   to tests that we did with fluid.demos.todoList but the substrate pane
   involves some detailed interaction including hover states so a more realistic

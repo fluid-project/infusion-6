@@ -3,7 +3,7 @@
  ▝▝   ▝▝   /mnt/outer-source/gits/fluid-infusion-6
 
 
-❯ Address step 1 of https://github.com/fluid-project/infusion-6/issues/25 and   
+❯ Address step 1 of FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25) and   
   assess whether any functionality is missing for step 2                        
 
   Ran 6 shell commands (ctrl+o to expand)
@@ -48,7 +48,7 @@
       834  });
       835 +                                                              
       836 +// Slop-free composition of the closest note finder with the i
-          +mage generator - fluid-project/infusion-6#25                  
+          +mage generator - FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)                  
       837 +                                                              
       838 +// Stands in for fluid.demos.tldrawHost, bridging the notes on
           + the canvas and the bounds of each widget's shape             
@@ -206,8 +206,8 @@
       897 +    }                                                         
       898 +});                                                           
       899 +                                                              
-      900  QUnit.test("Closest note composed with image generator - fluid
-           -project/infusion-6#25", async function (assert) {
+      900  QUnit.test("Closest note composed with image generator - 
+           FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)", async function (assert) {
       901      await fluid.tests.tldrawAI.loadImports();
       902      const originalFetch = fluid.demos.pixabay.fetch;
      ...
@@ -953,7 +953,7 @@
       813  });
       814  
       815 +// Members merged alongside a $reactiveRoot, which may be link
-          +s to referenced values - fluid-project/infusion-6#25          
+          +s to referenced values - FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)          
       816 +                                                              
       817 +fluid.def("fluid.tests.reactiveSource", {                     
       818 +    $layers: "fluid.component",                               
@@ -1040,8 +1040,8 @@
 ● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
       p = "tests/framework-tests/from-demos/js/TldrawAITests.js"…)
   ⎿  16:21:50.536:   fq:  FAIL: Module "tldraw "Ask me anything" Demo Tests
-     " Test name "Closest note composed with image generator - fluid-projec
-     t/infusion-6#25" - Message: Reconstructed widget's prompt drawn from t
+     " Test name "Closest note composed with image generator - 
+     FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)" - Message: Reconstructed widget's prompt drawn from t
      … +11 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/from-demos/js/TldrawAITests.js (+15 -19)
       854  });
@@ -1930,7 +1930,7 @@
        4 // Sends a direction to the IFM model exactly as the tldraw demo
          's "Ask me anything" panel would, from a mocked-up
        5 // workspace held in ifm-harness.html, applies its responses, an
-       6 // See fluid-project/infusion-6#25
+       6 // See FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)
        7 // Run from the repository root as
        8 //     node a-scratch/ifm-harness/run-harness.js [samples=3]
          ned by one response cannot affect another. Results are
@@ -1962,7 +1962,7 @@
       7 // responses are applied by a mock of the bridge in demo/tldraw/j
         s/tldraw-ai.js, with problems reported back to the
         ts they produce are assessed. See run-harness.js and
-      9 // fluid-project/infusion-6#25
+      9 // FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)
      … +630 lines (ctrl+o to expand)
 
 ● Before spending real calls, I'll add a dry-run mode that feeds the ideal
@@ -2756,8 +2756,8 @@ code 0)
 ● Bash(cd /mnt/outer-source/gits/fluid-infusion-6; python3 - <<'EOF'
       p = "tests/framework-tests/core/js/FluidViewTests.js"…)
   ⎿  16:57:33.260:   fq:  FAIL: Module "Fluid View Tests" Test name "Widget
-      nested within another takes the bounds of the widget enclosing it - f
-     luid-project/infusion-6#25" - Message: Died on test #1: Cannot read pr
+      nested within another takes the bounds of the widget enclosing it - 
+     FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)" - Message: Died on test #1: Cannot read pr
      … +9 lines (ctrl+o to expand)
   ⎿  Updated tests/framework-tests/core/js/FluidViewTests.js (+2 -2)
       1088              $layers: "fluid.templateViewComponent",
@@ -2770,7 +2770,7 @@ code 0)
       1092  });
       1093  
       1094  QUnit.test("Widget nested within another takes the bounds of 
-            the widget enclosing it - fluid-project/infusion-6#25", funct
+            the widget enclosing it - FLUID-7025 (https://github.com/fluid-project/infusion-6/issues/25)", funct
             ion (assert) {
      ...
       1097      const that = fluid.tests.umbrellaWidget({container, view:

@@ -1,5 +1,5 @@
 
-❯ Try to resolve https://github.com/fluid-project/infusion-6/issues/19 - report
+❯ Try to resolve FLUID-7019 (https://github.com/fluid-project/infusion-6/issues/19) - report
   if you run into an issue which requires fundamental new framework machinery or
   other kinds of bulky new construction
 
@@ -88,7 +88,7 @@
 
   Ran 2 shell commands
 
-● I've resolved fluid-project/infusion-6#19: all rendering machinery now lives
+● I've resolved FLUID-7019 (https://github.com/fluid-project/infusion-6/issues/19): all rendering machinery now lives
   on a `view` subcomponent of each view component. No fundamental new framework
   machinery was needed. I did have to fix one existing bug in FluidIL that this
   refactor exposed.
@@ -157,7 +157,7 @@
   `todo-list` demo) needed no changes.
 
   When you commit, the message should mention `Resolves
-  fluid-project/infusion-6#19`.
+  FLUID-7019 (https://github.com/fluid-project/infusion-6/issues/19)`.
 
 ❯ Everything needs to move onto {self}.view including container, template,
   templateTree etc.- there should be no view-specific machinery on the top-level
@@ -835,7 +835,7 @@
 
 
 It was working on
-  fluid-project/infusion-6#19, and your last instruction was "Yes, do both if
+  FLUID-7019 (https://github.com/fluid-project/infusion-6/issues/19), and your last instruction was "Yes, do both if
   you find no obstacles with (a)".
   - (a) Deferred $component merging was finished. It is the Infusion 4 approach
     from FLUID-5614: each layer's contribution becomes its own subcomponent
@@ -2913,7 +2913,7 @@ It was working on
 
   All view machinery is now hosted by a "view" subcomponent, with all view
   layers moved off the principal into view.$component.$layers - Resolves
-  fluid-project/infusion-6#19
+  FLUID-7019 (https://github.com/fluid-project/infusion-6/issues/19)
 
   - fluid.viewComponent is now the view's own base layer, absorbing fluid.view;
   view layers renamed consistently:

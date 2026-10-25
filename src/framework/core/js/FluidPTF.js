@@ -4,7 +4,7 @@
 
 // The "Potentia Transmission Format" (PTF) - a MIME multipart (RFC 1341, RFC 2046) document holding all of the layer
 // definitions, user potentia and live layer contents required to reconstruct a component instance at another location.
-// See https://github.com/fluid-project/infusion-6/issues/15
+// See FLUID-7015
 
 const fluidPTFScope = function (fluid) {
     const $t = fluid.proxySymbol;

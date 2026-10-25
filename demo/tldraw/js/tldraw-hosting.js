@@ -108,7 +108,7 @@ fluid.tldraw.injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.([\w$]+)\.vi
  * Construct the potentia through which a host supplies a widget with its container, the id of its shape and the
  * configuration of its shape. These are ordinarily directed at the widget's own view. However, a widget whose view is
  * cross-injected from one of its subcomponents, e.g. by `view: "{first}.view"` as described in
- * fluid-project/infusion-6#20, has no view of its own, and potentia directed at its view would override the injection.
+ * FLUID-7020, has no view of its own, and potentia directed at its view would override the injection.
  * In this case, they are directed at the view of that subcomponent instead, following any further such injection made
  * by the subcomponent's own layer.
  * @param {String} layerName - The name of the widget's layer, which must already be registered

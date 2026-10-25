@@ -3,7 +3,7 @@ No single limitation forces a hack in the main design. The broadcast linkage, th
 The existing list
 
 - 5 ($bindable) is only half resolved, and it's the one that matters most. Updates now stream through a bound signal and unbind works. But a $bindable still never rebinds when its arguments change: it logs "Ignoring attempt to rebind". So hostBounds would go stale if a view's shapeId changed, or if tldrawHost were recreated with a new editor. Today neither happens, because each widget is built once per shape. A cleaner design would key the binding on its arguments: unbind the old value and bind again when they change.
-- 9 (conditionals only at component level) got worse after #19. closestNoteFinder's distance line is now a subcomponent holding a view subcomponent holding a template, just to show one line. That's design rather than a defect, but the nesting is now heavy enough that a short form deserves thought.
+- 9 (conditionals only at component level) got worse after [FLUID-7019](https://github.com/fluid-project/infusion-6/issues/19). closestNoteFinder's distance line is now a subcomponent holding a view subcomponent holding a template, just to show one line. That's design rather than a defect, but the nesting is now heavy enough that a short form deserves thought.
 - 13 ($for reconciles by index) is still unmeasured. The notes bridge has a related coarseness: it produces a whole new array whenever any note changes. So every note finder recomputes on any note edit, even if that note is far from all of them. Finer grain needs per-item collections, which is the same machinery 13 needs.
 - 7, 11 and 12 had no effect here. Holding the editor as a live object in tldrawHost read naturally.
 
