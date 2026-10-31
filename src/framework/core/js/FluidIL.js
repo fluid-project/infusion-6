@@ -1959,8 +1959,8 @@ const $fluidILScope = function (fluid) {
             priority: fluid.mergeRecordTypes.subcomponent + (count - 1 - i),
             layer: expanded
         }));
-        // Strongest contribution first, as for the parents listed in any $layers
-        const layerNames = [...new Set([...contributions].reverse().flatMap(({expanded}) => expanded.$layers))];
+        // Weakest contribution first, as for the parents listed in any $layers
+        const layerNames = fluid.uniqueLayerNames(contributions.flatMap(({expanded}) => expanded.$layers));
         // TODO: detect injected reference and take direct path to instantiator
         return fluid.pushPotentia(shadow, memberName, subLayerRecords, layerNames, variables).computer;
     };
@@ -2229,7 +2229,15 @@ const $fluidILScope = function (fluid) {
                     const sourceRef = fluid.deSignalToSite(sourceSignal);
                     const sourceSite = fluid.isSignal(sourceRef) && sourceRef.$variety === "$sitedRef" ? sourceRef.site : null;
 
-                    const pushSubcomponentPotentia = function (value, subKey) {
+                    /**
+                     * Allocate the member of the list for one entry of the source collection
+                     * @param {any} value - The value of the entry
+                     * @param {String|Number} subKey - The key of the entry - its index if the source is an array
+                     * @param {Number} index - The position of the entry within the source, once ordered
+                     * @param {Number} length - The number of entries in the source
+                     * @return {ComponentComputer} The member allocated for the entry
+                     */
+                    const pushSubcomponentPotentia = function (value, subKey, index, length) {
                         allKeys.push("" + subKey);
                         const variables = {};
                         // A value which is itself a proxy onto a site, e.g. an element selected by filter() from
@@ -2245,6 +2253,11 @@ const $fluidILScope = function (fluid) {
                         if (forRecord.keyAs !== undefined) {
                             variables[forRecord.keyAs] = subKey;
                         }
+                        if (forRecord.positionAs !== undefined) {
+                            // Position within the collection regardless of how it is keyed, e.g. for rendering
+                            // separators between members
+                            variables[forRecord.positionAs] = {index, first: index === 0, last: index === length - 1};
+                        }
                         const computer = fluid.pushSubcomponentPotentia(listShadow, subKey, contributions, variables);
                         // Record the data item from which the component is lensed, so that destroying the component
                         // deletes the item from its source - see fluid.destroyComponent
@@ -2254,9 +2267,10 @@ const $fluidILScope = function (fluid) {
 
                     let togo;
                     if (Array.isArray(source)) {
-                        togo = source.map(pushSubcomponentPotentia);
+                        togo = source.map((value, index) => pushSubcomponentPotentia(value, index, index, source.length));
                     } else if (fluid.isPlainObject(source)) {
-                        togo = fluid.orderKeyedRecords(source).map(([key, value]) => pushSubcomponentPotentia(value, key));
+                        const entries = fluid.orderKeyedRecords(source);
+                        togo = entries.map(([key, value], index) => pushSubcomponentPotentia(value, key, index, entries.length));
                     } else if (fluid.isUnavailable(source)) {
                         return source;
                     } else {
@@ -2635,26 +2649,26 @@ const $fluidILScope = function (fluid) {
             const allMergeRecords = [...mergeRecords, dynamicMergeRecord];
             shadow.mergeRecords = allMergeRecords; // Put this in early so we can resolve container if there is an error
 
-            // The layers named by our merge records, strongest record first - within each record, as in any $layers
-            // list, an earlier layer is stronger than a later one
+            // The layers named by our merge records, weakest record first, preceded by our direct layer names - within
+            // each record, as in any $layers list, a later layer is stronger than an earlier one
             const recordPriority = mergeRecord => mergeRecord.priority ?? fluid.mergeRecordTypes[mergeRecord.mergeRecordType] ?? 0;
-            const mergeRecordLayerNames = [...allMergeRecords].sort((a, b) => recordPriority(a) - recordPriority(b))
+            const mergeRecordLayerNames = [...allMergeRecords].sort((a, b) => recordPriority(b) - recordPriority(a))
                 .map(mergeRecord => fluid.makeArray(mergeRecord.layer.$layers)).flat().filter(name => name);
-            const allLayerNames = [...mergeRecordLayerNames, ...[...layerNames].reverse()];
+            const allLayerNames = [...layerNames, ...mergeRecordLayerNames];
 
             const [dynamicNames, staticNames] = fluid.partition(allLayerNames, fluid.isILReference);
 
             // TODO: We notice layerNames now routinely duplicates mergedRecordLayerNames - C3 doesn't in fact make a problem of this
             // but we need to move to a "forgiving C3" in time - see notes from 31/5/25
-            const uniqueStaticNames = [...new Set(staticNames)];
+            const uniqueStaticNames = fluid.uniqueLayerNames(staticNames);
 
             const hierarchyResolver = new fluid.HierarchyResolver(layerName => {
                 fluid.ensureImportsLoaded(shadow, layerName);
             }, shadow);
             const resolved = fluid.flatMergedRound(shadow, hierarchyResolver, uniqueStaticNames); // <= WILL READ LAYER REGISTRY
 
-            // Dynamic layers may be named by our merge records, or amongst the parents of any of our layers
-            const uniqueDynamicNames = [...new Set([...dynamicNames, ...hierarchyResolver.dynamicLayerNames])];
+            // Dynamic layers may be named amongst the parents of any of our layers, or by our merge records, which are stronger
+            const uniqueDynamicNames = fluid.uniqueLayerNames([...hierarchyResolver.dynamicLayerNames, ...dynamicNames]);
             if (!fluid.arrayEqual(uniqueDynamicNames, shadow.dynamicLayerNames._value)) {
                 shadow.dynamicLayerNames.set(uniqueDynamicNames);
             }

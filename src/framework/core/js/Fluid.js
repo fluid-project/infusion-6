@@ -1582,6 +1582,16 @@ const $fluidScope = function (fluid) {
     };
 
     /**
+     * Remove duplicates from a list of layer names, weakest first, keeping the last and hence strongest occurrence of
+     * each name.
+     * @param {String[]} layerNames - The layer names, weakest first
+     * @return {String[]} The layer names without duplicates, weakest first
+     */
+    fluid.uniqueLayerNames = function (layerNames) {
+        return layerNames.filter((layerName, i) => layerNames.indexOf(layerName, i + 1) === -1);
+    };
+
+    /**
      * Filter a list of candidate layer names to those which are defined - see `fluid.isLayerDefined`. Suitable as the
      * function of a `$compute` producing dynamic layers, e.g. `$layers: ["fluid.component", "{self}.kindLayers"]`
      * with `kindLayers: "$compute:fluid.definedLayers({self}.candidates)"`.
@@ -1837,14 +1847,16 @@ const $fluidScope = function (fluid) {
      * Collect the contributions of a set of layers to a subcomponent record at a path into a `fluid.componentRecords`
      * rather than merging them. A layer may instead hold an IL reference at the path - whether this designates a
      * component, which will then be injected there, can only be known once it is resolved (see
-     * `fluid.expandReferenceRecord`) and so, as for any other value, it simply overrides all weaker contributions. Any
-     * other value at that path which is not a subcomponent record is an error.
+     * `fluid.expandReferenceRecord`) and so, as for any other value, it simply overrides all weaker contributions. A
+     * layer may also remove the subcomponent by holding `null`, or `{$component: null}`, at the path, which likewise
+     * overrides all weaker contributions - a stronger contribution brings the subcomponent back. Any other value at that
+     * path which is not a subcomponent record is an error.
      * @param {Object[]} layers - The layers being merged, weakest first
      * @param {String} key - The key at which the subcomponent record is held
      * @param {String[]} segs - The path of the layers' parent within the root being merged
      * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
-     * @return {Object|String} A value holding the collected contributions as its `$component` member, or an IL reference
-     * if this is the strongest value at the path
+     * @return {Object|String|null} A value holding the collected contributions as its `$component` member, or an IL
+     * reference if this is the strongest value at the path, or `null` if the subcomponent has been removed
      */
     fluid.collectComponentRecords = function (layers, key, segs, mergeRecords) {
         const contributions = [];
@@ -1855,9 +1867,10 @@ const $fluidScope = function (fluid) {
                 if (fluid.isComponentRecordHolder(value) && fluid.isPlainObject(value.$component, true)) {
                     contributions.push({record: value.$component, mergeRecordName: mergeRecords[i].mergeRecordName});
                     reference = undefined;
-                } else if (fluid.isILReference(value)) {
+                } else if (fluid.isILReference(value) || value === null || fluid.isComponentRecordHolder(value) && value.$component === null) {
+                    // An IL reference or a removal discards all weaker contributions
                     contributions.length = 0;
-                    reference = value;
+                    reference = fluid.isILReference(value) ? value : null;
                 } else if (value !== undefined) {
                     const from = mergeRecords[i].mergeRecordName ?? mergeRecords[i].mergeRecordType;
                     fluid.fail(`Cannot merge value ${JSON.stringify(value)} at path ${[...segs, key].join(".")} from ` +
@@ -2617,11 +2630,16 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Computes C3 precedence of the parent layers of the supplied layer
+     * Computes C3 precedence of the parent layers of the supplied layer. As for FLUID-5743, a parent listed later in a
+     * layer's `$layers` is stronger than one listed earlier, which is the reverse of the order expected by the C3
+     * algorithm, and so each list of parents is reversed before it is supplied to it.
+     * A parent which is listed after a layer which already derives from it is ignored, since it cannot be stronger than
+     * its descendant and its weaker position is already established by the descendant's own hierarchy. A parent listed
+     * before such a layer is retained, since it then constrains its order with respect to the other parents.
      * @param {String} C - The name of the layer whose parent precedence is required
      * @param {Object<String, Object>} defs - A layer definition registry
      * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
-     * @return {String[]} - The parent precedence list
+     * @return {String[]} - The parent precedence list, strongest first
      * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
      */
     fluid.C3_precedence = function (C, defs, visited) {
@@ -2635,8 +2653,12 @@ const $fluidScope = function (fluid) {
             // This error should not be received since the driver in fluid.hierarchyResolver will ensure that all parents have definitions
             fluid.fail(`Parent layer ${C} referenced which is not defined`);
         }
-        const parents = Array.from(defs[C].$layers);
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const allParents = Array.from(defs[C].$layers).reverse();
+        const allPrecLists = allParents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        // Strongest first, so a parent is redundant if it appears in the precedence of any parent following it
+        const retain = allParents.map((parent, i) => !allPrecLists.slice(i + 1).some(precList => precList.includes(parent)));
+        const parents = allParents.filter((parent, i) => retain[i]);
+        const precLists = allPrecLists.filter((precList, i) => retain[i]);
         const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
 
         visited.delete(C);
@@ -2644,17 +2666,18 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Computes C3 precedence of the parent layers of the supplied layer
-     * @param {String[]} parents - The name of the layer whose parent precedence is required
+     * Computes C3 precedence of a list of layers, as for the parents of a layer - see `fluid.C3_precedence`. Unlike
+     * the parents of a layer, the order of the list is a preference rather than a constraint.
+     * @param {String[]} parents - The names of the layers whose precedence is required, weakest first
      * @param {Object<String, Object>} defs - A layer definition registry
-     * @return {String[]} - The parent precedence list
+     * @return {String[]} - The precedence list, weakest first
      * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
      */
     fluid.C3_precedence_parents = function (parents, defs) {
         const visited = new Set();
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const precLists = [...parents].reverse().map(parent => fluid.C3_precedence(parent, defs, visited));
         const merged = fluid.C3_merge(precLists);
-        return merged;
+        return merged.reverse();
     };
 
     /**
@@ -2795,7 +2818,7 @@ const $fluidScope = function (fluid) {
             // A local store, so that we can use C3_precedence with direct lookups
             this.flatDefs = Object.create(null);
             this.unavailableLayers = Object.create(null);
-            // References to dynamic layers, e.g. "{self}.typeLayers", found amongst the parents of stored layers
+            // References to dynamic layers, e.g. "{self}.typeLayers", found amongst the parents of stored layers, weakest first
             this.dynamicLayerNames = [];
         }
 
@@ -2853,9 +2876,11 @@ const $fluidScope = function (fluid) {
                     // A reference amongst a layer's parents names dynamic layers, resolved against the component
                     // being merged once it is available - it takes no part in the layer's static hierarchy
                     const [dynamicParents, staticParents] = fluid.partition(readerExpanded.$layers, fluid.isILReference);
-                    this.dynamicLayerNames.push(...dynamicParents);
                     layerDef = dynamicParents.length === 0 ? readerExpanded : fluid.staticParentsLayer(readerExpanded, staticParents);
                     this.storeParents(layerDef, rootLayer || layerName);
+                    // Pushed after those of the layer's parents, so that, as for the layers themselves, those of a
+                    // derived layer are stronger
+                    this.dynamicLayerNames.push(...dynamicParents);
                 }
             }
             this.flatDefs[layerName] = layerDef;
@@ -2867,14 +2892,14 @@ const $fluidScope = function (fluid) {
          * Adds any new derived layers found by co-occurrence rules to the hierarchy resolver.
          *
          * @param {String[]} layerHierarchy - The current array of layer names in the hierarchy.
-         * @param {String[]} layerNames - Currently resolving layerNames - WILL BE MODIFIED by pushing co-occurring layers to the end
+         * @param {String[]} layerNames - Currently resolving layerNames, weakest first - WILL BE MODIFIED by pushing
+         * co-occurring layers to the end, where they are strongest
          * @return {Boolean} `true` if new co-occurring layers were found and added, `false` otherwise.
          */
         resolveHierarchyRound = function (layerHierarchy, layerNames) {
             const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy, this.shadow);
             newCoOccurrences.map(layerName => this.storeLayer(layerName));
-            // Highest precedence (most derived, lowest down) class is at left of list in this ordering
-            layerNames.unshift(...newCoOccurrences);
+            layerNames.push(...newCoOccurrences);
             return newCoOccurrences.length > 0;
         };
 
@@ -2882,14 +2907,14 @@ const $fluidScope = function (fluid) {
          * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map, and computing
          * precedence, producing the merge records of its definitions in order of decreasing priority.
          *
-         * @param {String[]} layerNames - The names of the top-level layer to resolve.
+         * @param {String[]} layerNames - The names of the top-level layers to resolve, weakest first.
          * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`,
          *     or an `unavailable` signal if resolution could not be completed.
          */
         resolve(layerNames) {
             const useLayerNames = layerNames.filter(layerName => !this.unavailableLayers[layerName]);
             while (true) {
-                const order = fluid.C3_precedence_parents(useLayerNames, this.flatDefs).reverse();
+                const order = fluid.C3_precedence_parents(useLayerNames, this.flatDefs);
                 if (this.resolveHierarchyRound(order, useLayerNames)) {
                     continue;
                 }

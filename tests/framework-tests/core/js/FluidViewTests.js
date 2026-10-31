@@ -1379,6 +1379,110 @@ QUnit.test("Element-level conditionals with @if and @else", function (assert) {
     that.destroy();
 });
 
+fluid.def("fluid.tests.removableSlot", {
+    $layers: ["fluid.component", "{self}.extraLayers"],
+    extraLayers: [],
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><header @id="header"></header><main class="main">Main</main><fluid-fragment @id="links"></fluid-fragment><span class="end">end</span></div>`
+        }
+    },
+    header: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<header class="header">Header</header>`
+                }
+            }
+        }
+    },
+    links: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<link class="link"/>`
+                }
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.removeSlots", {
+    header: null,
+    links: null
+});
+
+QUnit.test("Element bearing @id omitted whilst its member is removed with null", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.removableSlot({container});
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["header.header", "main.main", "link.link", "span.end"], "Initial render");
+    const main = qs(".main", container);
+
+    that.extraLayers = ["fluid.tests.removeSlots"];
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["main.main", "span.end"], "Elements of removed members omitted");
+    assert.equal(that.header, null, "Member removed");
+    const childNames = Object.keys(that[fluid.metadataSymbol].childComponents).filter(name => name !== "view");
+    assert.deepEqual(childNames, [], "Template slots allocate no components for removed members");
+
+    that.extraLayers = [];
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["header.header", "main.main", "link.link", "span.end"],
+        "Elements rendered again once removal withdrawn");
+    assert.equal(qs(".main", container), main, "Unaffected element undisturbed throughout");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.separatedList", {
+    $layers: "fluid.component",
+    tags: {
+        beta: {name: "Beta"},
+        alpha: {priority: "first", name: "Alpha"},
+        gamma: {name: "Gamma"}
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<p @id="tagLinks"></p>`
+        }
+    },
+    tagLinks: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{separatedList}.tags",
+                valueAs: "tag",
+                positionAs: "position"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<span @if="!position.first" class="sep">, </span><a>@{tag.name}</a>`
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Separators between members of a keyed $for rendered using positionAs", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.separatedList({container});
+    fluid.cell.stabilize();
+    assert.equal(container.textContent, "Alpha, Beta, Gamma", "Separator precedes all members but the first");
+
+    that.tags = {gamma: {name: "Gamma"}, beta: {name: "Beta"}};
+    fluid.cell.stabilize();
+    assert.equal(container.textContent, "Gamma, Beta", "Separators follow change in membership");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.partialBase", {
     $layers: "fluid.component",
     view: {
@@ -1469,8 +1573,8 @@ QUnit.test("Partial templates composited by selector, in order of layer preceden
     const path = that[fluid.metadataSymbol].path;
     assert.deepEqual(fluid.tests.childSummary(container), ["b.first", "h1.title", "nav", "div.modal", "div.modal2", "div.new"],
         "Partials composited first, after, by member, replacing and removing");
-    // Of the layers listed as parents of fluid.tests.partialAll, those listed earlier are stronger
-    assert.deepEqual(fluid.tests.childSummary(qs("h1", container)), ["span.meta2", "span.meta"],
+    // Of the layers listed as parents of fluid.tests.partialAll, those listed later are stronger
+    assert.deepEqual(fluid.tests.childSummary(qs("h1", container)), ["span.meta", "span.meta2"],
         "Partials at the same cutpoint follow in order of layer precedence, weakest first");
     assert.equal(qs("nav", container).id, `fl-id-${path}.navbar`, "Element of subcomponent bears id derived from its path");
     assert.notOk(qs(".first", container).hasAttribute("@relative"), "Own cutpoint of partial node not rendered");

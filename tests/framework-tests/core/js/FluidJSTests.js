@@ -512,6 +512,24 @@ QUnit.test("FLUID-4915: fluid.invokeGlobalFunction", function (assert) {
     fluid.invokeGlobalFunction("fluid.tests.invokeGlobalFunction.withoutArgs");
 });
 
+/**
+ * Constructs the "pedalo" hierarchy of https://opendylan.org/_static/c3-linearization.pdf, strongest parents first
+ * @param {String[]} pedalWheelBoatParents - The parents of the `pedalWheelBoat` layer
+ * @return {Object<String, String[]>} The parents of each layer in the hierarchy
+ */
+fluid.tests.pedaloDefs = function (pedalWheelBoatParents) {
+    return {
+        boat: [],
+        dayBoat: ["boat"],
+        wheelBoat: ["boat"],
+        engineless: ["dayBoat"],
+        smallMultihull: ["dayBoat"],
+        pedalWheelBoat: pedalWheelBoatParents,
+        smallCatamaran: ["smallMultihull"],
+        pedalo: ["pedalWheelBoat", "smallCatamaran"]
+    };
+};
+
 // C3 tests adapted from https://github.com/federicobond/c3-linearization/blob/master/test/test.js
 fluid.tests.c3tests = [{
     name: "single inheritance case",
@@ -556,18 +574,41 @@ fluid.tests.c3tests = [{
         O: [], X: ["O"], Y: ["O"], A: ["X", "Y"], B: ["Y", "X"], Z: ["A", "B"]
     },
     error: ["Inconsistent", "Z"]
+}, { // Figure 2 of https://opendylan.org/_static/c3-linearization.pdf
+    name: "Pedalo",
+    defs: fluid.tests.pedaloDefs(["engineless", "wheelBoat"]),
+    expected: {
+        pedalWheelBoat: ["pedalWheelBoat", "engineless", "dayBoat", "wheelBoat", "boat"],
+        pedalo: ["pedalo", "pedalWheelBoat", "engineless", "smallCatamaran", "smallMultihull", "dayBoat", "wheelBoat", "boat"]
+    }
+}, { // Restating an ancestor as stronger than its descendant is ignored rather than inconsistent
+    name: "Pedalo with ancestor restated stronger than its descendant",
+    defs: fluid.tests.pedaloDefs(["dayBoat", "engineless", "wheelBoat"]),
+    expected: {
+        pedalWheelBoat: ["pedalWheelBoat", "engineless", "dayBoat", "wheelBoat", "boat"],
+        pedalo: ["pedalo", "pedalWheelBoat", "engineless", "smallCatamaran", "smallMultihull", "dayBoat", "wheelBoat", "boat"]
+    }
+}, { // Restating an ancestor as weaker than another parent is retained and constrains its order
+    name: "Pedalo with ancestor restated weaker than another parent",
+    defs: fluid.tests.pedaloDefs(["engineless", "wheelBoat", "dayBoat"]),
+    expected: {
+        pedalWheelBoat: ["pedalWheelBoat", "engineless", "wheelBoat", "dayBoat", "boat"],
+        pedalo: ["pedalo", "pedalWheelBoat", "engineless", "wheelBoat", "smallCatamaran", "smallMultihull", "dayBoat", "boat"]
+    }
 }
 ];
 
 fluid.tests.c3tests.forEach(fixture => {
     QUnit.test(`C3 linearisation for FLUID-5800: ${fixture.name}`, function (assert) {
+        // The fixtures list parents, and expected linearisations, strongest first as for Python's MRO, whereas as for
+        // FLUID-5743 our $layers, and the linearisations we produce, list them weakest first
         // Check that grade registry is not corrupted by algorithm
-        const defs = fluid.freezeRecursive(fluid.transform(fixture.defs, def => ({$layers: def})));
+        const defs = fluid.freezeRecursive(fluid.transform(fixture.defs, def => ({$layers: [...def].reverse()})));
         if (fixture.expected) {
-            Object.keys(defs).forEach(key => {
+            Object.keys(fixture.expected).forEach(key => {
                 const message = "Linearization of layer " + key;
                 const lin = fluid.C3_precedence_parents([key], defs);
-                assert.deepEqual(lin, fixture.expected[key], message);
+                assert.deepEqual(lin, [...fixture.expected[key]].reverse(), message);
             });
         } else {
             const last = Object.keys(defs).reverse()[0];

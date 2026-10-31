@@ -1317,7 +1317,7 @@ QUnit.test("Directive merged alongside a reactive root is reported, but may repl
 // A fresh resolveRoot component resolves in place of one which has been destroyed
 
 fluid.def("fluid.tests.rootResolved", {
-    $layers: ["fluid.resolveRoot", "fluid.component"],
+    $layers: ["fluid.component", "fluid.resolveRoot"],
     notes: []
 });
 
@@ -2465,6 +2465,127 @@ QUnit.test("$for over a keyed collection honours priorities and skips removed en
     adapted.destroy();
 });
 
+fluid.def("fluid.tests.positionedFor", {
+    $layers: "fluid.component",
+    items: ["a", "b", "c"],
+    assets: {
+        main: {href: "m.css"},
+        katex: {priority: "first", href: "k.css"},
+        print: {href: "p.css"}
+    },
+    arrayMembers: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{positionedFor}.items",
+                valueAs: "item",
+                positionAs: "position"
+            }
+        }
+    },
+    keyedMembers: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{positionedFor}.assets",
+                keyAs: "key",
+                positionAs: "position"
+            }
+        }
+    }
+});
+
+QUnit.test("$for positionAs gives position of member regardless of keying", function (assert) {
+    const that = fluid.tests.positionedFor();
+    fluid.cell.stabilize();
+    assert.deepEqual(that.arrayMembers.list.map(member => member.position), [
+        {index: 0, first: true, last: false},
+        {index: 1, first: false, last: false},
+        {index: 2, first: false, last: true}
+    ], "Positions of members over an array");
+    assert.deepEqual(that.keyedMembers.list.map(member => [member.key, member.position]), [
+        ["katex", {index: 0, first: true, last: false}],
+        ["main", {index: 1, first: false, last: false}],
+        ["print", {index: 2, first: false, last: true}]
+    ], "Positions of members over a keyed collection follow its ordering rather than its keys");
+
+    that.items = ["a", "b", "c", "d"];
+    fluid.cell.stabilize();
+    assert.deepEqual(that.arrayMembers.list.map(member => member.position.last), [false, false, false, true],
+        "Former last member is no longer last once the collection grows");
+    that.items = ["a"];
+    fluid.cell.stabilize();
+    assert.deepEqual(that.arrayMembers.list.map(member => member.position), [{index: 0, first: true, last: true}],
+        "Sole member is both first and last");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.removable", {
+    $layers: ["fluid.component", "{self}.extraLayers"],
+    extraLayers: [],
+    header: {
+        $component: {
+            $layers: "fluid.component",
+            label: "header",
+            colour: "red"
+        }
+    },
+    footer: {
+        $component: {
+            $layers: "fluid.component",
+            label: "footer"
+        }
+    },
+    headerLabel: "{self}.header.label"
+});
+
+fluid.def("fluid.tests.removeHeader", {
+    header: null
+});
+
+fluid.def("fluid.tests.removeFooter", {
+    footer: {
+        $component: null
+    }
+});
+
+fluid.def("fluid.tests.restoreHeader", {
+    header: {
+        $component: {
+            $layers: "fluid.component",
+            label: "restored"
+        }
+    }
+});
+
+QUnit.test("Removing a subcomponent with null", function (assert) {
+    const that = fluid.tests.removable();
+    fluid.cell.stabilize();
+    assert.equal(that.header.label, "header", "Subcomponent is present without removal");
+    const headerShadow = that.header[fluid.metadataSymbol];
+
+    that.extraLayers = ["fluid.tests.removeHeader", "fluid.tests.removeFooter"];
+    fluid.cell.stabilize();
+    assert.notOk(fluid.isUnavailable(that), "Parent remains available when subcomponents are removed");
+    assert.equal(that.header, null, "Subcomponent removed by null");
+    assert.equal(that.footer, null, "Subcomponent removed by {$component: null}");
+    assert.ok(fluid.isDestroyedShadow(headerShadow), "Removed subcomponent destroyed");
+    assert.notOk(that[fluid.metadataSymbol].childComponents.header, "Removed subcomponent no longer a child");
+
+    // As for FLUID-5743, later layers are stronger
+    that.extraLayers = ["fluid.tests.removeHeader", "fluid.tests.restoreHeader"];
+    fluid.cell.stabilize();
+    assert.equal(that.header.label, "restored", "Stronger contribution brings subcomponent back");
+    assert.equal(that.header.colour, undefined, "Only contributions stronger than the removal apply");
+    assert.equal(that.footer.label, "footer", "Subcomponent comes back when layer holding null is withdrawn");
+
+    that.extraLayers = [];
+    fluid.cell.stabilize();
+    assert.equal(that.header.label, "header", "Original subcomponent comes back when all layers withdrawn");
+    assert.equal(that.headerLabel, "header", "Reference into restored subcomponent resolves");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.typeLookup", {
     $layers: ["fluid.component", "{self}.typeLayers"],
     type: "post",
@@ -2645,19 +2766,19 @@ fluid.def("fluid.tests.precedence.doc", {
 fluid.def("fluid.tests.precedence.type", {
     header: {
         $component: {
-            $layers: ["fluid.tests.precedence.post", "fluid.tests.precedence.base"]
+            $layers: ["fluid.tests.precedence.base", "fluid.tests.precedence.post"]
         }
     }
 });
 
 fluid.def("fluid.tests.precedence.typedDoc", {
-    $layers: ["fluid.tests.precedence.type", "fluid.tests.precedence.doc"]
+    $layers: ["fluid.tests.precedence.doc", "fluid.tests.precedence.type"]
 });
 
 QUnit.test("Layers named by a stronger subcomponent record are stronger, in the order it lists them", function (assert) {
     const that = fluid.tests.precedence.typedDoc();
     fluid.cell.stabilize();
-    assert.equal(that.header.kind, "post", "Layer listed first by the stronger record wins");
+    assert.equal(that.header.kind, "post", "Layer listed last by the stronger record wins");
     assert.deepEqual(that.header.$layers, ["fluid.component", "fluid.tests.precedence.base", "fluid.tests.precedence.post"],
         "Layers ordered weakest first");
     that.destroy();

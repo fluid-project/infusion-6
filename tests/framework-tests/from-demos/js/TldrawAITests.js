@@ -250,7 +250,7 @@ QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function 
     const nested = plan([create("new-1", "fluid.demos.ai.nested", [layerPart("fluid.demos.ai.nested", "fluid.demos.counter")])]);
     assert.equal(nested.problems.length, 1, "Layer defined within component part is checked");
 
-    const named = plan([layerPart("fluid.demos.ai.adapted", ["fluid.demos.counter", "fluid.topLevelWidget"]), create("new-1", "fluid.demos.ai.adapted"), deletion]);
+    const named = plan([layerPart("fluid.demos.ai.adapted", ["fluid.topLevelWidget", "fluid.demos.counter"]), create("new-1", "fluid.demos.ai.adapted"), deletion]);
     assert.deepEqual([named.problems, named.layers.length, named.creations.length, named.deletions], [[], 1, 1, ["shape:note1"]],
         "Document naming fluid.topLevelWidget accepted");
 
@@ -262,7 +262,7 @@ QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function 
     const sent = [];
     const responses = [
         fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", "fluid.demos.counter"), create("new-1", "fluid.demos.ai.adapted")]),
-        fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", ["fluid.demos.counter", "fluid.topLevelWidget"]), create("new-1", "fluid.demos.ai.adapted")])
+        fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", ["fluid.topLevelWidget", "fluid.demos.counter"]), create("new-1", "fluid.demos.ai.adapted")])
     ];
     await fluid.tldraw.ai.converse({
         direction: "Adapt the counter",
@@ -603,7 +603,7 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     // A layer whose definitions cannot be merged, as the AI wrote in trying to suppress a subcomponent of a parent layer
     await fluid.tests.tldrawAI.loadImports();
     fluid.def("fluid.tests.tldrawAI.unmergeable", {
-        $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+        $layers: ["fluid.topLevelWidget", "fluid.demos.closestNoteFinder"],
         distanceLine: false
     });
     const unmergeable = fluid.tests.tldrawAI.unmergeable();
@@ -1144,7 +1144,7 @@ fluid.tests.tldrawAI.boundsForShape = shapeId => shapeId === null ? null : {x: 1
 // as a subcomponent sharing its view, so that only the image generator renders. The prompt held in the image
 // generator's reactive state is linked to the closest note's text
 fluid.def("fluid.demos.ai.closestNoteImageGenerator", {
-    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    $layers: ["fluid.topLevelWidget", "fluid.demos.imageGenerator"],
     noteFinder: {
         $component: {
             $layers: "fluid.demos.closestNoteFinder",
@@ -1181,12 +1181,12 @@ fluid.def("fluid.tests.tldrawAI.visibleUmbrella", {
     $layers: "fluid.topLevelWidget",
     finder: {
         $component: {
-            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+            $layers: ["fluid.component", "fluid.demos.closestNoteFinder"]
         }
     },
     imageGen: {
         $component: {
-            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            $layers: ["fluid.component", "fluid.demos.imageGenerator"],
             state: {
                 prompt: "{finder}.closest.text"
             }
@@ -1202,7 +1202,7 @@ fluid.def("fluid.tests.tldrawAI.visibleUmbrella", {
 
 // A layer derived from an SFC layer supplying a template of its own, which overrides the SFC's
 fluid.def("fluid.tests.tldrawAI.retemplatedFinder", {
-    $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+    $layers: ["fluid.topLevelWidget", "fluid.demos.closestNoteFinder"],
     view: {
         $component: {
             $layers: "fluid.templateViewComponent",

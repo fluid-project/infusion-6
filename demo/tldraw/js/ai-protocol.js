@@ -342,9 +342,9 @@ address every one of its problems. Never send a \`problems\` part yourself.
 **Every widget you synthesize must apply \`fluid.topLevelWidget\` at its top level.** Whenever you define a layer in \
 your document and construct a fresh or replacement widget from it, the top-level \`$layers\` of that layer's \
 \`fluid.def\` must name \`fluid.topLevelWidget\` explicitly - even if it is already inherited from a parent layer - \
-and as the LAST of its layers, since naming it before a parent which already has it is an inconsistent hierarchy. \
+and as the FIRST of its layers, so that it is weaker than any other layer it names. \
 For example \`$layers: "fluid.topLevelWidget"\` for a widget made from scratch, or \
-\`$layers: ["fluid.demos.counter", "fluid.topLevelWidget"]\` for one adapting the counter. A document which \
+\`$layers: ["fluid.topLevelWidget", "fluid.demos.counter"]\` for one adapting the counter. A document which \
 synthesizes a widget without naming \`fluid.topLevelWidget\` is rejected in its entirety, and nothing in it is applied.
 
 Every multipart entity, nested ones included, must declare its own boundary in its Content-Type, distinct from that of \
@@ -494,10 +494,10 @@ fluid.tldraw.ai.strategyHints = `## Strategy hints
 * Make the smallest change which achieves the user's direction. To change what a widget holds, prefer \`live\` \
 values applied in place over replacing it.
 * Reuse the existing layer definitions maximally. To adapt a widget, define a fresh layer which lists the existing \
-layer in its \`$layers\`, followed by \`fluid.topLevelWidget\`, and holds only overrides, rather than copying and \
+layer in its \`$layers\`, preceded by \`fluid.topLevelWidget\`, and holds only overrides, rather than copying and \
 editing the existing layer's source, and replace the widget with one constructed from your fresh layer. Only redefine an existing layer when the user asks for \
 every widget made from it to change.
-* To compose two widgets, define a fresh "umbrella" layer with \`fluid.topLevelWidget\` as the last of its \`$layers\`, \
+* To compose two widgets, define a fresh "umbrella" layer with \`fluid.topLevelWidget\` as the first of its \`$layers\`, \
 holding each of them as a subcomponent by means of a \`$component\` record naming its existing layer. Choose the view of \
 just one of them as the view of the umbrella with \`view: "{first}.view"\`, and cross-inject between them with \
 references, e.g. \`second: {$component: {$layers: "my.second", input: "{first}.output"}}\`. A reference may equally \
@@ -512,7 +512,7 @@ may instead have a template of its own holding an \`@id\` element for each subco
 whilst the other only **supplies** a value to it, e.g. a widget finding some text which the dominant widget should \
 act on. The most economical geometry is then a fresh layer which extends the dominant widget's layer directly and \
 mixes in the supplier as a hidden subcomponent, with three ingredients and nothing else:
-    1. \`$layers\` naming the dominant widget's existing layer followed by \`fluid.topLevelWidget\`, so that the fresh \
+    1. \`$layers\` naming \`fluid.topLevelWidget\` followed by the dominant widget's existing layer, so that the fresh \
 widget IS the dominant widget, with all of its template, state and methods.
     2. A subcomponent constructed from the supplier's existing layer, whose \`view\` is a reference to the fresh \
 widget's own view, e.g. \`view: "{showsResult}.view"\` for a fresh layer named \`my.ai.showsResult\` - a layer's \
@@ -527,7 +527,7 @@ input - which may be a member of its reactive state.
 bound to an input and acted on by its button, and \`my.textFinder\` computes a member \`foundText\`:
 
         fluid.def("my.ai.showsFoundResult", {
-            $layers: ["my.resultShower", "fluid.topLevelWidget"],
+            $layers: ["fluid.topLevelWidget", "my.resultShower"],
             finder: {
                 $component: {
                     $layers: "my.textFinder",
@@ -1047,7 +1047,7 @@ fluid.tldraw.ai.checkTopLevelWidget = function (parts, plan) {
         plan.creations = [];
         plan.deletions = [];
         plan.problems.push(`Your document synthesizes widgets from the layers ${layerNames} which you define, but does not `
-            + `name ${fluid.tldraw.ai.topLevelWidgetLayer} - every widget you synthesize must name it as the last of the `
+            + `name ${fluid.tldraw.ai.topLevelWidgetLayer} - every widget you synthesize must name it as the first of the `
             + "$layers of its layer's definition, even if it is inherited. None of your document has been applied, so "
             + "send all of it again with this corrected.");
     }

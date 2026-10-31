@@ -930,13 +930,13 @@ const fluidViewScope = function (fluid) {
                 if (!oldViewLayers && (docTemplate || !oldLayers)) {
                     patchedText = fluid.patchDefMapPath(patchedText, reparse(), viewLayersPath, addLayers, "first");
                 }
-                // Add the tag layer marking the layer as derived from an SFC. This must be placed last since any of the
-                // existing layers may themselves be derived from an SFC - C3 linearization will then demand that they
-                // precede the tag layer.
+                // Add the tag layer marking the layer as derived from an SFC. This must be placed first, where it is
+                // weakest, since any of the existing layers may themselves be derived from an SFC - C3 linearization will
+                // then demand that they are stronger than the tag layer.
                 if (!oldLayers) {
-                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.component", "fluid.sfcLayer"], "first");
+                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.sfcLayer", "fluid.component"], "first");
                 } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcLayer")) {
-                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", [...fluid.makeArray(oldLayers), "fluid.sfcLayer"], "first");
+                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.sfcLayer", ...fluid.makeArray(oldLayers)], "first");
                 }
                 ourSNI.text = patchedText;
 
@@ -2148,6 +2148,20 @@ const fluidViewScope = function (fluid) {
         return record ? fluid.expandComponentContributions(record).forRecord !== undefined : false;
     };
 
+    /**
+     * Determine whether a member of a component which would hold a subcomponent has been removed by a stronger layer
+     * holding `null` at it - see `fluid.collectComponentRecords`
+     * @param {Shadow} shadow - The shadow of the component holding the member
+     * @param {String} memberName - The name of the member
+     * @return {Boolean} `true` if the member has been removed
+     */
+    fluid.isRemovedMember = function (shadow, memberName) {
+        return shadow.flatMerged.get()[memberName] === null;
+    };
+
+    // The condition of an element bearing `@id` whose member has been removed, which is never rendered
+    fluid.removedMemberCondition = fluid.cell(false, {name: "Removed member condition"});
+
     fluid.shadowsToRoot = function (shadow) {
         const togo = [];
         while (shadow) {
@@ -2283,7 +2297,8 @@ const fluidViewScope = function (fluid) {
      * layers, whose member `dataset` holds the element's `data-` attributes.
      *
      * An element bearing `@if` (or `@else`, following one bearing `@if`) is rendered only whilst its condition holds,
-     * by a child component of `self` which exists only whilst it does - see `fluid.templateBlock`.
+     * by a child component of `self` which exists only whilst it does - see `fluid.templateBlock`. An element bearing
+     * `@id` whose member has been removed by a layer holding `null` is likewise omitted, and allocates no component.
      *
      * @param {VNode} vtemplate - The vTree representing the template which will be parsed
      * @param {ComponentComputer} self - The component whose view renders the template, which receives any components
@@ -2309,6 +2324,8 @@ const fluidViewScope = function (fluid) {
         // Names of the members of self allocated for conditional elements and islands by this activation
         const jointNames = [];
         const jointCounts = {};
+        // Names of the members designated by @id whose elements are omitted by this activation since they are removed
+        const removedNames = [];
         const allocateJointName = kind => `${kind}-${jointCounts[kind] = (jointCounts[kind] || 0) + 1}`;
 
         /**
@@ -2361,6 +2378,25 @@ const fluidViewScope = function (fluid) {
             if (!idValue) {
                 jointNames.push(memberName);
             }
+        }
+
+        /**
+         * Omit from the rendered markup an element bearing `@id` whose member has been removed by a stronger layer
+         * holding `null`, as for an element bearing `@if` whose condition is false. Any component left by a previous
+         * activation's template record for the member is destroyed.
+         * @param {VNode} vnode - The element
+         */
+        function omitRemovedMember(vnode) {
+            const memberName = vnode.attrs["@id"];
+            delete vnode.children;
+            vnode.attrs = {};
+            vnode.ifSignal = fluid.removedMemberCondition;
+            vnode.blockKey = memberName;
+            removedNames.push(memberName);
+            const withdrawEffect = fluid.cell.effect(function () {
+                fluid.withdrawTemplateRecord(shadow, memberName);
+            }, [], {name: `Removed member effect for member ${memberName} at path ${shadow.path}`});
+            templateEffects.push(withdrawEffect);
         }
 
         /**
@@ -2421,10 +2457,18 @@ const fluidViewScope = function (fluid) {
                 }
             } else if (vnode.blockCondition) {
                 allocateTemplateBlock(vnode);
+            } else if (vnode.attrs?.["@id"] && fluid.isRemovedMember(shadow, vnode.attrs["@id"])) {
+                omitRemovedMember(vnode);
             } else {
                 // Process id attribute first since it may cause others to be slung to another component
                 const idValue = vnode.attrs?.["@id"];
                 if (idValue) {
+                    // The element's node is marked with its member's name, so that it can be removed should the member
+                    // be removed - if it was removed by the previous activation, the element is inserted afresh
+                    vnode.memberKey = idValue;
+                    if ((viewShadow.removedMemberNames || []).includes(idValue)) {
+                        vnode.blockKey = idValue;
+                    }
                     // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
                     // We likely don't want to use this in practice since a template update is going to update this live and
                     // we'd prefer to reuse whatever is in the DOM without tearing it down.
@@ -2518,6 +2562,7 @@ const fluidViewScope = function (fluid) {
             (viewShadow.templateJointNames || []).filter(name => !jointNames.includes(name)).forEach(name =>
                 fluid.withdrawTemplateRecord(selfShadow, name));
             viewShadow.templateJointNames = jointNames;
+            viewShadow.removedMemberNames = removedNames;
             return togo;
         };
 
@@ -2714,6 +2759,9 @@ const fluidViewScope = function (fluid) {
                         nodes.push(fresh);
                     }
                     other = fresh;
+                }
+                if (vchild.memberKey !== undefined) {
+                    other.flBlockKey = vchild.memberKey;
                 }
                 fluid.patchChildren(vchild, other);
             }
