@@ -143,7 +143,7 @@ fluid.vizReactive.edgeToKey = function (edge) {
     return edge.target.name + "-" + (edge.key ? edge.key.name : "null");
 };
 
-// Wrapper for asyncComputed that creates red sequence points
+// Wrapper for computed, with an async function, that creates red sequence points
 fluid.cellPrototype.vizReactiveAsyncComputed = function (arcId, fn, staticSources, props) {
 
     // Create wrapper that injects red sequence points
@@ -182,8 +182,8 @@ fluid.cellPrototype.vizReactiveAsyncComputed = function (arcId, fn, staticSource
         return result;
     };
 
-    // Call the original asyncComputed with the wrapped function
-    return fluid.cellPrototype.asyncComputed.call(this, fn && wrappedFn, staticSources, props);
+    // Call the original computed with the wrapped function, which is asynchronous since it returns a promise
+    return fluid.cellPrototype.computed.call(this, fn && wrappedFn, staticSources, props);
 };
 
 fluid.vizReactive.cell = function (initialValue, props) {

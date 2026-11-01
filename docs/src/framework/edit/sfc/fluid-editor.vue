@@ -63,6 +63,7 @@ fluid.def("fluid.editor.sfc", {
 
 
 // Currently read-only since layers defined in JavaScript cannot be faithfully written back from their rendered source
+// Rendered by fluid.layerToJavaScript, which requires FluidPTF.js to be loaded
 fluid.def("fluid.editor.javascript", {
     mode: "text/javascript",
     text: {

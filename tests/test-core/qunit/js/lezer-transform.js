@@ -214,13 +214,13 @@ fluid.lezer.getFunctionBody = function (token) {
 
 /**
  * @typedef {Object} LezerTransformState
- * @property {Number} arcId - Counter for generating unique arc IDs for asyncComputed calls.
- * @property {LezerNode[]} arcTokens - Array to collect argument tokens for transformed asyncComputed calls.
+ * @property {Number} arcId - Counter for generating unique arc IDs for transformed computed calls.
+ * @property {LezerNode[]} arcTokens - Array to collect argument tokens for transformed computed calls.
  */
 
 /**
  * Transforms a statement node by:
- *  - Replacing `fluid.cell().computed()` with `fluid.vizReactive.asyncComputed()`
+ *  - Replacing `fluid.cell()` with `fluid.vizReactive.cell()`
  *  - Injecting a `{name: "varName"}` argument into the `fluid.cell()` call
  *  - Replacing `.computed` property names with `vizReactiveAsyncComputed`
  *  - Inserting a unique arcId as the first argument to `vizReactiveAsyncComputed`

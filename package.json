@@ -41,6 +41,7 @@
         "start": "serve",
         "test": "node tests/test-core/qunit/js/fqunit-cli.js",
         "test:browser": "node tests/test-core/browser/js/demo-runner.js",
+        "test:browser-qunit": "node tests/test-core/browser/js/qunit-browser-runner.js",
         "hydrate-test": "node tests/framework-tests/server/hydrate-test.js",
         "output-documents-test": "node tests/framework-tests/server/output-documents-test.js"
     },
@@ -127,12 +128,14 @@
                 "tests/framework-tests/core/html/FluidViewTests.html",
                 "tests/framework-tests/core/html/FluidViewSFCTests.html",
                 "tests/framework-tests/core/html/FluidPTFTests.html",
+                "tests/framework-tests/components/html/ResizeBarTests.html",
                 "tests/framework-tests/from-demos/html/TodoListTests.html",
                 "tests/framework-tests/from-demos/html/TodoListAssignTests.html",
                 "tests/framework-tests/from-demos/html/TldrawAITests.html"
             ],
             "browser": [
-                "demo/compose-edit/demo-script.json"
+                "demo/compose-edit/demo-script.json",
+                "demo/tldraw/demo-script.json"
             ]
         }
     }

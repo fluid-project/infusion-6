@@ -101,6 +101,8 @@ fluid.editor.layerList.fromStore = function (store, userOnly, colourManager) {
     overflow: hidden !important;
     text-overflow: ellipsis;
     padding: 0px 4px;
+    /* The ordinary arrow rather than a text caret - a layer is opened by double-clicking it */
+    cursor: default;
 }
 
 </style>

@@ -9,7 +9,8 @@ fluid.def("fluid.fullPageEditor", {
         "fluid.editor.editorsPane": "%fluid-edit/sfc/fluid-editor-editorsPane.vue",
         "fluid.editor.historyPane": "%fluid-edit/sfc/fluid-editor-historyPane.vue",
         "fluid.editor.substratePane": "%fluid-edit/sfc/fluid-editor-substratePane.vue",
-        "fluid.codemirror": "%fluid-edit/sfc/fluid-codemirror.vue"
+        "fluid.codemirror": "%fluid-edit/sfc/fluid-codemirror.vue",
+        "fluid.resizeBar": "%infusion-6/src/components/sfc/fluid-resizeBar.vue"
     },
     // Expects: html from creator, and body as container
     editorVisible: false,
@@ -38,14 +39,17 @@ fluid.def("fluid.fullPageEditor", {
             }
         }
     },
+    // Divides the document's body from the docked editor
     resizeBar: {
         $component: {
-            $layers: "fluid.component",
+            $layers: "fluid.resizeBar",
+            before: "{fullPageEditor}.view.container",
+            after: "{fullPageEditor}.editorRoot.view.container",
+            minBefore: 200,
+            minAfter: 400,
             view: {
                 $component: {
-                    $layers: "fluid.templateViewComponent",
                     elideParent: true,
-                    template: `<div class="fl-resizer"></div>`,
                     container: "$compute:fluid.insertChildContainer(after, resizeBar, {self}.templateTree, {fullPageEditor}.html, {fullPageEditor}.view.container)"
                 }
             }

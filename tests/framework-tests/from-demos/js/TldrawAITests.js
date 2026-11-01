@@ -1006,28 +1006,25 @@ QUnit.test("History commands and their keyboard shortcuts", function (assert) {
     assert.notOk(fluid.tldraw.isTextEditing(null), "Nothing focused does not edit text");
 });
 
-QUnit.test("Sites in the arena referred to relative to their widget", async function (assert) {
+QUnit.test("Widgets held in the arena under names derived from their shapes", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
-    const first = fluid.tests.tldrawAI.makeCounter(qs(".container"), "shape:a", 1);
-    const instances = new Map([["shape:a", first]]);
-    const site = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first), segs: ["state"]});
-    const ref = fluid.tldraw.siteToRef(site, instances);
-    assert.deepEqual(ref, {shapeId: "shape:a", component: "/", path: "state"}, "Site in widget referred to by shape");
-    const viewSite = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first.view), segs: ["hostBounds"]});
-    assert.deepEqual(fluid.tldraw.siteToRef(viewSite, instances), {shapeId: "shape:a", component: "/view", path: "hostBounds"},
-        "Site in widget's subcomponent referred to by its path");
-    assert.ok(fluid.tldraw.findWidget(fluid.ptf.componentToShadow(first.view), instances), "Subcomponent belongs to widget");
-    assert.equal(fluid.tldraw.siteToRef(site, new Map()), null, "Site outside any widget cannot be referred to");
-
-    // Reconstruct the widget, as on restoring the arena
-    const second = fluid.tests.tldrawAI.makeCounter(qs(".container2"), "shape:a", 0);
-    const restored = new Map([["shape:a", second]]);
-    assert.equal(fluid.tldraw.refToSite(ref, restored), fluid.renderSite({shadow: fluid.ptf.componentToShadow(second), segs: ["state"]}),
-        "Reference resolved to reconstructed widget");
-    assert.equal(fluid.tldraw.refToSite({...ref, shapeId: "shape:gone"}, restored), null, "Reference to missing widget resolves to nothing");
-    assert.equal(fluid.tldraw.refToSite({...ref, component: "/missing"}, restored), null, "Reference to missing component resolves to nothing");
-    first.destroy();
-    second.destroy();
+    const originalRoot = fluid.history.arenaRoot;
+    const host = fluid.tests.tldrawAI.tldrawHost();
+    fluid.history.arenaRoot = fluid.ptf.componentToShadow(host);
+    try {
+        const memberName = fluid.tldraw.widgetMemberName("shape:a_B-1");
+        assert.equal(memberName, "shape-a_B-1", "Member name derived from shape id");
+        const potentia = fluid.tldraw.hostPotentiaFor("fluid.demos.counter", qs(".container"), "shape:a_B-1");
+        const first = fluid.initChildComponent(host, "fluid.demos.counter", potentia, memberName);
+        fluid.cell.stabilize();
+        const viewSite = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first.view), segs: ["hostBounds"]});
+        assert.deepEqual(fluid.history.siteToRef(viewSite), {segs: [memberName, "view"], path: "hostBounds"},
+            "Site in widget's subcomponent referred to through the widget's member name");
+        assert.equal(fluid.history.burstKey(viewSite), memberName, "Writes to the widget's subcomponents coalesced with the widget's");
+    } finally {
+        fluid.history.arenaRoot = originalRoot;
+        host.destroy();
+    }
 });
 
 QUnit.test("Sent directions recalled with the arrow keys", async function (assert) {

@@ -8,18 +8,12 @@ fluid.def("fluid.editor.historyPane", {
     $variety: "frameworkAux"
 });
 
-fluid.layerFromHistoryRec = {
-    updateLayer: (rec) => rec.newValue,
-    newLayer: (rec, layerName) => rec.newStore[layerName]._value,
-    deleteLayer: (rec, layerName) => rec.oldStore[layerName]._value
-};
-
 fluid.def("fluid.editor.historyList", {
     $layers: "fluid.component",
     records: {
         $compute: {
-            func: "fluid.editor.historyList.fromStore",
-            args: [fluid.layerHistory, fluid.layerHistoryIndex, "{editorRoot}.showUserLayersOnly", "{colourManager}.layerColours"]
+            func: "fluid.editor.historyList.fromMixedHistory",
+            args: [fluid.history.mixed, "{colourManager}.layerColours"]
         }
     },
     view: {
@@ -36,7 +30,7 @@ fluid.def("fluid.editor.historyList", {
                 $component: {
                     $layers: "fluid.templateViewComponent",
                     template: `
-<div class="fl-history-rec" @class="current:@{historyRec.current}" style="background-color: @{historyRec.colour}" title="@{layerName}">
+<div class="fl-history-rec" @class="current:@{historyRec.current}, start:@{historyRec.start}" style="background-color: @{historyRec.colour}" title="@{layerName}">
     <div class="fl-history-layer">@{layerName}</div>
     <div class="fl-history-type">@{historyRec.type}</div>
 </div>`
@@ -51,34 +45,34 @@ fluid.def("fluid.editor.historyList", {
     $variety: "frameworkAux"
 });
 
-fluid.editor.historyList.fromStore = function (layerHistory, layerHistoryIndex, userOnly, layerColours) {
-    const records = fluid.map(layerHistory, rec => {
-        const layerDef = rec.raw;
-        const togo = {
-            layerName: rec.layerName,
-            layerDef: fluid.layerFromHistoryRec[rec.type](rec, rec.layerName).raw,
-            type: rec.type
+/**
+ * Render the mixed history of live writes and layer redefinitions as the records shown by the history pane, in the order
+ * in which they were made. A step of the live history, which may hold several writes if bursts of writes are coalesced,
+ * is shown by the site of its first write. The most recently made record which is currently applied is marked current.
+ * If no record is applied, since history has been moved back to its very start, the first record is marked start.
+ * @param {MixedHistoryEntry[]} mixedHistory - The mixed history, as held by `fluid.history.mixed`
+ * @param {Object<String, String>} layerColours - The colour allocated to each layer, with `$live` for live writes
+ * @return {Object[]} A record to be shown for each entry, holding its `layerName`, `type`, `colour` and whether it is
+ * `current` or at the `start`
+ */
+fluid.editor.historyList.fromMixedHistory = function (mixedHistory, layerColours) {
+    const records = mixedHistory.map(({record}) => {
+        const isLive = record.type === "group";
+        const layerName = isLive ? record.records[0]?.site ?? record.key : record.layerName;
+        return {
+            layerName,
+            type: isLive || record.newSource ? "updateLayer" : "deleteLayer",
+            // Similar logic in EditorRoot.resolveLayerDef
+            colour: isLive ? layerColours.$live : layerColours[layerName]
         };
-        const isLive = togo.layerName.startsWith("{");
-        // Similar logic in EditorRoot.resolveLayerDef
-        togo.colour = isLive ? layerColours.$live : layerColours[togo.layerName];
-        // TODO: Assume that if it is live it must be a user layer since updates currently only come from $reactiveRoot layers
-        togo.frameworkStatus = isLive ? 0 : fluid.layerFrameworkStatus(togo.layerDef);
-        return togo;
     });
-    // A deferred layer will show up here faultily without filtering layerDef
-    //    const filteredRecords = records.filter(layer => !fluid.isUnavailable(layer.layerDef) && (userOnly ? layer.frameworkStatus === 0 : true));
-
-    // Hack for now: layerColourManager will not allocate a colour for a layer which is never actually demanded by any impl
-    // const filteredRecords = records.filter(record => record.colour);
-
-    // For now, history just stores user records otherwise navigation will become incoherent
-    const filteredRecords = records;
-    if (layerHistoryIndex > 0) { // TODO: Highlight 0th record
-        filteredRecords[layerHistoryIndex - 1].current = true;
+    const current = mixedHistory.reduce((latest, entry, i) => entry.applied ? i : latest, -1);
+    if (current !== -1) {
+        records[current].current = true;
+    } else if (records.length > 0) {
+        records[0].start = true;
     }
-
-    return filteredRecords;
+    return records;
 };
 
 </script>
@@ -92,8 +86,11 @@ fluid.editor.historyList.fromStore = function (layerHistory, layerHistoryIndex, 
 .fl-history-pane {
     padding: 4px;
     margin: 0 4px;
-    display: flex;
-    flex-direction: column;
+    /* A single column as wide as the pane or its widest record, so that each record's colour extends across the
+       whole of the pane's scrollable area */
+    display: grid;
+    grid-template-columns: auto;
+    align-content: start;
     border: 1px solid #ccc;
     overflow-y: scroll;
     cursor: default;
@@ -103,15 +100,29 @@ fluid.editor.historyList.fromStore = function (layerHistory, layerHistoryIndex, 
 .fl-history-rec {
     position: relative;
     margin-left: 20px;
+    /* Records scroll rather than wrap, so that the width of the column is that of the widest record */
+    white-space: nowrap;
 }
 
-.fl-history-rec.current::before {
+/* Leave room for the arrow preceding the first record */
+.fl-history-rec:first-child {
+    margin-top: 12px;
+}
+
+/* The arrow marks the position in history, following the record most recently applied */
+.fl-history-rec.current::before, .fl-history-rec.start::before {
     content: "\25B6"; /* Unicode character for ▶ */
     position: absolute;
     left: -20px;
     bottom: -15px;
     font-size: 26px;
     color: #444;
+}
+
+/* or preceding the first record if none is applied */
+.fl-history-rec.start::before {
+    bottom: auto;
+    top: -15px;
 }
 
 </style>

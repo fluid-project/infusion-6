@@ -292,9 +292,9 @@ if (typeof(document) !== "undefined") {
         evt.stopImmediatePropagation();
         if (evt.key === "z" && (evt.ctrlKey || evt.metaKey)) {
             console.log("Undo");
-            fluid.historyBack();
+            fluid.history.back();
         } else if (evt.key === "y" && (evt.ctrlKey || evt.metaKey)) {
-            fluid.historyForward();
+            fluid.history.forward();
         }
     });
 }

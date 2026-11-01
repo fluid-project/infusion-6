@@ -321,6 +321,19 @@ const $fluidScope = function (fluid) {
         return typeof(ref) === "string" && ref.charAt(0) === "{";
     };
 
+    /**
+     * Recover the literal String written in configuration by escaping its first character. Configuration interprets a
+     * String beginning with "{" as a context reference, and one beginning with "$" as a compact record such as
+     * "$compute:...". A String whose first character is a backslash is instead taken literally, without that character.
+     * As written in JavaScript source, "\\{" stands for a literal "{", "\\$" for a literal "$" and "\\\\" for a literal
+     * backslash at the start of a String. A backslash anywhere else in a String has no special meaning.
+     * @param {any} value - A value found in configuration
+     * @return {any} The value, with any escaping backslash removed from the start of a String
+     */
+    fluid.unescapeLiteral = function (value) {
+        return typeof(value) === "string" && value.charAt(0) === "\\" ? value.substring(1) : value;
+    };
+
     /** Determine whether the supplied value is a reference or an expander. The test is passed if either fluid.isILReference passes
      * or the value has an "expander" member
      * @param {any} ref - The value to be tested
@@ -705,8 +718,6 @@ const $fluidScope = function (fluid) {
     // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
     fluid.metadataSymbol = Symbol("fluid.metadata");
     const $m = fluid.metadataSymbol;
-
-    fluid.keySymbol = Symbol("fluid.key");
 
     fluid.unavailableProxy = function (target) {
         const proxy = new Proxy(target, {
@@ -1398,15 +1409,29 @@ const $fluidScope = function (fluid) {
     /** @type {Cell<Object>} */
     fluid.layerStore = fluid.cell({}, {name: "fluid.layerStore"});
 
-    /** @type {Cell<Array>} */
-    fluid.layerHistory = fluid.cell([], {name: "fluid.layerHistory"});
+    /*** HISTORY ***/
 
-    /** @type {Cell<Number>} */
-    fluid.layerHistoryIndex = fluid.cell(0, {name: "fluid.layerHistoryIndex"});
+    fluid.registerNamespace("fluid.history");
+
+    // Two kinds of undoable history are kept, each on a stack of its own - fluid.history.live, recording writes to the
+    // live state of components, and fluid.history.definitions, recording the redefinition and deletion of user layers. A
+    // host may step through either independently, e.g. the tldraw demo, which offers separate commands to undo widget
+    // changes and layer changes. fluid.history.mixed interleaves the two in the order in which their records were made,
+    // and fluid.history.back and fluid.history.forward step through them together, e.g. for the editor's history pane.
+    //
+    // The following members are replaced or extended from elsewhere:
+    //  - fluid.history.arenaRoot is set to the root of the component tree in FluidIL.js, and nominated afresh by the
+    //    tldraw demo in tldraw-driver.js
+    //  - fluid.history.coalesce is set by the tldraw demo in tldraw-driver.js
+    //  - fluid.history.liveRecordAppliers has an applier for "widgets" records registered by the tldraw demo in
+    //    tldraw-arena.js
+    //  - fluid.history.layerSource, fluid.history.sourceFromDef and fluid.history.applySource are replaced in FluidPTF.js
+    //    to hold the sources of layers as text
+    //  - fluid.history.now is replaced in tests to control the stamps of records
 
     /**
      * @typedef {Object} HistoryRec
-     * @property {String} type - The type of history event - one of "updateLayer", "newLayer",
+     * @property {String} type - The type of history event - one of "updateLayer", "newLayer", "deleteLayer"
      * @property {String} layerName - The name of the layer being updated
      * @property {Object} [oldValue] - The previous value of the layer
      * @property {Object} [newValue] - The updated value of the layer
@@ -1417,90 +1442,608 @@ const $fluidScope = function (fluid) {
      */
 
     /**
-     * Functions notified of each record pushed onto the history, e.g. to maintain the undoable histories of an arena
-     * in FluidPTF.js. Each accepts a {HistoryRec}.
-     * @type {Function[]}
+     * @typedef {Object} StackRec
+     * @property {String} type - The type of the record, e.g. "group" or "definition", by which it is applied
+     * @property {Number} madeAt - When the record was pushed onto its stack, in milliseconds since the epoch - see
+     * `fluid.history.pushToStack`
+     * @property {Number} seq - The order in which the record was pushed amongst all records pushed in this session,
+     * distinguishing records pushed within the same millisecond
      */
-    fluid.historyListeners = [];
 
     /**
-     * Pushes a new history record onto the history stack, and notifies any `fluid.historyListeners` of it.
+     * @typedef {Object} LiveHistoryRec
+     * @property {String} type - "live"
+     * @property {String|null} site - The site which was updated, as rendered by `fluid.renderSite`, or `null` if it did
+     * not exist when the record was restored from persistence
+     * @property {ArenaRef} ref - A reference to the site relative to the root of the arena, through which the record is
+     * applied in preference to its site, so that it applies to a reconstructed component
+     * @property {any} oldValue - The value at the site before the update
+     * @property {any} newValue - The value at the site after the update
+     */
+
+    /**
+     * @typedef {Object} GroupHistoryRec
+     * @property {String} type - "group"
+     * @property {String} key - The burst key, as determined by `fluid.history.burstKey`, shared by the records of the group
+     * @property {Number} time - When the group was last written to, in milliseconds since the epoch
+     * @property {Number} [gesture] - The id of the gesture which wrote the group, if any - see `fluid.history.withinGesture`
+     * @property {Object[]} records - The records of the group, oldest first, which are stepped through together
+     */
+
+    /**
+     * @typedef {Object} DefinitionHistoryRec
+     * @property {String} type - "definition"
+     * @property {String} layerName - The name of the layer which was redefined or deleted
+     * @property {LayerSource} oldSource - The layer's source before its redefinition or deletion
+     * @property {LayerSource|null} newSource - The layer's source after its redefinition, or `null` if it was deleted
+     */
+
+    /**
+     * @typedef {Object} LayerSource
+     * @property {String} contentType - The MIME type of the source, one of `fluid.layerMimeTypes`
+     * @property {String} [body] - The text of the source, as held by FluidPTF.js's sources
+     * @property {LayerDef} [def] - The definition itself, as held by the default sources of Fluid.js, which hold no text
+     */
+
+    /**
+     * @typedef {Object} HistoryStack
+     * @property {String} name - A name for the stack, for debugging
+     * @property {Cell<StackRec[]>} records - The records of the stack, oldest first
+     * @property {Cell<Number>} index - The number of records currently applied - records at and after this index may
+     * be stepped forward through
+     * @property {Cell<Boolean>} canBack - `true` if there is a record to step back through
+     * @property {Cell<Boolean>} canForward - `true` if there is a record to step forward through
+     * @property {Function} apply - Accepts a record and either "old" or "new", applies that side of it and returns
+     * `true`, or returns `false` if it can no longer be applied, e.g. since its component has been destroyed
+     */
+
+    /**
+     * Functions notified of each record pushed onto the history, e.g. to record further kinds of history. Each accepts
+     * a {HistoryRec}.
+     * @type {Function[]}
+     */
+    fluid.history.listeners = [];
+
+    /**
+     * Receive a record of a change to the layer store or to the live layer of a component, record it in
+     * `fluid.history.live` or `fluid.history.definitions` as appropriate, and notify any `fluid.history.listeners` of it.
+     * Only changes to live layers and to user layers are recorded, and none whilst history is suppressed by
+     * `fluid.history.withoutRecording`.
      * @param {HistoryRec} record - The history record to push
      */
-    fluid.pushHistory = function (record) {
+    fluid.history.push = function (record) {
         // TODO: coordinate this notion with LayerColorManager's alg for allocating colours, currently misplaced in fluid.editor.layerList.fromStore
-        if ((record.layerName.startsWith("{") || fluid.isUserLayer(record.layerName)) && !fluid.historyPush) {
-            const index = fluid.layerHistoryIndex.get();
-            fluid.layerHistory.set([...fluid.layerHistory._value.slice(0, index), record]);
-            fluid.layerHistoryIndex.set(index + 1);
-            fluid.historyListeners.forEach(listener => listener(record));
+        if ((record.layerName.startsWith("{") || fluid.isUserLayer(record.layerName)) && !fluid.history.suppressed) {
+            if (record.layerName.startsWith("{")) {
+                fluid.history.recordLive(record);
+            } else {
+                fluid.history.recordDefinition(record);
+            }
+            fluid.history.listeners.forEach(listener => listener(record));
         }
     };
+
+    // `true` whilst history is not to be recorded - see fluid.history.withoutRecording
+    fluid.history.suppressed = false;
 
     /**
      * Execute a function without recording any history, e.g. whilst applying a history record or restoring state
      * @param {Function} func - The function to execute
      * @return {any} The return value of the function
      */
-    fluid.withoutHistory = function (func) {
-        const wasPushing = fluid.historyPush;
-        fluid.historyPush = true;
+    fluid.history.withoutRecording = function (func) {
+        const wasPushing = fluid.history.suppressed;
+        fluid.history.suppressed = true;
         let togo;
         try {
             togo = func();
         } finally {
-            fluid.historyPush = wasPushing;
+            fluid.history.suppressed = wasPushing;
+        }
+        return togo;
+    };
+
+    // The greatest number of records held by a history stack - the oldest are discarded beyond this
+    fluid.history.maxLength = 200;
+
+    // The number of records pushed onto any history stack in this session - see StackRec
+    fluid.history.sequence = 0;
+
+    /**
+     * The current time, in milliseconds since the epoch - held here so that it may be replaced in tests
+     * @return {Number} The current time
+     */
+    fluid.history.now = () => Date.now();
+
+    /**
+     * Construct an empty history stack
+     * @param {String} name - A name for the stack, for debugging
+     * @param {Function} apply - Applies a record, as described for {HistoryStack}
+     * @return {HistoryStack} The stack
+     */
+    fluid.history.makeStack = function (name, apply) {
+        const records = fluid.cell([], {name: `${name} records`});
+        const index = fluid.cell(0, {name: `${name} index`});
+        return {
+            name,
+            records,
+            index,
+            apply,
+            canBack: fluid.cell(undefined, {name: `${name} canBack`}).computed(index => index > 0, [index]),
+            canForward: fluid.cell(undefined, {name: `${name} canForward`}).computed((records, index) => index < records.length, [records, index])
+        };
+    };
+
+    /**
+     * Push a record onto a history stack, discarding any records which had been stepped back through. The record is
+     * stamped with when it was pushed, so that the records of several stacks may be interleaved - see
+     * `fluid.history.mixed`. A record restored from persistence keeps its stamp.
+     * @param {HistoryStack} stack - The stack
+     * @param {Object} record - The record
+     */
+    fluid.history.pushToStack = function (stack, record) {
+        const stamped = {...record, madeAt: record.madeAt ?? fluid.history.now(), seq: fluid.history.sequence++};
+        const kept = [...stack.records.get().slice(0, stack.index.get()), stamped];
+        const trimmed = kept.slice(Math.max(0, kept.length - fluid.history.maxLength));
+        stack.records.set(trimmed);
+        stack.index.set(trimmed.length);
+    };
+
+    /**
+     * Step back through a history stack, undoing its most recently applied record. Any records which can no longer be
+     * applied are stepped over.
+     * @param {HistoryStack} stack - The stack
+     * @return {Boolean} `true` if a record was undone
+     */
+    fluid.history.stepBack = function (stack) {
+        const records = stack.records.get();
+        let index = stack.index.get();
+        let applied = false;
+        while (index > 0 && !applied) {
+            --index;
+            applied = stack.apply(records[index], "old");
+        }
+        stack.index.set(index);
+        return applied;
+    };
+
+    /**
+     * Step forward through a history stack, redoing the record most recently undone. Any records which can no longer be
+     * applied are stepped over.
+     * @param {HistoryStack} stack - The stack
+     * @return {Boolean} `true` if a record was redone
+     */
+    fluid.history.stepForward = function (stack) {
+        const records = stack.records.get();
+        let index = stack.index.get();
+        let applied = false;
+        while (index < records.length && !applied) {
+            applied = stack.apply(records[index], "new");
+            ++index;
+        }
+        stack.index.set(index);
+        return applied;
+    };
+
+    // The "arena" is the part of the component tree whose live state is recorded in fluid.history.live - the components
+    // beneath its root, fluid.history.arenaRoot. By default this is the root of the whole tree, as set in FluidIL.js once
+    // the tree exists. A host may nominate a component of its own as the root, e.g. the tldraw demo nominates the
+    // component hosting its canvas's widgets, or `null`, so that nothing belongs to the arena. Each component directly
+    // beneath the root is a "member" of the arena - writes to the same member may be coalesced into a single step - and
+    // a site in the arena is referred to by its path from the root. Such a reference remains valid as a member is
+    // reconstructed, e.g. on undoing its deletion or restoring a persisted arena, if it is reconstructed under the same
+    // member name - see the `memberName` argument of `fluid.initChildComponent`.
+
+    /**
+     * The shadow of the component at the root of the arena, or `null` if nothing belongs to the arena
+     * @type {Shadow|null}
+     */
+    fluid.history.arenaRoot = null;
+
+    /**
+     * @typedef {Object} ArenaRef
+     * @property {String[]} segs - The member names leading from the root of the arena to the component holding the site,
+     * the first of which is that of the member of the arena holding it
+     * @property {String} path - The path of the site within its component
+     */
+
+    /**
+     * Determine the path of a component from the root of the arena
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {String[]|null} The member names leading from the root of the arena to the component, or `null` if the
+     * component does not belong to the arena
+     */
+    fluid.history.arenaSegs = function (shadow) {
+        const root = fluid.history.arenaRoot;
+        const segs = [];
+        let current = shadow;
+        while (current && current !== root) {
+            segs.unshift(current.memberName);
+            current = current.parentShadow;
+        }
+        return root && current === root && segs.length > 0 ? segs : null;
+    };
+
+    /**
+     * Determine whether a component belongs to the arena, so that writes to its live state are recorded in
+     * `fluid.history.live`
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {Boolean} `true` if the component is beneath the root of the arena
+     */
+    fluid.history.arenaContains = function (shadow) {
+        return fluid.history.arenaSegs(shadow) !== null;
+    };
+
+    /**
+     * Render a site in the arena as a reference relative to the root of the arena
+     * @param {String} site - The site, as rendered by `fluid.renderSite`
+     * @return {ArenaRef|null} The reference, or `null` if the site is not in the arena
+     */
+    fluid.history.siteToRef = function (site) {
+        const parsed = fluid.parseSite(site);
+        const segs = parsed.shadow ? fluid.history.arenaSegs(parsed.shadow) : null;
+        return segs ? {segs, path: parsed.path} : null;
+    };
+
+    /**
+     * Resolve a reference produced by `fluid.history.siteToRef` to the site it currently refers to
+     * @param {ArenaRef} ref - The reference
+     * @return {String|null} The site, as rendered by `fluid.renderSite`, or `null` if it does not currently exist
+     */
+    fluid.history.refToSite = function (ref) {
+        const shadow = ref.segs.reduce((parent, seg) => parent?.childComponents[seg], fluid.history.arenaRoot);
+        return shadow ? fluid.renderSite({shadow, segs: fluid.pathToSegs(ref.path)}) : null;
+    };
+
+    /**
+     * Determine the key of a site, writes to sites sharing which may be coalesced into a single step - the name of the
+     * member of the arena holding it, so that writes to any of the member's components are coalesced together
+     * @param {String} site - The site, as rendered by `fluid.renderSite`, or the bare component reference `{path}`
+     * @return {String} The burst key - for a site outside the arena, the path of its component
+     */
+    fluid.history.burstKey = function (site) {
+        const parsed = fluid.parseSite(site);
+        const segs = parsed.shadow ? fluid.history.arenaSegs(parsed.shadow) : null;
+        return segs ? segs[0] : fluid.parseContextReference(site).context;
+    };
+
+    /**
+     * Apply one side of a live history record, unless its component no longer exists. The record is applied through its
+     * reference if it has one which currently resolves, and otherwise to its site.
+     * @param {LiveHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if the record was applied
+     */
+    fluid.history.applyLiveRecord = function (record, side) {
+        const siteName = (record.ref ? fluid.history.refToSite(record.ref) : null) ?? record.site;
+        const site = siteName ? fluid.parseSite(siteName) : {};
+        const live = !!site.shadow && site.shadow.lifecycleStatus !== "destroyed";
+        if (live) {
+            fluid.history.withoutRecording(() => fluid.setForComponent(site.shadow.that, site.path, record[side + "Value"]));
+        }
+        return live;
+    };
+
+    /**
+     * The functions which apply each type of record held in `fluid.history.live`, keyed by type, as described for the
+     * `apply` member of {HistoryStack}. A host may register further types, e.g. the tldraw demo's records of the
+     * creation and deletion of widgets.
+     * @type {Object<String, Function>}
+     */
+    fluid.history.liveRecordAppliers = {
+        live: fluid.history.applyLiveRecord
+    };
+
+    /**
+     * Apply one side of a record held in `fluid.history.live`, through the applier registered for its type
+     * @param {Object} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if the record was applied, or `false` if it could not be, or no applier is registered
+     */
+    fluid.history.applyArenaRecord = function (record, side) {
+        const applier = fluid.history.liveRecordAppliers[record.type];
+        return applier ? applier(record, side) : false;
+    };
+
+    /**
+     * Apply one side of a group record, by applying each of its records - in reverse order when stepping back
+     * @param {GroupHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if any of the group's records was applied
+     */
+    fluid.history.applyGroupRecord = function (record, side) {
+        const records = side === "old" ? [...record.records].reverse() : record.records;
+        return records.map(member => fluid.history.applyArenaRecord(member, side)).some(applied => applied);
+    };
+
+    fluid.history.liveRecordAppliers.group = fluid.history.applyGroupRecord;
+
+    /**
+     * Transform each record of a group record, e.g. into a persistable form, omitting any which cannot be transformed
+     * @param {GroupHistoryRec} record - The group record
+     * @param {Function} transform - Accepts a record and returns its transformed form, or `null` if it has none
+     * @return {GroupHistoryRec|null} The transformed group, or `null` if none of its records could be transformed
+     */
+    fluid.history.transformGroupRecord = function (record, transform) {
+        const records = record.records.map(member => transform(member)).filter(member => member !== null);
+        return records.length > 0 ? {...record, records} : null;
+    };
+
+    /** @type {HistoryStack} */
+    fluid.history.live = fluid.history.makeStack("fluid.history.live", fluid.history.applyArenaRecord);
+
+    // Each write to live state is a step of fluid.history.live of its own, held as a group record of one write. A host
+    // whose writes come in bursts, e.g. the tldraw demo, may set fluid.history.coalesce, whereupon bursts are
+    // coalesced into single steps. Writes to the same part of the arena, as determined by fluid.history.burstKey, are
+    // coalesced if each follows the previous within fluid.history.burstWindow, e.g. the keystrokes typing a word. Everything
+    // caused by a single gesture of the user, e.g. a click on a button invoking an asynchronous method, is coalesced
+    // into a step of its own until any promise it returned has settled, however long that takes.
+
+    // `true` if bursts of writes to live state are coalesced into single steps of fluid.history.live
+    fluid.history.coalesce = false;
+
+    // The greatest interval between writes which are coalesced into the same step, in milliseconds
+    fluid.history.burstWindow = 750;
+
+    // The id of the latest gesture to have begun
+    fluid.history.gestureCount = 0;
+
+    // The id of the gesture currently in progress for each burst key
+    /** @type {Map<String, Number>} */
+    fluid.history.openGestures = new Map();
+
+    /**
+     * Execute a function on behalf of a gesture of the user, e.g. the handler of a DOM event bound by a template, such
+     * that all writes it causes to the part of the arena holding the component may be coalesced into a single step of
+     * `fluid.history.live` - see `fluid.history.coalesce`. If the function returns a promise, the gesture lasts until
+     * it settles.
+     * @param {Shadow} shadow - The shadow of the component on whose behalf the gesture is made
+     * @param {Function} func - The function to execute
+     * @return {any} The return value of the function
+     */
+    fluid.history.withinGesture = function (shadow, func) {
+        const key = fluid.history.burstKey(`{${shadow.path}}`);
+        const gesture = ++fluid.history.gestureCount;
+        const close = () => {
+            if (fluid.history.openGestures.get(key) === gesture) {
+                fluid.history.openGestures.delete(key);
+            }
+        };
+        fluid.history.openGestures.set(key, gesture);
+        let togo;
+        try {
+            togo = func();
+        } finally {
+            if (typeof(togo?.then) === "function") {
+                // The returned promise is left to report its own failure
+                togo.then(close, close);
+            } else {
+                close();
+            }
         }
         return togo;
     };
 
     /**
-     * Applies a live history record to the running system using the specified key.
-     * @param {HistoryRec} rec - The history record to apply
-     * @param {String} key - The key to be used into the history record to fetch the layer definition
+     * Record a write to live state in `fluid.history.live`. If `fluid.history.coalesce` is set, the write is
+     * coalesced into the latest step if it belongs to the same burst as that step - a burst is only extended if no
+     * step has been stepped back through since, and a gesture always begins a step of its own.
+     * @param {LiveHistoryRec} record - The record of the write
      */
-    fluid.applyLiveHistory = function (rec, key) {
-        const site = fluid.parseSite(rec.layerName);
-        // TODO: source tracking for changes
-        fluid.withoutHistory(() => fluid.setForComponent(site.shadow.that, site.path, rec[key]));
-    };
-
-    /**
-     * Navigates backward in the history stack.
-     */
-    fluid.historyBack = function () {
-        const index = fluid.layerHistoryIndex.get();
-        if (index > 0) {
-            const newIndex = index - 1;
-            const backRec = fluid.layerHistory.get()[newIndex];
-            if (backRec.type === "updateLayer") {
-                if (backRec.layerName.startsWith("{")) {
-                    fluid.applyLiveHistory(backRec, "oldValue");
-                } else {
-                    // Update layer registry
-                }
-            }
-            fluid.layerHistoryIndex.set(newIndex);
+    fluid.history.pushLiveRecord = function (record) {
+        const stack = fluid.history.live;
+        const key = fluid.history.burstKey(record.site);
+        const now = fluid.history.now();
+        const gesture = fluid.history.openGestures.get(key);
+        const records = stack.records.get();
+        const index = stack.index.get();
+        const top = index === records.length ? records[index - 1] : undefined;
+        const joins = fluid.history.coalesce && top?.type === "group" && top.key === key &&
+            (gesture === undefined ? top.gesture === undefined && now - top.time <= fluid.history.burstWindow : top.gesture === gesture);
+        if (joins) {
+            const last = fluid.peek(top.records);
+            // Successive writes to the same site are folded together
+            const members = last.site === record.site && last.type === "live" ?
+                [...top.records.slice(0, -1), {...record, oldValue: last.oldValue}] : [...top.records, record];
+            stack.records.set([...records.slice(0, -1), {...top, time: now, records: members}]);
+        } else {
+            fluid.history.pushToStack(stack, {type: "group", key, time: now, ...(gesture === undefined ? {} : {gesture}), records: [record]});
         }
     };
 
     /**
-     * Navigates forward in the history stack.
+     * Record an update to the live layer of a component in `fluid.history.live`, if the component belongs to the arena
+     * @param {HistoryRec} record - The record of the update, whose `layerName` is the rendered site which was updated
      */
-    fluid.historyForward = function () {
-        const index = fluid.layerHistoryIndex.get();
-        if (index < fluid.layerHistory.get().length) {
-            const newIndex = index + 1;
-            const foreRec = fluid.layerHistory.get()[index];
-            if (foreRec.type === "updateLayer") {
-                if (foreRec.layerName.startsWith("{")) {
-                    fluid.applyLiveHistory(foreRec, "newValue");
-                } else {
-                    // Update layer registry
-                }
-            }
-            fluid.layerHistoryIndex.set(newIndex);
+    fluid.history.recordLive = function (record) {
+        const ref = record.type === "updateLayer" ? fluid.history.siteToRef(record.layerName) : null;
+        if (ref) {
+            fluid.history.pushLiveRecord({type: "live", site: record.layerName, ref, oldValue: record.oldValue, newValue: record.newValue});
         }
+    };
+
+    /** MIME types for each of the representations in which a layer's source may be held */
+    fluid.layerMimeTypes = {
+        sfc: "text/x-vue",
+        javascript: "text/javascript",
+        json: "application/json"
+    };
+
+    /**
+     * Determine the source of a layer from a definition of it, e.g. its previous one. By default this holds the
+     * definition itself - FluidPTF.js replaces this to render it as JavaScript. Rendering is left to FluidPTF.js since
+     * recording is not to cost every page which defines layers, nor to fail on one whose definition cannot be rendered.
+     * @param {String} layerName - The name of the layer
+     * @param {LayerDef} def - The definition
+     * @return {LayerSource} The source
+     */
+    fluid.history.sourceFromDef = function (layerName, def) {
+        return {contentType: fluid.layerMimeTypes.javascript, def};
+    };
+
+    /**
+     * Determine the source of a layer as currently defined, as recorded in `fluid.history.definitions`. By default this
+     * holds its definition - FluidPTF.js replaces this with the text from which the layer was loaded, e.g. that of its
+     * Single File Component.
+     * @param {String} layerName - The name of the layer
+     * @return {LayerSource} Its source
+     */
+    fluid.history.layerSource = function (layerName) {
+        return fluid.history.sourceFromDef(layerName, fluid.deSignal(fluid.readLayer(layerName).get().raw));
+    };
+
+    /**
+     * Determine whether two sources of a layer are the same, by their text if either has any, and otherwise by their
+     * definitions
+     * @param {LayerSource} a - The first source
+     * @param {LayerSource} b - The second source
+     * @return {Boolean} `true` if the sources are the same
+     */
+    fluid.history.isSameSource = function (a, b) {
+        return a.body !== undefined || b.body !== undefined ? a.body === b.body : a.def === b.def;
+    };
+
+    /**
+     * Define a layer from a source as determined by `fluid.history.layerSource`, without recording its redefinition in
+     * `fluid.history.definitions`. By default the source's definition is written - FluidPTF.js replaces this to register
+     * the source's text.
+     * @param {String} layerName - The name of the layer
+     * @param {LayerSource} source - The source
+     */
+    fluid.history.applySource = function (layerName, source) {
+        if (source.def !== undefined) {
+            fluid.history.withoutRecording(() => fluid.def(layerName, source.def));
+            fluid.history.layerSources.set(layerName, source);
+        } else {
+            fluid.log(fluid.logLevel.WARN, `Cannot apply source of layer ${layerName} which holds no definition - load FluidPTF.js to apply its text`);
+        }
+    };
+
+    /**
+     * Delete a layer without recording its deletion in `fluid.history.definitions`, e.g. whilst applying a record of the
+     * history itself, or restoring a persisted arena
+     * @param {String} layerName - The name of the layer
+     */
+    fluid.history.deleteLayerQuietly = function (layerName) {
+        fluid.history.withoutRecording(() => fluid.deleteLayer(layerName));
+        fluid.history.layerSources.delete(layerName);
+    };
+
+    /**
+     * Apply one side of a definition history record, by defining its layer from that source, or deleting the layer if
+     * that side has no source
+     * @param {DefinitionHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true`, since a layer can always be redefined or deleted
+     */
+    fluid.history.applyDefinitionRecord = function (record, side) {
+        const source = record[side + "Source"];
+        if (source) {
+            fluid.history.applySource(record.layerName, source);
+        } else {
+            fluid.history.deleteLayerQuietly(record.layerName);
+        }
+        return true;
+    };
+
+    /** @type {HistoryStack} */
+    fluid.history.definitions = fluid.history.makeStack("fluid.history.definitions", fluid.history.applyDefinitionRecord);
+
+    // The source of each user layer as last defined, from which the old source of its next redefinition is taken - the
+    // source of an SFC layer cannot be recovered from its previous definition, which does not hold its template
+    /** @type {Map<String, LayerSource>} */
+    fluid.history.layerSources = new Map();
+
+    // Layers whose redefinition, which for an SFC follows asynchronously, is still to arrive and is not to be recorded,
+    // e.g. since it is the application of a history record - keyed by layer name, holding the time after which it is no
+    // longer expected
+    /** @type {Map<String, Number>} */
+    fluid.history.expectedRedefinitions = new Map();
+
+    // How long an expected redefinition is expected for
+    fluid.history.expectedRedefinitionLifetime = 10000;
+
+    /**
+     * Record a redefinition or deletion of a user layer in `fluid.history.definitions`. The initial definitions of layers,
+     * e.g. as SFCs load, are not redefinitions, but the source of each is noted.
+     * @param {HistoryRec} record - The record of the change to the layer store
+     */
+    fluid.history.recordDefinition = function (record) {
+        const layerName = record.layerName;
+        const newDef = fluid.deSignal(record.newValue?.raw);
+        // Some updates, e.g. those tracking the loading of an SFC, hold no definition
+        if (record.type === "updateLayer" && fluid.isPlainObject(newDef, true) && !fluid.isUnavailable(newDef)) {
+            const oldDef = fluid.deSignal(record.oldValue?.raw);
+            const oldSource = fluid.history.layerSources.get(layerName) || (fluid.isPlainObject(oldDef, true) && !fluid.isUnavailable(oldDef) ?
+                fluid.history.sourceFromDef(layerName, oldDef) : null);
+            const newSource = fluid.history.layerSource(layerName);
+            fluid.history.layerSources.set(layerName, newSource);
+            const expected = fluid.history.expectedRedefinitions.get(layerName);
+            fluid.history.expectedRedefinitions.delete(layerName);
+            if (oldSource && !fluid.history.isSameSource(oldSource, newSource) && !(expected > Date.now())) {
+                fluid.history.pushToStack(fluid.history.definitions, {type: "definition", layerName, oldSource, newSource});
+            }
+        } else if (record.type === "newLayer") {
+            fluid.history.layerSources.set(layerName, fluid.history.layerSource(layerName));
+        } else if (record.type === "deleteLayer") {
+            const oldSource = fluid.history.layerSources.get(layerName);
+            fluid.history.layerSources.delete(layerName);
+            if (oldSource) {
+                fluid.history.pushToStack(fluid.history.definitions, {type: "definition", layerName, oldSource, newSource: null});
+            }
+        }
+    };
+
+    /**
+     * @typedef {Object} MixedHistoryEntry
+     * @property {HistoryStack} stack - The stack holding the record
+     * @property {StackRec} record - The record
+     * @property {Boolean} applied - `true` if the record is currently applied
+     */
+
+    // The stacks interleaved by fluid.history.mixed
+    fluid.history.mixedStacks = [fluid.history.live, fluid.history.definitions];
+
+    /**
+     * Compare two records of history stacks by when they were pushed
+     * @param {StackRec} a - The first record
+     * @param {StackRec} b - The second record
+     * @return {Number} Negative if `a` was pushed before `b`, positive if after
+     */
+    fluid.history.compareRecs = function (a, b) {
+        return (a.madeAt ?? 0) - (b.madeAt ?? 0) || (a.seq ?? 0) - (b.seq ?? 0);
+    };
+
+    /**
+     * The records of `fluid.history.live` and `fluid.history.definitions` interleaved in the order in which they were made
+     * @type {Cell<MixedHistoryEntry[]>}
+     */
+    fluid.history.mixed = fluid.cell(undefined, {name: "fluid.history.mixed"}).computed(() => {
+        const entries = fluid.history.mixedStacks.flatMap(stack => {
+            const index = stack.index.get();
+            return stack.records.get().map((record, i) => ({stack, record, applied: i < index}));
+        });
+        return entries.sort((a, b) => fluid.history.compareRecs(a.record, b.record));
+    });
+
+    /**
+     * Step back through the mixed history, undoing the most recently made of the records currently applied in any of
+     * its stacks
+     * @return {Boolean} `true` if a record was undone
+     */
+    fluid.history.back = function () {
+        const latest = fluid.peek(fluid.history.mixed.get().filter(entry => entry.applied));
+        return latest ? fluid.history.stepBack(latest.stack) : false;
+    };
+
+    /**
+     * Step forward through the mixed history, redoing the earliest made of the records which have been undone in any
+     * of its stacks
+     * @return {Boolean} `true` if a record was redone
+     */
+    fluid.history.forward = function () {
+        const earliest = fluid.history.mixed.get().find(entry => !entry.applied);
+        return earliest ? fluid.history.stepForward(earliest.stack) : false;
     };
 
     /**
@@ -1527,7 +2070,7 @@ const $fluidScope = function (fluid) {
         const store = fluid.layerStore.get();
         const newStore = {...store, [layerName]: fluid.cell(layerDef, {name: `Layer definition for ${layerName}`})};
         fluid.layerStore.set(newStore);
-        fluid.pushHistory({type: "newLayer", newStore, oldStore: store, layerName});
+        fluid.history.push({type: "newLayer", newStore, oldStore: store, layerName});
     };
 
     /**
@@ -1671,7 +2214,7 @@ const $fluidScope = function (fluid) {
                     fluid.layerStore.set({...store});
                 }
                 if (!fluid.isUnavailable(fluid.deSignal(layer))) {
-                    fluid.pushHistory({type: "updateLayer", oldValue, newValue: layerValue, layerName});
+                    fluid.history.push({type: "updateLayer", oldValue, newValue: layerValue, layerName});
                 }
             }
         } else {
@@ -1736,21 +2279,10 @@ const $fluidScope = function (fluid) {
         const newStore = {...currentStore};
         delete newStore[layerName];
         // Recorded whilst the layer is still in the store, since only the history of user layers is recorded
-        fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
+        fluid.history.push({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
         fluid.layerStore.set(newStore);
         fluid.destroyAvatar(layerName);
         fluid.withdrawLayerInjections(layerName);
-    };
-
-    /**
-     * Render a layer definition as a `fluid.def` call in JavaScript source text. Note that any global functions
-     * referenced by name from the definition are not included.
-     * @param {String} layerName - The name of the layer
-     * @param {LayerDef|Signal<LayerDef>} layerDef - The layer's definition
-     * @return {String} JavaScript source text which will register the layer definition when evaluated
-     */
-    fluid.layerToJavaScript = function (layerName, layerDef) {
-        return `fluid.def(${JSON.stringify(layerName)}, ${fluid.ptf.valueToJavaScript(fluid.deSignal(layerDef))});\n`;
     };
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
@@ -1803,6 +2335,7 @@ const $fluidScope = function (fluid) {
     fluid.mergeRecordTypes = {
         def: 1000, // and below, for resolved parents in hierarchy
         subcomponent: 700, // and above - wrt. nesting depth
+        forLayer: 650, // source element of a $for merged into its member through layerAs
         user: 600, // supplied as constructor arguments
         distribution: 300, // and above
         template: 200, // layer entries synthesized out of template
@@ -2071,9 +2604,61 @@ const $fluidScope = function (fluid) {
             segs.pop();
         } else {
             newTarget = last;
+            if (count > 1 && fluid.isILReference(last)) {
+                // A reference resolving to undefined passes over to the weaker material it overrides
+                fluid.set(layerMap, [...segs, key, $m, "fallback"],
+                    fluid.referenceFallback(last, segs, layers, mergeRecords, plainLayers, key, lastIndex));
+            }
         }
         target[key] = newTarget;
         fluid.set(layerMap, [...segs, key, $m, "source"], mergeRecords[lastIndex].mergeRecordName);
+    };
+
+    /**
+     * The record of an IL reference which is the strongest value at a path, together with the weaker material it
+     * overrides, which is used instead if the reference resolves to `undefined`.
+     * @param {String} reference - The IL reference
+     * @param {any} value - The merge of the weaker layers at the path
+     * @param {fluid.referenceFallbackRecord} [fallback] - If `value` is itself a reference overriding weaker material, the
+     * record for it in turn
+     */
+    fluid.referenceFallbackRecord = function (reference, value, fallback) {
+        this.reference = reference;
+        this.value = value;
+        this.fallback = fallback;
+    };
+
+    /**
+     * Merge the material of the layers weaker than one holding an IL reference at a key, as the fallback to be used if
+     * the reference resolves to `undefined` - see `fluid.expandFallbackReference`. Any fallbacks of references nested
+     * within weaker material which is itself a merged object are not recorded.
+     * @param {String} reference - The IL reference held at the key by the strongest layer
+     * @param {String[]} segs - The path of the layers' parent within the root being merged
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @param {Boolean[]} plainLayers - For each layer, whether it is a plain object or array
+     * @param {String} key - The key being merged
+     * @param {Number} lastIndex - The index of the layer holding the reference
+     * @return {fluid.referenceFallbackRecord} The reference together with the weaker material
+     */
+    fluid.referenceFallback = function (reference, segs, layers, mergeRecords, plainLayers, key, lastIndex) {
+        const holder = Object.create(null);
+        const weakerLayerMap = Object.create(null);
+        fluid.mergeLayerKey(holder, segs, weakerLayerMap, layers.slice(0, lastIndex), mergeRecords.slice(0, lastIndex),
+            plainLayers.slice(0, lastIndex), key);
+        return new fluid.referenceFallbackRecord(reference, holder[key], fluid.get(weakerLayerMap, [...segs, key, $m, "fallback"]));
+    };
+
+    /**
+     * Determine whether two reference fallbacks are equivalent, so that a signal allocated for one may be reused for the
+     * other - see `fluid.isSameSignalRecord`.
+     * @param {fluid.referenceFallbackRecord} [oldFallback] - The fallback for which a signal was previously allocated
+     * @param {fluid.referenceFallbackRecord} [newFallback] - The fallback currently recorded at the same site
+     * @return {Boolean} `true` if the fallbacks hold the same references and weaker material
+     */
+    fluid.isSameReferenceFallback = function (oldFallback, newFallback) {
+        return oldFallback === newFallback || !!oldFallback && !!newFallback && oldFallback.reference === newFallback.reference &&
+            oldFallback.value === newFallback.value && fluid.isSameReferenceFallback(oldFallback.fallback, newFallback.fallback);
     };
 
     // Merges of the members of chains of layer definitions, keyed by the strongest definition of the chain - see
@@ -2357,7 +2942,8 @@ const $fluidScope = function (fluid) {
             if (mapNode[$m]?.reactiveRoot) {
                 const members = linksAt(segs);
                 const links = members.filter(member => fluid.isILReference(member.value)).map(member => ({segs: member.segs, ref: member.value}));
-                const literals = members.filter(member => !fluid.isILReference(member.value));
+                const literals = members.filter(member => !fluid.isILReference(member.value))
+                    .map(member => ({...member, value: fluid.unescapeLiteral(member.value)}));
                 if (links.length > 0) {
                     mapNode[$m].reactiveLinks = links;
                 }

@@ -250,7 +250,7 @@ QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function 
     const nested = plan([create("new-1", "fluid.demos.ai.nested", [layerPart("fluid.demos.ai.nested", "fluid.demos.counter")])]);
     assert.equal(nested.problems.length, 1, "Layer defined within component part is checked");
 
-    const named = plan([layerPart("fluid.demos.ai.adapted", ["fluid.demos.counter", "fluid.topLevelWidget"]), create("new-1", "fluid.demos.ai.adapted"), deletion]);
+    const named = plan([layerPart("fluid.demos.ai.adapted", ["fluid.topLevelWidget", "fluid.demos.counter"]), create("new-1", "fluid.demos.ai.adapted"), deletion]);
     assert.deepEqual([named.problems, named.layers.length, named.creations.length, named.deletions], [[], 1, 1, ["shape:note1"]],
         "Document naming fluid.topLevelWidget accepted");
 
@@ -262,7 +262,7 @@ QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function 
     const sent = [];
     const responses = [
         fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", "fluid.demos.counter"), create("new-1", "fluid.demos.ai.adapted")]),
-        fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", ["fluid.demos.counter", "fluid.topLevelWidget"]), create("new-1", "fluid.demos.ai.adapted")])
+        fluid.ptf.encode([layerPart("fluid.demos.ai.adapted", ["fluid.topLevelWidget", "fluid.demos.counter"]), create("new-1", "fluid.demos.ai.adapted")])
     ];
     await fluid.tldraw.ai.converse({
         direction: "Adapt the counter",
@@ -453,7 +453,7 @@ fluid.def("fluid.tests.tldrawAI.doubler", {
 
 fluid.tests.tldrawAI.double = x => x * 2;
 
-// An umbrella composing the counter with a doubler, taking the counter's view as its own - fluid-project/infusion-6#20
+// An umbrella composing the counter with a doubler, taking the counter's view as its own - FLUID-7020
 fluid.def("fluid.tests.tldrawAI.umbrella", {
     $layers: "fluid.topLevelWidget",
     counter: {
@@ -603,7 +603,7 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     // A layer whose definitions cannot be merged, as the AI wrote in trying to suppress a subcomponent of a parent layer
     await fluid.tests.tldrawAI.loadImports();
     fluid.def("fluid.tests.tldrawAI.unmergeable", {
-        $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+        $layers: ["fluid.topLevelWidget", "fluid.demos.closestNoteFinder"],
         distanceLine: false
     });
     const unmergeable = fluid.tests.tldrawAI.unmergeable();
@@ -640,7 +640,7 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     that.destroy();
 });
 
-QUnit.test("Markdown rendered safely - fluid-project/infusion-6#24", function (assert) {
+QUnit.test("Markdown rendered safely - FLUID-7024", function (assert) {
     const element = document.createElement("div");
     fluid.demos.markdownBlock.renderInto(element, "# Title\n\n* One <script>alert(1)</script>\n* [Two](https://example.com) [Three](javascript:alert)\n\n`a<b`", true);
     assert.equal(qs("h1", element).textContent, "Title", "Heading rendered");
@@ -1006,28 +1006,25 @@ QUnit.test("History commands and their keyboard shortcuts", function (assert) {
     assert.notOk(fluid.tldraw.isTextEditing(null), "Nothing focused does not edit text");
 });
 
-QUnit.test("Sites in the arena referred to relative to their widget", async function (assert) {
+QUnit.test("Widgets held in the arena under names derived from their shapes", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
-    const first = fluid.tests.tldrawAI.makeCounter(qs(".container"), "shape:a", 1);
-    const instances = new Map([["shape:a", first]]);
-    const site = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first), segs: ["state"]});
-    const ref = fluid.tldraw.siteToRef(site, instances);
-    assert.deepEqual(ref, {shapeId: "shape:a", component: "/", path: "state"}, "Site in widget referred to by shape");
-    const viewSite = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first.view), segs: ["hostBounds"]});
-    assert.deepEqual(fluid.tldraw.siteToRef(viewSite, instances), {shapeId: "shape:a", component: "/view", path: "hostBounds"},
-        "Site in widget's subcomponent referred to by its path");
-    assert.ok(fluid.tldraw.findWidget(fluid.ptf.componentToShadow(first.view), instances), "Subcomponent belongs to widget");
-    assert.equal(fluid.tldraw.siteToRef(site, new Map()), null, "Site outside any widget cannot be referred to");
-
-    // Reconstruct the widget, as on restoring the arena
-    const second = fluid.tests.tldrawAI.makeCounter(qs(".container2"), "shape:a", 0);
-    const restored = new Map([["shape:a", second]]);
-    assert.equal(fluid.tldraw.refToSite(ref, restored), fluid.renderSite({shadow: fluid.ptf.componentToShadow(second), segs: ["state"]}),
-        "Reference resolved to reconstructed widget");
-    assert.equal(fluid.tldraw.refToSite({...ref, shapeId: "shape:gone"}, restored), null, "Reference to missing widget resolves to nothing");
-    assert.equal(fluid.tldraw.refToSite({...ref, component: "/missing"}, restored), null, "Reference to missing component resolves to nothing");
-    first.destroy();
-    second.destroy();
+    const originalRoot = fluid.history.arenaRoot;
+    const host = fluid.tests.tldrawAI.tldrawHost();
+    fluid.history.arenaRoot = fluid.ptf.componentToShadow(host);
+    try {
+        const memberName = fluid.tldraw.widgetMemberName("shape:a_B-1");
+        assert.equal(memberName, "shape-a_B-1", "Member name derived from shape id");
+        const potentia = fluid.tldraw.hostPotentiaFor("fluid.demos.counter", qs(".container"), "shape:a_B-1");
+        const first = fluid.initChildComponent(host, "fluid.demos.counter", potentia, memberName);
+        fluid.cell.stabilize();
+        const viewSite = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first.view), segs: ["hostBounds"]});
+        assert.deepEqual(fluid.history.siteToRef(viewSite), {segs: [memberName, "view"], path: "hostBounds"},
+            "Site in widget's subcomponent referred to through the widget's member name");
+        assert.equal(fluid.history.burstKey(viewSite), memberName, "Writes to the widget's subcomponents coalesced with the widget's");
+    } finally {
+        fluid.history.arenaRoot = originalRoot;
+        host.destroy();
+    }
 });
 
 QUnit.test("Sent directions recalled with the arrow keys", async function (assert) {
@@ -1116,7 +1113,7 @@ QUnit.test("Widget layers listed from the layer store, and deleted", async funct
     assert.notOk(listed().includes("fluid.demos.ai.sfcWidget"), "Deleted SFC layer no longer listed");
 });
 
-// Slop-free composition of the closest note finder with the image generator - fluid-project/infusion-6#25
+// Slop-free composition of the closest note finder with the image generator - FLUID-7025
 
 // Stands in for fluid.demos.tldrawHost, bridging the notes on the canvas and the bounds of each widget's shape. As
 // there, widgets are constructed as its children, within whose scope it may be resolved
@@ -1144,7 +1141,7 @@ fluid.tests.tldrawAI.boundsForShape = shapeId => shapeId === null ? null : {x: 1
 // as a subcomponent sharing its view, so that only the image generator renders. The prompt held in the image
 // generator's reactive state is linked to the closest note's text
 fluid.def("fluid.demos.ai.closestNoteImageGenerator", {
-    $layers: ["fluid.demos.imageGenerator", "fluid.topLevelWidget"],
+    $layers: ["fluid.topLevelWidget", "fluid.demos.imageGenerator"],
     noteFinder: {
         $component: {
             $layers: "fluid.demos.closestNoteFinder",
@@ -1181,12 +1178,12 @@ fluid.def("fluid.tests.tldrawAI.visibleUmbrella", {
     $layers: "fluid.topLevelWidget",
     finder: {
         $component: {
-            $layers: ["fluid.demos.closestNoteFinder", "fluid.component"]
+            $layers: ["fluid.component", "fluid.demos.closestNoteFinder"]
         }
     },
     imageGen: {
         $component: {
-            $layers: ["fluid.demos.imageGenerator", "fluid.component"],
+            $layers: ["fluid.component", "fluid.demos.imageGenerator"],
             state: {
                 prompt: "{finder}.closest.text"
             }
@@ -1202,7 +1199,7 @@ fluid.def("fluid.tests.tldrawAI.visibleUmbrella", {
 
 // A layer derived from an SFC layer supplying a template of its own, which overrides the SFC's
 fluid.def("fluid.tests.tldrawAI.retemplatedFinder", {
-    $layers: ["fluid.demos.closestNoteFinder", "fluid.topLevelWidget"],
+    $layers: ["fluid.topLevelWidget", "fluid.demos.closestNoteFinder"],
     view: {
         $component: {
             $layers: "fluid.templateViewComponent",
@@ -1211,7 +1208,7 @@ fluid.def("fluid.tests.tldrawAI.retemplatedFinder", {
     }
 });
 
-QUnit.test("Further compositions chosen by the AI - fluid-project/infusion-6#25", async function (assert) {
+QUnit.test("Further compositions chosen by the AI - FLUID-7025", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const container = qs(".container");
     const host = fluid.tests.tldrawAI.tldrawHost({notes: [{id: "shape:near", x: 120, y: 90, text: "A red fox"}]});
@@ -1289,7 +1286,7 @@ QUnit.test("Worked example of composition in the strategy hints is valid", funct
     host.destroy();
 });
 
-QUnit.test("Closest note composed with image generator - fluid-project/infusion-6#25", async function (assert) {
+QUnit.test("Closest note composed with image generator - FLUID-7025", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const originalFetch = fluid.demos.pixabay.fetch;
     const requests = fluid.tests.tldrawAI.fakePixabay(() => [fluid.tests.tldrawAI.pixabayHit(1, "https://pixabay.com/get/one.jpg")]);

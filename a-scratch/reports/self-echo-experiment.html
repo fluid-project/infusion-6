@@ -1,0 +1,3660 @@
+<meta charset="utf-8">
+<title>Self-Echo Under Recomposition</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+/* Layout: a long-form lab report - sticky contents rail beside a single reading column, wide tables and code scroll in place */
+:root {
+    --paper: #f5f6f8;
+    --ink: #1a2030;
+    --muted: #586174;
+    --rule: #d6dbe4;
+    --panel: #ebeef3;
+    --code-bg: #eef1f6;
+    --accent: #0e6a6c;
+    --accent-soft: #d5ebea;
+    --pass: #2c7a4b;
+    --pass-soft: #dcefe2;
+    --fail: #a8422c;
+    --fail-soft: #f6e0da;
+    --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+    --font-body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --step--1: 0.84rem;
+    --step-0: 1.05rem;
+    --step-1: 1.25rem;
+    --step-2: 1.6rem;
+    --step-3: 2.4rem;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --paper: #10141b;
+        --ink: #e2e6ee;
+        --muted: #98a1b3;
+        --rule: #283040;
+        --panel: #171e2b;
+        --code-bg: #141b27;
+        --accent: #5ec2bd;
+        --accent-soft: #163636;
+        --pass: #73cf98;
+        --pass-soft: #15301f;
+        --fail: #f08f78;
+        --fail-soft: #3a1d17;
+        color-scheme: dark;
+    }
+}
+:root[data-theme="dark"] {
+    --paper: #10141b;
+    --ink: #e2e6ee;
+    --muted: #98a1b3;
+    --rule: #283040;
+    --panel: #171e2b;
+    --code-bg: #141b27;
+    --accent: #5ec2bd;
+    --accent-soft: #163636;
+    --pass: #73cf98;
+    --pass-soft: #15301f;
+    --fail: #f08f78;
+    --fail-soft: #3a1d17;
+    color-scheme: dark;
+}
+
+body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: var(--step-0);
+    line-height: 1.6;
+}
+.page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding-block: 2.5rem 5rem;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 3rem;
+}
+@media (max-width: 860px) {
+    .page { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
+}
+
+/* Contents rail */
+nav.toc {
+    position: sticky;
+    top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+    align-self: start;
+    font-family: var(--font-display);
+    font-size: var(--step--1);
+}
+nav.toc .label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-size: 0.72rem;
+}
+nav.toc ol { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
+nav.toc a { color: var(--ink); text-decoration: none; display: block; padding: 0.1rem 0 0.1rem 0.7rem; border-left: 2px solid var(--rule); }
+nav.toc a:hover, nav.toc a:focus-visible { border-left-color: var(--accent); color: var(--accent); }
+@media (max-width: 860px) {
+    nav.toc { position: static; }
+    nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}
+
+main { min-width: 0; }
+main > section, main > header { max-width: 70ch; }
+main > section.wide { max-width: none; }
+main > section + section { margin-top: 3.5rem; }
+main > header { margin-bottom: 3rem; }
+
+header .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+}
+h1, h2, h3 {
+    font-family: var(--font-display);
+    line-height: 1.15;
+    text-wrap: balance;
+    font-weight: 700;
+}
+h1 { font-size: var(--step-3); margin: 0.4rem 0 1rem; letter-spacing: -0.01em; }
+h2 { font-size: var(--step-2); margin: 0 0 1rem; padding-top: 0.5rem; border-top: 1px solid var(--rule); }
+h3 { font-size: var(--step-1); margin: 2rem 0 0.6rem; font-weight: 500; }
+.dek { font-size: var(--step-1); color: var(--muted); line-height: 1.45; margin: 0; }
+p { margin: 0 0 1rem; }
+a { color: var(--accent); }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--panel); padding: 0.05em 0.3em; border-radius: 3px; }
+strong { font-weight: 600; }
+
+blockquote {
+    margin: 1.2rem 0;
+    padding: 0.2rem 0 0.2rem 1.1rem;
+    border-left: 3px solid var(--accent);
+    color: var(--ink);
+    font-style: italic;
+}
+blockquote cite { display: block; font-style: normal; font-size: var(--step--1); color: var(--muted); margin-top: 0.3rem; }
+
+.hypothesis {
+    background: var(--accent-soft);
+    padding: 1rem 1.2rem;
+    border-radius: 6px;
+    margin: 1.2rem 0;
+}
+.hypothesis .label { font-family: var(--font-display); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); display: block; margin-bottom: 0.3rem; }
+
+ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+li + li { margin-top: 0.3rem; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; margin: 1.2rem 0 1.6rem; border: 1px solid var(--rule); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; line-height: 1.45; }
+th, td { text-align: left; vertical-align: top; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--rule); }
+thead th { font-family: var(--font-display); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); background: var(--panel); }
+tbody tr:last-child td, tbody tr:last-child th { border-bottom: none; }
+tbody th { font-family: var(--font-display); font-weight: 500; white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 0.85rem; white-space: nowrap; }
+.chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.chip.pass { background: var(--pass-soft); color: var(--pass); }
+.chip.fail { background: var(--fail-soft); color: var(--fail); }
+.chip.same { background: var(--accent-soft); color: var(--accent); }
+
+/* Checks list */
+dl.checks { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.5rem 1.2rem; margin: 1rem 0 1.5rem; }
+dl.checks dt { font-family: var(--font-mono); font-size: 0.84rem; color: var(--accent); padding-top: 0.15rem; }
+dl.checks dd { margin: 0; }
+@media (max-width: 560px) {
+    dl.checks { grid-template-columns: minmax(0, 1fr); }
+    dl.checks dd { margin-bottom: 0.6rem; }
+}
+
+/* Code */
+figure.code { margin: 0.8rem 0 1.2rem; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--code-bg); }
+.code-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.35rem 0.75rem; background: var(--panel); border-bottom: 1px solid var(--rule); }
+.code-name { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+button.copy {
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.15rem 0.6rem;
+    cursor: pointer;
+}
+button.copy:hover, button.copy:focus-visible { border-color: var(--accent); }
+figure.code pre { margin: 0; padding: 0.8rem 0.9rem; overflow-x: auto; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; tab-size: 4; }
+figure.code pre code { background: none; padding: 0; font-size: inherit; }
+.hljs-keyword, .hljs-built_in, .hljs-literal { color: var(--accent); }
+.hljs-string, .hljs-attr, .hljs-attribute { color: var(--pass); }
+.hljs-number, .hljs-regexp { color: var(--fail); }
+.hljs-comment { color: var(--muted); font-style: italic; }
+.hljs-title, .hljs-name, .hljs-tag { color: var(--ink); font-weight: 500; }
+.hljs-addition { background: var(--pass-soft); color: var(--pass); display: inline-block; width: 100%; }
+.hljs-deletion { background: var(--fail-soft); color: var(--fail); display: inline-block; width: 100%; }
+.hljs-meta { color: var(--muted); }
+
+details { margin: 0.6rem 0; }
+details > summary { cursor: pointer; font-family: var(--font-display); font-size: 0.92rem; color: var(--accent); }
+details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details.diff > summary { padding: 0.2rem 0; }
+details.variant { border-top: 1px solid var(--rule); padding: 0.6rem 0; margin: 0; }
+details.variant > summary { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: baseline; color: var(--ink); }
+details.variant .vname { font-family: var(--font-mono); font-size: 0.88rem; color: var(--accent); min-width: 13rem; }
+details.variant .vtitle { font-family: var(--font-display); }
+.vdesc { margin: 0.6rem 0 0.4rem; max-width: 70ch; }
+
+.mermaid-wrap { overflow-x: auto; margin: 1rem 0 1.5rem; padding: 1rem; background: var(--panel); border-radius: 6px; }
+pre.mermaid { margin: 0; font-family: var(--font-body); background: none; }
+
+.finding { padding-left: 1rem; border-left: 3px solid var(--rule); margin: 1rem 0; }
+.finding.for { border-left-color: var(--pass); }
+.finding.against { border-left-color: var(--fail); }
+.finding h3 { margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+    * { scroll-behavior: auto !important; }
+}
+html { scroll-behavior: smooth; }
+</style>
+
+<div class="page">
+<nav class="toc" aria-label="Contents">
+    <span class="label">Contents</span>
+    <ol>
+        <li><a href="#question">The question</a></li>
+        <li><a href="#cycle">The editor cycle</a></li>
+        <li><a href="#method">Method</a></li>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#controls">Controls</a></li>
+        <li><a href="#defects">Framework defects</a></li>
+        <li><a href="#findings">What the evidence suggests</a></li>
+        <li><a href="#limits">Limits</a></li>
+        <li><a href="#reproduce">Reproducing it</a></li>
+        <li><a href="#source">Appendix: source</a></li>
+    </ol>
+</nav>
+
+<main>
+<header>
+    <div class="eyebrow">Infusion 6 · a-scratch/reports · November 2026</div>
+    <h1>Self-Echo Under Recomposition</h1>
+    <p class="dek">The same CodeMirror layer editor, built in Infusion 6 and in React with Zustand, put through four
+    recompositions, then rebuilt in a declarative Infusion style. The question is where the code that stops an editor
+    hearing its own changes has to live, and what it costs to move things around it.</p>
+</header>
+
+<section id="question">
+<h2>The question</h2>
+<p>Mainstream web applications are organised around one-way dataflow and read/write segregation. A component
+receives a value and a separate setter, and never writes its inputs directly. Issues of the kind Infusion handles with
+transactions and update sources rarely come up there by name. The question is why.</p>
+<p>Ryan Carniato's article <a href="https://dev.to/playfulprogramming/two-way-binding-is-a-two-way-street-2d3c">Two-way
+binding is a two-way street</a> argues that two-way binding leaves state ownership unclear. He holds that frameworks
+should make it opt-in at least, and he prefers to avoid it altogether. The article offers little evidence beyond the
+experience of Angular.js:</p>
+<blockquote>Two-way binding can turn your code into an unpredictable mess, and that is not something you want to
+experience firsthand.<cite>Ryan Carniato, “Two-way binding is a two-way street”</cite></blockquote>
+<p>Infusion 6 takes the other side. Any holder of a component proxy may write its state. Each write is a transaction
+(a <em>fit</em>) carrying the <em>sources</em> of the change. An effect can decline changes from a source with
+<code>excludeSource</code>, and the sources travel with the change through computations and through the writes made by
+effects (FLUID-5498).</p>
+<div class="hypothesis">
+    <span class="label">Hypothesis under test</span>
+    The real cost of one-way binding is a loss of composability. Every site where mutation can occur has the capability
+    injected into it. When the application is recomposed, that injection has to be rewritten across the application.
+    Is this loss real or only apparent, and can applications written with mainstream idioms be recomposed
+    straightforwardly?
+</div>
+<p>The concrete case is the self-reactive cycle of a CodeMirror editor whose edits are validated asynchronously.
+Sketching it in a mainstream system shows that one-way dataflow doesn't remove the cycle. The cycle runs through the
+third-party widget, outside the framework's model, so it gets handled by hand at each widget. The experiment measures
+what that costs as the application changes shape.</p>
+</section>
+
+<section id="cycle">
+<h2>The editor cycle</h2>
+<p>A user edits text in CodeMirror. The edit is validated asynchronously, here by a 150&nbsp;ms check that the text is
+well-formed JSON. Valid text is committed to the store, and committed text flows back to every editor showing the
+layer, so that undo, other panes and file loads reach them.</p>
+<div class="mermaid-wrap">
+<pre class="mermaid">
+flowchart LR
+    U["User types in editor A"] --> V["Async validation, 150 ms"]
+    V -->|valid| C["Commit to the store"]
+    C --> T["Layer text"]
+    T --> RA["Write into editor A"]
+    T --> RB["Write into editor B"]
+    RA -. "the echo: stale if A has been edited since" .-> U
+</pre>
+</div>
+<p>The return path to editor A is the problem. Validation takes time, so by the time a commit arrives the user may have
+typed more. If the editor accepts its own stale commit, it overwrites the newer typing, and CodeMirror's
+<code>setValue</code> also moves the cursor to the start. Editor B, and editor A when the change came from elsewhere,
+must still receive the text.</p>
+<h3>How each side suppresses the echo</h3>
+<p><strong>Infusion.</strong> The editor's read effect declares <code>excludeSource: "self"</code>. The editor's own
+writes are stamped with its <em>self source</em>, the component's shadow, which can't be written in configuration or
+confused with another instance's. The source travels with the transaction to the commit, through the effect that
+makes it, and across the async validation, so the returning change is recognised by identity.</p>
+<p><strong>React and Zustand.</strong> The editor holds its own document as an uncontrolled widget. At first it keeps a
+ref holding the text it last committed and skips that text when it comes back from the store, which is equality
+rather than identity. When that stops working, the fix is to tag each draft with the editor's <code>useId()</code> and
+carry the tag through the store as <code>textOrigin</code>.</p>
+</section>
+
+<section id="method">
+<h2>Method</h2>
+<p>Both apps use the same CodeMirror 5 build, the same validator and the same DOM contract. Each starts as a baseline
+(v0), and four recompositions follow, each applied to the previous version:</p>
+<ol>
+    <li><strong>R1.</strong> Add a second editor showing the same layer.</li>
+    <li><strong>R2.</strong> Move validation out of the editor into a shared service. Editors submit raw drafts, and
+    the service commits each valid draft in turn, so history keeps every valid edit as before.</li>
+    <li><strong>R3.</strong> Redirect where the text is stored. Editor B edits a separate "notes" layer while editor A
+    keeps the main one.</li>
+    <li><strong>R4.</strong> Insert a transforming step between commit and editors. The store keeps the committed
+    text, and what editors and views show is its normalised form, <code>JSON.stringify(JSON.parse(text))</code>,
+    which drops whitespace. A user's own spacing must never be rewritten under them.</li>
+</ol>
+<p>Each recomposition was first made the natural way for its framework, then tested, then fixed if it failed. The
+measures are the non-blank lines changed per file, whether the reusable editor had to change, and how many attempts it
+took. A headless Chromium harness drives every version through the same checks:</p>
+<dl class="checks">
+    <dt>commit</dt><dd>One valid edit is validated and committed. The editor keeps its text and cursor.</dd>
+    <dt>typingDuringValidation</dt><dd>Typing <code>3</code>, then <code>4</code> 60&nbsp;ms later, then <code>5</code>
+    after the first commit has landed but before the second. No keystroke may be lost and the cursor must stay put.
+    One undo must return to the previous valid edit, so each valid edit was committed.</dd>
+    <dt>undo</dt><dd>Undo reverts the committed text and reaches the editors.</dd>
+    <dt>crossPane</dt><dd>With two editors on one layer, each one's edits reach the other, including typing during
+    validation.</dd>
+    <dt>separateLayers</dt><dd>With two layers, editor B's edits and undo affect only the notes layer.</dd>
+    <dt>normalisedTyping</dt><dd>Typing <code>, 3</code>, <code>4</code> and <code>5</code> during overlapping
+    validations. The editor keeps <code>[1, 345]</code> as typed while the committed text reads <code>[1,345]</code>, and
+    undo brings the normalised <code>[1,34]</code> back into the editor.</dd>
+</dl>
+<p>The harness proves it can see the failure. Removing the <code>"self"</code> exclusion from the Infusion baseline loses
+the last keystroke and resets the cursor, as listed under <a href="#controls">Controls</a>. The layer text is a JSON
+array such as <code>[1]</code> rather than an object. Infusion configuration reads any string beginning with
+<code>{</code> as a context reference, and at the time had no way to escape one. A leading backslash now does.</p>
+</section>
+
+<section id="results" class="wide">
+<h2>Results</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr><th scope="col">Step</th><th scope="col">Infusion</th><th scope="col">Declarative Infusion (built after the fixes)</th><th scope="col">React + Zustand</th></tr>
+</thead>
+<tbody>
+<tr><th scope="row">Baseline</th>
+    <td>80 lines <span class="chip pass">10/10</span></td>
+    <td>89 lines <span class="chip pass">10/10</span></td>
+    <td>59 lines <span class="chip pass">10/10</span></td></tr>
+<tr><th scope="row">R1 · second editor</th>
+    <td>1 file, +6. Editor unchanged. Passed first time <span class="chip pass">16/16</span></td>
+    <td>1 file, +6. Editor unchanged. Passed first time <span class="chip pass">16/16</span></td>
+    <td>1 file, +1. Editor unchanged. Passed first time <span class="chip pass">16/16</span></td></tr>
+<tr><th scope="row">R2 · shared validation</th>
+    <td>2 files: app +13, editor +2 −7. First attempt <span class="chip fail">5/16</span>, from four framework defects and
+    one tracked-read mistake. After the fixes, 1 line of user code (<code>untracked</code>) <span class="chip pass">16/16</span></td>
+    <td>2 files: app +12, editor +3 −7. Passed first time, with no <code>untracked</code> <span class="chip pass">16/16</span></td>
+    <td>First attempt <span class="chip fail">7/16</span>: typing lost, cursor reset. Fixed by threading an origin tag
+    through store, validator and editor. Final: 2 files, store +17 −1, editor +9 −14 <span class="chip pass">16/16</span></td></tr>
+<tr><th scope="row">R3 · separate layers</th>
+    <td>3 files, +51 −30, mostly extracting the store into a component. <span class="chip same">Editor identical</span>
+    Passed first time <span class="chip pass">17/17</span></td>
+    <td>3 files, +50 −29. <span class="chip same">Editor identical</span> Passed first time <span class="chip pass">17/17</span></td>
+    <td>3 files, +43 −34. Editor changed (+2 −3), because it imported the single store. Passed first time
+    <span class="chip pass">17/17</span></td></tr>
+<tr><th scope="row">R4 · normalisation stage</th>
+    <td>3 files, +8 −5. <span class="chip same">Editor identical</span> First attempt <span class="chip fail">21/23</span>:
+    the user's text rewritten, from a fifth framework defect. After the fix <span class="chip pass">23/23</span></td>
+    <td>3 files, +8 −5. <span class="chip same">Editor identical</span> Passed first time <span class="chip pass">23/23</span></td>
+    <td>4 files, +11 −7. Editor changed (+2 −1) to read through a selector. Passed first time
+    <span class="chip pass">23/23</span></td></tr>
+<tr><th scope="row">Echo-suppression code at the end</th>
+    <td>2 lines, both in the editor. The exclusion never changed, and the stamp changed only in what it wraps, in R2</td>
+    <td>2 declarative lines in the editor (<code>excludeSource</code> and <code>source</code>), unchanged from v0 to v4</td>
+    <td>12 lines across the store and the editor, part of the store's data model and API</td></tr>
+<tr><th scope="row">Final size</th>
+    <td>116 lines, with 3 <code>fluid.cell</code> calls</td>
+    <td>125 lines, with no <code>fluid.cell</code> calls</td>
+    <td>83 lines</td></tr>
+</tbody>
+</table>
+</div>
+
+<div style="max-width: 70ch">
+<h3>R1 · A second editor on the same layer</h3>
+<p>A tie. Each framework needed one addition to the file that composes the app, and the editor didn't change. Both
+versions passed every check first time, including each editor receiving the other's typing.</p>
+<details class="diff"><summary>Infusion diff, v0 → v1</summary><figure class="code"><div class="code-head"><span class="code-name">fluid/v0 → fluid/v1</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v0/app.js
++++ fluid/v1/app.js
+@@ -13,8 +13,14 @@
+                 &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                 &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
++                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+             &lt;/div&gt;`
+         }
+     },
+     editorA: {
++        $component: {
++            $layers: &quot;exp.cmEditor&quot;
++        }
++    },
++    editorB: {
+         $component: {
+             $layers: &quot;exp.cmEditor&quot;
+</code></pre></figure></details><details class="diff"><summary>React diff, v0 → v1</summary><figure class="code"><div class="code-head"><span class="code-name">react/v0 → react/v1</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v0/app.jsx
++++ react/v1/app.jsx
+@@ -9,4 +9,5 @@
+         &lt;pre className=&quot;committed-main&quot;&gt;{text}&lt;/pre&gt;
+         &lt;Editor className=&quot;editor-a&quot;/&gt;
++        &lt;Editor className=&quot;editor-b&quot;/&gt;
+     &lt;/div&gt;;
+ }
+</code></pre></figure></details>
+
+<h3>R2 · Validation as a shared service</h3>
+<p>This is the recomposition the hypothesis is about, because it moves the commit away from the editor that suppresses
+its echo.</p>
+<p><strong>React.</strong> The direct translation moved the editor's equality ref onto draft submission. It failed. A
+stale commit of an earlier draft no longer matches the ref, which has moved on, so the editor writes the stale text into
+itself. The last keystroke is lost and the cursor goes to 0. The working fix tags each draft with the editor's
+<code>useId()</code>, adds a <code>textOrigin</code> field and origin parameters to <code>setDraft</code> and
+<code>commit</code>, and has the validator forward the origin. The store now has to know about editor identities.</p>
+<p><strong>Infusion.</strong> The editor's two echo-suppression lines stayed as they were, and only what the editor writes
+changed: a draft instead of a commit. The first attempt still failed badly, for reasons a user couldn't reasonably
+diagnose. Commits stopped after the first one, undo didn't stick, and the editor was overwritten. Finding the causes took
+instrumentation of the reactive graph, and they turned out to be four defects in the framework, listed under
+<a href="#defects">Framework defects</a>. One problem was in the user code: the commit effect read the history it
+appends to with tracking. Wrapping the commit in <code>fluid.cell.untracked</code> fixed that. React has no counterpart
+to this hazard, because Zustand's <code>getState()</code> isn't tracked.</p>
+<details class="diff"><summary>Infusion diff, v1 → v2 (final)</summary><figure class="code"><div class="code-head"><span class="code-name">fluid/v1 → fluid/v2</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v1/app.js
++++ fluid/v2/app.js
+@@ -4,4 +4,14 @@
+     text: &quot;[1]&quot;,
+     history: [],
++    draft: null,
++    // The shared validation service - each valid draft is committed in turn
++    validDraft: &quot;$compute:exp.app.validate({self}.draft)&quot;,
++    commitValid: {
++        $effect: {
++            // The commit consults the current text and history, which are not dependencies of the effect
++            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
++            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
++        }
++    },
+     commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+     undo: &quot;$method:exp.app.undo({self})&quot;,
+@@ -29,4 +39,8 @@
+ });
+ 
++exp.app.validate = async function (draft) {
++    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
++};
++
+ exp.app.commit = function (self, text) {
+     self.history = [...self.history, self.text];
+--- fluid/v1/editor.js
++++ fluid/v2/editor.js
+@@ -29,12 +29,7 @@
+     const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
+     cm.on(&quot;change&quot;, (cm, change) =&gt; {
+-        // Only the user&#x27;s edits are validated and committed - not text supplied by readText
++        // Only the user&#x27;s edits are submitted as drafts - not text supplied by readText
+         if (change.origin !== &quot;setValue&quot;) {
+-            const text = cm.getValue();
+-            validateLayer(text).then(valid =&gt; {
+-                if (valid) {
+-                    fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.commit(text))();
+-                }
+-            });
++            fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.draft = cm.getValue())();
+         }
+     });
+</code></pre></figure></details><details class="diff"><summary>React diff, v1 → v2 (final)</summary><figure class="code"><div class="code-head"><span class="code-name">react/v1 → react/v2</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v1/store.js
++++ react/v2/store.js
+@@ -3,9 +3,26 @@
+ export const useLayerStore = create(set =&gt; ({
+     text: &quot;[1]&quot;,
++    // The editor whose draft the current text was committed from, if any - so that it is not written back into it
++    textOrigin: null,
+     history: [],
+-    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.text], text})),
++    draft: null,
++    setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
++    commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
+     undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+         text: state.history[state.history.length - 1],
++        textOrigin: null,
+         history: state.history.slice(0, -1)
+     } : {})
+ }));
++
++// The shared validation service - each valid draft is committed in turn
++useLayerStore.subscribe((state, previous) =&gt; {
++    if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
++        const {text, origin} = state.draft;
++        validateLayer(text).then(valid =&gt; {
++            if (valid) {
++                useLayerStore.getState().commit(text, origin);
++            }
++        });
++    }
++});
+--- react/v1/editor.jsx
++++ react/v2/editor.jsx
+@@ -1,3 +1,3 @@
+-import {useEffect, useRef} from &quot;react&quot;;
++import {useEffect, useId, useRef} from &quot;react&quot;;
+ import {useLayerStore} from &quot;./store.js&quot;;
+ 
+@@ -5,22 +5,17 @@
+ export function Editor({className}) {
+     const text = useLayerStore(state =&gt; state.text);
+-    const commit = useLayerStore(state =&gt; state.commit);
++    const textOrigin = useLayerStore(state =&gt; state.textOrigin);
++    // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
++    const id = useId();
++    const setDraft = useLayerStore(state =&gt; state.setDraft);
+     const hostRef = useRef(null);
+     const cmRef = useRef(null);
+-    // The text this editor last committed, so that it is not written back into it when it returns from the store
+-    const lastCommitted = useRef(null);
+ 
+     useEffect(() =&gt; {
+         const cm = CodeMirror(hostRef.current, {value: text});
+         cm.on(&quot;change&quot;, (cm, change) =&gt; {
+-            // Only the user&#x27;s edits are validated and committed - not text supplied from the store
++            // Only the user&#x27;s edits are submitted as drafts - not text supplied from the store
+             if (change.origin !== &quot;setValue&quot;) {
+-                const edited = cm.getValue();
+-                validateLayer(edited).then(valid =&gt; {
+-                    if (valid) {
+-                        lastCommitted.current = edited;
+-                        commit(edited);
+-                    }
+-                });
++                setDraft(cm.getValue(), id);
+             }
+         });
+@@ -31,8 +26,8 @@
+     useEffect(() =&gt; {
+         const cm = cmRef.current;
+-        if (text !== lastCommitted.current &amp;&amp; cm.getValue() !== text) {
++        if (textOrigin !== id &amp;&amp; cm.getValue() !== text) {
+             cm.setValue(text);
+         }
+-    }, [text]);
++    }, [text, textOrigin]);
+ 
+     return &lt;div className={className} ref={hostRef}/&gt;;
+</code></pre></figure></details><details class="diff"><summary>React fix after the first attempt failed</summary><figure class="code"><div class="code-head"><span class="code-name">react/v2-natural-attempt → react/v2</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v2-natural-attempt/store.js
++++ react/v2/store.js
+@@ -3,10 +3,13 @@
+ export const useLayerStore = create(set =&gt; ({
+     text: &quot;[1]&quot;,
++    // The editor whose draft the current text was committed from, if any - so that it is not written back into it
++    textOrigin: null,
+     history: [],
+     draft: null,
+-    setDraft: draft =&gt; set({draft}),
+-    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.text], text})),
++    setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
++    commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
+     undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+         text: state.history[state.history.length - 1],
++        textOrigin: null,
+         history: state.history.slice(0, -1)
+     } : {})
+@@ -16,8 +19,8 @@
+ useLayerStore.subscribe((state, previous) =&gt; {
+     if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
+-        const draft = state.draft;
+-        validateLayer(draft).then(valid =&gt; {
++        const {text, origin} = state.draft;
++        validateLayer(text).then(valid =&gt; {
+             if (valid) {
+-                useLayerStore.getState().commit(draft);
++                useLayerStore.getState().commit(text, origin);
+             }
+         });
+--- react/v2-natural-attempt/editor.jsx
++++ react/v2/editor.jsx
+@@ -1,3 +1,3 @@
+-import {useEffect, useRef} from &quot;react&quot;;
++import {useEffect, useId, useRef} from &quot;react&quot;;
+ import {useLayerStore} from &quot;./store.js&quot;;
+ 
+@@ -5,9 +5,10 @@
+ export function Editor({className}) {
+     const text = useLayerStore(state =&gt; state.text);
++    const textOrigin = useLayerStore(state =&gt; state.textOrigin);
++    // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
++    const id = useId();
+     const setDraft = useLayerStore(state =&gt; state.setDraft);
+     const hostRef = useRef(null);
+     const cmRef = useRef(null);
+-    // The text this editor last submitted, so that it is not written back into it when it returns from the store
+-    const lastSubmitted = useRef(null);
+ 
+     useEffect(() =&gt; {
+@@ -16,6 +17,5 @@
+             // Only the user&#x27;s edits are submitted as drafts - not text supplied from the store
+             if (change.origin !== &quot;setValue&quot;) {
+-                lastSubmitted.current = cm.getValue();
+-                setDraft(lastSubmitted.current);
++                setDraft(cm.getValue(), id);
+             }
+         });
+@@ -26,8 +26,8 @@
+     useEffect(() =&gt; {
+         const cm = cmRef.current;
+-        if (text !== lastSubmitted.current &amp;&amp; cm.getValue() !== text) {
++        if (textOrigin !== id &amp;&amp; cm.getValue() !== text) {
+             cm.setValue(text);
+         }
+-    }, [text]);
++    }, [text, textOrigin]);
+ 
+     return &lt;div className={className} ref={hostRef}/&gt;;
+</code></pre></figure></details>
+
+<h3>R3 · Redirecting where the text is stored</h3>
+<p>Both passed first time. In Infusion, the store became a component instantiated twice, and each editor's
+<code>store</code> reference was overridden in configuration at its instance site, leaving the editor file identical.
+The React editor had to change, because it imported the single store hook. A React baseline that took its store from
+context would have avoided that change, but only if someone had anticipated it. Infusion's redirection needed no such
+foresight.</p>
+<details class="diff"><summary>Infusion diff, v2 → v3</summary><figure class="code"><div class="code-head"><span class="code-name">fluid/v2 → fluid/v3</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v2/index.html
++++ fluid/v3/index.html
+@@ -15,4 +15,5 @@
+     &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
++    &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+--- fluid/v2/app.js
++++ fluid/v3/app.js
+@@ -2,24 +2,23 @@
+ fluid.def(&quot;exp.app&quot;, {
+     $layers: &quot;fluid.component&quot;,
+-    text: &quot;[1]&quot;,
+-    history: [],
+-    draft: null,
+-    // The shared validation service - each valid draft is committed in turn
+-    validDraft: &quot;$compute:exp.app.validate({self}.draft)&quot;,
+-    commitValid: {
+-        $effect: {
+-            // The commit consults the current text and history, which are not dependencies of the effect
+-            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
+-            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
++    main: {
++        $component: {
++            $layers: &quot;exp.layerStore&quot;
+         }
+     },
+-    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+-    undo: &quot;$method:exp.app.undo({self})&quot;,
++    notes: {
++        $component: {
++            $layers: &quot;exp.layerStore&quot;,
++            text: &quot;[9]&quot;
++        }
++    },
+     view: {
+         $component: {
+             $layers: &quot;fluid.templateViewComponent&quot;,
+             template: `&lt;div&gt;
+-                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+-                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
++                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.main.undo()&quot;&gt;Undo&lt;/button&gt;
++                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.main.text}&lt;/pre&gt;
++                &lt;button class=&quot;undo-notes&quot; @onclick=&quot;{exp.app}.notes.undo()&quot;&gt;Undo notes&lt;/button&gt;
++                &lt;pre class=&quot;committed-notes&quot;&gt;@{{exp.app}.notes.text}&lt;/pre&gt;
+                 &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                 &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+@@ -29,28 +28,13 @@
+     editorA: {
+         $component: {
+-            $layers: &quot;exp.cmEditor&quot;
++            $layers: &quot;exp.cmEditor&quot;,
++            store: &quot;{exp.app}.main&quot;
+         }
+     },
+     editorB: {
+         $component: {
+-            $layers: &quot;exp.cmEditor&quot;
++            $layers: &quot;exp.cmEditor&quot;,
++            store: &quot;{exp.app}.notes&quot;
+         }
+     }
+ });
+-
+-exp.app.validate = async function (draft) {
+-    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+-};
+-
+-exp.app.commit = function (self, text) {
+-    self.history = [...self.history, self.text];
+-    self.text = text;
+-};
+-
+-exp.app.undo = function (self) {
+-    const history = self.history;
+-    if (history.length &gt; 0) {
+-        self.text = history[history.length - 1];
+-        self.history = history.slice(0, -1);
+-    }
+-};
+--- /dev/null
++++ fluid/v3/store.js
+@@ -0,0 +1,36 @@
++&quot;use strict&quot;;
++// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
++fluid.def(&quot;exp.layerStore&quot;, {
++    $layers: &quot;fluid.component&quot;,
++    text: &quot;[1]&quot;,
++    history: [],
++    draft: null,
++    // The shared validation service - each valid draft is committed in turn
++    validDraft: &quot;$compute:exp.layerStore.validate({self}.draft)&quot;,
++    commitValid: {
++        $effect: {
++            // The commit consults the current text and history, which are not dependencies of the effect
++            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
++            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
++        }
++    },
++    commit: &quot;$method:exp.layerStore.commit({self}, {0})&quot;,
++    undo: &quot;$method:exp.layerStore.undo({self})&quot;
++});
++
++exp.layerStore.validate = async function (draft) {
++    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
++};
++
++exp.layerStore.commit = function (self, text) {
++    self.history = [...self.history, self.text];
++    self.text = text;
++};
++
++exp.layerStore.undo = function (self) {
++    const history = self.history;
++    if (history.length &gt; 0) {
++        self.text = history[history.length - 1];
++        self.history = history.slice(0, -1);
++    }
++};
+</code></pre></figure></details><details class="diff"><summary>React diff, v2 → v3</summary><figure class="code"><div class="code-head"><span class="code-name">react/v2 → react/v3</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v2/app.jsx
++++ react/v3/app.jsx
+@@ -1,13 +1,20 @@
+-import {useLayerStore} from &quot;./store.js&quot;;
++import {createLayerStore} from &quot;./store.js&quot;;
+ import {Editor} from &quot;./editor.jsx&quot;;
+ 
++const useMain = createLayerStore(&quot;[1]&quot;);
++const useNotes = createLayerStore(&quot;[9]&quot;);
++
+ export function App() {
+-    const text = useLayerStore(state =&gt; state.text);
+-    const undo = useLayerStore(state =&gt; state.undo);
++    const mainText = useMain(state =&gt; state.text);
++    const undoMain = useMain(state =&gt; state.undo);
++    const notesText = useNotes(state =&gt; state.text);
++    const undoNotes = useNotes(state =&gt; state.undo);
+     return &lt;div&gt;
+-        &lt;button className=&quot;undo-main&quot; onClick={undo}&gt;Undo&lt;/button&gt;
+-        &lt;pre className=&quot;committed-main&quot;&gt;{text}&lt;/pre&gt;
+-        &lt;Editor className=&quot;editor-a&quot;/&gt;
+-        &lt;Editor className=&quot;editor-b&quot;/&gt;
++        &lt;button className=&quot;undo-main&quot; onClick={undoMain}&gt;Undo&lt;/button&gt;
++        &lt;pre className=&quot;committed-main&quot;&gt;{mainText}&lt;/pre&gt;
++        &lt;button className=&quot;undo-notes&quot; onClick={undoNotes}&gt;Undo notes&lt;/button&gt;
++        &lt;pre className=&quot;committed-notes&quot;&gt;{notesText}&lt;/pre&gt;
++        &lt;Editor className=&quot;editor-a&quot; useLayerStore={useMain}/&gt;
++        &lt;Editor className=&quot;editor-b&quot; useLayerStore={useNotes}/&gt;
+     &lt;/div&gt;;
+ }
+--- react/v2/store.js
++++ react/v3/store.js
+@@ -1,28 +1,32 @@
+ import {create} from &quot;zustand&quot;;
+ 
+-export const useLayerStore = create(set =&gt; ({
+-    text: &quot;[1]&quot;,
+-    // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+-    textOrigin: null,
+-    history: [],
+-    draft: null,
+-    setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
+-    commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
+-    undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+-        text: state.history[state.history.length - 1],
++// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
++export function createLayerStore(initialText) {
++    const useLayerStore = create(set =&gt; ({
++        text: initialText,
++        // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+         textOrigin: null,
+-        history: state.history.slice(0, -1)
+-    } : {})
+-}));
++        history: [],
++        draft: null,
++        setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
++        commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
++        undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
++            text: state.history[state.history.length - 1],
++            textOrigin: null,
++            history: state.history.slice(0, -1)
++        } : {})
++    }));
+ 
+-// The shared validation service - each valid draft is committed in turn
+-useLayerStore.subscribe((state, previous) =&gt; {
+-    if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
+-        const {text, origin} = state.draft;
+-        validateLayer(text).then(valid =&gt; {
+-            if (valid) {
+-                useLayerStore.getState().commit(text, origin);
+-            }
+-        });
+-    }
+-});
++    // The shared validation service - each valid draft is committed in turn
++    useLayerStore.subscribe((state, previous) =&gt; {
++        if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
++            const {text, origin} = state.draft;
++            validateLayer(text).then(valid =&gt; {
++                if (valid) {
++                    useLayerStore.getState().commit(text, origin);
++                }
++            });
++        }
++    });
++    return useLayerStore;
++}
+--- react/v2/editor.jsx
++++ react/v3/editor.jsx
+@@ -1,7 +1,5 @@
+ import {useEffect, useId, useRef} from &quot;react&quot;;
+-import {useLayerStore} from &quot;./store.js&quot;;
+-
+-// A reusable CodeMirror editor for the text of the layer store
+-export function Editor({className}) {
++// A reusable CodeMirror editor for the text of a layer store
++export function Editor({className, useLayerStore}) {
+     const text = useLayerStore(state =&gt; state.text);
+     const textOrigin = useLayerStore(state =&gt; state.textOrigin);
+</code></pre></figure></details>
+
+<h3>R4 · A transforming step between commit and editors</h3>
+<p>React passed first time. The origin tag forced by R2 marks the change itself, so a transformed value still carries
+it. Infusion's first attempt rewrote the user's <code>[1, 345]</code> as <code>[1,345]</code> and moved the cursor. Two
+validations were in flight at once. When the earlier one settled, the computation stopped counting as pending, so its
+transaction closed while the later run was outstanding, and that later result arrived without its source. Before R4 the
+equality check in the editor hid this, because the result equalled the editor's text. Normalisation makes them differ.
+The defect was fixed in the framework, and the user code needed no change.</p>
+<details class="diff"><summary>Infusion diff, v3 → v4</summary><figure class="code"><div class="code-head"><span class="code-name">fluid/v3 → fluid/v4</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v3/index.html
++++ fluid/v4/index.html
+@@ -15,4 +15,5 @@
+     &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
++    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+--- fluid/v3/app.js
++++ fluid/v4/app.js
+@@ -10,5 +10,5 @@
+         $component: {
+             $layers: &quot;exp.layerStore&quot;,
+-            text: &quot;[9]&quot;
++            committed: &quot;[9]&quot;
+         }
+     },
+--- fluid/v3/store.js
++++ fluid/v4/store.js
+@@ -3,5 +3,7 @@
+ fluid.def(&quot;exp.layerStore&quot;, {
+     $layers: &quot;fluid.component&quot;,
+-    text: &quot;[1]&quot;,
++    committed: &quot;[1]&quot;,
++    // The normalisation stage - the text which views and editors see
++    text: &quot;$compute:normaliseLayer({self}.committed)&quot;,
+     history: [],
+     draft: null,
+@@ -24,6 +26,6 @@
+ 
+ exp.layerStore.commit = function (self, text) {
+-    self.history = [...self.history, self.text];
+-    self.text = text;
++    self.history = [...self.history, self.committed];
++    self.committed = text;
+ };
+ 
+@@ -31,5 +33,5 @@
+     const history = self.history;
+     if (history.length &gt; 0) {
+-        self.text = history[history.length - 1];
++        self.committed = history[history.length - 1];
+         self.history = history.slice(0, -1);
+     }
+</code></pre></figure></details><details class="diff"><summary>React diff, v3 → v4</summary><figure class="code"><div class="code-head"><span class="code-name">react/v3 → react/v4</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v3/index.html
++++ react/v4/index.html
+@@ -7,4 +7,5 @@
+     &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
++    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+ &lt;/head&gt;
+ &lt;body&gt;
+--- react/v3/app.jsx
++++ react/v4/app.jsx
+@@ -1,3 +1,3 @@
+-import {createLayerStore} from &quot;./store.js&quot;;
++import {createLayerStore, selectText} from &quot;./store.js&quot;;
+ import {Editor} from &quot;./editor.jsx&quot;;
+ 
+@@ -6,7 +6,7 @@
+ 
+ export function App() {
+-    const mainText = useMain(state =&gt; state.text);
++    const mainText = useMain(selectText);
+     const undoMain = useMain(state =&gt; state.undo);
+-    const notesText = useNotes(state =&gt; state.text);
++    const notesText = useNotes(selectText);
+     const undoNotes = useNotes(state =&gt; state.undo);
+     return &lt;div&gt;
+--- react/v3/store.js
++++ react/v4/store.js
+@@ -2,7 +2,10 @@
+ 
+ // A layer&#x27;s text, with its history and the shared validation service which commits its drafts
++// The normalisation stage - the text which views and editors see
++export const selectText = state =&gt; normaliseLayer(state.committed);
++
+ export function createLayerStore(initialText) {
+     const useLayerStore = create(set =&gt; ({
+-        text: initialText,
++        committed: initialText,
+         // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+         textOrigin: null,
+@@ -10,7 +13,7 @@
+         draft: null,
+         setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
+-        commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
++        commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.committed], committed: text, textOrigin: origin})),
+         undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+-            text: state.history[state.history.length - 1],
++            committed: state.history[state.history.length - 1],
+             textOrigin: null,
+             history: state.history.slice(0, -1)
+--- react/v3/editor.jsx
++++ react/v4/editor.jsx
+@@ -1,6 +1,7 @@
+ import {useEffect, useId, useRef} from &quot;react&quot;;
++import {selectText} from &quot;./store.js&quot;;
+ // A reusable CodeMirror editor for the text of a layer store
+ export function Editor({className, useLayerStore}) {
+-    const text = useLayerStore(state =&gt; state.text);
++    const text = useLayerStore(selectText);
+     const textOrigin = useLayerStore(state =&gt; state.textOrigin);
+     // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
+</code></pre></figure></details>
+
+<h3>A declarative rebuild</h3>
+<p>The Infusion editor above followed an early pattern from the framework's own CodeMirror integration: the work happened
+in imperative code inside the binder, and the editor's commits were stamped by hand with
+<code>fluid.cell.withAmbientSource</code>. To check whether that shaped the results, the Infusion chain was rebuilt in a
+declarative style, after two framework changes. An <code>$effect</code> record may now declare <code>source: "self"</code>,
+so that everything it writes carries the component's self source. A <code>$method</code> now runs its function untracked,
+so values a method reads never become dependencies of a computation or effect that calls it. Its arguments are still
+resolved in the caller's context, because they can be genuine dependencies of the caller.</p>
+<p>In the declarative editor, the CodeMirror listener only records the raw edit in a member. An async <code>$compute</code>
+validates it, and an <code>$effect</code> declaring <code>source: "self"</code> commits it. In R2 that effect forwards the
+edit to the store as a draft instead, and the store's commit effect calls its <code>commit</code> method with no
+<code>untracked</code>. Every step passed first time, the client code makes no <code>fluid.cell</code> calls, and the two
+lines that suppress the echo are declarations that never change. The style costs about nine more lines than the
+imperative one.</p>
+<p>The conclusions hold. Composability is slightly stronger, since the suppression is now declared rather than applied.
+The R2 hazard that only Infusion had, an effect re-triggering itself through a method's reads, no longer exists: the
+earlier control that omitted <code>untracked</code> now passes. The declarative chain was built on the fixed framework, so
+its first-time passes say nothing about how it would have fared before the fixes. It can't run on the earlier framework,
+which lacks <code>source:</code>.</p>
+<details class="diff"><summary>Imperative → declarative baseline</summary><figure class="code"><div class="code-head"><span class="code-name">fluid/v0 → fluid-decl/v0</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v0/editor.js
++++ fluid-decl/v0/editor.js
+@@ -5,4 +5,15 @@
+     store: &quot;{exp.app}&quot;,
+     text: &quot;{self}.store.text&quot;,
++    // The user&#x27;s latest edit, as reported by the editor
++    edited: null,
++    validEdit: &quot;$compute:exp.cmEditor.validate({self}.edited)&quot;,
++    commitEdit: {
++        $effect: {
++            func: (store, text) =&gt; store.commit(text),
++            args: [&quot;{self}.store&quot;, &quot;{self}.validEdit&quot;],
++            // Marked as originated by us, so that it is not read back by readEffect
++            source: &quot;self&quot;
++        }
++    },
+     view: {
+         $component: {
+@@ -13,5 +24,5 @@
+     instance: {
+         $bindable: {
+-            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer)&quot;,
++            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer, {self}.text)&quot;,
+             onceOnly: true
+         }
+@@ -26,18 +37,17 @@
+ });
+ 
+-exp.cmEditor.construct = function (self, container) {
+-    const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
++exp.cmEditor.construct = function (self, container, text) {
++    const cm = CodeMirror(container, {value: text});
+     cm.on(&quot;change&quot;, (cm, change) =&gt; {
+-        // Only the user&#x27;s edits are validated and committed - not text supplied by readText
++        // Only the user&#x27;s edits are reported - not text supplied by readText
+         if (change.origin !== &quot;setValue&quot;) {
+-            const text = cm.getValue();
+-            validateLayer(text).then(valid =&gt; {
+-                if (valid) {
+-                    fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.commit(text))();
+-                }
+-            });
++            self.edited = cm.getValue();
+         }
+     });
+     return cm;
++};
++
++exp.cmEditor.validate = async function (edited) {
++    return edited !== null &amp;&amp; await validateLayer(edited) ? edited : fluid.unavailable(&quot;Edit is not valid&quot;);
+ };
+ 
+</code></pre></figure></details><details class="diff"><summary>Declarative diff, v0 → v1</summary><figure class="code"><div class="code-head"><span class="code-name">fluid-decl/v0 → fluid-decl/v1</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid-decl/v0/app.js
++++ fluid-decl/v1/app.js
+@@ -13,8 +13,14 @@
+                 &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                 &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
++                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+             &lt;/div&gt;`
+         }
+     },
+     editorA: {
++        $component: {
++            $layers: &quot;exp.cmEditor&quot;
++        }
++    },
++    editorB: {
+         $component: {
+             $layers: &quot;exp.cmEditor&quot;
+</code></pre></figure></details><details class="diff"><summary>Declarative diff, v1 → v2</summary><figure class="code"><div class="code-head"><span class="code-name">fluid-decl/v1 → fluid-decl/v2</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid-decl/v1/app.js
++++ fluid-decl/v2/app.js
+@@ -4,4 +4,13 @@
+     text: &quot;[1]&quot;,
+     history: [],
++    draft: null,
++    // The shared validation service - each valid draft is committed in turn
++    validDraft: &quot;$compute:exp.app.validate({self}.draft)&quot;,
++    commitValid: {
++        $effect: {
++            func: (self, text) =&gt; self.commit(text),
++            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
++        }
++    },
+     commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+     undo: &quot;$method:exp.app.undo({self})&quot;,
+@@ -29,4 +38,8 @@
+ });
+ 
++exp.app.validate = async function (draft) {
++    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
++};
++
+ exp.app.commit = function (self, text) {
+     self.history = [...self.history, self.text];
+--- fluid-decl/v1/editor.js
++++ fluid-decl/v2/editor.js
+@@ -7,9 +7,8 @@
+     // The user&#x27;s latest edit, as reported by the editor
+     edited: null,
+-    validEdit: &quot;$compute:exp.cmEditor.validate({self}.edited)&quot;,
+-    commitEdit: {
++    submitDraft: {
+         $effect: {
+-            func: (store, text) =&gt; store.commit(text),
+-            args: [&quot;{self}.store&quot;, &quot;{self}.validEdit&quot;],
++            func: (store, edited) =&gt; store.draft = edited,
++            args: [&quot;{self}.store&quot;, &quot;{self}.edited&quot;],
+             // Marked as originated by us, so that it is not read back by readEffect
+             source: &quot;self&quot;
+@@ -48,8 +47,4 @@
+ };
+ 
+-exp.cmEditor.validate = async function (edited) {
+-    return edited !== null &amp;&amp; await validateLayer(edited) ? edited : fluid.unavailable(&quot;Edit is not valid&quot;);
+-};
+-
+ exp.cmEditor.readText = function (text, cm) {
+     if (cm.getValue() !== text) {
+</code></pre></figure></details><details class="diff"><summary>Declarative diff, v2 → v3</summary><figure class="code"><div class="code-head"><span class="code-name">fluid-decl/v2 → fluid-decl/v3</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid-decl/v2/index.html
++++ fluid-decl/v3/index.html
+@@ -15,4 +15,5 @@
+     &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
++    &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+--- fluid-decl/v2/app.js
++++ fluid-decl/v3/app.js
+@@ -2,23 +2,23 @@
+ fluid.def(&quot;exp.app&quot;, {
+     $layers: &quot;fluid.component&quot;,
+-    text: &quot;[1]&quot;,
+-    history: [],
+-    draft: null,
+-    // The shared validation service - each valid draft is committed in turn
+-    validDraft: &quot;$compute:exp.app.validate({self}.draft)&quot;,
+-    commitValid: {
+-        $effect: {
+-            func: (self, text) =&gt; self.commit(text),
+-            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
++    main: {
++        $component: {
++            $layers: &quot;exp.layerStore&quot;
+         }
+     },
+-    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+-    undo: &quot;$method:exp.app.undo({self})&quot;,
++    notes: {
++        $component: {
++            $layers: &quot;exp.layerStore&quot;,
++            text: &quot;[9]&quot;
++        }
++    },
+     view: {
+         $component: {
+             $layers: &quot;fluid.templateViewComponent&quot;,
+             template: `&lt;div&gt;
+-                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+-                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
++                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.main.undo()&quot;&gt;Undo&lt;/button&gt;
++                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.main.text}&lt;/pre&gt;
++                &lt;button class=&quot;undo-notes&quot; @onclick=&quot;{exp.app}.notes.undo()&quot;&gt;Undo notes&lt;/button&gt;
++                &lt;pre class=&quot;committed-notes&quot;&gt;@{{exp.app}.notes.text}&lt;/pre&gt;
+                 &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                 &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+@@ -28,28 +28,13 @@
+     editorA: {
+         $component: {
+-            $layers: &quot;exp.cmEditor&quot;
++            $layers: &quot;exp.cmEditor&quot;,
++            store: &quot;{exp.app}.main&quot;
+         }
+     },
+     editorB: {
+         $component: {
+-            $layers: &quot;exp.cmEditor&quot;
++            $layers: &quot;exp.cmEditor&quot;,
++            store: &quot;{exp.app}.notes&quot;
+         }
+     }
+ });
+-
+-exp.app.validate = async function (draft) {
+-    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+-};
+-
+-exp.app.commit = function (self, text) {
+-    self.history = [...self.history, self.text];
+-    self.text = text;
+-};
+-
+-exp.app.undo = function (self) {
+-    const history = self.history;
+-    if (history.length &gt; 0) {
+-        self.text = history[history.length - 1];
+-        self.history = history.slice(0, -1);
+-    }
+-};
+--- /dev/null
++++ fluid-decl/v3/store.js
+@@ -0,0 +1,35 @@
++&quot;use strict&quot;;
++// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
++fluid.def(&quot;exp.layerStore&quot;, {
++    $layers: &quot;fluid.component&quot;,
++    text: &quot;[1]&quot;,
++    history: [],
++    draft: null,
++    // The shared validation service - each valid draft is committed in turn
++    validDraft: &quot;$compute:exp.layerStore.validate({self}.draft)&quot;,
++    commitValid: {
++        $effect: {
++            func: (self, text) =&gt; self.commit(text),
++            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
++        }
++    },
++    commit: &quot;$method:exp.layerStore.commit({self}, {0})&quot;,
++    undo: &quot;$method:exp.layerStore.undo({self})&quot;
++});
++
++exp.layerStore.validate = async function (draft) {
++    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
++};
++
++exp.layerStore.commit = function (self, text) {
++    self.history = [...self.history, self.text];
++    self.text = text;
++};
++
++exp.layerStore.undo = function (self) {
++    const history = self.history;
++    if (history.length &gt; 0) {
++        self.text = history[history.length - 1];
++        self.history = history.slice(0, -1);
++    }
++};
+</code></pre></figure></details><details class="diff"><summary>Declarative diff, v3 → v4</summary><figure class="code"><div class="code-head"><span class="code-name">fluid-decl/v3 → fluid-decl/v4</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid-decl/v3/index.html
++++ fluid-decl/v4/index.html
+@@ -15,4 +15,5 @@
+     &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
++    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+--- fluid-decl/v3/app.js
++++ fluid-decl/v4/app.js
+@@ -10,5 +10,5 @@
+         $component: {
+             $layers: &quot;exp.layerStore&quot;,
+-            text: &quot;[9]&quot;
++            committed: &quot;[9]&quot;
+         }
+     },
+--- fluid-decl/v3/store.js
++++ fluid-decl/v4/store.js
+@@ -3,5 +3,7 @@
+ fluid.def(&quot;exp.layerStore&quot;, {
+     $layers: &quot;fluid.component&quot;,
+-    text: &quot;[1]&quot;,
++    committed: &quot;[1]&quot;,
++    // The normalisation stage - the text which views and editors see
++    text: &quot;$compute:normaliseLayer({self}.committed)&quot;,
+     history: [],
+     draft: null,
+@@ -23,6 +25,6 @@
+ 
+ exp.layerStore.commit = function (self, text) {
+-    self.history = [...self.history, self.text];
+-    self.text = text;
++    self.history = [...self.history, self.committed];
++    self.committed = text;
+ };
+ 
+@@ -30,5 +32,5 @@
+     const history = self.history;
+     if (history.length &gt; 0) {
+-        self.text = history[history.length - 1];
++        self.committed = history[history.length - 1];
+         self.history = history.slice(0, -1);
+     }
+</code></pre></figure></details>
+</div>
+</section>
+
+<section id="controls" class="wide">
+<h2>Controls</h2>
+<p style="max-width: 70ch">Each control removes or alters one thing in a passing version, to show that the harness
+detects the failure and that the code doing the work is where it appears to be.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th scope="col">Variant</th><th scope="col">Change</th><th scope="col">Outcome</th></tr></thead>
+<tbody>
+<tr><th scope="row"><a href="#src-controls-fluid-v0-noself">fluid-v0-noself</a></th>
+    <td>Infusion v0 with the read effect's <code>"self"</code> exclusion removed</td>
+    <td><span class="chip fail">5/10</span> The last keystroke is lost (<code>[134]</code> for <code>[1345]</code>) and the cursor moves to 0</td></tr>
+<tr><th scope="row"><a href="#src-react-v2-natural-attempt">react v2, first attempt</a></th>
+    <td>React R2 with the v1 equality ref moved onto draft submission</td>
+    <td><span class="chip fail">7/16</span> The same failure, in both editors</td></tr>
+<tr><th scope="row"><a href="#src-controls-fluid-v2-tracked">fluid-v2-tracked</a></th>
+    <td>Infusion R2 without <code>untracked</code> around the commit</td>
+    <td><span class="chip fail">11/16</span> before methods ran untracked: the effect re-triggered itself until the cycle
+    guard stopped it after 100 runs, leaving 100 duplicate history entries and a console error naming the effect and the
+    fix. <span class="chip pass">16/16</span> since</td></tr>
+<tr><th scope="row"><a href="#src-controls-fluid-decl-v2-noself">fluid-decl-v2-noself</a></th>
+    <td>Declarative R2 with the read effect's <code>"self"</code> exclusion removed</td>
+    <td><span class="chip fail">7/16</span> The same failure as the other exclusion controls, so the declared source is
+    what does the work</td></tr>
+<tr><th scope="row"><a href="#src-react-v3-forgot">react v3, off-protocol undo</a></th>
+    <td>React R3 with undo no longer clearing <code>textOrigin</code></td>
+    <td><span class="chip fail">14/17</span> Undo silently stops reaching the editor that last committed</td></tr>
+<tr><th scope="row"><a href="#src-react-v1-normalised">react v1 + R4</a></th>
+    <td>R4's normalisation applied to React v1, which still compares against the last text it committed</td>
+    <td><span class="chip fail">fails</span> Typing <code>, 3</code>, <code>4</code>, <code>5</code> during validation leaves
+    <code>[1,34]</code>: the last keystroke is lost and the cursor moves to 0. The baseline checks still pass, since
+    they type no spaces</td></tr>
+</tbody>
+</table>
+</div>
+<p style="max-width: 70ch">The off-protocol control matters most for the hypothesis. React's origin tag is a convention
+that every code path writing the text has to honour, and a writer that forgets fails silently. Infusion's nearest
+equivalent mistake, forgetting <code>untracked</code>, now fails loudly with a message naming the fix.</p>
+</section>
+
+<section id="defects" class="wide">
+<h2>Framework defects</h2>
+<p style="max-width: 70ch">Seven defects in the Infusion core surfaced. The first five appeared while building this
+small app the natural way. The last two appeared while trialling untracked method dispatch for the declarative rebuild:
+an early version of that change, which also resolved a method's arguments untracked, broke two compose-edit demo steps,
+and tracing the breakage found both. All seven existed before the experiment. Each is fixed in the repository, with a
+regression test confirmed to fail without the fix.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th scope="col">Defect</th><th scope="col">Symptom</th><th scope="col">Fix</th><th scope="col">Test</th></tr></thead>
+<tbody>
+<tr><th scope="row">Lost re-staling</th>
+    <td>An effect whose run made one of its own inputs stale was marked clean afterwards and taken off the queue. The input
+    stayed stale with nothing to pull it, and the effect never ran again, so commits stopped after the first.</td>
+    <td>A mark made during a cell's own update is kept (<code>_restale</code>), and an effect is taken off the queue
+    before it runs, so it can be queued again (<code>FluidSignals.js</code>)</td>
+    <td>“An effect whose run makes one of its sources stale is notified of later changes”, and the IL test “An effect
+    writing members of its own component is notified of each later change, once”</td></tr>
+<tr><th scope="row">Writing created a dependency</th>
+    <td>The first write to a member made a tracked read, so an effect came to depend on what it wrote and ran twice</td>
+    <td>The read in <code>fluid.pathToLive</code> is untracked (<code>FluidIL.js</code>)</td>
+    <td>Covered by the IL test above</td></tr>
+<tr><th scope="row">Unbounded self-triggering</th>
+    <td>Once the first fix was in, an effect genuinely writing a value it reads looped forever</td>
+    <td>An effect run more than <code>fluid.cell.maxEffectRuns</code> (100) times in one stabilization is reported
+    through <code>fluid.cell.reportCycle</code> and not run again in that pass</td>
+    <td>“An effect which cyclically triggers itself is stopped and reported”</td></tr>
+<tr><th scope="row">Sources lost across async</th>
+    <td>Only pending effects held a transaction open, so a pending async computation's result arrived with no source</td>
+    <td>A pending async computation holds open a transaction that carries sources. A first version held every
+    transaction and hung a bagatelle start-up test, so it is limited to sourced ones</td>
+    <td>Exercised by the overlap test below and the R2 harness run</td></tr>
+<tr><th scope="row">Overlapping async runs</th>
+    <td>When an earlier promise settled while a later one was outstanding, the computation stopped counting as pending
+    and the later result lost its source</td>
+    <td>Outstanding promises are counted per cell (<code>_inFlight</code>), and a cell with any outstanding run keeps
+    holding its sourced transaction</td>
+    <td>“Sources are carried across an async computation whose runs overlap”</td></tr>
+<tr><th scope="row">Stale computations after a binding</th>
+    <td>A computation whose own pull made a source it had already received change, e.g. by making a binding, kept its
+    stale value permanently</td>
+    <td>A computation is re-marked only when the source that changed had already returned its value to the update in
+    progress, and is then recomputed at once, with a bound. A first version, which re-marked on any change, broke 106
+    tests</td>
+    <td>“A computation whose received source changes in the course of its update is brought up to date”</td></tr>
+<tr><th scope="row">Sources left stale by a traversal</th>
+    <td>While a cell's sources were brought up to date in turn, a later one, e.g. a binding that turned over a component,
+    made an earlier one stale again. The cell then found no edge it could run and was marked clean without being
+    recomputed. A reopened editor kept the previous layer's text</td>
+    <td>The pass over an edge's sources repeats while any of them has gone stale and is not on the traversal stack, with a
+    bound</td>
+    <td>“A source made stale again whilst a later source is brought up to date is brought up to date once more”</td></tr>
+</tbody>
+</table>
+</div>
+<p style="max-width: 70ch">Two smaller issues came up while building the baseline. Configuration had no way to write a
+literal string beginning with <code>{</code> or <code>$</code>. A leading backslash now escapes one, so
+<code>"\\{"</code> in JavaScript source stands for a literal <code>{</code>. The editors were also switched from
+<code>{global}.CodeMirror</code> to the global, in the belief that the argument arrived proxied. That was a
+misdiagnosis. The proxy was the unavailable value of the unescaped text, which CodeMirror took for a document object.
+A control with <code>{global}.CodeMirror</code> restored passes every check. After the fixes, the Infusion suites pass
+in full: 2129 tests in node, 349 in Chromium, 34 demo steps, and 151 in the bagatelle port.</p>
+</section>
+
+<section id="findings">
+<h2>What the evidence suggests</h2>
+<div class="finding for">
+<h3>The composability cost is real, and it shows up as soon as the commit moves</h3>
+<p>In Infusion, echo suppression stayed as two lines inside the editor through all four recompositions, and the editor
+file was untouched in R1, R3 and R4. In React it moved into the store's data model and API at R2, as a field, two
+parameters and forwarding in the validator. The editor changed again in R3 and R4. This matches the hypothesis. The
+ability to recognise one's own change was injected at each place a mutation happens, and moving the mutation meant
+rewriting it in several places.</p>
+</div>
+<div class="finding for">
+<h3>Equality is not identity</h3>
+<p>Suppressing an echo by comparing values works only while nothing on the return path transforms the value or lets it
+go stale. Both a shared validator (R2) and a normaliser (R4) broke it. The mainstream fix is to carry an identity in the
+data, a hand-built version of what Infusion's transactions carry automatically. Once React had it, R3 and R4 caused it
+no trouble, but it is a protocol every writer must follow.</p>
+</div>
+<div class="finding against">
+<h3>Carniato's point about predictability held, given the framework's maturity</h3>
+<p>Every Infusion failure was a framework defect rather than a user mistake, five in total over four small
+recompositions, and each needed graph instrumentation to diagnose. Two more surfaced in the follow-up, again found only
+by instrumentation. React's failures were ordinary logic errors that could be read from the code. Infusion's code was
+also 40 to 50% larger. One difference has gone: Infusion no longer needs <code>untracked</code> where React's
+<code>getState()</code> needs nothing, since methods now run untracked.</p>
+</div>
+<p>On balance the evidence favours the architecture on composability and the mainstream on predictability. That
+judgement is about the framework as it stood. The defects are fixed, and the declarative rebuild passed every step first
+time on the fixed framework. The question to ask next is whether that holds on further recompositions, or whether a
+reactive graph that keeps write capability general keeps producing failures that need instrumentation to explain.</p>
+</section>
+
+<section id="limits">
+<h2>Limits</h2>
+<ul>
+    <li>Both implementations were written by the same author, who also wrote the framework fixes. The choice of idioms
+    on each side is theirs.</li>
+    <li>The React baseline used a single global Zustand store, which is the common idiom. A store taken from context
+    would have spared the editor change in R3 if the redirection had been anticipated.</li>
+    <li>The app is small, and four recompositions are a small sample.</li>
+    <li>The harness relies on fixed delays around a 150&nbsp;ms validator. It was stable across every run here but is
+    timing-dependent.</li>
+    <li>The Infusion first-attempt outcomes in R2 and R4 reflect the framework before its fixes. With the fixed framework,
+    R2 and R4 need no change beyond the recomposition itself. The declarative chain was built after the fixes, so it shows
+    only the fixed framework.</li>
+    <li>Line counts are non-blank lines of user source. They exclude the bundle and count the page's script tags.</li>
+</ul>
+</section>
+
+<section id="reproduce">
+<h2>Reproducing it</h2>
+<p>The experiment ran from a temporary directory, so this page carries the complete source. To rebuild it, lay the
+files out as the paths in the <a href="#source">appendix</a> show, under one directory, and add:</p>
+<ul>
+    <li>a symlink <code>infusion</code> to an infusion-6 checkout containing the framework fixes;</li>
+    <li>in <code>react/</code>, <code>npm install react@18.3.1 react-dom@18.3.1 zustand@4.5.5 esbuild@0.19.12</code>, then
+    <code>./build.sh v0</code> and likewise for each React version;</li>
+    <li>a run of <code>node run.js &lt;version&gt; &lt;suite&gt;</code>, e.g. <code>node run.js fluid/v4 normalised</code>.
+    The suites are <code>base</code> (v0), <code>twoEditors</code> (v1, v2), <code>twoLayers</code> (v3) and
+    <code>normalised</code> (v4).</li>
+</ul>
+<p><code>run.js</code> loads infusion-6's demo runner and puppeteer by absolute path, so adjust those two paths to your
+checkout.</p>
+</section>
+
+<section id="source" class="wide">
+<h2>Appendix: source</h2>
+<p style="max-width: 70ch">Every file of every version, as tested. Expand a version to read it.</p>
+<h3>Versions</h3>
+<details class="variant" id="src-fluid-v0"><summary><span class="vname">fluid/v0</span><span class="vtitle">Infusion baseline</span></summary><p class="vdesc">One editor bound to the layer text. The editor validates each edit and commits valid text to <code>exp.app</code>. Its read effect excludes <code>"self"</code>, and its commits are stamped with <code>fluid.selfSource(self)</code>.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.app.undo({self})&quot;,
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    }
+});
+
+exp.app.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.app.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container) {
+    const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are validated and committed - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            const text = cm.getValue();
+            validateLayer(text).then(valid =&gt; {
+                if (valid) {
+                    fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.commit(text))();
+                }
+            });
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-react-v0"><summary><span class="vname">react/v0</span><span class="vtitle">React baseline</span></summary><p class="vdesc">The same app with React 18 and Zustand 4. The editor owns its CodeMirror document, and a <code>lastCommitted</code> ref stops it writing its own commits back into itself.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;React layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script src=&quot;bundle.js&quot;&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">index.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createRoot} from &quot;react-dom/client&quot;;
+import {App} from &quot;./app.jsx&quot;;
+
+createRoot(document.querySelector(&quot;.app&quot;)).render(&lt;App/&gt;);
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useLayerStore} from &quot;./store.js&quot;;
+import {Editor} from &quot;./editor.jsx&quot;;
+
+export function App() {
+    const text = useLayerStore(state =&gt; state.text);
+    const undo = useLayerStore(state =&gt; state.undo);
+    return &lt;div&gt;
+        &lt;button className=&quot;undo-main&quot; onClick={undo}&gt;Undo&lt;/button&gt;
+        &lt;pre className=&quot;committed-main&quot;&gt;{text}&lt;/pre&gt;
+        &lt;Editor className=&quot;editor-a&quot;/&gt;
+    &lt;/div&gt;;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {create} from &quot;zustand&quot;;
+
+export const useLayerStore = create(set =&gt; ({
+    text: &quot;[1]&quot;,
+    history: [],
+    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.text], text})),
+    undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+        text: state.history[state.history.length - 1],
+        history: state.history.slice(0, -1)
+    } : {})
+}));
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useEffect, useRef} from &quot;react&quot;;
+import {useLayerStore} from &quot;./store.js&quot;;
+
+// A reusable CodeMirror editor for the text of the layer store
+export function Editor({className}) {
+    const text = useLayerStore(state =&gt; state.text);
+    const commit = useLayerStore(state =&gt; state.commit);
+    const hostRef = useRef(null);
+    const cmRef = useRef(null);
+    // The text this editor last committed, so that it is not written back into it when it returns from the store
+    const lastCommitted = useRef(null);
+
+    useEffect(() =&gt; {
+        const cm = CodeMirror(hostRef.current, {value: text});
+        cm.on(&quot;change&quot;, (cm, change) =&gt; {
+            // Only the user&#x27;s edits are validated and committed - not text supplied from the store
+            if (change.origin !== &quot;setValue&quot;) {
+                const edited = cm.getValue();
+                validateLayer(edited).then(valid =&gt; {
+                    if (valid) {
+                        lastCommitted.current = edited;
+                        commit(edited);
+                    }
+                });
+            }
+        });
+        cmRef.current = cm;
+        return () =&gt; cm.getWrapperElement().remove();
+    }, []);
+
+    useEffect(() =&gt; {
+        const cm = cmRef.current;
+        if (text !== lastCommitted.current &amp;&amp; cm.getValue() !== text) {
+            cm.setValue(text);
+        }
+    }, [text]);
+
+    return &lt;div className={className} ref={hostRef}/&gt;;
+}
+</code></pre></figure></details><details class="variant" id="src-fluid-v1"><summary><span class="vname">fluid/v1</span><span class="vtitle">Infusion R1: a second editor</span></summary><p class="vdesc">A second <code>exp.cmEditor</code> on the same layer.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.app.undo({self})&quot;,
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    }
+});
+
+exp.app.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.app.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container) {
+    const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are validated and committed - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            const text = cm.getValue();
+            validateLayer(text).then(valid =&gt; {
+                if (valid) {
+                    fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.commit(text))();
+                }
+            });
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-react-v1"><summary><span class="vname">react/v1</span><span class="vtitle">React R1: a second editor</span></summary><p class="vdesc">A second <code>&lt;Editor&gt;</code> on the same store.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;React layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script src=&quot;bundle.js&quot;&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">index.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createRoot} from &quot;react-dom/client&quot;;
+import {App} from &quot;./app.jsx&quot;;
+
+createRoot(document.querySelector(&quot;.app&quot;)).render(&lt;App/&gt;);
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useLayerStore} from &quot;./store.js&quot;;
+import {Editor} from &quot;./editor.jsx&quot;;
+
+export function App() {
+    const text = useLayerStore(state =&gt; state.text);
+    const undo = useLayerStore(state =&gt; state.undo);
+    return &lt;div&gt;
+        &lt;button className=&quot;undo-main&quot; onClick={undo}&gt;Undo&lt;/button&gt;
+        &lt;pre className=&quot;committed-main&quot;&gt;{text}&lt;/pre&gt;
+        &lt;Editor className=&quot;editor-a&quot;/&gt;
+        &lt;Editor className=&quot;editor-b&quot;/&gt;
+    &lt;/div&gt;;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {create} from &quot;zustand&quot;;
+
+export const useLayerStore = create(set =&gt; ({
+    text: &quot;[1]&quot;,
+    history: [],
+    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.text], text})),
+    undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+        text: state.history[state.history.length - 1],
+        history: state.history.slice(0, -1)
+    } : {})
+}));
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useEffect, useRef} from &quot;react&quot;;
+import {useLayerStore} from &quot;./store.js&quot;;
+
+// A reusable CodeMirror editor for the text of the layer store
+export function Editor({className}) {
+    const text = useLayerStore(state =&gt; state.text);
+    const commit = useLayerStore(state =&gt; state.commit);
+    const hostRef = useRef(null);
+    const cmRef = useRef(null);
+    // The text this editor last committed, so that it is not written back into it when it returns from the store
+    const lastCommitted = useRef(null);
+
+    useEffect(() =&gt; {
+        const cm = CodeMirror(hostRef.current, {value: text});
+        cm.on(&quot;change&quot;, (cm, change) =&gt; {
+            // Only the user&#x27;s edits are validated and committed - not text supplied from the store
+            if (change.origin !== &quot;setValue&quot;) {
+                const edited = cm.getValue();
+                validateLayer(edited).then(valid =&gt; {
+                    if (valid) {
+                        lastCommitted.current = edited;
+                        commit(edited);
+                    }
+                });
+            }
+        });
+        cmRef.current = cm;
+        return () =&gt; cm.getWrapperElement().remove();
+    }, []);
+
+    useEffect(() =&gt; {
+        const cm = cmRef.current;
+        if (text !== lastCommitted.current &amp;&amp; cm.getValue() !== text) {
+            cm.setValue(text);
+        }
+    }, [text]);
+
+    return &lt;div className={className} ref={hostRef}/&gt;;
+}
+</code></pre></figure></details><details class="variant" id="src-fluid-v2"><summary><span class="vname">fluid/v2</span><span class="vtitle">Infusion R2: shared validation</span></summary><p class="vdesc">Editors write raw drafts. The store validates them with an async <code>$compute</code>, and an <code>$effect</code> commits each valid draft.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    draft: null,
+    // The shared validation service - each valid draft is committed in turn
+    validDraft: &quot;$compute:exp.app.validate({self}.draft)&quot;,
+    commitValid: {
+        $effect: {
+            // The commit consults the current text and history, which are not dependencies of the effect
+            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
+            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+        }
+    },
+    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.app.undo({self})&quot;,
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    }
+});
+
+exp.app.validate = async function (draft) {
+    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+};
+
+exp.app.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.app.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container) {
+    const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are submitted as drafts - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.draft = cm.getValue())();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-react-v2"><summary><span class="vname">react/v2</span><span class="vtitle">React R2: shared validation</span></summary><p class="vdesc">Editors write drafts tagged with their <code>useId()</code>. A store subscription validates each draft and commits it with its origin, and editors skip text whose <code>textOrigin</code> is their own.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;React layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script src=&quot;bundle.js&quot;&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">index.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createRoot} from &quot;react-dom/client&quot;;
+import {App} from &quot;./app.jsx&quot;;
+
+createRoot(document.querySelector(&quot;.app&quot;)).render(&lt;App/&gt;);
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useLayerStore} from &quot;./store.js&quot;;
+import {Editor} from &quot;./editor.jsx&quot;;
+
+export function App() {
+    const text = useLayerStore(state =&gt; state.text);
+    const undo = useLayerStore(state =&gt; state.undo);
+    return &lt;div&gt;
+        &lt;button className=&quot;undo-main&quot; onClick={undo}&gt;Undo&lt;/button&gt;
+        &lt;pre className=&quot;committed-main&quot;&gt;{text}&lt;/pre&gt;
+        &lt;Editor className=&quot;editor-a&quot;/&gt;
+        &lt;Editor className=&quot;editor-b&quot;/&gt;
+    &lt;/div&gt;;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {create} from &quot;zustand&quot;;
+
+export const useLayerStore = create(set =&gt; ({
+    text: &quot;[1]&quot;,
+    // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+    textOrigin: null,
+    history: [],
+    draft: null,
+    setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
+    commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
+    undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+        text: state.history[state.history.length - 1],
+        textOrigin: null,
+        history: state.history.slice(0, -1)
+    } : {})
+}));
+
+// The shared validation service - each valid draft is committed in turn
+useLayerStore.subscribe((state, previous) =&gt; {
+    if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
+        const {text, origin} = state.draft;
+        validateLayer(text).then(valid =&gt; {
+            if (valid) {
+                useLayerStore.getState().commit(text, origin);
+            }
+        });
+    }
+});
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useEffect, useId, useRef} from &quot;react&quot;;
+import {useLayerStore} from &quot;./store.js&quot;;
+
+// A reusable CodeMirror editor for the text of the layer store
+export function Editor({className}) {
+    const text = useLayerStore(state =&gt; state.text);
+    const textOrigin = useLayerStore(state =&gt; state.textOrigin);
+    // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
+    const id = useId();
+    const setDraft = useLayerStore(state =&gt; state.setDraft);
+    const hostRef = useRef(null);
+    const cmRef = useRef(null);
+
+    useEffect(() =&gt; {
+        const cm = CodeMirror(hostRef.current, {value: text});
+        cm.on(&quot;change&quot;, (cm, change) =&gt; {
+            // Only the user&#x27;s edits are submitted as drafts - not text supplied from the store
+            if (change.origin !== &quot;setValue&quot;) {
+                setDraft(cm.getValue(), id);
+            }
+        });
+        cmRef.current = cm;
+        return () =&gt; cm.getWrapperElement().remove();
+    }, []);
+
+    useEffect(() =&gt; {
+        const cm = cmRef.current;
+        if (textOrigin !== id &amp;&amp; cm.getValue() !== text) {
+            cm.setValue(text);
+        }
+    }, [text, textOrigin]);
+
+    return &lt;div className={className} ref={hostRef}/&gt;;
+}
+</code></pre></figure></details><details class="variant" id="src-fluid-v3"><summary><span class="vname">fluid/v3</span><span class="vtitle">Infusion R3: separate layers</span></summary><p class="vdesc">The store becomes the component <code>exp.layerStore</code>, instantiated as <code>main</code> and <code>notes</code>. Each editor's <code>store</code> reference is overridden at its instance site.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    main: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;
+        }
+    },
+    notes: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;,
+            text: &quot;[9]&quot;
+        }
+    },
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.main.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.main.text}&lt;/pre&gt;
+                &lt;button class=&quot;undo-notes&quot; @onclick=&quot;{exp.app}.notes.undo()&quot;&gt;Undo notes&lt;/button&gt;
+                &lt;pre class=&quot;committed-notes&quot;&gt;@{{exp.app}.notes.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.main&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.notes&quot;
+        }
+    }
+});
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
+fluid.def(&quot;exp.layerStore&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    draft: null,
+    // The shared validation service - each valid draft is committed in turn
+    validDraft: &quot;$compute:exp.layerStore.validate({self}.draft)&quot;,
+    commitValid: {
+        $effect: {
+            // The commit consults the current text and history, which are not dependencies of the effect
+            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
+            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+        }
+    },
+    commit: &quot;$method:exp.layerStore.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.layerStore.undo({self})&quot;
+});
+
+exp.layerStore.validate = async function (draft) {
+    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+};
+
+exp.layerStore.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.layerStore.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container) {
+    const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are submitted as drafts - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.draft = cm.getValue())();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-react-v3"><summary><span class="vname">react/v3</span><span class="vtitle">React R3: separate layers</span></summary><p class="vdesc">The store becomes the factory <code>createLayerStore</code>. The editor receives its store hook as a prop.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;React layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script src=&quot;bundle.js&quot;&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">index.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createRoot} from &quot;react-dom/client&quot;;
+import {App} from &quot;./app.jsx&quot;;
+
+createRoot(document.querySelector(&quot;.app&quot;)).render(&lt;App/&gt;);
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createLayerStore} from &quot;./store.js&quot;;
+import {Editor} from &quot;./editor.jsx&quot;;
+
+const useMain = createLayerStore(&quot;[1]&quot;);
+const useNotes = createLayerStore(&quot;[9]&quot;);
+
+export function App() {
+    const mainText = useMain(state =&gt; state.text);
+    const undoMain = useMain(state =&gt; state.undo);
+    const notesText = useNotes(state =&gt; state.text);
+    const undoNotes = useNotes(state =&gt; state.undo);
+    return &lt;div&gt;
+        &lt;button className=&quot;undo-main&quot; onClick={undoMain}&gt;Undo&lt;/button&gt;
+        &lt;pre className=&quot;committed-main&quot;&gt;{mainText}&lt;/pre&gt;
+        &lt;button className=&quot;undo-notes&quot; onClick={undoNotes}&gt;Undo notes&lt;/button&gt;
+        &lt;pre className=&quot;committed-notes&quot;&gt;{notesText}&lt;/pre&gt;
+        &lt;Editor className=&quot;editor-a&quot; useLayerStore={useMain}/&gt;
+        &lt;Editor className=&quot;editor-b&quot; useLayerStore={useNotes}/&gt;
+    &lt;/div&gt;;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {create} from &quot;zustand&quot;;
+
+// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
+export function createLayerStore(initialText) {
+    const useLayerStore = create(set =&gt; ({
+        text: initialText,
+        // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+        textOrigin: null,
+        history: [],
+        draft: null,
+        setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
+        commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
+        undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+            text: state.history[state.history.length - 1],
+            textOrigin: null,
+            history: state.history.slice(0, -1)
+        } : {})
+    }));
+
+    // The shared validation service - each valid draft is committed in turn
+    useLayerStore.subscribe((state, previous) =&gt; {
+        if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
+            const {text, origin} = state.draft;
+            validateLayer(text).then(valid =&gt; {
+                if (valid) {
+                    useLayerStore.getState().commit(text, origin);
+                }
+            });
+        }
+    });
+    return useLayerStore;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useEffect, useId, useRef} from &quot;react&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+export function Editor({className, useLayerStore}) {
+    const text = useLayerStore(state =&gt; state.text);
+    const textOrigin = useLayerStore(state =&gt; state.textOrigin);
+    // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
+    const id = useId();
+    const setDraft = useLayerStore(state =&gt; state.setDraft);
+    const hostRef = useRef(null);
+    const cmRef = useRef(null);
+
+    useEffect(() =&gt; {
+        const cm = CodeMirror(hostRef.current, {value: text});
+        cm.on(&quot;change&quot;, (cm, change) =&gt; {
+            // Only the user&#x27;s edits are submitted as drafts - not text supplied from the store
+            if (change.origin !== &quot;setValue&quot;) {
+                setDraft(cm.getValue(), id);
+            }
+        });
+        cmRef.current = cm;
+        return () =&gt; cm.getWrapperElement().remove();
+    }, []);
+
+    useEffect(() =&gt; {
+        const cm = cmRef.current;
+        if (textOrigin !== id &amp;&amp; cm.getValue() !== text) {
+            cm.setValue(text);
+        }
+    }, [text, textOrigin]);
+
+    return &lt;div className={className} ref={hostRef}/&gt;;
+}
+</code></pre></figure></details><details class="variant" id="src-fluid-v4"><summary><span class="vname">fluid/v4</span><span class="vtitle">Infusion R4: normalisation stage</span></summary><p class="vdesc">The store keeps <code>committed</code>, and <code>text</code> becomes a <code>$compute</code> of its normalised form.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    main: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;
+        }
+    },
+    notes: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;,
+            committed: &quot;[9]&quot;
+        }
+    },
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.main.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.main.text}&lt;/pre&gt;
+                &lt;button class=&quot;undo-notes&quot; @onclick=&quot;{exp.app}.notes.undo()&quot;&gt;Undo notes&lt;/button&gt;
+                &lt;pre class=&quot;committed-notes&quot;&gt;@{{exp.app}.notes.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.main&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.notes&quot;
+        }
+    }
+});
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
+fluid.def(&quot;exp.layerStore&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    committed: &quot;[1]&quot;,
+    // The normalisation stage - the text which views and editors see
+    text: &quot;$compute:normaliseLayer({self}.committed)&quot;,
+    history: [],
+    draft: null,
+    // The shared validation service - each valid draft is committed in turn
+    validDraft: &quot;$compute:exp.layerStore.validate({self}.draft)&quot;,
+    commitValid: {
+        $effect: {
+            // The commit consults the current text and history, which are not dependencies of the effect
+            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
+            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+        }
+    },
+    commit: &quot;$method:exp.layerStore.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.layerStore.undo({self})&quot;
+});
+
+exp.layerStore.validate = async function (draft) {
+    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+};
+
+exp.layerStore.commit = function (self, text) {
+    self.history = [...self.history, self.committed];
+    self.committed = text;
+};
+
+exp.layerStore.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.committed = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container) {
+    const cm = CodeMirror(container, {value: fluid.cell.untracked(() =&gt; self.text)});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are submitted as drafts - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            fluid.cell.withAmbientSource(fluid.selfSource(self), () =&gt; self.store.draft = cm.getValue())();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-react-v4"><summary><span class="vname">react/v4</span><span class="vtitle">React R4: normalisation stage</span></summary><p class="vdesc">The store keeps <code>committed</code> and exports a <code>selectText</code> selector, which the editor and the app read through.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;React layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script src=&quot;bundle.js&quot;&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">index.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createRoot} from &quot;react-dom/client&quot;;
+import {App} from &quot;./app.jsx&quot;;
+
+createRoot(document.querySelector(&quot;.app&quot;)).render(&lt;App/&gt;);
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {createLayerStore, selectText} from &quot;./store.js&quot;;
+import {Editor} from &quot;./editor.jsx&quot;;
+
+const useMain = createLayerStore(&quot;[1]&quot;);
+const useNotes = createLayerStore(&quot;[9]&quot;);
+
+export function App() {
+    const mainText = useMain(selectText);
+    const undoMain = useMain(state =&gt; state.undo);
+    const notesText = useNotes(selectText);
+    const undoNotes = useNotes(state =&gt; state.undo);
+    return &lt;div&gt;
+        &lt;button className=&quot;undo-main&quot; onClick={undoMain}&gt;Undo&lt;/button&gt;
+        &lt;pre className=&quot;committed-main&quot;&gt;{mainText}&lt;/pre&gt;
+        &lt;button className=&quot;undo-notes&quot; onClick={undoNotes}&gt;Undo notes&lt;/button&gt;
+        &lt;pre className=&quot;committed-notes&quot;&gt;{notesText}&lt;/pre&gt;
+        &lt;Editor className=&quot;editor-a&quot; useLayerStore={useMain}/&gt;
+        &lt;Editor className=&quot;editor-b&quot; useLayerStore={useNotes}/&gt;
+    &lt;/div&gt;;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {create} from &quot;zustand&quot;;
+
+// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
+// The normalisation stage - the text which views and editors see
+export const selectText = state =&gt; normaliseLayer(state.committed);
+
+export function createLayerStore(initialText) {
+    const useLayerStore = create(set =&gt; ({
+        committed: initialText,
+        // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+        textOrigin: null,
+        history: [],
+        draft: null,
+        setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
+        commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.committed], committed: text, textOrigin: origin})),
+        undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+            committed: state.history[state.history.length - 1],
+            textOrigin: null,
+            history: state.history.slice(0, -1)
+        } : {})
+    }));
+
+    // The shared validation service - each valid draft is committed in turn
+    useLayerStore.subscribe((state, previous) =&gt; {
+        if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
+            const {text, origin} = state.draft;
+            validateLayer(text).then(valid =&gt; {
+                if (valid) {
+                    useLayerStore.getState().commit(text, origin);
+                }
+            });
+        }
+    });
+    return useLayerStore;
+}
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.jsx</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">import {useEffect, useId, useRef} from &quot;react&quot;;
+import {selectText} from &quot;./store.js&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+export function Editor({className, useLayerStore}) {
+    const text = useLayerStore(selectText);
+    const textOrigin = useLayerStore(state =&gt; state.textOrigin);
+    // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
+    const id = useId();
+    const setDraft = useLayerStore(state =&gt; state.setDraft);
+    const hostRef = useRef(null);
+    const cmRef = useRef(null);
+
+    useEffect(() =&gt; {
+        const cm = CodeMirror(hostRef.current, {value: text});
+        cm.on(&quot;change&quot;, (cm, change) =&gt; {
+            // Only the user&#x27;s edits are submitted as drafts - not text supplied from the store
+            if (change.origin !== &quot;setValue&quot;) {
+                setDraft(cm.getValue(), id);
+            }
+        });
+        cmRef.current = cm;
+        return () =&gt; cm.getWrapperElement().remove();
+    }, []);
+
+    useEffect(() =&gt; {
+        const cm = cmRef.current;
+        if (textOrigin !== id &amp;&amp; cm.getValue() !== text) {
+            cm.setValue(text);
+        }
+    }, [text, textOrigin]);
+
+    return &lt;div className={className} ref={hostRef}/&gt;;
+}
+</code></pre></figure></details><details class="variant" id="src-fluid-decl-v0"><summary><span class="vname">fluid-decl/v0</span><span class="vtitle">Declarative Infusion baseline</span></summary><p class="vdesc">The editor's CodeMirror listener only records the raw edit in <code>edited</code>. An async <code>$compute</code> validates it, and an <code>$effect</code> declaring <code>source: "self"</code> commits it. The initial text reaches the binder as an argument.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.app.undo({self})&quot;,
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    }
+});
+
+exp.app.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.app.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    // The user&#x27;s latest edit, as reported by the editor
+    edited: null,
+    validEdit: &quot;$compute:exp.cmEditor.validate({self}.edited)&quot;,
+    commitEdit: {
+        $effect: {
+            func: (store, text) =&gt; store.commit(text),
+            args: [&quot;{self}.store&quot;, &quot;{self}.validEdit&quot;],
+            // Marked as originated by us, so that it is not read back by readEffect
+            source: &quot;self&quot;
+        }
+    },
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer, {self}.text)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container, text) {
+    const cm = CodeMirror(container, {value: text});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are reported - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            self.edited = cm.getValue();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.validate = async function (edited) {
+    return edited !== null &amp;&amp; await validateLayer(edited) ? edited : fluid.unavailable(&quot;Edit is not valid&quot;);
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-fluid-decl-v1"><summary><span class="vname">fluid-decl/v1</span><span class="vtitle">Declarative R1: a second editor</span></summary><p class="vdesc">A second <code>exp.cmEditor</code> on the same layer.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.app.undo({self})&quot;,
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    }
+});
+
+exp.app.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.app.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    // The user&#x27;s latest edit, as reported by the editor
+    edited: null,
+    validEdit: &quot;$compute:exp.cmEditor.validate({self}.edited)&quot;,
+    commitEdit: {
+        $effect: {
+            func: (store, text) =&gt; store.commit(text),
+            args: [&quot;{self}.store&quot;, &quot;{self}.validEdit&quot;],
+            // Marked as originated by us, so that it is not read back by readEffect
+            source: &quot;self&quot;
+        }
+    },
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer, {self}.text)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container, text) {
+    const cm = CodeMirror(container, {value: text});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are reported - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            self.edited = cm.getValue();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.validate = async function (edited) {
+    return edited !== null &amp;&amp; await validateLayer(edited) ? edited : fluid.unavailable(&quot;Edit is not valid&quot;);
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-fluid-decl-v2"><summary><span class="vname">fluid-decl/v2</span><span class="vtitle">Declarative R2: shared validation</span></summary><p class="vdesc">The editor's validation and commit move to the store. An <code>$effect</code> declaring <code>source: "self"</code> forwards each edit as a draft, and the store's commit effect calls its method with no <code>untracked</code>.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    draft: null,
+    // The shared validation service - each valid draft is committed in turn
+    validDraft: &quot;$compute:exp.app.validate({self}.draft)&quot;,
+    commitValid: {
+        $effect: {
+            func: (self, text) =&gt; self.commit(text),
+            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+        }
+    },
+    commit: &quot;$method:exp.app.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.app.undo({self})&quot;,
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;
+        }
+    }
+});
+
+exp.app.validate = async function (draft) {
+    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+};
+
+exp.app.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.app.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    // The user&#x27;s latest edit, as reported by the editor
+    edited: null,
+    submitDraft: {
+        $effect: {
+            func: (store, edited) =&gt; store.draft = edited,
+            args: [&quot;{self}.store&quot;, &quot;{self}.edited&quot;],
+            // Marked as originated by us, so that it is not read back by readEffect
+            source: &quot;self&quot;
+        }
+    },
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer, {self}.text)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container, text) {
+    const cm = CodeMirror(container, {value: text});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are reported - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            self.edited = cm.getValue();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-fluid-decl-v3"><summary><span class="vname">fluid-decl/v3</span><span class="vtitle">Declarative R3: separate layers</span></summary><p class="vdesc">As Infusion R3, with the declarative editor.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    main: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;
+        }
+    },
+    notes: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;,
+            text: &quot;[9]&quot;
+        }
+    },
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.main.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.main.text}&lt;/pre&gt;
+                &lt;button class=&quot;undo-notes&quot; @onclick=&quot;{exp.app}.notes.undo()&quot;&gt;Undo notes&lt;/button&gt;
+                &lt;pre class=&quot;committed-notes&quot;&gt;@{{exp.app}.notes.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.main&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.notes&quot;
+        }
+    }
+});
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
+fluid.def(&quot;exp.layerStore&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    text: &quot;[1]&quot;,
+    history: [],
+    draft: null,
+    // The shared validation service - each valid draft is committed in turn
+    validDraft: &quot;$compute:exp.layerStore.validate({self}.draft)&quot;,
+    commitValid: {
+        $effect: {
+            func: (self, text) =&gt; self.commit(text),
+            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+        }
+    },
+    commit: &quot;$method:exp.layerStore.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.layerStore.undo({self})&quot;
+});
+
+exp.layerStore.validate = async function (draft) {
+    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+};
+
+exp.layerStore.commit = function (self, text) {
+    self.history = [...self.history, self.text];
+    self.text = text;
+};
+
+exp.layerStore.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.text = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    // The user&#x27;s latest edit, as reported by the editor
+    edited: null,
+    submitDraft: {
+        $effect: {
+            func: (store, edited) =&gt; store.draft = edited,
+            args: [&quot;{self}.store&quot;, &quot;{self}.edited&quot;],
+            // Marked as originated by us, so that it is not read back by readEffect
+            source: &quot;self&quot;
+        }
+    },
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer, {self}.text)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container, text) {
+    const cm = CodeMirror(container, {value: text});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are reported - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            self.edited = cm.getValue();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details><details class="variant" id="src-fluid-decl-v4"><summary><span class="vname">fluid-decl/v4</span><span class="vtitle">Declarative R4: normalisation stage</span></summary><p class="vdesc">As Infusion R4, with the declarative editor.</p><figure class="code"><div class="code-head"><span class="code-name">index.html</span><button class="copy" type="button">Copy</button></div><pre><code class="language-xml">&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot;/&gt;
+    &lt;title&gt;Infusion layer editor&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../infusion/src/lib/codemirror/css/codemirror.css&quot;/&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidCore.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidSignals.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/Fluid.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidIL.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/template-parser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidPTF.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/framework/core/js/FluidView-browser.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;store.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;editor.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;app.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;app&quot;&gt;&lt;/div&gt;
+&lt;script&gt;
+    window.app = exp.app({container: document.querySelector(&quot;.app&quot;)});
+    fluid.cell.stabilize();
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">app.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+fluid.def(&quot;exp.app&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    main: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;
+        }
+    },
+    notes: {
+        $component: {
+            $layers: &quot;exp.layerStore&quot;,
+            committed: &quot;[9]&quot;
+        }
+    },
+    view: {
+        $component: {
+            $layers: &quot;fluid.templateViewComponent&quot;,
+            template: `&lt;div&gt;
+                &lt;button class=&quot;undo-main&quot; @onclick=&quot;{exp.app}.main.undo()&quot;&gt;Undo&lt;/button&gt;
+                &lt;pre class=&quot;committed-main&quot;&gt;@{{exp.app}.main.text}&lt;/pre&gt;
+                &lt;button class=&quot;undo-notes&quot; @onclick=&quot;{exp.app}.notes.undo()&quot;&gt;Undo notes&lt;/button&gt;
+                &lt;pre class=&quot;committed-notes&quot;&gt;@{{exp.app}.notes.text}&lt;/pre&gt;
+                &lt;div class=&quot;editor-a&quot; @id=&quot;editorA&quot;&gt;&lt;/div&gt;
+                &lt;div class=&quot;editor-b&quot; @id=&quot;editorB&quot;&gt;&lt;/div&gt;
+            &lt;/div&gt;`
+        }
+    },
+    editorA: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.main&quot;
+        }
+    },
+    editorB: {
+        $component: {
+            $layers: &quot;exp.cmEditor&quot;,
+            store: &quot;{exp.app}.notes&quot;
+        }
+    }
+});
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">store.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A layer&#x27;s text, with its history and the shared validation service which commits its drafts
+fluid.def(&quot;exp.layerStore&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    committed: &quot;[1]&quot;,
+    // The normalisation stage - the text which views and editors see
+    text: &quot;$compute:normaliseLayer({self}.committed)&quot;,
+    history: [],
+    draft: null,
+    // The shared validation service - each valid draft is committed in turn
+    validDraft: &quot;$compute:exp.layerStore.validate({self}.draft)&quot;,
+    commitValid: {
+        $effect: {
+            func: (self, text) =&gt; self.commit(text),
+            args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+        }
+    },
+    commit: &quot;$method:exp.layerStore.commit({self}, {0})&quot;,
+    undo: &quot;$method:exp.layerStore.undo({self})&quot;
+});
+
+exp.layerStore.validate = async function (draft) {
+    return draft !== null &amp;&amp; await validateLayer(draft) ? draft : fluid.unavailable(&quot;Draft is not valid&quot;);
+};
+
+exp.layerStore.commit = function (self, text) {
+    self.history = [...self.history, self.committed];
+    self.committed = text;
+};
+
+exp.layerStore.undo = function (self) {
+    const history = self.history;
+    if (history.length &gt; 0) {
+        self.committed = history[history.length - 1];
+        self.history = history.slice(0, -1);
+    }
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">editor.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// A reusable CodeMirror editor for the text of a layer store
+fluid.def(&quot;exp.cmEditor&quot;, {
+    $layers: &quot;fluid.component&quot;,
+    store: &quot;{exp.app}&quot;,
+    text: &quot;{self}.store.text&quot;,
+    // The user&#x27;s latest edit, as reported by the editor
+    edited: null,
+    submitDraft: {
+        $effect: {
+            func: (store, edited) =&gt; store.draft = edited,
+            args: [&quot;{self}.store&quot;, &quot;{self}.edited&quot;],
+            // Marked as originated by us, so that it is not read back by readEffect
+            source: &quot;self&quot;
+        }
+    },
+    view: {
+        $component: {
+            elideParent: false,
+            template: &quot;&lt;div class=\&quot;cm-host\&quot;&gt;&lt;/div&gt;&quot;
+        }
+    },
+    instance: {
+        $bindable: {
+            bind: &quot;exp.cmEditor.construct({self}, {self}.view.renderedContainer, {self}.text)&quot;,
+            onceOnly: true
+        }
+    },
+    readEffect: {
+        $effect: {
+            func: &quot;exp.cmEditor.readText&quot;,
+            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+            excludeSource: &quot;self&quot;
+        }
+    }
+});
+
+exp.cmEditor.construct = function (self, container, text) {
+    const cm = CodeMirror(container, {value: text});
+    cm.on(&quot;change&quot;, (cm, change) =&gt; {
+        // Only the user&#x27;s edits are reported - not text supplied by readText
+        if (change.origin !== &quot;setValue&quot;) {
+            self.edited = cm.getValue();
+        }
+    });
+    return cm;
+};
+
+exp.cmEditor.readText = function (text, cm) {
+    if (cm.getValue() !== text) {
+        cm.setValue(text);
+    }
+};
+</code></pre></figure></details>
+<h3>Controls</h3>
+<p style="max-width: 70ch">Each control is shown as a diff against the version it alters.</p>
+<details class="variant" id="src-controls-fluid-v0-noself"><summary><span class="vname">controls/fluid-v0-noself</span><span class="vtitle">Infusion v0 without the exclusion</span></summary><p class="vdesc">The read effect no longer excludes <code>"self"</code>. Its other files are identical to <a href="#src-fluid-v0">fluid/v0</a>.</p><figure class="code"><div class="code-head"><span class="code-name">fluid/v0 → controls/fluid-v0-noself</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v0/editor.js
++++ controls/fluid-v0-noself/editor.js
+@@ -20,6 +20,5 @@
+         $effect: {
+             func: &quot;exp.cmEditor.readText&quot;,
+-            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+-            excludeSource: &quot;self&quot;
++            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;]
+         }
+     }
+</code></pre></figure></details><details class="variant" id="src-react-v2-natural-attempt"><summary><span class="vname">react/v2-natural-attempt</span><span class="vtitle">React R2, first attempt</span></summary><p class="vdesc">The editor's equality ref is moved onto draft submission, which is the direct translation of v1. Its other files are identical to <a href="#src-react-v2">react/v2</a>.</p><figure class="code"><div class="code-head"><span class="code-name">react/v2 → react/v2-natural-attempt</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v2/store.js
++++ react/v2-natural-attempt/store.js
+@@ -3,13 +3,10 @@
+ export const useLayerStore = create(set =&gt; ({
+     text: &quot;[1]&quot;,
+-    // The editor whose draft the current text was committed from, if any - so that it is not written back into it
+-    textOrigin: null,
+     history: [],
+     draft: null,
+-    setDraft: (text, origin) =&gt; set({draft: {text, origin}}),
+-    commit: (text, origin = null) =&gt; set(state =&gt; ({history: [...state.history, state.text], text, textOrigin: origin})),
++    setDraft: draft =&gt; set({draft}),
++    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.text], text})),
+     undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+         text: state.history[state.history.length - 1],
+-        textOrigin: null,
+         history: state.history.slice(0, -1)
+     } : {})
+@@ -19,8 +16,8 @@
+ useLayerStore.subscribe((state, previous) =&gt; {
+     if (state.draft !== previous.draft &amp;&amp; state.draft !== null) {
+-        const {text, origin} = state.draft;
+-        validateLayer(text).then(valid =&gt; {
++        const draft = state.draft;
++        validateLayer(draft).then(valid =&gt; {
+             if (valid) {
+-                useLayerStore.getState().commit(text, origin);
++                useLayerStore.getState().commit(draft);
+             }
+         });
+--- react/v2/editor.jsx
++++ react/v2-natural-attempt/editor.jsx
+@@ -1,3 +1,3 @@
+-import {useEffect, useId, useRef} from &quot;react&quot;;
++import {useEffect, useRef} from &quot;react&quot;;
+ import {useLayerStore} from &quot;./store.js&quot;;
+ 
+@@ -5,10 +5,9 @@
+ export function Editor({className}) {
+     const text = useLayerStore(state =&gt; state.text);
+-    const textOrigin = useLayerStore(state =&gt; state.textOrigin);
+-    // Identifies this editor&#x27;s drafts, so that text committed from them is not written back into it
+-    const id = useId();
+     const setDraft = useLayerStore(state =&gt; state.setDraft);
+     const hostRef = useRef(null);
+     const cmRef = useRef(null);
++    // The text this editor last submitted, so that it is not written back into it when it returns from the store
++    const lastSubmitted = useRef(null);
+ 
+     useEffect(() =&gt; {
+@@ -17,5 +16,6 @@
+             // Only the user&#x27;s edits are submitted as drafts - not text supplied from the store
+             if (change.origin !== &quot;setValue&quot;) {
+-                setDraft(cm.getValue(), id);
++                lastSubmitted.current = cm.getValue();
++                setDraft(lastSubmitted.current);
+             }
+         });
+@@ -26,8 +26,8 @@
+     useEffect(() =&gt; {
+         const cm = cmRef.current;
+-        if (textOrigin !== id &amp;&amp; cm.getValue() !== text) {
++        if (text !== lastSubmitted.current &amp;&amp; cm.getValue() !== text) {
+             cm.setValue(text);
+         }
+-    }, [text, textOrigin]);
++    }, [text]);
+ 
+     return &lt;div className={className} ref={hostRef}/&gt;;
+</code></pre></figure></details><details class="variant" id="src-controls-fluid-v2-tracked"><summary><span class="vname">controls/fluid-v2-tracked</span><span class="vtitle">Infusion R2 without untracked</span></summary><p class="vdesc">The commit effect reads the history it appends to with tracking. Its other files are identical to <a href="#src-fluid-v2">fluid/v2</a>.</p><figure class="code"><div class="code-head"><span class="code-name">fluid/v2 → controls/fluid-v2-tracked</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid/v2/app.js
++++ controls/fluid-v2-tracked/app.js
+@@ -9,6 +9,5 @@
+     commitValid: {
+         $effect: {
+-            // The commit consults the current text and history, which are not dependencies of the effect
+-            func: (self, text) =&gt; fluid.cell.untracked(() =&gt; self.commit(text)),
++            func: (self, text) =&gt; self.commit(text),
+             args: [&quot;{self}&quot;, &quot;{self}.validDraft&quot;]
+         }
+</code></pre></figure></details><details class="variant" id="src-react-v3-forgot"><summary><span class="vname">react/v3-forgot</span><span class="vtitle">React R3 with one writer off-protocol</span></summary><p class="vdesc">Undo no longer clears <code>textOrigin</code>. Its other files are identical to <a href="#src-react-v3">react/v3</a>.</p><figure class="code"><div class="code-head"><span class="code-name">react/v3 → react/v3-forgot</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v3/store.js
++++ react/v3-forgot/store.js
+@@ -13,5 +13,4 @@
+         undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+             text: state.history[state.history.length - 1],
+-            textOrigin: null,
+             history: state.history.slice(0, -1)
+         } : {})
+</code></pre></figure></details><details class="variant" id="src-react-v1-normalised"><summary><span class="vname">react/v1-normalised</span><span class="vtitle">R4 applied to equality-based suppression</span></summary><p class="vdesc">The normalisation stage of R4, applied to v1, which still compares against the last text it committed. Its other files are identical to <a href="#src-react-v1">react/v1</a>.</p><figure class="code"><div class="code-head"><span class="code-name">react/v1 → react/v1-normalised</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- react/v1/index.html
++++ react/v1-normalised/index.html
+@@ -7,4 +7,5 @@
+     &lt;script src=&quot;../../infusion/src/lib/codemirror/js/codemirror.js&quot;&gt;&lt;/script&gt;
+     &lt;script src=&quot;../../shared/validate.js&quot;&gt;&lt;/script&gt;
++    &lt;script src=&quot;../../shared/normalise.js&quot;&gt;&lt;/script&gt;
+ &lt;/head&gt;
+ &lt;body&gt;
+--- react/v1/app.jsx
++++ react/v1-normalised/app.jsx
+@@ -1,7 +1,7 @@
+-import {useLayerStore} from &quot;./store.js&quot;;
++import {useLayerStore, selectText} from &quot;./store.js&quot;;
+ import {Editor} from &quot;./editor.jsx&quot;;
+ 
+ export function App() {
+-    const text = useLayerStore(state =&gt; state.text);
++    const text = useLayerStore(selectText);
+     const undo = useLayerStore(state =&gt; state.undo);
+     return &lt;div&gt;
+--- react/v1/store.js
++++ react/v1-normalised/store.js
+@@ -1,10 +1,12 @@
+ import {create} from &quot;zustand&quot;;
+ 
++export const selectText = state =&gt; normaliseLayer(state.committed);
++
+ export const useLayerStore = create(set =&gt; ({
+-    text: &quot;[1]&quot;,
++    committed: &quot;[1]&quot;,
+     history: [],
+-    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.text], text})),
++    commit: text =&gt; set(state =&gt; ({history: [...state.history, state.committed], committed: text})),
+     undo: () =&gt; set(state =&gt; state.history.length &gt; 0 ? {
+-        text: state.history[state.history.length - 1],
++        committed: state.history[state.history.length - 1],
+         history: state.history.slice(0, -1)
+     } : {})
+--- react/v1/editor.jsx
++++ react/v1-normalised/editor.jsx
+@@ -1,8 +1,8 @@
+ import {useEffect, useRef} from &quot;react&quot;;
+-import {useLayerStore} from &quot;./store.js&quot;;
++import {useLayerStore, selectText} from &quot;./store.js&quot;;
+ 
+ // A reusable CodeMirror editor for the text of the layer store
+ export function Editor({className}) {
+-    const text = useLayerStore(state =&gt; state.text);
++    const text = useLayerStore(selectText);
+     const commit = useLayerStore(state =&gt; state.commit);
+     const hostRef = useRef(null);
+</code></pre></figure></details><details class="variant" id="src-controls-fluid-decl-v2-noself"><summary><span class="vname">controls/fluid-decl-v2-noself</span><span class="vtitle">Declarative R2 without the exclusion</span></summary><p class="vdesc">The read effect no longer excludes <code>"self"</code>. Its other files are identical to <a href="#src-fluid-decl-v2">fluid-decl/v2</a>.</p><figure class="code"><div class="code-head"><span class="code-name">fluid-decl/v2 → controls/fluid-decl-v2-noself</span><button class="copy" type="button">Copy</button></div><pre><code class="language-diff">--- fluid-decl/v2/editor.js
++++ controls/fluid-decl-v2-noself/editor.js
+@@ -30,6 +30,5 @@
+         $effect: {
+             func: &quot;exp.cmEditor.readText&quot;,
+-            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;],
+-            excludeSource: &quot;self&quot;
++            args: [&quot;{self}.text&quot;, &quot;{self}.instance&quot;]
+         }
+     }
+</code></pre></figure></details>
+<h3>Shared files and harness</h3>
+<figure class="code"><div class="code-head"><span class="code-name">shared/validate.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// The asynchronous validator shared by both implementations - JSON well-formedness, after a fixed delay standing in
+// for a worker or server round trip
+window.validationDelay = 150;
+window.validateLayer = function (text) {
+    return new Promise(resolve =&gt; setTimeout(() =&gt; {
+        let valid = true;
+        try {
+            JSON.parse(text);
+        } catch (e) {
+            valid = false;
+        }
+        resolve(valid);
+    }, window.validationDelay));
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">shared/normalise.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">&quot;use strict&quot;;
+// The normalisation stage shared by both implementations - the canonical form of valid layer text, without whitespace
+window.normaliseLayer = function (text) {
+    return JSON.stringify(JSON.parse(text));
+};
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">react/build.sh</span><button class="copy" type="button">Copy</button></div><pre><code class="language-bash">#!/bin/sh
+# Build one React variant: build.sh v0
+cd &quot;$(dirname &quot;$0&quot;)/$1&quot; &amp;&amp; ../node_modules/.bin/esbuild index.jsx --bundle --outfile=bundle.js --jsx=automatic --define:process.env.NODE_ENV=\&quot;production\&quot; --log-level=warning
+</code></pre></figure><figure class="code"><div class="code-head"><span class="code-name">run.js</span><button class="copy" type="button">Copy</button></div><pre><code class="language-javascript">/* eslint-env node */
+&quot;use strict&quot;;
+// Usage: node run.js &lt;variant dir relative to exp, e.g. fluid/v0&gt; &lt;suite: base|twoEditors|twoLayers&gt;
+const path = require(&quot;path&quot;);
+const runner = require(&quot;/home/amb26/Source/gits/infusion-6/tests/test-core/browser/js/demo-runner.js&quot;);
+const puppeteer = require(&quot;/home/amb26/Source/gits/infusion-6/node_modules/puppeteer&quot;);
+
+const sleep = ms =&gt; new Promise(r =&gt; setTimeout(r, ms));
+
+// In-page helpers
+const pageHelpers = function () {
+    window.cmOf = sel =&gt; document.querySelector(sel + &quot; .CodeMirror&quot;).CodeMirror;
+    // Place the cursor just before the closing brace, as a user would to edit the value
+    window.placeCursor = sel =&gt; {
+        const cm = cmOf(sel);
+        cm.focus();
+        cm.setCursor(cm.posFromIndex(cm.getValue().length - 1));
+    };
+    window.typeInto = (sel, str) =&gt; {
+        const cm = cmOf(sel);
+        cm.replaceRange(str, cm.getCursor(), null, &quot;+input&quot;);
+    };
+    window.snapshot = () =&gt; {
+        const read = sel =&gt; document.querySelector(sel) ? document.querySelector(sel).textContent : null;
+        const ed = sel =&gt; {
+            const el = document.querySelector(sel + &quot; .CodeMirror&quot;);
+            return el ? {value: el.CodeMirror.getValue(), cursor: el.CodeMirror.indexFromPos(el.CodeMirror.getCursor())} : null;
+        };
+        return {
+            committedMain: read(&quot;.committed-main&quot;), committedNotes: read(&quot;.committed-notes&quot;),
+            a: ed(&quot;.editor-a&quot;), b: ed(&quot;.editor-b&quot;), setValues: window.setValueCount || 0
+        };
+    };
+};
+
+const tests = {
+    commit: {suites: [&quot;base&quot;, &quot;twoEditors&quot;, &quot;twoLayers&quot;, &quot;normalised&quot;], run: async (page, check) =&gt; {
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-a&quot;); typeInto(&quot;.editor-a&quot;, &quot;2&quot;); });
+        await sleep(450);
+        const s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;committed after validation&quot;, s.committedMain, &quot;[12]&quot;);
+        check(&quot;editor A text&quot;, s.a.value, &quot;[12]&quot;);
+        check(&quot;editor A cursor kept&quot;, s.a.cursor, 3);
+    }},
+    typingDuringValidation: {suites: [&quot;base&quot;, &quot;twoEditors&quot;, &quot;twoLayers&quot;, &quot;normalised&quot;], run: async (page, check) =&gt; {
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-a&quot;); typeInto(&quot;.editor-a&quot;, &quot;3&quot;); });
+        await sleep(60);
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-a&quot;, &quot;4&quot;));
+        await sleep(130);   // first commit (&quot;13&quot;) has now arrived, second (&quot;134&quot;) has not
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-a&quot;, &quot;5&quot;));
+        await sleep(600);
+        let s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;no typing lost - editor A&quot;, s.a.value, &quot;[1345]&quot;);
+        check(&quot;no typing lost - committed&quot;, s.committedMain, &quot;[1345]&quot;);
+        check(&quot;editor A cursor kept&quot;, s.a.cursor, 5);
+        // Every valid edit is committed in turn - so one undo returns to the previous one
+        await page.click(&quot;.undo-main&quot;);
+        await sleep(100);
+        s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;each valid edit committed - undo&quot;, s.committedMain, &quot;[134]&quot;);
+        check(&quot;undo reaches editor A&quot;, s.a.value, &quot;[134]&quot;);
+    }},
+    undo: {suites: [&quot;base&quot;, &quot;twoEditors&quot;, &quot;twoLayers&quot;, &quot;normalised&quot;], run: async (page, check, suite) =&gt; {
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-a&quot;); typeInto(&quot;.editor-a&quot;, &quot;2&quot;); });
+        await sleep(450);
+        await page.click(&quot;.undo-main&quot;);
+        await sleep(100);
+        const s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;undo reverts committed&quot;, s.committedMain, &quot;[1]&quot;);
+        check(&quot;undo reaches editor A&quot;, s.a.value, &quot;[1]&quot;);
+        if (suite === &quot;twoEditors&quot;) {
+            check(&quot;undo reaches editor B&quot;, s.b.value, &quot;[1]&quot;);
+        }
+    }},
+    crossPane: {suites: [&quot;twoEditors&quot;], run: async (page, check) =&gt; {
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-a&quot;); typeInto(&quot;.editor-a&quot;, &quot;2&quot;); });
+        await sleep(450);
+        let s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;A&#x27;s edit reaches B&quot;, s.b.value, &quot;[12]&quot;);
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-b&quot;); typeInto(&quot;.editor-b&quot;, &quot;3&quot;); });
+        await sleep(60);
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-b&quot;, &quot;4&quot;));
+        await sleep(130);
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-b&quot;, &quot;5&quot;));
+        await sleep(600);
+        s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;no typing lost - editor B&quot;, s.b.value, &quot;[12345]&quot;);
+        check(&quot;B&#x27;s edits reach A&quot;, s.a.value, &quot;[12345]&quot;);
+        check(&quot;committed&quot;, s.committedMain, &quot;[12345]&quot;);
+        check(&quot;editor B cursor kept&quot;, s.b.cursor, 6);
+    }},
+    separateLayers: {suites: [&quot;twoLayers&quot;, &quot;normalised&quot;], run: async (page, check) =&gt; {
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-b&quot;); typeInto(&quot;.editor-b&quot;, &quot;2&quot;); });
+        await sleep(450);
+        let s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;B edits the notes layer&quot;, s.committedNotes, &quot;[92]&quot;);
+        check(&quot;main layer untouched&quot;, s.committedMain, &quot;[1]&quot;);
+        check(&quot;editor A untouched&quot;, s.a.value, &quot;[1]&quot;);
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-b&quot;); typeInto(&quot;.editor-b&quot;, &quot;3&quot;); });
+        await sleep(60);
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-b&quot;, &quot;4&quot;));
+        await sleep(130);
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-b&quot;, &quot;5&quot;));
+        await sleep(600);
+        s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;no typing lost - editor B&quot;, s.b.value, &quot;[92345]&quot;);
+        check(&quot;notes committed&quot;, s.committedNotes, &quot;[92345]&quot;);
+        await page.click(&quot;.undo-notes&quot;);
+        await sleep(100);
+        s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;notes undo reaches B&quot;, s.b.value, &quot;[9234]&quot;);
+        check(&quot;main layer still untouched&quot;, s.committedMain, &quot;[1]&quot;);
+    }}
+,
+    normalisedTyping: {suites: [&quot;normalised&quot;], run: async (page, check) =&gt; {
+        // Typed with a space, which the normalised form drops - the editor must not rewrite the user&#x27;s text
+        await page.evaluate(() =&gt; { placeCursor(&quot;.editor-a&quot;); typeInto(&quot;.editor-a&quot;, &quot;, 3&quot;); });
+        await sleep(60);
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-a&quot;, &quot;4&quot;));
+        await sleep(130);   // &quot;[1,3]&quot; has now been committed, &quot;[1,34]&quot; has not
+        await page.evaluate(() =&gt; typeInto(&quot;.editor-a&quot;, &quot;5&quot;));
+        await sleep(600);
+        let s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;user&#x27;s own text kept - editor A&quot;, s.a.value, &quot;[1, 345]&quot;);
+        check(&quot;editor A cursor kept&quot;, s.a.cursor, 7);
+        check(&quot;committed text is normalised&quot;, s.committedMain, &quot;[1,345]&quot;);
+        await page.click(&quot;.undo-main&quot;);
+        await sleep(100);
+        s = await page.evaluate(() =&gt; snapshot());
+        check(&quot;undo reverts committed&quot;, s.committedMain, &quot;[1,34]&quot;);
+        check(&quot;undo reaches editor A, normalised&quot;, s.a.value, &quot;[1,34]&quot;);
+        check(&quot;notes untouched&quot;, s.committedNotes, &quot;[9]&quot;);
+    }}
+};
+
+(async () =&gt; {
+    const [variant, suite] = process.argv.slice(2);
+    const root = __dirname;
+    const server = await runner.startServer(root);
+    const browser = await puppeteer.launch({headless: true, args: [&quot;--no-sandbox&quot;]});
+    let failures = 0, passes = 0;
+    try {
+        for (const [name, test] of Object.entries(tests)) {
+            if (test.suites.includes(suite)) {
+                const page = await browser.newPage();
+                const errors = [];
+                page.on(&quot;pageerror&quot;, e =&gt; errors.push(e.message));
+                await page.goto(`http://127.0.0.1:${server.address().port}/${variant}/index.html`);
+                await page.waitForFunction(() =&gt; document.querySelectorAll(&quot;.CodeMirror&quot;).length &gt; 0, {timeout: 10000});
+                await sleep(100);
+                await page.evaluate(pageHelpers);
+                const results = [];
+                const check = (label, actual, expected) =&gt; {
+                    const ok = JSON.stringify(actual) === JSON.stringify(expected);
+                    results.push(ok);
+                    if (ok) {
+                        passes++;
+                    } else {
+                        failures++;
+                        console.log(`  FAIL ${name}: ${label} - expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+                    }
+                };
+                await test.run(page, check, suite);
+                errors.forEach(e =&gt; console.log(`  page error in ${name}: ${e}`));
+                console.log(`${results.every(x =&gt; x) ? &quot;ok    &quot; : &quot;not ok&quot;} ${name}`);
+                await page.close();
+            }
+        }
+    } finally {
+        await browser.close();
+        server.close();
+    }
+    console.log(`# ${variant} [${suite}]: ${passes} checks passed, ${failures} failed`);
+})();
+</code></pre></figure>
+</section>
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function () {
+    if (window.hljs) {
+        document.querySelectorAll("figure.code pre code").forEach(block => window.hljs.highlightElement(block));
+    }
+    document.querySelectorAll("button.copy").forEach(button => {
+        button.addEventListener("click", () => {
+            const code = button.closest("figure").querySelector("code");
+            const text = code.textContent;
+            const done = label => {
+                button.textContent = label;
+                setTimeout(() => button.textContent = "Copy", 1500);
+            };
+            const selectFallback = () => {
+                const range = document.createRange();
+                range.selectNodeContents(code);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                done("Selected");
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => done("Copied"), selectFallback);
+            } else {
+                selectFallback();
+            }
+        });
+    });
+})();
+</script>

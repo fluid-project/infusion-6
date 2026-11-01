@@ -41,11 +41,11 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         const b = fluid.cell();
         b.name = "b";
-        b.asyncComputed(async1, [s]);
+        b.computed(async1, [s]);
 
         const c = fluid.cell();
         c.name = "c";
-        c.asyncComputed(async2, [s]);
+        c.computed(async2, [s]);
 
         const e = fluid.cell.effect((v1, v2) => {
             effectCalls++;
@@ -118,11 +118,11 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         a = fluid.cell();
         a.name = "a";
-        a.asyncComputed(async1, [s]);
+        a.computed(async1, [s]);
 
         const b = fluid.cell();
         b.name = "b";
-        b.asyncComputed(async2, [s, a]);
+        b.computed(async2, [s, a]);
 
         const e = fluid.cell.effect(v => {
             effectCalls++;
@@ -164,7 +164,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         const async1 = () => Promise.resolve(s.get());
 
-        const a = fluid.cell(undefined, {name: "a"}).asyncComputed(async () => {
+        const a = fluid.cell(undefined, {name: "a"}).computed(async () => {
             return await async1();
         });
 
@@ -199,7 +199,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         let n = 1;
 
-        const a = fluid.cell().asyncComputed(async () => {
+        const a = fluid.cell().computed(async () => {
             return Promise.resolve(n++);
         });
 
@@ -240,7 +240,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         const async1 = () => Promise.resolve(s.get());
 
-        const a = fluid.cell().asyncComputed(async () => {
+        const a = fluid.cell().computed(async () => {
             return await async1();
         }, []);
         a.name = "a";
@@ -279,7 +279,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         const s = fluid.cell(1);
 
-        const a = fluid.cell().asyncComputed(async () => {
+        const a = fluid.cell().computed(async () => {
             return s.get();
         });
 
@@ -322,7 +322,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         let callCount = 0;
         let lastValue;
 
-        const v = fluid.cell(undefined, {name: "v"}).asyncComputed(async function* () {
+        const v = fluid.cell(undefined, {name: "v"}).computed(async function* () {
             // Original had "yield await" which is redundant - https://stackoverflow.com/questions/77012368/is-yield-await-redundant-in-javascript-async-generator-functions
             yield Promise.resolve(1);
             yield Promise.resolve(2);
@@ -369,7 +369,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         let callCount = 0;
         let lastValue;
 
-        const a = fluid.cell().asyncComputed(async () => {
+        const a = fluid.cell().computed(async () => {
             return s.get();
         });
         a.name = "a";
@@ -421,11 +421,11 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         const fahrenheitCell = fluid.cell();
         fahrenheitCell.name = "Fahrenheit";
 
-        kelvinCell.asyncComputed(celsius => celsius + 273.15, [celsiusCell]);
-        celsiusCell.asyncComputed(kelvin => kelvin - 273.15, [kelvinCell]);
+        kelvinCell.computed(celsius => celsius + 273.15, [celsiusCell]);
+        celsiusCell.computed(kelvin => kelvin - 273.15, [kelvinCell]);
 
-        fahrenheitCell.asyncComputed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
-        celsiusCell.asyncComputed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+        fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+        celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
         // Celsius value has spread in both directions
         assert.equal(kelvinCell.get(), 288.15, "Spread from Celsius to Kelvin");
@@ -446,11 +446,11 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         const fahrenheitCell = fluid.cell();
         fahrenheitCell.name = "Fahrenheit";
 
-        kelvinCell.asyncComputed(celsius => fluid.returnAsync(celsius + 273.15), [celsiusCell]);
-        celsiusCell.asyncComputed(kelvin => fluid.returnAsync(kelvin - 273.15), [kelvinCell]);
+        kelvinCell.computed(celsius => fluid.returnAsync(celsius + 273.15), [celsiusCell]);
+        celsiusCell.computed(kelvin => fluid.returnAsync(kelvin - 273.15), [kelvinCell]);
 
-        fahrenheitCell.asyncComputed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
-        celsiusCell.asyncComputed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
+        fahrenheitCell.computed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
+        celsiusCell.computed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
 
         // Celsius value has spread in both directions
         assert.equal(await fluid.cell.waitFor(kelvinCell), 288.15, "Spread from Celsius to Kelvin");
@@ -484,14 +484,14 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
-        fahrenheitCell.asyncComputed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
+        fahrenheitCell.computed(celsius => 9 * celsius / 5 + 32, [celsiusCell]);
 
         await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "One notification on forward arc");
         assert.deepEqual(cSeq, [15], "No backward notification");
 
-        celsiusCell.asyncComputed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
+        celsiusCell.computed(fahrenheit => 5 * (fahrenheit - 32) / 9, [fahrenheitCell]);
 
         await fluid.cell.stabilizeAsync();
 
@@ -517,7 +517,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.deepEqual(cSeq, [100], "Relayed update");
 
         // Tear down one relation
-        fahrenheitCell.asyncComputed(null, [celsiusCell]);
+        fahrenheitCell.computed(null, [celsiusCell]);
 
         reset();
 
@@ -576,14 +576,14 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         assert.deepEqual(fSeq, [], "No startup notification - auto-promote undefined to unavailable");
 
-        fahrenheitCell.asyncComputed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
+        fahrenheitCell.computed(celsius => fluid.returnAsync(9 * celsius / 5 + 32), [celsiusCell]);
 
         await fluid.cell.stabilizeAsync();
 
         assert.deepEqual(fSeq, [59], "One notification on forward arc");
         assert.deepEqual(cSeq, [15], "No backward notification");
 
-        celsiusCell.asyncComputed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
+        celsiusCell.computed(fahrenheit => fluid.returnAsync(5 * (fahrenheit - 32) / 9), [fahrenheitCell]);
 
         await fluid.cell.stabilizeAsync();
 
@@ -609,7 +609,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         assert.deepEqual(cSeq, [100], "Relayed update after 212");
 
         // Tear down one relation
-        fahrenheitCell.asyncComputed(null, [celsiusCell]);
+        fahrenheitCell.computed(null, [celsiusCell]);
 
         reset();
 
@@ -653,7 +653,7 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
         // eslint-disable-next-line no-unused-vars
         const blockTarget = fluid.cell(undefined, {name: "blockTarget"})
-            .asyncComputed(async bS => {
+            .computed(async bS => {
                 await blockWait;
                 return bS;
             }, [blockSource]);
@@ -689,12 +689,12 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
             0,
             Error("Failure computing async arc")
         ];
-        const B = fluid.cell(2, {name: "B"}).asyncComputed(() => {
+        const B = fluid.cell(2, {name: "B"}).computed(() => {
             const togo = returns[returnIndex++];
             return togo instanceof Error ? new Promise((resolve, reject) => setTimeout(() => reject(togo), 0)) :
                 new Promise(resolve => setTimeout(() => resolve(togo), 0));
         }, [A]);
-        const C = fluid.cell(3, {name: "C"}).asyncComputed(b => {
+        const C = fluid.cell(3, {name: "C"}).computed(b => {
             return fluid.returnAsync(b);
         }, [B]);
         const Clog = [];
@@ -735,10 +735,10 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
 
     QUnit.test("Error propagation across async surfacing as promise rejection", async assert => {
         const A = fluid.cell(1, {name: "A"});
-        const B = fluid.cell(2, {name: "B"}).asyncComputed(() =>
+        const B = fluid.cell(2, {name: "B"}).computed(() =>
             new Promise((resolve, reject) => setTimeout(() => reject(Error("Failure computing async arc")), 0)), [A]);
 
-        const C = fluid.cell(3, {name: "C"}).asyncComputed(b => fluid.returnAsync(b), [B]);
+        const C = fluid.cell(3, {name: "C"}).computed(b => fluid.returnAsync(b), [B]);
 
         A.set(2);
 
@@ -763,16 +763,16 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         //     D
         const a = fluid.cell("a", {name: "a"});
 
-        const b = fluid.cell(undefined, {name: "b"}).asyncComputed(
+        const b = fluid.cell(undefined, {name: "b"}).computed(
             aVal => fluid.returnAsync(aVal),
             [a]
         );
 
         // establish dependency on A
-        const c = fluid.cell(undefined, {name: "c"}).asyncComputed(() => fluid.returnAsync("c"), [a]);
+        const c = fluid.cell(undefined, {name: "c"}).computed(() => fluid.returnAsync("c"), [a]);
 
         let spyResult;
-        const d = fluid.cell(undefined, {name: "d"}).asyncComputed(
+        const d = fluid.cell(undefined, {name: "d"}).computed(
             (bVal, cVal) => fluid.invokeAsync(() => {
                 spyResult = bVal + " " + cVal;
                 return spyResult;
@@ -798,11 +798,11 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         const c5Log = [];
 
         const headCell = fluid.cell(undefined, {name: "head"});
-        const c1Cell = fluid.cell(undefined, {name: "c1"}).asyncComputed(head => fluid.returnAsync(head), [headCell]);
-        const c2Cell = fluid.cell(undefined, {name: "c2"}).asyncComputed(() => fluid.returnAsync(0), [c1Cell]);
-        const c3Cell = fluid.cell(undefined, {name: "c3"}).asyncComputed(c2 => { busy(); return fluid.returnAsync(c2 + 1); }, [c2Cell]);
-        const c4Cell = fluid.cell(undefined, {name: "c4"}).asyncComputed(c3 => fluid.returnAsync(c3 + 2), [c3Cell]);
-        const c5Cell = fluid.cell(undefined, {name: "c5"}).asyncComputed(c4 => fluid.returnAsync(c4 + 3), [c4Cell]);
+        const c1Cell = fluid.cell(undefined, {name: "c1"}).computed(head => fluid.returnAsync(head), [headCell]);
+        const c2Cell = fluid.cell(undefined, {name: "c2"}).computed(() => fluid.returnAsync(0), [c1Cell]);
+        const c3Cell = fluid.cell(undefined, {name: "c3"}).computed(c2 => { busy(); return fluid.returnAsync(c2 + 1); }, [c2Cell]);
+        const c4Cell = fluid.cell(undefined, {name: "c4"}).computed(c3 => fluid.returnAsync(c3 + 2), [c3Cell]);
+        const c5Cell = fluid.cell(undefined, {name: "c5"}).computed(c4 => fluid.returnAsync(c4 + 3), [c4Cell]);
 
         const c5Logger = fluid.cell.effect(c5 => c5Log.push(c5), [c5Cell], {name: "c5Logger"});
 
@@ -840,11 +840,11 @@ QUnit.module("Fluid Signals Async Tests", function (hooks) {
         }
 
         const headCell = fluid.cell(undefined, {name: "head"});
-        const c1Cell = fluid.cell(undefined, {name: "c1"}).asyncComputed(head => fluid.returnAsync(head), [headCell]);
-        const c2Cell = fluid.cell(undefined, {name: "c2"}).asyncComputed(() => fluid.returnAsync(0), [c1Cell]);
-        const c3Cell = fluid.cell(undefined, {name: "c3"}).asyncComputed(c2 => { busy(); return fluid.returnAsync(c2 + 1); }, [c2Cell]);
-        const c4Cell = fluid.cell(undefined, {name: "c4"}).asyncComputed(c3 => fluid.returnAsync(c3 + 2), [c3Cell]);
-        const c5Cell = fluid.cell(undefined, {name: "c5"}).asyncComputed(c4 => fluid.returnAsync(c4 + 3), [c4Cell]);
+        const c1Cell = fluid.cell(undefined, {name: "c1"}).computed(head => fluid.returnAsync(head), [headCell]);
+        const c2Cell = fluid.cell(undefined, {name: "c2"}).computed(() => fluid.returnAsync(0), [c1Cell]);
+        const c3Cell = fluid.cell(undefined, {name: "c3"}).computed(c2 => { busy(); return fluid.returnAsync(c2 + 1); }, [c2Cell]);
+        const c4Cell = fluid.cell(undefined, {name: "c4"}).computed(c3 => fluid.returnAsync(c3 + 2), [c3Cell]);
+        const c5Cell = fluid.cell(undefined, {name: "c5"}).computed(c4 => fluid.returnAsync(c4 + 3), [c4Cell]);
 
         // Initial computation
         headCell.set(1);
@@ -945,8 +945,8 @@ QUnit.module("Fluid Signals Auto-stabilization Tests", function () {
 
     QUnit.test("settle() waits for a chain of async computations", async assert => {
         const head = fluid.cell(1, {name: "head"});
-        const c1 = fluid.cell(undefined, {name: "c1"}).asyncComputed(h => fluid.returnAsync(h + 1), [head]);
-        const c2 = fluid.cell(undefined, {name: "c2"}).asyncComputed(v => fluid.returnAsync(v * 10), [c1]);
+        const c1 = fluid.cell(undefined, {name: "c1"}).computed(h => fluid.returnAsync(h + 1), [head]);
+        const c2 = fluid.cell(undefined, {name: "c2"}).computed(v => fluid.returnAsync(v * 10), [c1]);
         const log = [];
         const logEffect = fluid.cell.effect(value => log.push(value), [c2], {name: "logEffect"});
 
@@ -966,7 +966,7 @@ QUnit.module("Fluid Signals Auto-stabilization Tests", function () {
             release = resolve;
         });
         const source = fluid.cell(1, {name: "source"});
-        const blocked = fluid.cell(undefined, {name: "blocked"}).asyncComputed(async value => {
+        const blocked = fluid.cell(undefined, {name: "blocked"}).computed(async value => {
             await blocker;
             return value;
         }, [source]);
@@ -996,6 +996,73 @@ QUnit.module("Fluid Signals Auto-stabilization Tests", function () {
         assert.equal(await waiting, 1, "Resolved with the value which was available");
         await fluid.cell.settle();
         assert.ok(fluid.cell.isQuiescent(), "Graph settled despite disposed watcher of pending source");
+    });
+
+    QUnit.test("A fit held open by a pending effect does not carry its sources to later changes", async assert => {
+        const value = fluid.cell(0, {name: "value"});
+        let release;
+        // Holds open the fit of each change which triggers it until it settles
+        const slow = fluid.cell.effect(() => new Promise(resolve => release = resolve), [value], {name: "slow"});
+        const seen = [];
+        const widget = fluid.cell.effect(v => seen.push(v), [value], {name: "widget", excludeSource: "widget"});
+        fluid.cell.stabilize();
+        value.set(1, "widget");
+        fluid.cell.stabilize();
+        assert.deepEqual(seen, [0], "The widget is not notified of its own change");
+        assert.ok(fluid.isPending(slow.get(false, true)), "The slow effect is still pending");
+        value.set(2);
+        fluid.cell.stabilize();
+        value.set(3, "other");
+        fluid.cell.stabilize();
+        assert.deepEqual(seen, [0, 2, 3], "Changes made whilst the slow effect is pending are notified, whatever their source");
+        release();
+        await fluid.cell.settle();
+        assert.ok(fluid.cell.isQuiescent(), "Graph settled once the slow effect resolves");
+        widget.dispose();
+        slow.dispose();
+    });
+
+    QUnit.test("Sources are carried across an async computation whose runs overlap", async assert => {
+        const draft = fluid.cell(0, {name: "draft"});
+        const validated = fluid.cell(undefined, {name: "validated"}).computed(d => new Promise(resolve => setTimeout(() => resolve(d), 40)), [draft]);
+        const seen = [];
+        const widget = fluid.cell.effect(v => seen.push(v), [validated], {name: "widget", excludeSource: "editor"});
+        fluid.cell.stabilize();
+        await fluid.cell.settle();
+        assert.deepEqual(seen, [0], "Initial value seen");
+        draft.set(1, "editor");
+        fluid.cell.stabilize();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        // The first run settles whilst this one is still outstanding
+        draft.set(2, "editor");
+        fluid.cell.stabilize();
+        // Waited out rather than settled, since a fit which is not held would let settle() resolve before the second run
+        await new Promise(resolve => setTimeout(resolve, 100));
+        assert.equal(validated.get(), 2, "Both runs have settled");
+        assert.deepEqual(seen, [0], "Neither result of the editor's changes is delivered to the widget excluding it");
+        draft.set(3);
+        fluid.cell.stabilize();
+        await fluid.cell.settle();
+        assert.deepEqual(seen, [0, 3], "A change from elsewhere is delivered");
+        widget.dispose();
+    });
+
+    QUnit.test("Sources supplied by nested calls of withAmbientSource are carried together", assert => {
+        const value = fluid.cell(0, {name: "value"});
+        const runs = {outer: [], inner: []};
+        fluid.cell.effect(v => runs.outer.push(v), [value], {name: "outer", excludeSource: "outer"});
+        fluid.cell.effect(v => runs.inner.push(v), [value], {name: "inner", excludeSource: "inner"});
+        fluid.cell.stabilize();
+        fluid.cell.withAmbientSource("outer", () => {
+            fluid.cell.withAmbientSource("inner", () => value.set(1))();
+            fluid.cell.stabilize();
+            value.set(2);
+        })();
+        fluid.cell.stabilize();
+        value.set(3);
+        fluid.cell.stabilize();
+        assert.deepEqual(runs.outer, [0, 3], "Changes made within the outer call carry its source");
+        assert.deepEqual(runs.inner, [0, 2, 3], "Only the change made within the inner call carries its source");
     });
 
     QUnit.test("waitFor() resolves on a condition whose timing lies outside the graph", async assert => {

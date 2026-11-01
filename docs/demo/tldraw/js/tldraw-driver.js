@@ -4,8 +4,7 @@ import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, re
 import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions, guardClipboardEvents,
     isWidgetAvailable} from "./tldraw-clipboard.js";
 import {makeAIBridge} from "./tldraw-ai.js";
-import {containsWidget, restoreArena, persistArena, bindHistoryKeys, bindWidgetHistory, recordWidgetCreation,
-    widgetBurstKey} from "./tldraw-arena.js";
+import {restoreArena, persistArena, bindHistoryKeys, bindWidgetHistory, recordWidgetCreation} from "./tldraw-arena.js";
 
 const h = React.createElement;
 
@@ -27,14 +26,12 @@ const licenseKey = await loadLicenseKey();
 
 // The canvas is persisted in this browser's local storage, separately for each value of any ?infusionArenaId URL parameter
 fluid.persistenceAdapter = fluid.makeLocalStoragePersistenceAdapter();
-// The arena whose state is undoable and persisted consists of the widgets on the canvas, excluding e.g. the AI panel
-fluid.arenaContains = containsWidget;
-// Records of widget state refer to their widget through its shape, so that they apply once more to a widget which has
-// been reconstructed, e.g. on undoing its deletion or restoring the arena
-fluid.arenaSiteToRef = site => fluid.tldraw.siteToRef(site, infusionInstances);
-fluid.arenaRefToSite = ref => fluid.tldraw.refToSite(ref, infusionInstances);
+// The arena whose state is undoable and persisted consists of the widgets on the canvas, excluding e.g. the AI panel -
+// these are constructed within the tldrawHost, which is nominated as the arena's root once it is constructed in onMount.
+// Until then, nothing belongs to the arena.
+fluid.history.arenaRoot = null;
 // Bursts of writes to a widget, e.g. typing or everything caused by a click, are coalesced into single undoable steps
-fluid.arenaBurstKey = widgetBurstKey;
+fluid.history.coalesce = true;
 
 fluid.registerNamespace("fluid.tldraw");
 
@@ -280,6 +277,8 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
          */
         const construct = function (host, layerUnavailable) {
             const shapeConfig = fluid.tldraw.shapeToConfig(shape, true);
+            // Named for the shape, so that the widget keeps its path within the arena as it is reconstructed
+            const memberName = fluid.tldraw.widgetMemberName(shapeId);
             // The host potentia can only be determined once the widget's own layer is available
             const potentia = layerUnavailable === null ? fluid.tldraw.hostPotentiaFor(layerName, container, shapeId, shapeConfig) :
                 {view: {$component: {container, shapeId, shape: shapeConfig}}};
@@ -287,7 +286,7 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
                 if (parts) {
                     // The component is adopted as soon as it is constructed, before it is available, so that it can be
                     // diagnosed whilst it is incomplete and is destroyed if the shape unmounts in the meantime
-                    adopt(fluid.ptf.constructParts(parts, {potentia, parent: host}), "Reconstructed");
+                    adopt(fluid.ptf.constructParts(parts, {potentia, parent: host, memberName}), "Reconstructed");
                     const constructed = that;
                     fluid.ptf.applyParts(constructed, parts).then(unresolved => {
                         if (unresolved.length > 0) {
@@ -306,7 +305,7 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
                         }
                     });
                 } else {
-                    adopt(fluid.initChildComponent(host, layerName, potentia), "Constructed");
+                    adopt(fluid.initChildComponent(host, layerName, potentia, memberName), "Constructed");
                 }
             } catch (error) {
                 console.error(`Failed to construct Infusion component for shape ${shapeId}: `, error);
@@ -612,7 +611,7 @@ const NewShapePanel = function () {
  */
 const HistoryButtons = function ({caption, back, forward}) {
     const isApple = fluid.tldraw.isApple();
-    const stack = fluid[back.stack];
+    const stack = fluid.history[back.stack];
     const enabled = {
         back: useCellValue(stack.canBack),
         forward: useCellValue(stack.canForward)
@@ -662,6 +661,7 @@ const onMount = function (editor) {
     fluid.tldraw.editorInstance = editor;
     fluid.tldraw.instances = infusionInstances;
     const tldrawHost = fluid.demos.tldrawHost({editor});
+    fluid.history.arenaRoot = fluid.ptf.componentToShadow(tldrawHost);
     // Widgets awaiting the host are constructed within it
     resolveHost(tldrawHost);
     // Lets the "Ask me anything" panel reflect on and alter the canvas
@@ -695,6 +695,7 @@ const onMount = function (editor) {
         unbindKeys();
         unguard();
         awaitHost();
+        fluid.history.arenaRoot = null;
         tldrawHost.destroy();
     };
 };

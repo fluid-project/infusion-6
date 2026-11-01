@@ -2,7 +2,7 @@
 // The "Ask me anything" panel, through which the user may converse with an AI which can reflect on and alter the
 // widgets in the workspace - ported from the AI chat sidebar of the Aarhus "Stund" prototype.
 // The protocol is in js/ai-protocol.js and the machinery acting on the canvas in js/tldraw-ai.js.
-// See https://github.com/fluid-project/infusion-6/issues/22
+// See FLUID-7022
 
 fluid.registerNamespace("fluid.demos.askAnything");
 

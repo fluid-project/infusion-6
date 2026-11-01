@@ -16,17 +16,7 @@ const saveDelay = 500;
 // recorded in the history
 const saveCheckInterval = 5000;
 
-/**
- * Determine whether a component belongs to the arena - that is, is part of a widget hosted on the canvas, rather than,
- * e.g., the "Ask me anything" panel. Suitable as `fluid.arenaContains`.
- * @param {Shadow} shadow - The shadow of the component
- * @return {Boolean} `true` if the component is part of a widget hosted on the canvas
- */
-export const containsWidget = function (shadow) {
-    return fluid.tldraw.findWidget(shadow, infusionInstances) !== null;
-};
-
-// The creation and deletion of widgets, recorded in fluid.liveHistory beside the updates to their state
+// The creation and deletion of widgets, recorded in fluid.history.live beside the updates to their state
 
 /**
  * @typedef {Object} WidgetRecord
@@ -59,13 +49,13 @@ const widgetRecord = function (shape, parts) {
 };
 
 /**
- * Record the creation of fresh widgets, e.g. from the "New shape" menu, in `fluid.liveHistory`
+ * Record the creation of fresh widgets, e.g. from the "New shape" menu, in `fluid.history.live`
  * @param {Editor} editor - The tldraw editor
  * @param {String[]} shapeIds - The ids of the shapes hosting the fresh widgets
  */
 export const recordWidgetCreation = function (editor, shapeIds) {
     const widgets = shapeIds.map(id => editor.getShape(id)).filter(shape => shape).map(shape => widgetRecord(shape, null));
-    fluid.ptf.pushToStack(fluid.liveHistory, {type: "widgets", created: true, widgets});
+    fluid.history.pushToStack(fluid.history.live, {type: "widgets", created: true, widgets});
 };
 
 /**
@@ -102,21 +92,21 @@ const applyWidgetsRecord = function (editor, record, side) {
 };
 
 /**
- * Begin recording the deletion of widgets in `fluid.liveHistory`, and applying records of their creation and
+ * Begin recording the deletion of widgets in `fluid.history.live`, and applying records of their creation and
  * deletion. Widgets deleted together, e.g. as a selection, are recorded together.
  * @param {Editor} editor - The tldraw editor
  * @return {Function} A function which stops recording and applying such records
  */
 export const bindWidgetHistory = function (editor) {
     let deleted = [];
-    fluid.ptf.liveRecordAppliers.widgets = (record, side) => applyWidgetsRecord(editor, record, side);
+    fluid.history.liveRecordAppliers.widgets = (record, side) => applyWidgetsRecord(editor, record, side);
     const unregister = editor.sideEffects.registerBeforeDeleteHandler("shape", (shape, source) => {
         if (shape.type === "infusion" && source === "user" && !applyingWidgets) {
             // Captured whilst the widget's component still exists
             deleted.push(widgetRecord(shape, componentPartsFor(shape)));
             if (deleted.length === 1) {
                 queueMicrotask(() => {
-                    fluid.ptf.pushToStack(fluid.liveHistory, {type: "widgets", created: false, widgets: deleted});
+                    fluid.history.pushToStack(fluid.history.live, {type: "widgets", created: false, widgets: deleted});
                     deleted = [];
                 });
             }
@@ -124,22 +114,22 @@ export const bindWidgetHistory = function (editor) {
     });
     return () => {
         unregister();
-        delete fluid.ptf.liveRecordAppliers.widgets;
+        delete fluid.history.liveRecordAppliers.widgets;
     };
 };
 
 /**
- * Determine whether a record of `fluid.liveHistory` is a step written by a gesture which is still in progress, e.g. a
+ * Determine whether a record of `fluid.history.live` is a step written by a gesture which is still in progress, e.g. a
  * search whose results have yet to arrive
  * @param {Object} record - The record
  * @return {Boolean} `true` if the record is a step whose gesture is in progress
  */
 const isInFlight = function (record) {
-    return record.type === "group" && record.gesture !== undefined && fluid.ptf.openGestures.get(record.key) === record.gesture;
+    return record.type === "group" && record.gesture !== undefined && fluid.history.openGestures.get(record.key) === record.gesture;
 };
 
 /**
- * Render a record of `fluid.liveHistory` in a form which can be persisted - a group through each of its records, and
+ * Render a record of `fluid.history.live` in a form which can be persisted - a group through each of its records, and
  * records of widgets as they are, since they are already so. A step whose gesture is still in progress is incomplete,
  * and is not persisted, just as the state it has written so far is not - see `settledParts`.
  * @param {Object} record - The record
@@ -147,44 +137,36 @@ const isInFlight = function (record) {
  */
 const encodeArenaRecord = function (record) {
     return isInFlight(record) ? null :
-        record.type === "group" ? fluid.ptf.transformGroupRecord(record, encodeArenaRecord) :
-        record.type === "live" ? fluid.ptf.encodeLiveRecord(record, site => fluid.tldraw.siteToRef(site, infusionInstances)) : record;
+        record.type === "group" ? fluid.history.transformGroupRecord(record, encodeArenaRecord) :
+        record.type === "live" ? fluid.ptf.encodeLiveRecord(record) : record;
 };
 
 /**
- * Restore a record of `fluid.liveHistory` from its persisted form
+ * Restore a record of `fluid.history.live` from its persisted form
  * @param {Object} persisted - The persisted record
  * @return {Object|null} The record, or `null` if it cannot be restored
  */
 const decodeArenaRecord = function (persisted) {
-    return persisted.type === "group" ? fluid.ptf.transformGroupRecord(persisted, decodeArenaRecord) :
-        persisted.type === "live" ? fluid.ptf.decodeLiveRecord(persisted, ref => fluid.tldraw.refToSite(ref, infusionInstances)) : persisted;
-};
-
-/**
- * Determine the burst key of a site in the arena - writes to the same widget are coalesced into single steps of the
- * history, whichever of its components they are made to. Suitable as `fluid.arenaBurstKey`.
- * @param {String} site - The site, as rendered by `fluid.renderSite`, or the bare component reference `{path}`
- * @return {String} The id of the shape hosting the widget holding the site, or the site's component if it is in none
- */
-export const widgetBurstKey = function (site) {
-    return fluid.tldraw.siteToRef(site, infusionInstances)?.shapeId ?? fluid.parseContextReference(site).context;
+    return persisted.type === "group" ? fluid.history.transformGroupRecord(persisted, decodeArenaRecord) :
+        persisted.type === "live" ? fluid.ptf.decodeLiveRecord(persisted) : persisted;
 };
 
 /**
  * Revert the writes of any gesture still in progress for a widget, e.g. a search whose results have yet to arrive,
  * within the parts persisting it - so that the widget is persisted in the settled state it held before the gesture
  * began, rather than in a transient one, e.g. showing a search in progress, which nothing would ever complete once
- * restored. The values to revert to are the old values of the step the gesture is writing to `fluid.liveHistory`.
+ * restored. The values to revert to are the old values of the step the gesture is writing to `fluid.history.live`.
  * @param {String} shapeId - The id of the shape hosting the widget
  * @param {PTFPart[]} parts - The parts of the widget's component, as assembled by `fluid.ptf.componentToParts`
  * @return {PTFPart[]} The parts, with the live parts holding the widget's settled state
  */
 const settledParts = function (shapeId, parts) {
-    const step = fluid.liveHistory.records.get().find(record => record.key === shapeId && isInFlight(record));
-    const reverts = step ? step.records.filter(record => record.type === "live" && record.ref?.shapeId === shapeId) : [];
+    // The widget is the member of the arena of this name, which is the burst key of its steps - see fluid.history.burstKey
+    const memberName = fluid.tldraw.widgetMemberName(shapeId);
+    const step = fluid.history.live.records.get().find(record => record.key === memberName && isInFlight(record));
+    const reverts = step ? step.records.filter(record => record.type === "live" && record.ref.segs[0] === memberName) : [];
     return reverts.length === 0 ? parts : parts.map(part => {
-        const forPart = reverts.filter(record => part.kind === "live" && record.ref.component === part.filename);
+        const forPart = reverts.filter(record => part.kind === "live" && fluid.ptf.segsToFilename(record.ref.segs.slice(1)) === part.filename);
         let togo = part;
         if (forPart.length > 0) {
             const live = JSON.parse(part.body);
@@ -217,8 +199,8 @@ export const arenaToParts = function (editor) {
         return parts && infusionInstances.has(shape.id) ? settledParts(shape.id, parts) : parts;
     };
     const history = {
-        live: fluid.ptf.historyToJSON(fluid.liveHistory, encodeArenaRecord),
-        definitions: fluid.ptf.historyToJSON(fluid.definitionHistory)
+        live: fluid.ptf.historyToJSON(fluid.history.live, encodeArenaRecord),
+        definitions: fluid.ptf.historyToJSON(fluid.history.definitions)
     };
     return [...(content ? contentToParts(content, partsFor) : []), {
         kind: "history",
@@ -281,10 +263,10 @@ export const restoreArena = async function (editor, text) {
         if (history) {
             await awaitPageInjections();
             redefinedSources(history.definitions).forEach((source, layerName) => {
-                const current = fluid.layerRecToUnavailable(fluid.readLayer(layerName).get()) === null ? fluid.ptf.layerSource(layerName) : null;
+                const current = fluid.layerRecToUnavailable(fluid.readLayer(layerName).get()) === null ? fluid.history.layerSource(layerName) : null;
                 if (source === null && current !== null) {
                     // A layer deleted within the arena, which the page has loaded once more
-                    fluid.ptf.deleteLayerQuietly(layerName);
+                    fluid.history.deleteLayerQuietly(layerName);
                 } else if (source !== null && current?.body !== source.body) {
                     fluid.ptf.registerLayerPartQuietly({kind: "layer", filename: layerName, ...source});
                 }
@@ -299,8 +281,8 @@ export const restoreArena = async function (editor, text) {
         const shapeCount = content.shapes.length;
         await Promise.all(instantiations.map(awaitReport));
         if (history) {
-            fluid.ptf.historyFromJSON(fluid.liveHistory, history.live, decodeArenaRecord);
-            fluid.ptf.historyFromJSON(fluid.definitionHistory, history.definitions);
+            fluid.ptf.historyFromJSON(fluid.history.live, history.live, decodeArenaRecord);
+            fluid.ptf.historyFromJSON(fluid.history.definitions, history.definitions);
         }
         console.log(`Restored arena with ${shapeCount} shapes`);
         togo = true;
@@ -340,8 +322,8 @@ export const persistArena = function (editor) {
         }
     };
     const stopListening = editor.store.listen(schedule, {scope: "document", source: "all"});
-    const historyEffect = fluid.cell.effect(schedule, [fluid.liveHistory.records, fluid.liveHistory.index,
-        fluid.definitionHistory.records, fluid.definitionHistory.index], {name: "Arena persistence on history change", isFree: true});
+    const historyEffect = fluid.cell.effect(schedule, [fluid.history.live.records, fluid.history.live.index,
+        fluid.history.definitions.records, fluid.history.definitions.index], {name: "Arena persistence on history change", isFree: true});
     const interval = setInterval(save, saveCheckInterval);
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pagehide", save);

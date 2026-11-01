@@ -243,7 +243,7 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
 <script src="%fluid-edit/js/layerColourManager.js"></script>
 
 <template>
-    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot" style="max-width: 700px; min-width: 700px">
+    <div class="fl-editor-root fl-docking-area-component" data-fl-key="editorRoot">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@6.1.95/css/materialdesignicons.min.css">
         <svg id="svg-defs">
             <defs>
@@ -285,8 +285,8 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
                 <div class="fl-history-browser">
                     <div class="fl-history-pane-top">
                         <div class="fl-history-label fl-pane-label">History</div>
-                        <span class="mdi mdi-arrow-u-left-top fl-clickable" @onclick="fluid.historyBack()"></span>
-                        <span class="mdi mdi-arrow-u-right-top fl-clickable" @onclick="fluid.historyForward()"></span>
+                        <span class="mdi mdi-arrow-u-left-top fl-clickable" @onclick="fluid.history.back()"></span>
+                        <span class="mdi mdi-arrow-u-right-top fl-clickable" @onclick="fluid.history.forward()"></span>
                     </div>
                     <div @id="historyPane"></div>
                 </div>
@@ -323,6 +323,8 @@ fluid.animateInspectOverlay = function (self, inspectingSite, layerColours, docu
 
 .fl-editor-root {
     border: 1px solid #cccccc;
+    /* The resize bar forms the editor's left boundary */
+    border-left: none;
     /* Lifted from bulma.css */
     font-family: BlinkMacSystemFont, -apple-system, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell",
        "Fira Sans", "Droid Sans", "Helvetica Neue", "Helvetica", "Arial", sans-serif;

@@ -293,7 +293,92 @@ QUnit.test("Source tracking and source exclusion", assert => {
     fluid.cell.stabilize();
     assert.deepEqual(Blog, [], "Update skipped if source excluded");
 
+    A.set(4);
+    fluid.cell.stabilize();
+    assert.deepEqual(Blog, [5], "Unsourced update after an excluded one is delivered");
+
     Beff.dispose();
+});
+
+QUnit.test("Source exclusion does not stick to a cell after an excluded update", assert => {
+    const B = fluid.cell("a", {name: "B"});
+    const runs = [];
+    const eff = fluid.cell.effect(v => runs.push(v), [B], {excludeSource: "hash"});
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, ["a"], "Startup effect");
+
+    fluid.cell.withAmbientSource("hash", () => B.set("b"))();
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, ["a"], "Update with ambient excluded source skipped");
+
+    B.set("c");
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, ["a", "c"], "Later unsourced update delivered");
+
+    B.set("d", "hash");
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, ["a", "c"], "Update with excluded source supplied as String skipped");
+
+    B.set("e", {source: "hash"});
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, ["a", "c"], "Update with excluded source supplied in options skipped");
+
+    B.set("f");
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, ["a", "c", "f"], "Unsourced update delivered again");
+
+    eff.dispose();
+});
+
+QUnit.test("Sourced write to a cell already updated within a sourced fit", assert => {
+    const A = fluid.cell(0, {name: "A"});
+    const B = fluid.cell(undefined, {name: "B"}).computed(a => a + 1, [A]);
+    const runs = [];
+    const eff = fluid.cell.effect(b => runs.push(b), [B], {name: "eff", excludeSource: "other"});
+    fluid.cell.stabilize();
+    runs.length = 0;
+
+    A.set(1, "first");
+    assert.equal(B.get(), 2, "B updated within the fit started by the sourced write, which is held open by the read");
+    B.set(10, "other");
+    fluid.cell.stabilize();
+    assert.equal(B.get(), 10, "Sourced write to a cell enlisted in an open fit is applied");
+    assert.deepEqual(runs, [], "The write carries its own source downstream, so that it is excluded");
+
+    B.set(11);
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [11], "Later unsourced write delivered");
+    eff.dispose();
+});
+
+QUnit.test("Writes made by an effect inherit the sources of the change which triggered it - FLUID-5498", assert => {
+    const hash = fluid.cell("intro", {name: "hash"});
+    const section = fluid.cell(0, {name: "section"});
+    const panes = ["intro", "history", "solow"];
+    // Selects the section named by the hash, as a listener would which navigates on a change of hash
+    const follow = fluid.cell.effect(pane => section.set(panes.indexOf(pane)), [hash], {name: "follow"});
+    const pane = fluid.cell(undefined, {name: "pane"}).computed(index => panes[index], [section]);
+    const userChanges = [];
+    const record = fluid.cell.effect(pane => userChanges.push(pane), [pane], {name: "record", excludeSource: "hash"});
+    fluid.cell.stabilize();
+    userChanges.length = 0;
+
+    fluid.cell.withAmbientSource("hash", () => hash.set("solow"))();
+    fluid.cell.stabilize();
+    assert.equal(section.get(), 2, "Section follows the hash");
+    assert.deepEqual(userChanges, [], "Change of section caused by a change of hash is excluded downstream, two edges and an effect away");
+
+    section.set(1);
+    fluid.cell.stabilize();
+    assert.deepEqual(userChanges, ["history"], "Unsourced change of section is delivered");
+
+    fluid.cell.withAmbientSource("hash", () => hash.set("intro"))();
+    fluid.cell.stabilize();
+    assert.deepEqual(userChanges, ["history"], "Further change caused by the hash is excluded");
+    assert.equal(fluid.cell.inheritedSources, null, "No sources are inherited outside an effect");
+
+    follow.dispose();
+    record.dispose();
 });
 
 // kairo's "avoidable computation" test at https://github.com/milomg/js-reactivity-benchmark/blob/main/packages/core/src/benches/kairo/avoidable.ts
@@ -461,4 +546,81 @@ QUnit.test("Unconfigured source demotes an edge which did not carry the update",
 
     assert.equal(target.get(), "fallback",
         "Edge holding an unconfigured source passed over in favour of a configured alternative");
+});
+
+QUnit.test("An effect whose run makes one of its sources stale is notified of later changes", assert => {
+    const A = fluid.cell(1, {name: "A"});
+    const B = fluid.cell(0, {name: "B"});
+    // C reads B, so that the effect's write of B makes C stale whilst the effect is running
+    const C = fluid.cell(undefined, {name: "C"}).computed((...args) => args[0], [A, B]);
+    const runs = [];
+    fluid.cell.effect(c => {
+        runs.push(c);
+        fluid.cell.untracked(() => B.set(B.get() + 1));
+    }, [C], {name: "writer"});
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [1], "Effect runs initially, and is not rerun since C's value is unchanged by its write");
+    A.set(2);
+    fluid.cell.stabilize();
+    A.set(3);
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [1, 2, 3], "Effect notified of each later change to A");
+});
+
+QUnit.test("An effect which cyclically triggers itself is stopped and reported", assert => {
+    const A = fluid.cell(0, {name: "A"});
+    let runs = 0;
+    const effect = fluid.cell.effect(a => {
+        ++runs;
+        A.set(a + 1);
+    }, [A], {name: "self-incrementing effect"});
+    const logged = [];
+    const oldReport = fluid.cell.reportCycle;
+    fluid.cell.reportCycle = message => logged.push(message);
+    try {
+        fluid.cell.stabilize();
+    } finally {
+        fluid.cell.reportCycle = oldReport;
+    }
+    assert.equal(runs, fluid.cell.maxEffectRuns, "Effect run the maximum number of times within one stabilization");
+    assert.ok(logged.some(line => line.includes("self-incrementing effect") && line.includes("fluid.cell.untracked")),
+        "The cycle is reported, naming the effect");
+    effect.dispose();
+});
+
+QUnit.test("A computation whose received source changes in the course of its update is brought up to date", assert => {
+    // B binds lazily: once triggered, pulling it changes its own source A - as for a binding made available partway
+    // through a pull
+    const A = fluid.cell("unbound", {name: "A"});
+    const trigger = fluid.cell("idle", {name: "trigger"});
+    const B = fluid.cell(undefined, {name: "B"}).computed((a, t) => {
+        if (t === "go" && a === "unbound") {
+            A.set("bound");
+        }
+        return a;
+    }, [A, trigger]);
+    const C = fluid.cell(undefined, {name: "C"}).computed(b => "C sees " + b, [B]);
+    assert.equal(C.get(), "C sees unbound", "Initial value");
+    trigger.set("go");
+    assert.equal(C.get(), "C sees bound", "The reader receives the value computed from the changed source");
+    assert.equal(B.get(), "bound", "The computation holds its current value");
+});
+
+QUnit.test("A source made stale again whilst a later source is brought up to date is brought up to date once more", assert => {
+    const base = fluid.cell(1, {name: "base"});
+    const first = fluid.cell(undefined, {name: "first"}).computed(b => b * 10, [base]);
+    const trigger = fluid.cell("idle", {name: "trigger"});
+    // Bringing this up to date changes the source of "first", which has already been brought up to date - as for a
+    // binding made in the course of a pull which turns over a component read by an earlier argument
+    const second = fluid.cell(undefined, {name: "second"}).computed(t => {
+        if (t === "go") {
+            base.set(2);
+        }
+        return t;
+    }, [trigger]);
+    const both = fluid.cell(undefined, {name: "both"}).computed((f, s) => `${f}:${s}`, [first, second]);
+    assert.equal(both.get(), "10:idle", "Initial value");
+    trigger.set("go");
+    assert.equal(both.get(), "20:go", "Both sources' current values received");
+    assert.equal(both.get(), "20:go", "And held");
 });

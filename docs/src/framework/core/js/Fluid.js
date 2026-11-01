@@ -321,6 +321,19 @@ const $fluidScope = function (fluid) {
         return typeof(ref) === "string" && ref.charAt(0) === "{";
     };
 
+    /**
+     * Recover the literal String written in configuration by escaping its first character. Configuration interprets a
+     * String beginning with "{" as a context reference, and one beginning with "$" as a compact record such as
+     * "$compute:...". A String whose first character is a backslash is instead taken literally, without that character.
+     * As written in JavaScript source, "\\{" stands for a literal "{", "\\$" for a literal "$" and "\\\\" for a literal
+     * backslash at the start of a String. A backslash anywhere else in a String has no special meaning.
+     * @param {any} value - A value found in configuration
+     * @return {any} The value, with any escaping backslash removed from the start of a String
+     */
+    fluid.unescapeLiteral = function (value) {
+        return typeof(value) === "string" && value.charAt(0) === "\\" ? value.substring(1) : value;
+    };
+
     /** Determine whether the supplied value is a reference or an expander. The test is passed if either fluid.isILReference passes
      * or the value has an "expander" member
      * @param {any} ref - The value to be tested
@@ -705,8 +718,6 @@ const $fluidScope = function (fluid) {
     // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
     fluid.metadataSymbol = Symbol("fluid.metadata");
     const $m = fluid.metadataSymbol;
-
-    fluid.keySymbol = Symbol("fluid.key");
 
     fluid.unavailableProxy = function (target) {
         const proxy = new Proxy(target, {
@@ -1289,361 +1300,61 @@ const $fluidScope = function (fluid) {
 
     /*** The Fluid Event system. ***/
 
-    fluid.registerNamespace("fluid.event");
-
-    fluid.event.identifyListener = function (listener, soft) {
-        if (typeof(listener) !== "string" && !listener.$$fluid_guid && !soft) {
-            listener.$$fluid_guid = fluid.allocateGuid();
-        }
-        return listener.$$fluid_guid;
-    };
-
-    fluid.event.impersonateListener = function (origListener, newListener) {
-        fluid.event.identifyListener(origListener);
-        newListener.$$fluid_guid = origListener.$$fluid_guid;
-    };
-
-    fluid.event.sortListeners = function (listeners) {
-        let togo = [];
-        Object.values(listeners).forEach(oneNamespace => {
-            let headHard; // notify only the first listener with hard namespace - or else all if all are soft
-            for (let i = 0; i < oneNamespace.length; ++i) {
-                const thisListener = oneNamespace[i];
-                if (!thisListener.softNamespace && !headHard) {
-                    headHard = thisListener;
-                }
-            }
-            if (headHard) {
-                togo.push(headHard);
-            } else {
-                togo = togo.concat(oneNamespace);
-            }
-        });
-        return fluid.sortByPriority(togo);
-    };
-
-    fluid.event.resolveListener = function (listener) {
-        const listenerName = listener.globalName || (typeof(listener) === "string" ? listener : null);
-        if (listenerName) {
-            const listenerFunc = fluid.getGlobalValue(listenerName);
-            if (!listenerFunc) {
-                fluid.fail("Unable to look up name " + listenerName + " as a global function");
-            } else {
-                listener = listenerFunc;
-            }
-        }
-        return listener;
-    };
-
-    /* Generate a name for a component for debugging purposes */
-    fluid.nameComponent = function (that) {
-        return that ? fluid.dumpComponentAndPath(that) : "[unknown component]";
-    };
-
-    fluid.event.nameEvent = function (that, eventName) {
-        return eventName + " of " + fluid.nameComponent(that);
-    };
-
-    // A function to tag the type of a Fluid event firer (primarily to mark it uncopyable)
-    fluid.event.firer = function () {
-    };
-
-    /** Construct an "event firer" object which can be used to register and deregister
-     * listeners, to which "events" can be fired. These events consist of an arbitrary
-     * function signature. General documentation on the Fluid events system is at
-     * http://docs.fluidproject.org/infusion/development/InfusionEventSystem.html .
-     *
-     * @param {Object} options - A structure to configure this event firer. Supported fields:
-     *     {String} name - a readable name for this firer to be used in diagnostics and debugging
-     *     {Boolean} preventable - If <code>true</code> the return value of each handler will
-     * be checked for <code>false</code> in which case further listeners will be shortcircuited, and this
-     * will be the return value of fire()
-     *     {Boolean} promise - If `true`, the event firer will receive a "thenable" signature allowing
-     * it to function as a promise. In this case the event should be fired with only one argument, and
-     * not more than once.
-     * @return {Object} - The newly-created event firer.
+    /**
+     * @typedef {Object} EventFirer
+     * @property {String} name - A readable name for the event, for diagnostics
+     * @property {Function} addListener - Adds a listener, with signature `(listener, namespace, priority)`
+     * @property {Function} fire - Fires the event, with a free signature which is supplied to each listener
      */
-    fluid.makeEventFirer = function (options) {
-        options = options || {};
-        const name = options.name || "<anonymous>";
-        let that;
 
-        const lazyInit = function () { // Lazy init function to economise on object references for events which are never listened to
-            // The authoritative list of all listeners, a hash indexed by namespace, looking up to a stack (array) of
-            // listener records in "burial order"
-            that.listeners = {};
-            // An index of all listeners by "id" - we should consider removing this since it is only used during removal
-            // and because that.listeners is a hash of stacks we can't really accelerate removal by much
-            that.byId = {};
-            // The "live" list of listeners which will be notified in order on any firing. Recomputed on any use of
-            // addListener/removeListener
-            that.sortedListeners = [];
-            // Very low-level destruction notification scheme primarily intended for FLUID-6445. Will be an array of nullary functions
-            that.onDestroy = null;
-            // arguments after 3rd are not part of public API
-            // listener as Object is used only by ChangeApplier to tunnel path, segs, etc as part of its "spec"
-            /** Adds a listener to this event.
-             * @param {Function|String} listener - The listener function to be added, or a global name resolving to a function. The signature of the function is arbitrary and matches that sent to event.fire()
-             * @param {String} [namespace] - (Optional) A namespace for this listener. At most one listener with a particular namespace can be active on an event at one time. Removing successively added listeners with a particular
-             * namespace will expose previously added ones in a stack idiom
-             * @param {String|Number} [priority] - A priority for the listener relative to others, perhaps expressed with a constraint relative to the namespace of another - see
+    /**
+     * Construct an event firer, to which listeners may be added, each of which is notified when the event is fired.
+     * Listeners are notified in the order given by their priorities, and otherwise in the order they were added. This
+     * is a minimal form of the event system of Infusion 4, supporting just `fluid.loggingEvent` and
+     * `fluid.failureEvent` - listeners cannot be removed, but a listener displaces any existing one with its namespace.
+     * @param {Object} [options] - Options configuring the firer
+     * @param {String} [options.name] - A readable name for the event, for diagnostics
+     * @return {EventFirer} The event firer
+     */
+    fluid.makeEventFirer = function (options = {}) {
+        // Listener records indexed by namespace
+        const byNamespace = {};
+        // The listener records in the order in which they are notified, recomputed whenever a listener is added
+        let sortedListeners = [];
+        let count = 0;
+        return {
+            name: options.name || "<anonymous>",
+            /**
+             * Adds a listener to this event.
+             * @param {Function} listener - The listener, whose signature matches that supplied to `fire`
+             * @param {String} [namespace] - A namespace for the listener, displacing any existing listener with the same
+             * namespace. If omitted, the listener receives a unique namespace.
+             * @param {String|Number} [priority] - A priority for the listener relative to others, perhaps expressed with a
+             * constraint relative to the namespace of another, e.g. "before:log" - see
              * http://docs.fluidproject.org/infusion/development/Priorities.html
-             * @param {String} [softNamespace] - An unsupported internal option that is not part of the public API.
-             * @param {String} [listenerId] - An unsupported internal option that is not part of the public API.
              */
-            that.addListener = function (listener, namespace, priority, softNamespace, listenerId) {
-                let record;
-                if (that.destroyed) {
-                    fluid.fail("Cannot add listener to destroyed event firer " + that.name);
-                }
-                if (!listener) {
-                    return;
-                }
-                if (fluid.isPlainObject(listener, true) && !fluid.isApplicable(listener)) {
-                    record = listener;
-                    listener = record.listener;
-                    namespace = record.namespace;
-                    priority = record.priority;
-                    softNamespace = record.softNamespace;
-                    listenerId = record.listenerId;
-                }
-                if (typeof(listener) === "string") {
-                    listener = {globalName: listener};
-                }
-                const id = listenerId || fluid.event.identifyListener(listener);
-                namespace = namespace || id;
-                record = Object.assign(record || {}, {
-                    namespace: namespace,
-                    listener: listener,
-                    softNamespace: softNamespace,
-                    listenerId: listenerId,
-                    priority: fluid.parsePriority(priority, that.sortedListeners.length, false, "listeners")
-                });
-                that.byId[id] = record;
-
-                const thisListeners = (that.listeners[namespace] = fluid.makeArray(that.listeners[namespace]));
-                thisListeners[softNamespace ? "push" : "unshift"](record);
-
-                that.sortedListeners = fluid.event.sortListeners(that.listeners);
-            };
-            that.addListener.apply(null, arguments);
-        };
-        that = Object.create(fluid.event.firer.prototype);
-        Object.assign(that, {
-            eventId: fluid.allocateGuid(),
-            name: name,
-            ownerId: options.ownerId,
-            typeName: "fluid.event.firer",
-            destroy: function () {
-                that.destroyed = true;
-                fluid.each(that.onDestroy, function (func) {
-                    func();
-                });
-            },
-            addListener: function () {
-                lazyInit.apply(null, arguments);
+            addListener: function (listener, namespace, priority) {
+                const listenerNamespace = namespace || "listener-" + fluid.allocateGuid();
+                byNamespace[listenerNamespace] = {
+                    namespace: listenerNamespace,
+                    listener,
+                    priority: fluid.parsePriority(priority, count++, false, "listeners")
+                };
+                sortedListeners = fluid.sortByPriority(Object.values(byNamespace));
             },
             /**
-             * Removes a listener previously registered with this event.
-             *
-             * @param {Function|String} listener - Either the listener function, the namespace of a listener
-             * (in which case a previous listener with that namespace may be uncovered) or an id sent to the
-             * undocumented `listenerId` argument of `addListener
+             * Fires this event to its listeners, in order of priority. The signature of this method is free. Any
+             * exception thrown by a listener propagates, and no further listeners are notified.
+             * @param {...any} args - The arguments to be supplied to each listener
              */
-            // Can be supplied either listener, namespace, or id (which may match either listener function's guid or original listenerId argument)
-            removeListener: function (listener) {
-                if (!that.listeners) {
-                    return;
-                }
-                let namespace, id, record;
-                if (typeof(listener) === "string") {
-                    namespace = listener;
-                    record = that.listeners[namespace];
-                    if (!record) { // it was an id and not a namespace - take the namespace from its record later
-                        id = namespace;
-                        namespace = null;
-                    }
-                } else if (typeof(listener) === "function") {
-                    id = fluid.event.identifyListener(listener, true);
-                    if (!id) {
-                        fluid.fail("Cannot remove unregistered listener function ", listener, " from event " + that.name);
-                    }
-                }
-                const rec = that.byId[id];
-                const softNamespace = rec && rec.softNamespace;
-                namespace = namespace || (rec && rec.namespace) || id;
-                delete that.byId[id];
-                record = that.listeners[namespace];
-                if (record) {
-                    if (softNamespace) {
-                        fluid.remove_if(record, function (thisLis) {
-                            return thisLis.listener.$$fluid_guid === id || thisLis.listenerId === id;
-                        });
-                    } else {
-                        record.shift();
-                    }
-                    if (record.length === 0) {
-                        delete that.listeners[namespace];
-                    }
-                }
-                that.sortedListeners = fluid.event.sortListeners(that.listeners);
-            },
-            /* Fires this event to all listeners which are active. They will be notified in order of priority. The signature of this method is free. */
-            fire: function () {
-                const listeners = that.sortedListeners;
-                if (options.promise) {
-                    that.promisePayload = arguments[0];
-                }
-                if (!listeners || that.destroyed) {
-                    return;
-                }
+            fire: function (...args) {
+                // A listener added during firing is not notified until the next firing
+                const listeners = sortedListeners;
                 for (let i = 0; i < listeners.length; ++i) {
-                    const lisrec = listeners[i];
-                    if (typeof(lisrec.listener) !== "function") {
-                        lisrec.listener = fluid.event.resolveListener(lisrec.listener);
-                    }
-                    const listener = lisrec.listener;
-                    const ret = listener.apply(null, arguments);
-                    let value;
-                    if (options.preventable && ret === false || that.destroyed) {
-                        value = false;
-                    }
-                    if (value !== undefined) {
-                        return value;
-                    }
+                    listeners[i].listener.apply(null, args);
                 }
             }
-        });
-        if (options.promise) {
-            that.then = function (func) {
-                if ("promisePayload" in that) {
-                    func(that.promisePayload);
-                } else {
-                    that.addListener(func);
-                }
-            };
-        }
-        return that;
-    };
-
-    // Fires to an event which may not be instantiated (in which case no-op) - primary modern usage is to resolve FLUID-5904
-    fluid.fireEvent = function (component, eventName, args) {
-        const firer = component.events && component.events[eventName];
-        if (firer) {
-            firer.fire.apply(null, fluid.makeArray(args));
-        }
-    };
-
-    // unsupported, NON-API function
-    fluid.event.addListenerToFirer = function (firer, value, namespace, wrapper) {
-        wrapper = wrapper || (x => x);
-        if (Array.isArray(value)) {
-            for (let i = 0; i < value.length; ++i) {
-                fluid.event.addListenerToFirer(firer, value[i], namespace, wrapper);
-            }
-        } else if (typeof(value) === "function" || typeof(value) === "string") {
-            wrapper(firer).addListener(value, namespace);
-        } else if (value && typeof(value) === "object") {
-            wrapper(firer).addListener(value.listener, namespace || value.namespace, value.priority, value.softNamespace, value.listenerId);
-        }
-    };
-
-    // unsupported, NON-API function - non-IOC passthrough
-    fluid.event.resolveListenerRecord = function (records) {
-        return {records: records};
-    };
-
-    fluid.expandImmediate = function (material) {
-        fluid.fail("fluid.expandImmediate could not be loaded - please include FluidIL.js in order to operate IL event with descriptor " + material);
-    };
-
-    fluid.mergeListeners = function (that, events, listeners) {
-        fluid.each(listeners, function (value, key) {
-            let firer, namespace;
-            if (fluid.isILReference(key)) {
-                firer = fluid.expandImmediate(key, that);
-                if (!firer) {
-                    fluid.fail("Error in listener record: key " + key + " could not be looked up to an event firer - did you miss out \"events.\" when referring to an event firer?");
-                }
-            } else {
-                const keydot = key.indexOf(".");
-
-                if (keydot !== -1) {
-                    namespace = key.substring(keydot + 1);
-                    key = key.substring(0, keydot);
-                }
-                if (!events[key]) {
-                    fluid.fail("Listener registered for event " + key + " which is not defined for this component");
-                }
-                firer = events[key];
-            }
-            const record = fluid.event.resolveListenerRecord(value, that, key, namespace, true);
-            fluid.event.addListenerToFirer(firer, record.records, namespace, record.adderWrapper);
-        });
-    };
-
-    fluid.eventFromRecord = function (eventSpec, eventKey, that) {
-        const isILEvent = eventSpec && (typeof(eventSpec) !== "string" || fluid.isILReference(eventSpec));
-        let event;
-        if (isILEvent) {
-            if (!fluid.event.resolveEvent) {
-                fluid.fail("fluid.event.resolveEvent could not be loaded - please include FluidIL.js in order to operate IL driven event with descriptor ",
-                    eventSpec);
-            } else {
-                event = fluid.event.resolveEvent(that, eventKey, eventSpec);
-            }
-        } else {
-            event = fluid.makeEventFirer({
-                name: fluid.event.nameEvent(that, eventKey),
-                preventable: eventSpec === "preventable",
-                promise: eventSpec === "promise",
-                ownerId: that.id
-            });
-        }
-        return event;
-    };
-
-    fluid.mergeListenerPolicy = function (target, source, key) {
-        if (typeof(key) !== "string") {
-            fluid.fail("Error in listeners declaration - the keys in this structure must resolve to event names - got " + key + " from ", source);
-        }
-        // cf. triage in mergeListeners
-        const hasNamespace = !fluid.isILReference(key) && key.indexOf(".") !== -1;
-        return hasNamespace ? (source || target) : fluid.arrayConcatPolicy(target, source);
-    };
-
-    fluid.makeMergeListenersPolicy = function (merger, modelRelay) {
-        return function (target, source) {
-            target = target || {};
-            if (modelRelay && (Array.isArray(source) || "target" in source && (typeof(source.target) === "string" || source.target.segs))) { // This form allowed for modelRelay
-                target[""] = merger(target[""], source, "");
-            } else {
-                fluid.each(source, function (listeners, key) {
-                    target[key] = merger(target[key], listeners, key);
-                });
-            }
-            return target;
         };
-    };
-
-    fluid.validateListenersImplemented = function (that) {
-        const errors = [];
-        fluid.each(that.events, function (event, name) {
-            fluid.each(event.sortedListeners, function (lisrec) {
-                if (lisrec.listener === fluid.notImplemented || lisrec.listener.globalName === "fluid.notImplemented") {
-                    errors.push({
-                        name: name,
-                        namespace: lisrec.namespace,
-                        componentSource: fluid.model.getSimple(that.options.listeners, [name + "." + lisrec.namespace, 0, "componentSource"])
-                    });
-                }
-            });
-        });
-        return errors;
-    };
-
-    fluid.arrayConcatPolicy = function (target, source) {
-        return fluid.makeArray(target).concat(fluid.makeArray(source));
     };
 
     /*** FLUID LOGGING SYSTEM ***/
@@ -1662,7 +1373,7 @@ const $fluidScope = function (fluid) {
     fluid.loggingEvent.addListener(fluid.doBrowserLog, "log");
     // Not intended to be overridden - just a positional placeholder so that the priority of
     // actions filtering the log arguments before dispatching may be referred to it
-    fluid.loggingEvent.addListener(x => x, "filterArgs", "before:log");
+    fluid.loggingEvent.addListener(fluid.identity, "filterArgs", "before:log");
     fluid.loggingEvent.addListener(fluid.addTimestampArg, "addTimestampArg", "after:filterArgs");
 
     /*** FLUID ERROR SYSTEM ***/
@@ -1698,15 +1409,29 @@ const $fluidScope = function (fluid) {
     /** @type {Cell<Object>} */
     fluid.layerStore = fluid.cell({}, {name: "fluid.layerStore"});
 
-    /** @type {Cell<Array>} */
-    fluid.layerHistory = fluid.cell([], {name: "fluid.layerHistory"});
+    /*** HISTORY ***/
 
-    /** @type {Cell<Number>} */
-    fluid.layerHistoryIndex = fluid.cell(0, {name: "fluid.layerHistoryIndex"});
+    fluid.registerNamespace("fluid.history");
+
+    // Two kinds of undoable history are kept, each on a stack of its own - fluid.history.live, recording writes to the
+    // live state of components, and fluid.history.definitions, recording the redefinition and deletion of user layers. A
+    // host may step through either independently, e.g. the tldraw demo, which offers separate commands to undo widget
+    // changes and layer changes. fluid.history.mixed interleaves the two in the order in which their records were made,
+    // and fluid.history.back and fluid.history.forward step through them together, e.g. for the editor's history pane.
+    //
+    // The following members are replaced or extended from elsewhere:
+    //  - fluid.history.arenaRoot is set to the root of the component tree in FluidIL.js, and nominated afresh by the
+    //    tldraw demo in tldraw-driver.js
+    //  - fluid.history.coalesce is set by the tldraw demo in tldraw-driver.js
+    //  - fluid.history.liveRecordAppliers has an applier for "widgets" records registered by the tldraw demo in
+    //    tldraw-arena.js
+    //  - fluid.history.layerSource, fluid.history.sourceFromDef and fluid.history.applySource are replaced in FluidPTF.js
+    //    to hold the sources of layers as text
+    //  - fluid.history.now is replaced in tests to control the stamps of records
 
     /**
      * @typedef {Object} HistoryRec
-     * @property {String} type - The type of history event - one of "updateLayer", "newLayer",
+     * @property {String} type - The type of history event - one of "updateLayer", "newLayer", "deleteLayer"
      * @property {String} layerName - The name of the layer being updated
      * @property {Object} [oldValue] - The previous value of the layer
      * @property {Object} [newValue] - The updated value of the layer
@@ -1717,90 +1442,608 @@ const $fluidScope = function (fluid) {
      */
 
     /**
-     * Functions notified of each record pushed onto the history, e.g. to maintain the undoable histories of an arena
-     * in FluidPTF.js. Each accepts a {HistoryRec}.
-     * @type {Function[]}
+     * @typedef {Object} StackRec
+     * @property {String} type - The type of the record, e.g. "group" or "definition", by which it is applied
+     * @property {Number} madeAt - When the record was pushed onto its stack, in milliseconds since the epoch - see
+     * `fluid.history.pushToStack`
+     * @property {Number} seq - The order in which the record was pushed amongst all records pushed in this session,
+     * distinguishing records pushed within the same millisecond
      */
-    fluid.historyListeners = [];
 
     /**
-     * Pushes a new history record onto the history stack, and notifies any `fluid.historyListeners` of it.
+     * @typedef {Object} LiveHistoryRec
+     * @property {String} type - "live"
+     * @property {String|null} site - The site which was updated, as rendered by `fluid.renderSite`, or `null` if it did
+     * not exist when the record was restored from persistence
+     * @property {ArenaRef} ref - A reference to the site relative to the root of the arena, through which the record is
+     * applied in preference to its site, so that it applies to a reconstructed component
+     * @property {any} oldValue - The value at the site before the update
+     * @property {any} newValue - The value at the site after the update
+     */
+
+    /**
+     * @typedef {Object} GroupHistoryRec
+     * @property {String} type - "group"
+     * @property {String} key - The burst key, as determined by `fluid.history.burstKey`, shared by the records of the group
+     * @property {Number} time - When the group was last written to, in milliseconds since the epoch
+     * @property {Number} [gesture] - The id of the gesture which wrote the group, if any - see `fluid.history.withinGesture`
+     * @property {Object[]} records - The records of the group, oldest first, which are stepped through together
+     */
+
+    /**
+     * @typedef {Object} DefinitionHistoryRec
+     * @property {String} type - "definition"
+     * @property {String} layerName - The name of the layer which was redefined or deleted
+     * @property {LayerSource} oldSource - The layer's source before its redefinition or deletion
+     * @property {LayerSource|null} newSource - The layer's source after its redefinition, or `null` if it was deleted
+     */
+
+    /**
+     * @typedef {Object} LayerSource
+     * @property {String} contentType - The MIME type of the source, one of `fluid.layerMimeTypes`
+     * @property {String} [body] - The text of the source, as held by FluidPTF.js's sources
+     * @property {LayerDef} [def] - The definition itself, as held by the default sources of Fluid.js, which hold no text
+     */
+
+    /**
+     * @typedef {Object} HistoryStack
+     * @property {String} name - A name for the stack, for debugging
+     * @property {Cell<StackRec[]>} records - The records of the stack, oldest first
+     * @property {Cell<Number>} index - The number of records currently applied - records at and after this index may
+     * be stepped forward through
+     * @property {Cell<Boolean>} canBack - `true` if there is a record to step back through
+     * @property {Cell<Boolean>} canForward - `true` if there is a record to step forward through
+     * @property {Function} apply - Accepts a record and either "old" or "new", applies that side of it and returns
+     * `true`, or returns `false` if it can no longer be applied, e.g. since its component has been destroyed
+     */
+
+    /**
+     * Functions notified of each record pushed onto the history, e.g. to record further kinds of history. Each accepts
+     * a {HistoryRec}.
+     * @type {Function[]}
+     */
+    fluid.history.listeners = [];
+
+    /**
+     * Receive a record of a change to the layer store or to the live layer of a component, record it in
+     * `fluid.history.live` or `fluid.history.definitions` as appropriate, and notify any `fluid.history.listeners` of it.
+     * Only changes to live layers and to user layers are recorded, and none whilst history is suppressed by
+     * `fluid.history.withoutRecording`.
      * @param {HistoryRec} record - The history record to push
      */
-    fluid.pushHistory = function (record) {
+    fluid.history.push = function (record) {
         // TODO: coordinate this notion with LayerColorManager's alg for allocating colours, currently misplaced in fluid.editor.layerList.fromStore
-        if ((record.layerName.startsWith("{") || fluid.isUserLayer(record.layerName)) && !fluid.historyPush) {
-            const index = fluid.layerHistoryIndex.get();
-            fluid.layerHistory.set([...fluid.layerHistory._value.slice(0, index), record]);
-            fluid.layerHistoryIndex.set(index + 1);
-            fluid.historyListeners.forEach(listener => listener(record));
+        if ((record.layerName.startsWith("{") || fluid.isUserLayer(record.layerName)) && !fluid.history.suppressed) {
+            if (record.layerName.startsWith("{")) {
+                fluid.history.recordLive(record);
+            } else {
+                fluid.history.recordDefinition(record);
+            }
+            fluid.history.listeners.forEach(listener => listener(record));
         }
     };
+
+    // `true` whilst history is not to be recorded - see fluid.history.withoutRecording
+    fluid.history.suppressed = false;
 
     /**
      * Execute a function without recording any history, e.g. whilst applying a history record or restoring state
      * @param {Function} func - The function to execute
      * @return {any} The return value of the function
      */
-    fluid.withoutHistory = function (func) {
-        const wasPushing = fluid.historyPush;
-        fluid.historyPush = true;
+    fluid.history.withoutRecording = function (func) {
+        const wasPushing = fluid.history.suppressed;
+        fluid.history.suppressed = true;
         let togo;
         try {
             togo = func();
         } finally {
-            fluid.historyPush = wasPushing;
+            fluid.history.suppressed = wasPushing;
+        }
+        return togo;
+    };
+
+    // The greatest number of records held by a history stack - the oldest are discarded beyond this
+    fluid.history.maxLength = 200;
+
+    // The number of records pushed onto any history stack in this session - see StackRec
+    fluid.history.sequence = 0;
+
+    /**
+     * The current time, in milliseconds since the epoch - held here so that it may be replaced in tests
+     * @return {Number} The current time
+     */
+    fluid.history.now = () => Date.now();
+
+    /**
+     * Construct an empty history stack
+     * @param {String} name - A name for the stack, for debugging
+     * @param {Function} apply - Applies a record, as described for {HistoryStack}
+     * @return {HistoryStack} The stack
+     */
+    fluid.history.makeStack = function (name, apply) {
+        const records = fluid.cell([], {name: `${name} records`});
+        const index = fluid.cell(0, {name: `${name} index`});
+        return {
+            name,
+            records,
+            index,
+            apply,
+            canBack: fluid.cell(undefined, {name: `${name} canBack`}).computed(index => index > 0, [index]),
+            canForward: fluid.cell(undefined, {name: `${name} canForward`}).computed((records, index) => index < records.length, [records, index])
+        };
+    };
+
+    /**
+     * Push a record onto a history stack, discarding any records which had been stepped back through. The record is
+     * stamped with when it was pushed, so that the records of several stacks may be interleaved - see
+     * `fluid.history.mixed`. A record restored from persistence keeps its stamp.
+     * @param {HistoryStack} stack - The stack
+     * @param {Object} record - The record
+     */
+    fluid.history.pushToStack = function (stack, record) {
+        const stamped = {...record, madeAt: record.madeAt ?? fluid.history.now(), seq: fluid.history.sequence++};
+        const kept = [...stack.records.get().slice(0, stack.index.get()), stamped];
+        const trimmed = kept.slice(Math.max(0, kept.length - fluid.history.maxLength));
+        stack.records.set(trimmed);
+        stack.index.set(trimmed.length);
+    };
+
+    /**
+     * Step back through a history stack, undoing its most recently applied record. Any records which can no longer be
+     * applied are stepped over.
+     * @param {HistoryStack} stack - The stack
+     * @return {Boolean} `true` if a record was undone
+     */
+    fluid.history.stepBack = function (stack) {
+        const records = stack.records.get();
+        let index = stack.index.get();
+        let applied = false;
+        while (index > 0 && !applied) {
+            --index;
+            applied = stack.apply(records[index], "old");
+        }
+        stack.index.set(index);
+        return applied;
+    };
+
+    /**
+     * Step forward through a history stack, redoing the record most recently undone. Any records which can no longer be
+     * applied are stepped over.
+     * @param {HistoryStack} stack - The stack
+     * @return {Boolean} `true` if a record was redone
+     */
+    fluid.history.stepForward = function (stack) {
+        const records = stack.records.get();
+        let index = stack.index.get();
+        let applied = false;
+        while (index < records.length && !applied) {
+            applied = stack.apply(records[index], "new");
+            ++index;
+        }
+        stack.index.set(index);
+        return applied;
+    };
+
+    // The "arena" is the part of the component tree whose live state is recorded in fluid.history.live - the components
+    // beneath its root, fluid.history.arenaRoot. By default this is the root of the whole tree, as set in FluidIL.js once
+    // the tree exists. A host may nominate a component of its own as the root, e.g. the tldraw demo nominates the
+    // component hosting its canvas's widgets, or `null`, so that nothing belongs to the arena. Each component directly
+    // beneath the root is a "member" of the arena - writes to the same member may be coalesced into a single step - and
+    // a site in the arena is referred to by its path from the root. Such a reference remains valid as a member is
+    // reconstructed, e.g. on undoing its deletion or restoring a persisted arena, if it is reconstructed under the same
+    // member name - see the `memberName` argument of `fluid.initChildComponent`.
+
+    /**
+     * The shadow of the component at the root of the arena, or `null` if nothing belongs to the arena
+     * @type {Shadow|null}
+     */
+    fluid.history.arenaRoot = null;
+
+    /**
+     * @typedef {Object} ArenaRef
+     * @property {String[]} segs - The member names leading from the root of the arena to the component holding the site,
+     * the first of which is that of the member of the arena holding it
+     * @property {String} path - The path of the site within its component
+     */
+
+    /**
+     * Determine the path of a component from the root of the arena
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {String[]|null} The member names leading from the root of the arena to the component, or `null` if the
+     * component does not belong to the arena
+     */
+    fluid.history.arenaSegs = function (shadow) {
+        const root = fluid.history.arenaRoot;
+        const segs = [];
+        let current = shadow;
+        while (current && current !== root) {
+            segs.unshift(current.memberName);
+            current = current.parentShadow;
+        }
+        return root && current === root && segs.length > 0 ? segs : null;
+    };
+
+    /**
+     * Determine whether a component belongs to the arena, so that writes to its live state are recorded in
+     * `fluid.history.live`
+     * @param {Shadow} shadow - The shadow of the component
+     * @return {Boolean} `true` if the component is beneath the root of the arena
+     */
+    fluid.history.arenaContains = function (shadow) {
+        return fluid.history.arenaSegs(shadow) !== null;
+    };
+
+    /**
+     * Render a site in the arena as a reference relative to the root of the arena
+     * @param {String} site - The site, as rendered by `fluid.renderSite`
+     * @return {ArenaRef|null} The reference, or `null` if the site is not in the arena
+     */
+    fluid.history.siteToRef = function (site) {
+        const parsed = fluid.parseSite(site);
+        const segs = parsed.shadow ? fluid.history.arenaSegs(parsed.shadow) : null;
+        return segs ? {segs, path: parsed.path} : null;
+    };
+
+    /**
+     * Resolve a reference produced by `fluid.history.siteToRef` to the site it currently refers to
+     * @param {ArenaRef} ref - The reference
+     * @return {String|null} The site, as rendered by `fluid.renderSite`, or `null` if it does not currently exist
+     */
+    fluid.history.refToSite = function (ref) {
+        const shadow = ref.segs.reduce((parent, seg) => parent?.childComponents[seg], fluid.history.arenaRoot);
+        return shadow ? fluid.renderSite({shadow, segs: fluid.pathToSegs(ref.path)}) : null;
+    };
+
+    /**
+     * Determine the key of a site, writes to sites sharing which may be coalesced into a single step - the name of the
+     * member of the arena holding it, so that writes to any of the member's components are coalesced together
+     * @param {String} site - The site, as rendered by `fluid.renderSite`, or the bare component reference `{path}`
+     * @return {String} The burst key - for a site outside the arena, the path of its component
+     */
+    fluid.history.burstKey = function (site) {
+        const parsed = fluid.parseSite(site);
+        const segs = parsed.shadow ? fluid.history.arenaSegs(parsed.shadow) : null;
+        return segs ? segs[0] : fluid.parseContextReference(site).context;
+    };
+
+    /**
+     * Apply one side of a live history record, unless its component no longer exists. The record is applied through its
+     * reference if it has one which currently resolves, and otherwise to its site.
+     * @param {LiveHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if the record was applied
+     */
+    fluid.history.applyLiveRecord = function (record, side) {
+        const siteName = (record.ref ? fluid.history.refToSite(record.ref) : null) ?? record.site;
+        const site = siteName ? fluid.parseSite(siteName) : {};
+        const live = !!site.shadow && site.shadow.lifecycleStatus !== "destroyed";
+        if (live) {
+            fluid.history.withoutRecording(() => fluid.setForComponent(site.shadow.that, site.path, record[side + "Value"]));
+        }
+        return live;
+    };
+
+    /**
+     * The functions which apply each type of record held in `fluid.history.live`, keyed by type, as described for the
+     * `apply` member of {HistoryStack}. A host may register further types, e.g. the tldraw demo's records of the
+     * creation and deletion of widgets.
+     * @type {Object<String, Function>}
+     */
+    fluid.history.liveRecordAppliers = {
+        live: fluid.history.applyLiveRecord
+    };
+
+    /**
+     * Apply one side of a record held in `fluid.history.live`, through the applier registered for its type
+     * @param {Object} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if the record was applied, or `false` if it could not be, or no applier is registered
+     */
+    fluid.history.applyArenaRecord = function (record, side) {
+        const applier = fluid.history.liveRecordAppliers[record.type];
+        return applier ? applier(record, side) : false;
+    };
+
+    /**
+     * Apply one side of a group record, by applying each of its records - in reverse order when stepping back
+     * @param {GroupHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true` if any of the group's records was applied
+     */
+    fluid.history.applyGroupRecord = function (record, side) {
+        const records = side === "old" ? [...record.records].reverse() : record.records;
+        return records.map(member => fluid.history.applyArenaRecord(member, side)).some(applied => applied);
+    };
+
+    fluid.history.liveRecordAppliers.group = fluid.history.applyGroupRecord;
+
+    /**
+     * Transform each record of a group record, e.g. into a persistable form, omitting any which cannot be transformed
+     * @param {GroupHistoryRec} record - The group record
+     * @param {Function} transform - Accepts a record and returns its transformed form, or `null` if it has none
+     * @return {GroupHistoryRec|null} The transformed group, or `null` if none of its records could be transformed
+     */
+    fluid.history.transformGroupRecord = function (record, transform) {
+        const records = record.records.map(member => transform(member)).filter(member => member !== null);
+        return records.length > 0 ? {...record, records} : null;
+    };
+
+    /** @type {HistoryStack} */
+    fluid.history.live = fluid.history.makeStack("fluid.history.live", fluid.history.applyArenaRecord);
+
+    // Each write to live state is a step of fluid.history.live of its own, held as a group record of one write. A host
+    // whose writes come in bursts, e.g. the tldraw demo, may set fluid.history.coalesce, whereupon bursts are
+    // coalesced into single steps. Writes to the same part of the arena, as determined by fluid.history.burstKey, are
+    // coalesced if each follows the previous within fluid.history.burstWindow, e.g. the keystrokes typing a word. Everything
+    // caused by a single gesture of the user, e.g. a click on a button invoking an asynchronous method, is coalesced
+    // into a step of its own until any promise it returned has settled, however long that takes.
+
+    // `true` if bursts of writes to live state are coalesced into single steps of fluid.history.live
+    fluid.history.coalesce = false;
+
+    // The greatest interval between writes which are coalesced into the same step, in milliseconds
+    fluid.history.burstWindow = 750;
+
+    // The id of the latest gesture to have begun
+    fluid.history.gestureCount = 0;
+
+    // The id of the gesture currently in progress for each burst key
+    /** @type {Map<String, Number>} */
+    fluid.history.openGestures = new Map();
+
+    /**
+     * Execute a function on behalf of a gesture of the user, e.g. the handler of a DOM event bound by a template, such
+     * that all writes it causes to the part of the arena holding the component may be coalesced into a single step of
+     * `fluid.history.live` - see `fluid.history.coalesce`. If the function returns a promise, the gesture lasts until
+     * it settles.
+     * @param {Shadow} shadow - The shadow of the component on whose behalf the gesture is made
+     * @param {Function} func - The function to execute
+     * @return {any} The return value of the function
+     */
+    fluid.history.withinGesture = function (shadow, func) {
+        const key = fluid.history.burstKey(`{${shadow.path}}`);
+        const gesture = ++fluid.history.gestureCount;
+        const close = () => {
+            if (fluid.history.openGestures.get(key) === gesture) {
+                fluid.history.openGestures.delete(key);
+            }
+        };
+        fluid.history.openGestures.set(key, gesture);
+        let togo;
+        try {
+            togo = func();
+        } finally {
+            if (typeof(togo?.then) === "function") {
+                // The returned promise is left to report its own failure
+                togo.then(close, close);
+            } else {
+                close();
+            }
         }
         return togo;
     };
 
     /**
-     * Applies a live history record to the running system using the specified key.
-     * @param {HistoryRec} rec - The history record to apply
-     * @param {String} key - The key to be used into the history record to fetch the layer definition
+     * Record a write to live state in `fluid.history.live`. If `fluid.history.coalesce` is set, the write is
+     * coalesced into the latest step if it belongs to the same burst as that step - a burst is only extended if no
+     * step has been stepped back through since, and a gesture always begins a step of its own.
+     * @param {LiveHistoryRec} record - The record of the write
      */
-    fluid.applyLiveHistory = function (rec, key) {
-        const site = fluid.parseSite(rec.layerName);
-        // TODO: source tracking for changes
-        fluid.withoutHistory(() => fluid.setForComponent(site.shadow.that, site.path, rec[key]));
-    };
-
-    /**
-     * Navigates backward in the history stack.
-     */
-    fluid.historyBack = function () {
-        const index = fluid.layerHistoryIndex.get();
-        if (index > 0) {
-            const newIndex = index - 1;
-            const backRec = fluid.layerHistory.get()[newIndex];
-            if (backRec.type === "updateLayer") {
-                if (backRec.layerName.startsWith("{")) {
-                    fluid.applyLiveHistory(backRec, "oldValue");
-                } else {
-                    // Update layer registry
-                }
-            }
-            fluid.layerHistoryIndex.set(newIndex);
+    fluid.history.pushLiveRecord = function (record) {
+        const stack = fluid.history.live;
+        const key = fluid.history.burstKey(record.site);
+        const now = fluid.history.now();
+        const gesture = fluid.history.openGestures.get(key);
+        const records = stack.records.get();
+        const index = stack.index.get();
+        const top = index === records.length ? records[index - 1] : undefined;
+        const joins = fluid.history.coalesce && top?.type === "group" && top.key === key &&
+            (gesture === undefined ? top.gesture === undefined && now - top.time <= fluid.history.burstWindow : top.gesture === gesture);
+        if (joins) {
+            const last = fluid.peek(top.records);
+            // Successive writes to the same site are folded together
+            const members = last.site === record.site && last.type === "live" ?
+                [...top.records.slice(0, -1), {...record, oldValue: last.oldValue}] : [...top.records, record];
+            stack.records.set([...records.slice(0, -1), {...top, time: now, records: members}]);
+        } else {
+            fluid.history.pushToStack(stack, {type: "group", key, time: now, ...(gesture === undefined ? {} : {gesture}), records: [record]});
         }
     };
 
     /**
-     * Navigates forward in the history stack.
+     * Record an update to the live layer of a component in `fluid.history.live`, if the component belongs to the arena
+     * @param {HistoryRec} record - The record of the update, whose `layerName` is the rendered site which was updated
      */
-    fluid.historyForward = function () {
-        const index = fluid.layerHistoryIndex.get();
-        if (index < fluid.layerHistory.get().length) {
-            const newIndex = index + 1;
-            const foreRec = fluid.layerHistory.get()[index];
-            if (foreRec.type === "updateLayer") {
-                if (foreRec.layerName.startsWith("{")) {
-                    fluid.applyLiveHistory(foreRec, "newValue");
-                } else {
-                    // Update layer registry
-                }
-            }
-            fluid.layerHistoryIndex.set(newIndex);
+    fluid.history.recordLive = function (record) {
+        const ref = record.type === "updateLayer" ? fluid.history.siteToRef(record.layerName) : null;
+        if (ref) {
+            fluid.history.pushLiveRecord({type: "live", site: record.layerName, ref, oldValue: record.oldValue, newValue: record.newValue});
         }
+    };
+
+    /** MIME types for each of the representations in which a layer's source may be held */
+    fluid.layerMimeTypes = {
+        sfc: "text/x-vue",
+        javascript: "text/javascript",
+        json: "application/json"
+    };
+
+    /**
+     * Determine the source of a layer from a definition of it, e.g. its previous one. By default this holds the
+     * definition itself - FluidPTF.js replaces this to render it as JavaScript. Rendering is left to FluidPTF.js since
+     * recording is not to cost every page which defines layers, nor to fail on one whose definition cannot be rendered.
+     * @param {String} layerName - The name of the layer
+     * @param {LayerDef} def - The definition
+     * @return {LayerSource} The source
+     */
+    fluid.history.sourceFromDef = function (layerName, def) {
+        return {contentType: fluid.layerMimeTypes.javascript, def};
+    };
+
+    /**
+     * Determine the source of a layer as currently defined, as recorded in `fluid.history.definitions`. By default this
+     * holds its definition - FluidPTF.js replaces this with the text from which the layer was loaded, e.g. that of its
+     * Single File Component.
+     * @param {String} layerName - The name of the layer
+     * @return {LayerSource} Its source
+     */
+    fluid.history.layerSource = function (layerName) {
+        return fluid.history.sourceFromDef(layerName, fluid.deSignal(fluid.readLayer(layerName).get().raw));
+    };
+
+    /**
+     * Determine whether two sources of a layer are the same, by their text if either has any, and otherwise by their
+     * definitions
+     * @param {LayerSource} a - The first source
+     * @param {LayerSource} b - The second source
+     * @return {Boolean} `true` if the sources are the same
+     */
+    fluid.history.isSameSource = function (a, b) {
+        return a.body !== undefined || b.body !== undefined ? a.body === b.body : a.def === b.def;
+    };
+
+    /**
+     * Define a layer from a source as determined by `fluid.history.layerSource`, without recording its redefinition in
+     * `fluid.history.definitions`. By default the source's definition is written - FluidPTF.js replaces this to register
+     * the source's text.
+     * @param {String} layerName - The name of the layer
+     * @param {LayerSource} source - The source
+     */
+    fluid.history.applySource = function (layerName, source) {
+        if (source.def !== undefined) {
+            fluid.history.withoutRecording(() => fluid.def(layerName, source.def));
+            fluid.history.layerSources.set(layerName, source);
+        } else {
+            fluid.log(fluid.logLevel.WARN, `Cannot apply source of layer ${layerName} which holds no definition - load FluidPTF.js to apply its text`);
+        }
+    };
+
+    /**
+     * Delete a layer without recording its deletion in `fluid.history.definitions`, e.g. whilst applying a record of the
+     * history itself, or restoring a persisted arena
+     * @param {String} layerName - The name of the layer
+     */
+    fluid.history.deleteLayerQuietly = function (layerName) {
+        fluid.history.withoutRecording(() => fluid.deleteLayer(layerName));
+        fluid.history.layerSources.delete(layerName);
+    };
+
+    /**
+     * Apply one side of a definition history record, by defining its layer from that source, or deleting the layer if
+     * that side has no source
+     * @param {DefinitionHistoryRec} record - The record
+     * @param {String} side - "old" or "new"
+     * @return {Boolean} `true`, since a layer can always be redefined or deleted
+     */
+    fluid.history.applyDefinitionRecord = function (record, side) {
+        const source = record[side + "Source"];
+        if (source) {
+            fluid.history.applySource(record.layerName, source);
+        } else {
+            fluid.history.deleteLayerQuietly(record.layerName);
+        }
+        return true;
+    };
+
+    /** @type {HistoryStack} */
+    fluid.history.definitions = fluid.history.makeStack("fluid.history.definitions", fluid.history.applyDefinitionRecord);
+
+    // The source of each user layer as last defined, from which the old source of its next redefinition is taken - the
+    // source of an SFC layer cannot be recovered from its previous definition, which does not hold its template
+    /** @type {Map<String, LayerSource>} */
+    fluid.history.layerSources = new Map();
+
+    // Layers whose redefinition, which for an SFC follows asynchronously, is still to arrive and is not to be recorded,
+    // e.g. since it is the application of a history record - keyed by layer name, holding the time after which it is no
+    // longer expected
+    /** @type {Map<String, Number>} */
+    fluid.history.expectedRedefinitions = new Map();
+
+    // How long an expected redefinition is expected for
+    fluid.history.expectedRedefinitionLifetime = 10000;
+
+    /**
+     * Record a redefinition or deletion of a user layer in `fluid.history.definitions`. The initial definitions of layers,
+     * e.g. as SFCs load, are not redefinitions, but the source of each is noted.
+     * @param {HistoryRec} record - The record of the change to the layer store
+     */
+    fluid.history.recordDefinition = function (record) {
+        const layerName = record.layerName;
+        const newDef = fluid.deSignal(record.newValue?.raw);
+        // Some updates, e.g. those tracking the loading of an SFC, hold no definition
+        if (record.type === "updateLayer" && fluid.isPlainObject(newDef, true) && !fluid.isUnavailable(newDef)) {
+            const oldDef = fluid.deSignal(record.oldValue?.raw);
+            const oldSource = fluid.history.layerSources.get(layerName) || (fluid.isPlainObject(oldDef, true) && !fluid.isUnavailable(oldDef) ?
+                fluid.history.sourceFromDef(layerName, oldDef) : null);
+            const newSource = fluid.history.layerSource(layerName);
+            fluid.history.layerSources.set(layerName, newSource);
+            const expected = fluid.history.expectedRedefinitions.get(layerName);
+            fluid.history.expectedRedefinitions.delete(layerName);
+            if (oldSource && !fluid.history.isSameSource(oldSource, newSource) && !(expected > Date.now())) {
+                fluid.history.pushToStack(fluid.history.definitions, {type: "definition", layerName, oldSource, newSource});
+            }
+        } else if (record.type === "newLayer") {
+            fluid.history.layerSources.set(layerName, fluid.history.layerSource(layerName));
+        } else if (record.type === "deleteLayer") {
+            const oldSource = fluid.history.layerSources.get(layerName);
+            fluid.history.layerSources.delete(layerName);
+            if (oldSource) {
+                fluid.history.pushToStack(fluid.history.definitions, {type: "definition", layerName, oldSource, newSource: null});
+            }
+        }
+    };
+
+    /**
+     * @typedef {Object} MixedHistoryEntry
+     * @property {HistoryStack} stack - The stack holding the record
+     * @property {StackRec} record - The record
+     * @property {Boolean} applied - `true` if the record is currently applied
+     */
+
+    // The stacks interleaved by fluid.history.mixed
+    fluid.history.mixedStacks = [fluid.history.live, fluid.history.definitions];
+
+    /**
+     * Compare two records of history stacks by when they were pushed
+     * @param {StackRec} a - The first record
+     * @param {StackRec} b - The second record
+     * @return {Number} Negative if `a` was pushed before `b`, positive if after
+     */
+    fluid.history.compareRecs = function (a, b) {
+        return (a.madeAt ?? 0) - (b.madeAt ?? 0) || (a.seq ?? 0) - (b.seq ?? 0);
+    };
+
+    /**
+     * The records of `fluid.history.live` and `fluid.history.definitions` interleaved in the order in which they were made
+     * @type {Cell<MixedHistoryEntry[]>}
+     */
+    fluid.history.mixed = fluid.cell(undefined, {name: "fluid.history.mixed"}).computed(() => {
+        const entries = fluid.history.mixedStacks.flatMap(stack => {
+            const index = stack.index.get();
+            return stack.records.get().map((record, i) => ({stack, record, applied: i < index}));
+        });
+        return entries.sort((a, b) => fluid.history.compareRecs(a.record, b.record));
+    });
+
+    /**
+     * Step back through the mixed history, undoing the most recently made of the records currently applied in any of
+     * its stacks
+     * @return {Boolean} `true` if a record was undone
+     */
+    fluid.history.back = function () {
+        const latest = fluid.peek(fluid.history.mixed.get().filter(entry => entry.applied));
+        return latest ? fluid.history.stepBack(latest.stack) : false;
+    };
+
+    /**
+     * Step forward through the mixed history, redoing the earliest made of the records which have been undone in any
+     * of its stacks
+     * @return {Boolean} `true` if a record was redone
+     */
+    fluid.history.forward = function () {
+        const earliest = fluid.history.mixed.get().find(entry => !entry.applied);
+        return earliest ? fluid.history.stepForward(earliest.stack) : false;
     };
 
     /**
@@ -1827,7 +2070,7 @@ const $fluidScope = function (fluid) {
         const store = fluid.layerStore.get();
         const newStore = {...store, [layerName]: fluid.cell(layerDef, {name: `Layer definition for ${layerName}`})};
         fluid.layerStore.set(newStore);
-        fluid.pushHistory({type: "newLayer", newStore, oldStore: store, layerName});
+        fluid.history.push({type: "newLayer", newStore, oldStore: store, layerName});
     };
 
     /**
@@ -1879,6 +2122,16 @@ const $fluidScope = function (fluid) {
         fluid.layerStore.get();
         const layerRec = fluid.readLayer(layerName).get();
         return fluid.layerRecToUnavailable(layerRec) === null || !!fluid.importMap[layerName];
+    };
+
+    /**
+     * Remove duplicates from a list of layer names, weakest first, keeping the last and hence strongest occurrence of
+     * each name.
+     * @param {String[]} layerNames - The layer names, weakest first
+     * @return {String[]} The layer names without duplicates, weakest first
+     */
+    fluid.uniqueLayerNames = function (layerNames) {
+        return layerNames.filter((layerName, i) => layerNames.indexOf(layerName, i + 1) === -1);
     };
 
     /**
@@ -1961,7 +2214,7 @@ const $fluidScope = function (fluid) {
                     fluid.layerStore.set({...store});
                 }
                 if (!fluid.isUnavailable(fluid.deSignal(layer))) {
-                    fluid.pushHistory({type: "updateLayer", oldValue, newValue: layerValue, layerName});
+                    fluid.history.push({type: "updateLayer", oldValue, newValue: layerValue, layerName});
                 }
             }
         } else {
@@ -2026,21 +2279,10 @@ const $fluidScope = function (fluid) {
         const newStore = {...currentStore};
         delete newStore[layerName];
         // Recorded whilst the layer is still in the store, since only the history of user layers is recorded
-        fluid.pushHistory({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
+        fluid.history.push({type: "deleteLayer", newStore, oldStore: currentStore, layerName});
         fluid.layerStore.set(newStore);
         fluid.destroyAvatar(layerName);
         fluid.withdrawLayerInjections(layerName);
-    };
-
-    /**
-     * Render a layer definition as a `fluid.def` call in JavaScript source text. Note that any global functions
-     * referenced by name from the definition are not included.
-     * @param {String} layerName - The name of the layer
-     * @param {LayerDef|Signal<LayerDef>} layerDef - The layer's definition
-     * @return {String} JavaScript source text which will register the layer definition when evaluated
-     */
-    fluid.layerToJavaScript = function (layerName, layerDef) {
-        return `fluid.def(${JSON.stringify(layerName)}, ${fluid.ptf.valueToJavaScript(fluid.deSignal(layerDef))});\n`;
     };
 
     // Like a "reader macro" - currently just ensures that "$layers" is an array
@@ -2093,6 +2335,7 @@ const $fluidScope = function (fluid) {
     fluid.mergeRecordTypes = {
         def: 1000, // and below, for resolved parents in hierarchy
         subcomponent: 700, // and above - wrt. nesting depth
+        forLayer: 650, // source element of a $for merged into its member through layerAs
         user: 600, // supplied as constructor arguments
         distribution: 300, // and above
         template: 200, // layer entries synthesized out of template
@@ -2137,14 +2380,16 @@ const $fluidScope = function (fluid) {
      * Collect the contributions of a set of layers to a subcomponent record at a path into a `fluid.componentRecords`
      * rather than merging them. A layer may instead hold an IL reference at the path - whether this designates a
      * component, which will then be injected there, can only be known once it is resolved (see
-     * `fluid.expandReferenceRecord`) and so, as for any other value, it simply overrides all weaker contributions. Any
-     * other value at that path which is not a subcomponent record is an error.
+     * `fluid.expandReferenceRecord`) and so, as for any other value, it simply overrides all weaker contributions. A
+     * layer may also remove the subcomponent by holding `null`, or `{$component: null}`, at the path, which likewise
+     * overrides all weaker contributions - a stronger contribution brings the subcomponent back. Any other value at that
+     * path which is not a subcomponent record is an error.
      * @param {Object[]} layers - The layers being merged, weakest first
      * @param {String} key - The key at which the subcomponent record is held
      * @param {String[]} segs - The path of the layers' parent within the root being merged
      * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
-     * @return {Object|String} A value holding the collected contributions as its `$component` member, or an IL reference
-     * if this is the strongest value at the path
+     * @return {Object|String|null} A value holding the collected contributions as its `$component` member, or an IL
+     * reference if this is the strongest value at the path, or `null` if the subcomponent has been removed
      */
     fluid.collectComponentRecords = function (layers, key, segs, mergeRecords) {
         const contributions = [];
@@ -2155,9 +2400,10 @@ const $fluidScope = function (fluid) {
                 if (fluid.isComponentRecordHolder(value) && fluid.isPlainObject(value.$component, true)) {
                     contributions.push({record: value.$component, mergeRecordName: mergeRecords[i].mergeRecordName});
                     reference = undefined;
-                } else if (fluid.isILReference(value)) {
+                } else if (fluid.isILReference(value) || value === null || fluid.isComponentRecordHolder(value) && value.$component === null) {
+                    // An IL reference or a removal discards all weaker contributions
                     contributions.length = 0;
-                    reference = value;
+                    reference = fluid.isILReference(value) ? value : null;
                 } else if (value !== undefined) {
                     const from = mergeRecords[i].mergeRecordName ?? mergeRecords[i].mergeRecordType;
                     fluid.fail(`Cannot merge value ${JSON.stringify(value)} at path ${[...segs, key].join(".")} from ` +
@@ -2167,6 +2413,111 @@ const $fluidScope = function (fluid) {
             }
         });
         return reference === undefined ? {$component: new fluid.componentRecords(contributions)} : reference;
+    };
+
+    /**
+     * @typedef {Object} EffectMaterial
+     * @property {Boolean} composite - `true` if the effect was written in composite form, as an array of listener records
+     * @property {FuncRecord[]} records - The listener records of the effect - a single one if it was written in simple form
+     */
+
+    /**
+     * Determine whether a layer's value at a path holds an effect, written either as a compact "$effect:..." String or
+     * as a record `{$effect: ...}`, whose member may be a single listener record or, for a composite effect, an array of
+     * them - see `fluid.collectEffectRecords`.
+     * @param {any} value - The value to be tested
+     * @return {EffectMaterial|null} The effect's listener records, or `null` if the value does not hold an effect
+     */
+    fluid.effectMaterial = function (value) {
+        const expanded = typeof(value) === "string" && value.startsWith("$effect:") ? fluid.expandCompactElement(value) : value;
+        let togo = null;
+        if (fluid.isPlainObject(expanded, true) && "$effect" in expanded) {
+            const record = expanded.$effect;
+            const composite = Array.isArray(record);
+            togo = {composite, records: composite ? record : [record]};
+        }
+        return togo;
+    };
+
+    /**
+     * Determine the namespace of a listener record of an effect - a record without one, including that of any effect
+     * written in simple form, has the empty namespace.
+     * @param {FuncRecord} record - The listener record
+     * @return {String} Its namespace
+     */
+    fluid.effectNamespace = function (record) {
+        return record.namespace ?? "";
+    };
+
+    /**
+     * Verify that no two listener records of an effect supplied together share a namespace.
+     * @param {FuncRecord[]} records - The listener records
+     * @param {String} site - A description of where the records were found, for any error message
+     */
+    fluid.checkEffectNamespaces = function (records, site) {
+        const namespaces = records.map(fluid.effectNamespace);
+        const duplicate = namespaces.find((namespace, i) => namespaces.indexOf(namespace) !== i);
+        if (duplicate !== undefined) {
+            fluid.fail(`Duplicate namespace "${duplicate}" in listener records of composite $effect ${site} - each listener ` +
+                "record of an effect must have a distinct namespace, and at most one may have none");
+        }
+    };
+
+    /**
+     * Merge the effects supplied by several layers at a path. Rather than the strongest effect displacing all others, as
+     * for any other value, the listener records of each are merged together by namespace, a stronger record displacing a
+     * weaker one of the same namespace in place, as for the namespaced listeners of Infusion 4 - see FLUID-7028. Any
+     * value other than an effect displaces all weaker effects. If just one listener record survives the merge and it was
+     * supplied by an effect in simple form, that effect is the result just as written, otherwise the result is a
+     * composite effect holding the surviving records - see `fluid.expandCompositeEffectRecord`.
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {String} key - The key at which the effects are held
+     * @param {String[]} segs - The path of the layers' parent within the root being merged
+     * @param {Boolean[]} plainLayers - For each layer, whether it is a plain object or array
+     * @return {String|Object} The merged effect
+     */
+    fluid.collectEffectRecords = function (layers, key, segs, plainLayers) {
+        let contributions = [];
+        layers.forEach((layer, i) => {
+            if (plainLayers[i] && key in layer) {
+                const value = layer[key];
+                const material = fluid.effectMaterial(value);
+                if (material) {
+                    contributions.push({value, material});
+                } else {
+                    contributions = [];
+                }
+            }
+        });
+        let togo;
+        if (contributions.length === 1) {
+            togo = contributions[0].value;
+        } else {
+            const site = "at path " + [...segs, key].join(".");
+            // Each entry holds a surviving listener record together with the contribution which supplied it
+            const merged = [];
+            contributions.forEach(contribution => {
+                fluid.checkEffectNamespaces(contribution.material.records, site);
+                contribution.material.records.forEach(record => {
+                    const index = merged.findIndex(entry => fluid.effectNamespace(entry.record) === fluid.effectNamespace(record));
+                    const entry = {record, contribution};
+                    if (index === -1) {
+                        merged.push(entry);
+                    } else {
+                        merged[index] = entry;
+                    }
+                });
+            });
+            if (merged.length === 1 && !merged[0].contribution.material.composite) {
+                togo = merged[0].contribution.value;
+            } else {
+                togo = {$effect: merged.map(entry => entry.record)};
+                // Record the material merged here, so that a fresh merge of the same material may be recognised as
+                // equivalent - see fluid.isSameSignalRecord
+                togo[$m] = {contributions: contributions.map(contribution => contribution.value)};
+            }
+        }
+        return togo;
     };
 
     /**
@@ -2245,15 +2596,69 @@ const $fluidScope = function (fluid) {
         }
         if (holdsComponent) {
             newTarget = fluid.collectComponentRecords(layers, key, segs, mergeRecords);
+        } else if (count > 1 && fluid.effectMaterial(last)) {
+            newTarget = fluid.collectEffectRecords(layers, key, segs, plainLayers);
         } else if (count > 1 && fluid.isPlainObject(last, true)) {
             segs.push(key);
             newTarget = fluid.mergeFreshMaterial(target, key, segs, layerMap, layers.map(layer => layer?.[key]), mergeRecords);
             segs.pop();
         } else {
             newTarget = last;
+            if (count > 1 && fluid.isILReference(last)) {
+                // A reference resolving to undefined passes over to the weaker material it overrides
+                fluid.set(layerMap, [...segs, key, $m, "fallback"],
+                    fluid.referenceFallback(last, segs, layers, mergeRecords, plainLayers, key, lastIndex));
+            }
         }
         target[key] = newTarget;
         fluid.set(layerMap, [...segs, key, $m, "source"], mergeRecords[lastIndex].mergeRecordName);
+    };
+
+    /**
+     * The record of an IL reference which is the strongest value at a path, together with the weaker material it
+     * overrides, which is used instead if the reference resolves to `undefined`.
+     * @param {String} reference - The IL reference
+     * @param {any} value - The merge of the weaker layers at the path
+     * @param {fluid.referenceFallbackRecord} [fallback] - If `value` is itself a reference overriding weaker material, the
+     * record for it in turn
+     */
+    fluid.referenceFallbackRecord = function (reference, value, fallback) {
+        this.reference = reference;
+        this.value = value;
+        this.fallback = fallback;
+    };
+
+    /**
+     * Merge the material of the layers weaker than one holding an IL reference at a key, as the fallback to be used if
+     * the reference resolves to `undefined` - see `fluid.expandFallbackReference`. Any fallbacks of references nested
+     * within weaker material which is itself a merged object are not recorded.
+     * @param {String} reference - The IL reference held at the key by the strongest layer
+     * @param {String[]} segs - The path of the layers' parent within the root being merged
+     * @param {Object[]} layers - The layers being merged, weakest first
+     * @param {MergeRecord[]} mergeRecords - The merge records holding the layers
+     * @param {Boolean[]} plainLayers - For each layer, whether it is a plain object or array
+     * @param {String} key - The key being merged
+     * @param {Number} lastIndex - The index of the layer holding the reference
+     * @return {fluid.referenceFallbackRecord} The reference together with the weaker material
+     */
+    fluid.referenceFallback = function (reference, segs, layers, mergeRecords, plainLayers, key, lastIndex) {
+        const holder = Object.create(null);
+        const weakerLayerMap = Object.create(null);
+        fluid.mergeLayerKey(holder, segs, weakerLayerMap, layers.slice(0, lastIndex), mergeRecords.slice(0, lastIndex),
+            plainLayers.slice(0, lastIndex), key);
+        return new fluid.referenceFallbackRecord(reference, holder[key], fluid.get(weakerLayerMap, [...segs, key, $m, "fallback"]));
+    };
+
+    /**
+     * Determine whether two reference fallbacks are equivalent, so that a signal allocated for one may be reused for the
+     * other - see `fluid.isSameSignalRecord`.
+     * @param {fluid.referenceFallbackRecord} [oldFallback] - The fallback for which a signal was previously allocated
+     * @param {fluid.referenceFallbackRecord} [newFallback] - The fallback currently recorded at the same site
+     * @return {Boolean} `true` if the fallbacks hold the same references and weaker material
+     */
+    fluid.isSameReferenceFallback = function (oldFallback, newFallback) {
+        return oldFallback === newFallback || !!oldFallback && !!newFallback && oldFallback.reference === newFallback.reference &&
+            oldFallback.value === newFallback.value && fluid.isSameReferenceFallback(oldFallback.fallback, newFallback.fallback);
     };
 
     // Merges of the members of chains of layer definitions, keyed by the strongest definition of the chain - see
@@ -2537,7 +2942,8 @@ const $fluidScope = function (fluid) {
             if (mapNode[$m]?.reactiveRoot) {
                 const members = linksAt(segs);
                 const links = members.filter(member => fluid.isILReference(member.value)).map(member => ({segs: member.segs, ref: member.value}));
-                const literals = members.filter(member => !fluid.isILReference(member.value));
+                const literals = members.filter(member => !fluid.isILReference(member.value))
+                    .map(member => ({...member, value: fluid.unescapeLiteral(member.value)}));
                 if (links.length > 0) {
                     mapNode[$m].reactiveLinks = links;
                 }
@@ -2810,11 +3216,16 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Computes C3 precedence of the parent layers of the supplied layer
+     * Computes C3 precedence of the parent layers of the supplied layer. As for FLUID-5743, a parent listed later in a
+     * layer's `$layers` is stronger than one listed earlier, which is the reverse of the order expected by the C3
+     * algorithm, and so each list of parents is reversed before it is supplied to it.
+     * A parent which is listed after a layer which already derives from it is ignored, since it cannot be stronger than
+     * its descendant and its weaker position is already established by the descendant's own hierarchy. A parent listed
+     * before such a layer is retained, since it then constrains its order with respect to the other parents.
      * @param {String} C - The name of the layer whose parent precedence is required
      * @param {Object<String, Object>} defs - A layer definition registry
      * @param {Set<String>} visited - A set to keep track of visited classes to detect circular hierarchy.
-     * @return {String[]} - The parent precedence list
+     * @return {String[]} - The parent precedence list, strongest first
      * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
      */
     fluid.C3_precedence = function (C, defs, visited) {
@@ -2828,8 +3239,12 @@ const $fluidScope = function (fluid) {
             // This error should not be received since the driver in fluid.hierarchyResolver will ensure that all parents have definitions
             fluid.fail(`Parent layer ${C} referenced which is not defined`);
         }
-        const parents = Array.from(defs[C].$layers);
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const allParents = Array.from(defs[C].$layers).reverse();
+        const allPrecLists = allParents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        // Strongest first, so a parent is redundant if it appears in the precedence of any parent following it
+        const retain = allParents.map((parent, i) => !allPrecLists.slice(i + 1).some(precList => precList.includes(parent)));
+        const parents = allParents.filter((parent, i) => retain[i]);
+        const precLists = allPrecLists.filter((precList, i) => retain[i]);
         const merged = fluid.C3_merge([[C]].concat(precLists).concat([parents]));
 
         visited.delete(C);
@@ -2837,17 +3252,18 @@ const $fluidScope = function (fluid) {
     };
 
     /**
-     * Computes C3 precedence of the parent layers of the supplied layer
-     * @param {String[]} parents - The name of the layer whose parent precedence is required
+     * Computes C3 precedence of a list of layers, as for the parents of a layer - see `fluid.C3_precedence`. Unlike
+     * the parents of a layer, the order of the list is a preference rather than a constraint.
+     * @param {String[]} parents - The names of the layers whose precedence is required, weakest first
      * @param {Object<String, Object>} defs - A layer definition registry
-     * @return {String[]} - The parent precedence list
+     * @return {String[]} - The precedence list, weakest first
      * @throws {Error} - Throws an error if the hierarchy is inconsistent, circular, or a layer is missing
      */
     fluid.C3_precedence_parents = function (parents, defs) {
         const visited = new Set();
-        const precLists = parents.map(parent => fluid.C3_precedence(parent, defs, visited));
+        const precLists = [...parents].reverse().map(parent => fluid.C3_precedence(parent, defs, visited));
         const merged = fluid.C3_merge(precLists);
-        return merged;
+        return merged.reverse();
     };
 
     /**
@@ -2988,7 +3404,7 @@ const $fluidScope = function (fluid) {
             // A local store, so that we can use C3_precedence with direct lookups
             this.flatDefs = Object.create(null);
             this.unavailableLayers = Object.create(null);
-            // References to dynamic layers, e.g. "{self}.typeLayers", found amongst the parents of stored layers
+            // References to dynamic layers, e.g. "{self}.typeLayers", found amongst the parents of stored layers, weakest first
             this.dynamicLayerNames = [];
         }
 
@@ -3034,7 +3450,7 @@ const $fluidScope = function (fluid) {
                     // Read it again - it is presumably now pending if successfully fetched, but fetching may instead have
                     // released a definition which was gated on a load that had already completed
                     // Apparently this epicycle could be removed once we reform fit tracking and not cause a get() to end a fit synchronously -
-                    // see transcript for issue #17
+                    // see transcript for issue FLUID-7017
                     layer = fluid.readLayer(layerName, true).get();
                     unavailableLayer = fluid.layerRecToUnavailable(layer);
                 }
@@ -3046,9 +3462,11 @@ const $fluidScope = function (fluid) {
                     // A reference amongst a layer's parents names dynamic layers, resolved against the component
                     // being merged once it is available - it takes no part in the layer's static hierarchy
                     const [dynamicParents, staticParents] = fluid.partition(readerExpanded.$layers, fluid.isILReference);
-                    this.dynamicLayerNames.push(...dynamicParents);
                     layerDef = dynamicParents.length === 0 ? readerExpanded : fluid.staticParentsLayer(readerExpanded, staticParents);
                     this.storeParents(layerDef, rootLayer || layerName);
+                    // Pushed after those of the layer's parents, so that, as for the layers themselves, those of a
+                    // derived layer are stronger
+                    this.dynamicLayerNames.push(...dynamicParents);
                 }
             }
             this.flatDefs[layerName] = layerDef;
@@ -3060,14 +3478,14 @@ const $fluidScope = function (fluid) {
          * Adds any new derived layers found by co-occurrence rules to the hierarchy resolver.
          *
          * @param {String[]} layerHierarchy - The current array of layer names in the hierarchy.
-         * @param {String[]} layerNames - Currently resolving layerNames - WILL BE MODIFIED by pushing co-occurring layers to the end
+         * @param {String[]} layerNames - Currently resolving layerNames, weakest first - WILL BE MODIFIED by pushing
+         * co-occurring layers to the end, where they are strongest
          * @return {Boolean} `true` if new co-occurring layers were found and added, `false` otherwise.
          */
         resolveHierarchyRound = function (layerHierarchy, layerNames) {
             const newCoOccurrences = fluid.resolveCoOccurrences(layerHierarchy, this.shadow);
             newCoOccurrences.map(layerName => this.storeLayer(layerName));
-            // Highest precedence (most derived, lowest down) class is at left of list in this ordering
-            layerNames.unshift(...newCoOccurrences);
+            layerNames.push(...newCoOccurrences);
             return newCoOccurrences.length > 0;
         };
 
@@ -3075,14 +3493,14 @@ const $fluidScope = function (fluid) {
          * Resolve a component hierarchy by evaluating all signals in the supplied flatDefs map, and computing
          * precedence, producing the merge records of its definitions in order of decreasing priority.
          *
-         * @param {String[]} layerNames - The names of the top-level layer to resolve.
+         * @param {String[]} layerNames - The names of the top-level layers to resolve, weakest first.
          * @return {MergedHierarchyResolution | Unavailable} An object containing `mergeRecords`,
          *     or an `unavailable` signal if resolution could not be completed.
          */
         resolve(layerNames) {
             const useLayerNames = layerNames.filter(layerName => !this.unavailableLayers[layerName]);
             while (true) {
-                const order = fluid.C3_precedence_parents(useLayerNames, this.flatDefs).reverse();
+                const order = fluid.C3_precedence_parents(useLayerNames, this.flatDefs);
                 if (this.resolveHierarchyRound(order, useLayerNames)) {
                     continue;
                 }

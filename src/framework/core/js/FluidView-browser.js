@@ -151,7 +151,7 @@ const $fluidViewBrowserScope = function (fluid) {
             } else {
                 rvalue = fluid.coerceToPrimitive(rh);
             }
-            handler = fluid.cell.withAmbientSource("dom", () => {
+            handler = fluid.cell.withAmbientSource(fluid.domSources(shadow), () => {
                 if (rvalueSignal) {
                     rvalue = fluid.deSignal(rvalueSignal);
                 }
@@ -162,7 +162,7 @@ const $fluidViewBrowserScope = function (fluid) {
             });
         } else {
             const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");
-            handler = fluid.cell.withAmbientSource("dom", fluid.expandMethodRecord(parsed, shadow, fluid.vnodeToSegs(vnode)));
+            handler = fluid.cell.withAmbientSource(fluid.domSources(shadow), fluid.expandMethodRecord(parsed, shadow, fluid.vnodeToSegs(vnode)));
         }
 
         // map modifiers
@@ -189,7 +189,7 @@ const $fluidViewBrowserScope = function (fluid) {
                 }
             }
             // Everything the handler causes, until any promise it returns settles, is a single step of the arena's history
-            const togo = fluid.ptf.withinGesture(shadow, () => handler(e));
+            const togo = fluid.history.withinGesture(shadow, () => handler(e));
             fluid.cell.stabilize();
             return togo;
         };
@@ -214,7 +214,20 @@ const $fluidViewBrowserScope = function (fluid) {
         return Object.values(el.flEventsBound || {}).some(bound => bound.some(event => events.includes(event)));
     };
 
-    fluid.globalDismissalSignal = fluid.cell(0, {name: "Global dismissal signal"});
+    /**
+     * A record of a press of the pointer anywhere in the document, holding the element pressed as its `target`
+     * @typedef {Object} PointerPressRecord
+     * @property {EventTarget} target - The target of the pointerdown event
+     */
+
+    /**
+     * Holds a record of the most recent press of the pointer anywhere in the document, for popups such as menus which
+     * are dismissed by a press outside them. Each popup decides for itself whether the press was outside it, by
+     * inspecting the record's `target`. A fresh record is written for each press, so that successive presses notify
+     * even if they fall on the same element.
+     * @type {Cell<PointerPressRecord|null>}
+     */
+    fluid.globalDismissalSignal = fluid.cell(null, {name: "Global dismissal signal"});
 
     fluid.def("fluid.globalDismissal", {
         $layers: "fluid.resolveRoot",
@@ -224,18 +237,19 @@ const $fluidViewBrowserScope = function (fluid) {
                 container: document
             }
         },
-        clicked: 0,
-        register: {
-            $effect: {
-                func: (self) => {
-                    self.view.container.addEventListener("click", (e) => {
-                        const noDismiss = e.target.closest(".fl-no-dismiss");
-                        if (!noDismiss) {
-                            ++fluid.globalDismissalSignal.value;
-                        }
-                    });
+        pressListener: {
+            $bindable: {
+                bind: {
+                    func: dokkument => {
+                        const listener = e => fluid.globalDismissalSignal.set({target: e.target});
+                        // Listen during capture, so that presses whose propagation is stopped, e.g. by a canvas which
+                        // takes them as its own gestures, are still seen
+                        dokkument.addEventListener("pointerdown", listener, true);
+                        return {dokkument, listener};
+                    },
+                    args: "{self}.view.container"
                 },
-                args: "{self}"
+                unbind: ({dokkument, listener}) => dokkument.removeEventListener("pointerdown", listener, true)
             }
         },
         $variety: "frameworkAux"

@@ -21,7 +21,12 @@ fluid.def("fluid.editor.menu", {
             layers: "fluid.editor.menu.filterLayers"
         }]
     },
+    // The name of the menu which is open, if any
     menuOpen: null,
+    // The name of the menu which was opened by moving the pointer onto its item from another open menu, if it has not
+    // been clicked since
+    openedByHover: null,
+    toggleMenu: "$method:fluid.editor.menu.toggleMenu({self}, {0}:itemName)",
     itemChosen: {
         $method: {
             func: (self, menuRecord) => {
@@ -31,10 +36,10 @@ fluid.def("fluid.editor.menu", {
             args: ["{self}", "{0}:menuRecord"]
         }
     },
-    clickDismiss: {
+    pressDismiss: {
         $effect: {
-            func: self => self.menuOpen = null,
-            args: ["{self}", fluid.globalDismissalSignal]
+            func: "fluid.editor.menu.pressDismiss",
+            args: ["{self}", fluid.globalDismissalSignal, "{self}.view.renderedContainer"]
         }
     },
     inspect: {
@@ -66,11 +71,11 @@ fluid.def("fluid.editor.menu", {
                     $layers: "fluid.templateViewComponent",
                     template: `
             <div class="fl-menu-item-holder">
-                <div class="fl-menu-item fl-clickable fl-no-dismiss"
-                    @onclick="{menu}.menuOpen = {self}.itemName"
+                <div class="fl-menu-item fl-clickable"
+                    @onclick="{menu}.toggleMenu({self}.itemName)"
                     @onmouseover="fluid.editor.menu.mouseOver({menu}, {self}.itemName)">@{itemName}
                 </div>
-                <div class="fl-menu-body fl-no-dismiss" @class="active:@{{self}.isOpen}">
+                <div class="fl-menu-body" @class="active:@{{self}.isOpen}">
                     <div class="fl-menu-body-item" @id="menuBodyItems"></div>
                 </div>
             </div>`
@@ -96,9 +101,46 @@ fluid.def("fluid.editor.menu", {
     $variety: "frameworkAux"
 });
 
+/**
+ * Close any open menu when the pointer is pressed outside the menus. A press on a menu's own item is left to its click
+ * handler, which toggles the menu, and a press within an open menu's body leaves it open.
+ * @param {fluid.editor.menu} menu - The menu component
+ * @param {PointerPressRecord|null} press - The most recent press of the pointer, as held in `fluid.globalDismissalSignal`
+ * @param {Element} container - The rendered container of the menu bar
+ */
+fluid.editor.menu.pressDismiss = function (menu, press, container) {
+    const menuItems = container.querySelector(".fl-menu-items");
+    // Whether a menu is open is consulted rather than depended upon - opening one is no reason to look again at a press
+    // made before it was opened
+    if (press && fluid.cell.untracked(() => menu.menuOpen) && !menuItems?.contains(press.target)) {
+        menu.menuOpen = null;
+    }
+};
+
+/**
+ * Open the menu whose item was clicked, or close it if it was already open. A menu which has just been opened by
+ * moving the pointer onto its item is left open, since the click which follows is a request to see it.
+ * @param {fluid.editor.menu} menu - The menu component
+ * @param {String} itemName - The name of the menu whose item was clicked
+ */
+fluid.editor.menu.toggleMenu = function (menu, itemName) {
+    if (menu.menuOpen === itemName && menu.openedByHover !== itemName) {
+        menu.menuOpen = null;
+    } else {
+        menu.menuOpen = itemName;
+    }
+    menu.openedByHover = null;
+};
+
+/**
+ * Whilst a menu is open, open instead the menu whose item the pointer moves onto
+ * @param {fluid.editor.menu} menu - The menu component
+ * @param {String} itemName - The name of the menu whose item the pointer moved onto
+ */
 fluid.editor.menu.mouseOver = function (menu, itemName) {
     if (itemName && menu.menuOpen && itemName !== menu.menuOpen) {
         menu.menuOpen = itemName;
+        menu.openedByHover = itemName;
     }
 };
 

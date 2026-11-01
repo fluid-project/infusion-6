@@ -9,6 +9,8 @@ fluid.def("fluid.codemirror", {
         gutters: ["CodeMirror-lint-markers"],
     },
     text: "",
+    // The editor's text once it has passed validation, which is asynchronous - see fluid.codemirror.construct
+    validText: null,
     view: {
         $component: {
             elideParent: false,
@@ -44,8 +46,18 @@ fluid.def("fluid.codemirror", {
         $effect: {
             func: "fluid.codemirror.readText",
             args: ["{self}.text", "{self}.instance"],
-            // Text which we wrote ourselves, as marked by our writeEffect, is not read back
-            excludeSource: "fluid.codemirror"
+            // Text which we wrote ourselves is not read back, since the user may have edited further whilst it was
+            // validated - any other editor, e.g. one rendering a layer redefined by our edit, still receives it
+            excludeSource: "self"
+        }
+    },
+    writeEffect: {
+        $effect: {
+            func: "fluid.codemirror.writeText",
+            // The instance is an argument so that nothing is written before the editor is constructed
+            args: ["{self}", "{fluid.editor}", "{self}.validText", "{self}.instance"],
+            // Marked as originated by us, so that it is not read back by readEffect
+            source: "self"
         }
     },
 
@@ -99,12 +111,14 @@ fluid.codemirror.updateText = function (instance, text) {
     }
 };
 
-const $m = fluid.metadataSymbol;
-
 fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
-    const validText = fluid.cell(fluid.unavailable("Text not validated", "pending"), {name: "fluid.codemirror validated text at " + self[$m].path});
-    validText.$variety = "codeMirror-validText";
-    const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, validText, tooltipRoot: ".fl-editor-root"};
+    // The linter reports each text which passes validation, possibly after the editor has been destroyed
+    const onValidText = text => {
+        if (!fluid.isDestroyed(self)) {
+            self.validText = text;
+        }
+    };
+    const options = {...self.codemirrorOptions, ...holder.codemirrorOptions, mode: holder.mode, onValidText, tooltipRoot: ".fl-editor-root"};
     const textarea = container.firstElementChild;
     const instance = CodeMirror.fromTextArea(textarea, options);
     console.log("Constructing from textArea ", textarea, " ", textarea.innerText);
@@ -118,15 +132,25 @@ fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
             instance.hasUserEdits = true;
         }
     });
-    instance.writeEffect = fluid.cell.effect(validText => {
-        // Text agreeing with what we are being supplied, e.g. after the user reverts an edit, has nothing to contribute.
-        // Any other is written under our own source, so that it is not read back by readEffect.
-        if (holder.writeText && instance.hasUserEdits && validText !== fluid.cell.untracked(() => self.text)) {
-            fluid.cell.withAmbientSource("fluid.codemirror", () => holder.writeText(validText))();
-        }
-    }, [validText], {name: "writeEffect for fluid.codemirror at " + self[$m].path});
     fluid.disableRendering(self);
     return instance;
+};
+
+/**
+ * Write text which the user has edited, once it has passed validation, back to the editor holding this CodeMirror
+ * @param {fluid.codemirror} self - The CodeMirror component
+ * @param {fluid.editor} holder - The editor holding it, which may write the text back with its `writeText` method
+ * @param {String|null} validText - The editor's text as last validated, or `null` if none has been
+ * @param {CodeMirror} instance - The CodeMirror instance
+ */
+fluid.codemirror.writeText = function (self, holder, validText, instance) {
+    // The current text and the holder's writer are consulted rather than depended upon
+    fluid.cell.untracked(() => {
+        // Text agreeing with what we are being supplied, e.g. after the user reverts an edit, has nothing to contribute
+        if (validText !== null && holder.writeText && instance.hasUserEdits && validText !== self.text) {
+            holder.writeText(validText);
+        }
+    });
 };
 
 /**
@@ -134,7 +158,6 @@ fluid.codemirror.construct = function (self, holder, container, CodeMirror) {
  * @param {CodeMirror} instance - The CodeMirror instance
  */
 fluid.codemirror.destroy = function (instance) {
-    instance.writeEffect.dispose();
     if (instance.getWrapperElement().parentNode) {
         instance.toTextArea();
     }

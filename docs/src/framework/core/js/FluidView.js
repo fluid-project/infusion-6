@@ -930,13 +930,13 @@ const fluidViewScope = function (fluid) {
                 if (!oldViewLayers && (docTemplate || !oldLayers)) {
                     patchedText = fluid.patchDefMapPath(patchedText, reparse(), viewLayersPath, addLayers, "first");
                 }
-                // Add the tag layer marking the layer as derived from an SFC. This must be placed last since any of the
-                // existing layers may themselves be derived from an SFC - C3 linearization will then demand that they
-                // precede the tag layer.
+                // Add the tag layer marking the layer as derived from an SFC. This must be placed first, where it is
+                // weakest, since any of the existing layers may themselves be derived from an SFC - C3 linearization will
+                // then demand that they are stronger than the tag layer.
                 if (!oldLayers) {
-                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.component", "fluid.sfcLayer"], "first");
+                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.sfcLayer", "fluid.component"], "first");
                 } else if (!fluid.makeArray(oldLayers).includes("fluid.sfcLayer")) {
-                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", [...fluid.makeArray(oldLayers), "fluid.sfcLayer"], "first");
+                    patchedText = fluid.patchDefMap(patchedText, reparse(), "$layers", ["fluid.sfcLayer", ...fluid.makeArray(oldLayers)], "first");
                 }
                 ourSNI.text = patchedText;
 
@@ -979,7 +979,7 @@ const fluidViewScope = function (fluid) {
     fluid.pushSFCHistory = function (layerName, oldText, newText) {
         const layerValue = fluid.layerStore._value[layerName]?._value;
         if (layerValue) {
-            fluid.pushHistory({type: "updateLayer", oldValue: layerValue, newValue: layerValue, layerName, oldText, newText});
+            fluid.history.push({type: "updateLayer", oldValue: layerValue, newValue: layerValue, layerName, oldText, newText});
         }
     };
 
@@ -1537,6 +1537,10 @@ const fluidViewScope = function (fluid) {
             const togo = fluid.cell.effect(function (element) {
                 fluid.allocateDomId(element);
                 // console.log("Event binding effect activating for vnode " + vnode._id + " element ", element.flDomId, " on ", vnode.on);
+                // The effect runs afresh whenever the vnode's element is notified - remove any listeners bound by an
+                // earlier run, to an earlier element or this one, so that a handler is never bound more than once
+                fluid.removeDomListeners(vTreeRec);
+                vTreeRec.length = 0;
                 fluid.applyOns(vnode, vnode.shadow, element, vnode.on, vTreeRec);
             }, [vnode.elementSignal], {
                 onDispose: () => {
@@ -1660,15 +1664,38 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Resolve the site to which a write at a site is directed, in the same way as a write through the component proxy.
+     * A write beneath a member sourced from another site, e.g. `range.checked` beneath a `$for` iteration variable
+     * `range`, is directed upstream to that site, i.e. into the original element of the source. A write to the sourced
+     * member itself is not redirected, since it rebinds the member locally.
+     * @param {Site} site - The site being written
+     * @return {Site} The site to which the write is directed
+     */
+    fluid.lensedWriteSite = function (site) {
+        let togo = site;
+        // Try the shortest prefix first, since the proxy hands off to the first sourced member it traverses
+        for (let i = 1; i < site.segs.length && togo === site; ++i) {
+            const prefix = site.segs.slice(0, i);
+            const upstream = fluid.upstreamSite(site.shadow, prefix);
+            if (upstream.shadow !== site.shadow || !fluid.arrayEqual(upstream.segs, prefix)) {
+                // The upstream site may itself lie beneath a sourced member of its own component
+                togo = fluid.lensedWriteSite({shadow: upstream.shadow, segs: [...upstream.segs, ...site.segs.slice(i)]});
+            }
+        }
+        return togo;
+    };
+
+    /**
      * Resolve the model site to which a template reference bound to an attribute could write back a user's change.
-     * A site holding a signal product such as `$compute` is not writeable - although a linked member of a reactive root
-     * is, since its link only writes into it.
+     * A write beneath a member sourced from another site is directed upstream, as for a write through the component
+     * proxy - see `fluid.lensedWriteSite`. A site holding a signal product such as `$compute` is not writeable - although
+     * a linked member of a reactive root is, since its link only writes into it.
      * @param {Signal} token - The live reference bound to the attribute, as resolved by `fluid.fetchContextReference`
      * @return {Site|null} The writeable site, or `null` if there is none
      */
     fluid.writeableAttrSite = function (token) {
         const sited = fluid.deSignalToSite(token);
-        const site = fluid.isSignal(sited) && sited.$variety === "$sitedRef" ? sited.site : null;
+        const site = fluid.isSignal(sited) && sited.$variety === "$sitedRef" ? fluid.lensedWriteSite(sited.site) : null;
         const rec = site && fluid.get(site.shadow.shadowMap, [...site.segs, $m]);
         const isProduct = rec?.signalRecord && rec.handlerRecord !== fluid.reactiveLinkExpanderRecord;
         return site && !isProduct ? site : null;
@@ -1695,6 +1722,18 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Return the sources carried by changes made by the user through the view of a component, e.g. by handlers bound in
+     * its template to DOM events or the live state of its elements - `"dom"`, marking all of the user's activity, and
+     * the source of changes originated by the component itself, matched by an effect excluding `"self"` - see
+     * fluid.selfSource
+     * @param {Shadow} shadow - The shadow of the component whose view received the user's activity
+     * @return {any[]} The sources
+     */
+    fluid.domSources = function (shadow) {
+        return ["dom", shadow];
+    };
+
+    /**
      * Allocate an effect which listens for a user's changes to the live state of an element bound to an attribute
      * named in `fluid.liveStateAttrs`, removing the listener when the template's effects are disposed.
      * @param {Effect[]} templateEffects - An array of effects to contribute the allocated effect to
@@ -1714,7 +1753,7 @@ const fluidViewScope = function (fluid) {
             };
             const togo = fluid.cell.effect(function (element) {
                 unbind();
-                const listener = fluid.cell.withAmbientSource("dom", () => fluid.liveStateChanged(element, key, token));
+                const listener = fluid.cell.withAmbientSource(fluid.domSources(vnode.shadow), () => fluid.liveStateChanged(element, key, token));
                 element.addEventListener(event, listener);
                 bound = {element, listener};
             }, [vnode.elementSignal], {
@@ -1838,8 +1877,11 @@ const fluidViewScope = function (fluid) {
         const firstChar = key.charCodeAt(0);
         if (firstChar === 64) { // @
             if (key.startsWith("@on")) {
+                // A single effect binds all of the vnode's handlers, and so is allocated only for its first
+                if (!vnode.on) {
+                    fluid.allocateEventBindingEffect(templateEffects, vnode);
+                }
                 fluid.pushArray(vnode, "on", {onKey: key.slice(3).toLowerCase(), onValue: value});
-                fluid.allocateEventBindingEffect(templateEffects, vnode);
             } else if (key === "@class") {
                 const parts = value.split(",").map(part => part.trim());
                 const clazz = Object.fromEntries(parts.map(part => {
@@ -2148,6 +2190,20 @@ const fluidViewScope = function (fluid) {
         return record ? fluid.expandComponentContributions(record).forRecord !== undefined : false;
     };
 
+    /**
+     * Determine whether a member of a component which would hold a subcomponent has been removed by a stronger layer
+     * holding `null` at it - see `fluid.collectComponentRecords`
+     * @param {Shadow} shadow - The shadow of the component holding the member
+     * @param {String} memberName - The name of the member
+     * @return {Boolean} `true` if the member has been removed
+     */
+    fluid.isRemovedMember = function (shadow, memberName) {
+        return shadow.flatMerged.get()[memberName] === null;
+    };
+
+    // The condition of an element bearing `@id` whose member has been removed, which is never rendered
+    fluid.removedMemberCondition = fluid.cell(false, {name: "Removed member condition"});
+
     fluid.shadowsToRoot = function (shadow) {
         const togo = [];
         while (shadow) {
@@ -2283,7 +2339,8 @@ const fluidViewScope = function (fluid) {
      * layers, whose member `dataset` holds the element's `data-` attributes.
      *
      * An element bearing `@if` (or `@else`, following one bearing `@if`) is rendered only whilst its condition holds,
-     * by a child component of `self` which exists only whilst it does - see `fluid.templateBlock`.
+     * by a child component of `self` which exists only whilst it does - see `fluid.templateBlock`. An element bearing
+     * `@id` whose member has been removed by a layer holding `null` is likewise omitted, and allocates no component.
      *
      * @param {VNode} vtemplate - The vTree representing the template which will be parsed
      * @param {ComponentComputer} self - The component whose view renders the template, which receives any components
@@ -2309,6 +2366,8 @@ const fluidViewScope = function (fluid) {
         // Names of the members of self allocated for conditional elements and islands by this activation
         const jointNames = [];
         const jointCounts = {};
+        // Names of the members designated by @id whose elements are omitted by this activation since they are removed
+        const removedNames = [];
         const allocateJointName = kind => `${kind}-${jointCounts[kind] = (jointCounts[kind] || 0) + 1}`;
 
         /**
@@ -2361,6 +2420,25 @@ const fluidViewScope = function (fluid) {
             if (!idValue) {
                 jointNames.push(memberName);
             }
+        }
+
+        /**
+         * Omit from the rendered markup an element bearing `@id` whose member has been removed by a stronger layer
+         * holding `null`, as for an element bearing `@if` whose condition is false. Any component left by a previous
+         * activation's template record for the member is destroyed.
+         * @param {VNode} vnode - The element
+         */
+        function omitRemovedMember(vnode) {
+            const memberName = vnode.attrs["@id"];
+            delete vnode.children;
+            vnode.attrs = {};
+            vnode.ifSignal = fluid.removedMemberCondition;
+            vnode.blockKey = memberName;
+            removedNames.push(memberName);
+            const withdrawEffect = fluid.cell.effect(function () {
+                fluid.withdrawTemplateRecord(shadow, memberName);
+            }, [], {name: `Removed member effect for member ${memberName} at path ${shadow.path}`});
+            templateEffects.push(withdrawEffect);
         }
 
         /**
@@ -2421,10 +2499,18 @@ const fluidViewScope = function (fluid) {
                 }
             } else if (vnode.blockCondition) {
                 allocateTemplateBlock(vnode);
+            } else if (vnode.attrs?.["@id"] && fluid.isRemovedMember(shadow, vnode.attrs["@id"])) {
+                omitRemovedMember(vnode);
             } else {
                 // Process id attribute first since it may cause others to be slung to another component
                 const idValue = vnode.attrs?.["@id"];
                 if (idValue) {
+                    // The element's node is marked with its member's name, so that it can be removed should the member
+                    // be removed - if it was removed by the previous activation, the element is inserted afresh
+                    vnode.memberKey = idValue;
+                    if ((viewShadow.removedMemberNames || []).includes(idValue)) {
+                        vnode.blockKey = idValue;
+                    }
                     // This effect binds to the DOM node, when it is disposed, will empty the component's template record.
                     // We likely don't want to use this in practice since a template update is going to update this live and
                     // we'd prefer to reuse whatever is in the DOM without tearing it down.
@@ -2440,9 +2526,6 @@ const fluidViewScope = function (fluid) {
                         }, {name: `parentTemplate signal for vnode ${vnode._id}`});
                         delete vnode.children;
                         vnode.attrs = fluid.filterObjKeys(vnode.attrs, key => !key.startsWith("@"));
-                        // The element bears the id derived from the subcomponent's path even when the subcomponent
-                        // renders nothing of its own, so that it is clear in the markup which member it holds
-                        vnode.defaultAttrs = {...vnode.defaultAttrs, id: fluid.containerIdPrefix + fluid.composeSegment(shadow.path, idValue)};
 
                         // The template record ensures that the child has a view, rendering into the container supplied
                         // here - if the child is a component list, its view renders its members' views in sequence. A
@@ -2467,7 +2550,6 @@ const fluidViewScope = function (fluid) {
                         const childShadow = fluid.pushPotentia(shadow, idValue, [templateRecord]);
                         if (isFragment) {
                             vnode.fragmentOf = childShadow;
-                            delete vnode.defaultAttrs;
                         }
                         // Establish dependency on availability of child component so we re-render if its availability changes
                         childShadow.availableInstance.get();
@@ -2518,6 +2600,7 @@ const fluidViewScope = function (fluid) {
             (viewShadow.templateJointNames || []).filter(name => !jointNames.includes(name)).forEach(name =>
                 fluid.withdrawTemplateRecord(selfShadow, name));
             viewShadow.templateJointNames = jointNames;
+            viewShadow.removedMemberNames = removedNames;
             return togo;
         };
 
@@ -2543,27 +2626,10 @@ const fluidViewScope = function (fluid) {
 
             const filteredTree = !fluid.isUnavailable(selfEditing) && selfEditing ? selfEditingRef.get().site.shadow.that.filterForSelfEditing(activatedTree, self) : activatedTree;
 
-            fluid.assignContainerId(filteredTree, selfShadow);
             fluid.bindContainer(templateEffects, filteredTree, self, view);
             togo = filteredTree;
         }
         return togo;
-    };
-
-    fluid.containerIdPrefix = "fl-id-";
-
-    /**
-     * Assign a default id derived from a component's path to the root VNode of its rendered tree, which is rendered onto
-     * its container, so that rendered components are easily distinguished in markup. The id is applied only if the
-     * template does not specify one and the container does not already have one, and the tree is not a placeholder
-     * rendered from the parent's template by `fluid.placeholderTree`.
-     * @param {VNode} vTree - The root VNode of the component's rendered tree
-     * @param {Shadow} shadow - The shadow of the rendering component
-     */
-    fluid.assignContainerId = function (vTree, shadow) {
-        if (vTree.attrs?.id === undefined && !vTree.isPlaceholder) {
-            vTree.defaultAttrs = {...vTree.defaultAttrs, id: fluid.containerIdPrefix + shadow.path};
-        }
     };
 
     fluid.unbindDom = function (/*vnode, element*/) {
@@ -2663,6 +2729,112 @@ const fluidViewScope = function (fluid) {
     // Hack to assign ids to vnodes to ensure that their events get bound to container DOM nodes exactly once
     let vnode_id = 1;
 
+    /**
+     * Determine the key by which a vnode's node is matched up across renderings - the key of the list member whose
+     * markup it is, or else the member held by an element bearing `@id`, or else the block of an element bearing `@if`.
+     * A vnode with none of these is matched by position amongst its unkeyed siblings.
+     * @param {VNode} vnode - The vnode
+     * @return {String|undefined} Its key, if it has one
+     */
+    fluid.vnodeKey = function (vnode) {
+        return typeof(vnode) === "string" ? undefined : vnode.listKey ?? vnode.memberKey ?? vnode.blockKey;
+    };
+
+    /**
+     * Determine whether a node within an element is not ours to reconcile - one injected for a Single File Component,
+     * e.g. its style, or a script booting the framework in a hydrated document.
+     * @param {Node} node - The node
+     * @return {Boolean} `true` if the node is to be left alone
+     */
+    fluid.isForeignFrameworkNode = function (node) {
+        return fluid.isInjectedNode(node) || node.nodeType === 1 /* Node.ELEMENT_NODE */ && node.localName === "script" &&
+            fluid.classifyScriptNode(node) === "framework";
+    };
+
+    /**
+     * Match up the vnodes which are to be the children of an element with the nodes which it currently holds and which
+     * may be reused for them, removing any others which this rendering owns. A rendering owns the nodes it created,
+     * and, on the first rendering of an element which already has children, e.g. markup written by an earlier static
+     * rendering, those which it claims from them. Any node which it does not own, e.g. one added by a widget loader or
+     * browser extension, is left in place and alone. On the first rendering the children are claimed by position,
+     * since the markup is expected to have been rendered from the same template. Thereafter, owned nodes are matched to
+     * vnodes by key where they have one, so that a node is reused by the same list member or block however the list
+     * is reordered or grows, and other nodes by position amongst the unkeyed ones.
+     * @param {Element} element - The element whose children are being reconciled
+     * @param {VNode[]} vchildren - The vnodes which are to be its children
+     * @return {Array<Node|undefined>} For each vnode, the node to be reused for it, or `undefined` if one is to be created
+     */
+    fluid.assignChildNodes = function (element, vchildren) {
+        const children = [...element.childNodes].filter(node => !fluid.isForeignFrameworkNode(node));
+        let assigned;
+        let owned;
+        if (element.flPatched) {
+            owned = children.filter(node => node.flOwned);
+            const byKey = new Map();
+            const unkeyed = [];
+            owned.forEach(node => {
+                if (node.flKey !== undefined) {
+                    byKey.set(node.flKey, node);
+                } else {
+                    unkeyed.push(node);
+                }
+            });
+            let unkeyedIndex = 0;
+            assigned = vchildren.map(vchild => {
+                const key = fluid.vnodeKey(vchild);
+                let candidate;
+                if (key !== undefined) {
+                    candidate = byKey.get(key);
+                    byKey.delete(key);
+                } else {
+                    candidate = unkeyed[unkeyedIndex++];
+                }
+                return candidate && fluid.matchNodeToVNode(candidate, vchild) ? candidate : undefined;
+            });
+        } else {
+            owned = children;
+            assigned = vchildren.map((vchild, i) => children[i] && fluid.matchNodeToVNode(children[i], vchild) ? children[i] : undefined);
+        }
+        const reused = new Set(assigned);
+        owned.filter(node => !reused.has(node)).forEach(node => node.remove());
+        return assigned;
+    };
+
+    /**
+     * Place the nodes for the vnodes which are to be the children of an element into it in order, creating any which
+     * are not to be reused, and patch each of them. Each node is placed after the node of its preceding sibling vnode,
+     * moving it only if it is out of order, so that a node reused for a keyed vnode keeps its identity - e.g. a
+     * stylesheet is not fetched again, nor a script run again. Nodes which the rendering does not own are not moved, and
+     * nodes created are placed immediately after their predecessor, so that any nodes appended to the element by others,
+     * e.g. injections into the head, remain after all of the rendering's own.
+     * @param {Element} element - The element whose children are being reconciled
+     * @param {VNode[]} vchildren - The vnodes which are to be its children
+     * @param {Array<Node|undefined>} nodes - For each vnode, the node to be reused for it, as returned by
+     * `fluid.assignChildNodes`
+     */
+    fluid.placeChildNodes = function (element, vchildren, nodes) {
+        const placed = new Set(nodes.filter(node => node));
+        let cursor = element.firstChild;
+        vchildren.forEach((vchild, i) => {
+            let node = nodes[i];
+            if (!node) {
+                node = fluid.nodeFromVNode(element.ownerDocument, vchild);
+            }
+            node.flOwned = true;
+            node.flKey = fluid.vnodeKey(vchild);
+            // Look past nodes we do not own up to the next of ours - if it is this node, it is already in order
+            let probe = cursor;
+            while (probe && probe !== node && !placed.has(probe)) {
+                probe = probe.nextSibling;
+            }
+            if (probe !== node) {
+                element.insertBefore(node, cursor);
+            }
+            cursor = node.nextSibling;
+            fluid.patchChildren(vchild, node);
+        });
+    };
+
     // Helpful comparison: https://lazamar.github.io/virtual-dom/#applying-a-diff
     /**
      * Updates the DOM to match the given virtual node (VNode) structure.
@@ -2685,39 +2857,12 @@ const fluidViewScope = function (fluid) {
 
         // It may be undefined because this is a joint to a subcomponent as applied in fluid.processAttributeDirective
         if (vnode.children !== undefined) {
-            // An element bearing @if is omitted whilst its condition is false. Its node is marked with the key of its
-            // block, so that it is removed whilst absent, and so that a node is reused only by its own block, even
-            // across activations of the template - other nodes are then matched up with their vnodes by position
+            // An element bearing @if is omitted whilst its condition is false, and its node is then not reused
             const isAbsent = vchild => vchild.ifSignal !== undefined && !vchild.ifSignal.get();
-            const absentKeys = new Set(vnode.children.filter(isAbsent).map(vchild => vchild.blockKey));
-            [...element.childNodes].filter(node => absentKeys.has(node.flBlockKey)).forEach(node => node.remove());
-            // Nodes injected for Single File Components, e.g. into the head, are not ours to reconcile
-            const nodes = [...element.childNodes].filter(node => !fluid.isInjectedNode(node));
             const vchildren = vnode.children.filter(vchild => !isAbsent(vchild)).flatMap(fluid.expandFragmentSlot);
-            const vcount = vchildren.length;
-            for (let i = 0; i < vcount; ++i) {
-                const vchild = vchildren[i];
-                let other = nodes[i];
-                // An element which has just become present is inserted rather than taking over its successor's node
-                const freshlyPresent = vchild.blockKey !== undefined && other && other.flBlockKey !== vchild.blockKey;
-                if (!other || freshlyPresent || !fluid.matchNodeToVNode(other, vchild)) {
-                    const fresh = fluid.nodeFromVNode(element.ownerDocument, vchild);
-                    fresh.flBlockKey = vchild.blockKey;
-                    if (freshlyPresent) {
-                        element.insertBefore(fresh, other);
-                        nodes.splice(i, 0, fresh);
-                    } else if (other) {
-                        other.replaceWith(fresh);
-                        nodes[i] = fresh;
-                    } else {
-                        element.appendChild(fresh);
-                        nodes.push(fresh);
-                    }
-                    other = fresh;
-                }
-                fluid.patchChildren(vchild, other);
-            }
-            nodes.slice(vcount).forEach(node => node.remove());
+            const nodes = fluid.assignChildNodes(element, vchildren);
+            fluid.placeChildNodes(element, vchildren, nodes);
+            element.flPatched = true;
             const boundValue = vnode.boundAttrs?.value;
             if (boundValue && element.localName === "select") {
                 // Patching the options may have disturbed the value materialised onto them, so restore it
@@ -3028,6 +3173,8 @@ const fluidViewScope = function (fluid) {
         const markup = `<ul class="fl-error">${errors}</ul>`;
         // OK to flash this in since it will be replaced when proper rendering happens and has no browser state
         container.innerHTML = markup;
+        // The report is the rendering's own, and so is reconciled away by the next one - see fluid.assignChildNodes
+        container.childNodes.forEach(node => node.flOwned = true);
     };
 
     /**
@@ -3206,10 +3353,18 @@ const fluidViewScope = function (fluid) {
                     unavailable: treesUnavailable
                 } = fluid.processSignalArgs(componentList.map(component => component.view.vTree));
                 // A member whose view does not elide its template's root renders the root's children - e.g. several
-                // top-level nodes of a template, or the contents of an SFC's <template> - which are spliced in its place
+                // top-level nodes of a template, or the contents of an SFC's <template> - which are spliced in its place.
+                // Each is keyed by its member, so that its node follows the member however the list changes - the list's
+                // path qualifies the key, since a list in a <fluid-fragment> slot is spliced amongst other children
+                const listPath = self[$m].path;
+                const keyed = (childTree, component) => {
+                    const memberKey = `${listPath}[${component[$m].memberName}]`;
+                    const vnodes = fluid.isTemplateRootTag(childTree.tag) ? childTree.children : [childTree];
+                    return vnodes.map((vnode, i) => typeof(vnode) === "string" ? vnode : Object.assign(vnode, {listKey: `${memberKey}#${i}`}));
+                };
                 return treesUnavailable || {
                     tag: "template",
-                    children: childTrees.flatMap(childTree => fluid.isTemplateRootTag(childTree.tag) ? childTree.children : [childTree]),
+                    children: childTrees.flatMap((childTree, i) => keyed(childTree, componentList[i])),
                     _id: vnode_id++
                 };
             }

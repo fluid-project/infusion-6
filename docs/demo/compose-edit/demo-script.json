@@ -42,7 +42,7 @@
             "description": "and a hover pane should cover the corresponding footer component in the app",
             "target": {"selector": "#fl-inspect-overlay"},
             "visible": true,
-            "covers": {"selector": "[id$='.post.0.footer']"}
+            "covers": {"selector": ".fl-fullpost > :nth-child(4)", "index": 0}
         }, {
             "description": "showing its layer name",
             "target": {"selector": "#fl-inspect-overlay .fl-inspect-layer"},
@@ -191,7 +191,7 @@
             "description": "A hover pane should cover the footer component",
             "target": {"selector": "#fl-inspect-overlay"},
             "visible": true,
-            "covers": {"selector": "[id$='.post.1.footer']"}
+            "covers": {"selector": ".fl-fullpost > :nth-child(4)", "index": 1}
         }, {
             "description": "showing its layer name",
             "target": {"selector": "#fl-inspect-overlay .fl-inspect-layer"},
@@ -208,7 +208,7 @@
             "description": "The hover pane should move to cover the post component",
             "target": {"selector": "#fl-inspect-overlay"},
             "visible": true,
-            "covers": {"selector": "[id$='.post.0.post']"}
+            "covers": {"selector": ".fl-fullpost > :nth-child(3)", "index": 0}
         }, {
             "description": "showing its layer name",
             "target": {"selector": "#fl-inspect-overlay .fl-inspect-layer"},

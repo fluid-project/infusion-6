@@ -108,7 +108,7 @@ fluid.tldraw.injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.([\w$]+)\.vi
  * Construct the potentia through which a host supplies a widget with its container, the id of its shape and the
  * configuration of its shape. These are ordinarily directed at the widget's own view. However, a widget whose view is
  * cross-injected from one of its subcomponents, e.g. by `view: "{first}.view"` as described in
- * fluid-project/infusion-6#20, has no view of its own, and potentia directed at its view would override the injection.
+ * FLUID-7020, has no view of its own, and potentia directed at its view would override the injection.
  * In this case, they are directed at the view of that subcomponent instead, following any further such injection made
  * by the subcomponent's own layer.
  * @param {String} layerName - The name of the widget's layer, which must already be registered
@@ -336,7 +336,7 @@ fluid.tldraw.readShapeConfig = function (parts) {
 
 /**
  * @typedef {Object} HistoryCommand
- * @property {String} stack - The member of `fluid` holding the history stack acted on - "liveHistory" or "definitionHistory"
+ * @property {String} stack - The member of `fluid.history` holding the history stack acted on - "live" or "definitions"
  * @property {Boolean} back - `true` to step back through the stack, `false` to step forward
  * @property {String} key - The key which, with the platform's command modifier, issues the command
  * @property {Boolean} shift - `true` if the Shift key must also be held
@@ -346,10 +346,10 @@ fluid.tldraw.readShapeConfig = function (parts) {
 
 /** @type {HistoryCommand[]} */
 fluid.tldraw.historyCommands = [
-    {stack: "liveHistory", back: true, key: "z", shift: false, label: "Undo widget change", icon: "↶"},
-    {stack: "liveHistory", back: false, key: "y", shift: false, label: "Redo widget change", icon: "↷"},
-    {stack: "definitionHistory", back: true, key: "z", shift: true, label: "Undo layer change", icon: "↶"},
-    {stack: "definitionHistory", back: false, key: "y", shift: true, label: "Redo layer change", icon: "↷"}
+    {stack: "live", back: true, key: "z", shift: false, label: "Undo widget change", icon: "↶"},
+    {stack: "live", back: false, key: "y", shift: false, label: "Redo widget change", icon: "↷"},
+    {stack: "definitions", back: true, key: "z", shift: true, label: "Undo layer change", icon: "↶"},
+    {stack: "definitions", back: false, key: "y", shift: true, label: "Redo layer change", icon: "↷"}
 ];
 
 /**
@@ -432,58 +432,20 @@ fluid.tldraw.commandForKey = function (event, isApple) {
  * @return {Boolean} `true` if a record was undone or redone
  */
 fluid.tldraw.runHistoryCommand = function (command) {
-    const stack = fluid[command.stack];
-    return command.back ? fluid.ptf.historyBack(stack) : fluid.ptf.historyForward(stack);
+    const stack = fluid.history[command.stack];
+    return command.back ? fluid.history.stepBack(stack) : fluid.history.stepForward(stack);
 };
 
 /**
- * @typedef {Object} ArenaSiteRef
- * @property {String} shapeId - The id of the shape hosting the widget holding the site
- * @property {String} component - The path of the site's component within the widget, as rendered by `fluid.ptf.segsToFilename`
- * @property {String} path - The path of the site within its component
+ * Determine the member name under which the widget hosted by a shape is constructed within the tldrawHost, which is
+ * the root of the arena. Since this is derived from the shape's id, a widget reconstructed in the same shape, e.g. on
+ * undoing its deletion or restoring the arena, keeps its path within the arena, and the records of its state in
+ * `fluid.history.live` apply to it once more - see `fluid.history.arenaRoot`.
+ * @param {String} shapeId - The id of the shape hosting the widget
+ * @return {String} The widget's member name
  */
-
-/**
- * Find the widget holding a component, together with the component's path within it
- * @param {Shadow} shadow - The shadow of the component
- * @param {Map<String, fluid.component>} instances - The widget hosted by each shape, keyed by shape id
- * @return {Object|null} `{shapeId, segs}` for the widget holding the component, or `null` if it is in none
- */
-fluid.tldraw.findWidget = function (shadow, instances) {
-    const roots = new Map([...instances].map(([shapeId, that]) => [fluid.ptf.componentToShadow(that), shapeId]));
-    const segs = [];
-    let current = shadow;
-    while (current && !roots.has(current)) {
-        segs.unshift(current.memberName);
-        current = current.parentShadow;
-    }
-    return current ? {shapeId: roots.get(current), segs} : null;
-};
-
-/**
- * Render a site as a reference relative to the widget holding it, which remains valid once the canvas has been
- * restored with fresh components - suitable for `fluid.ptf.encodeLiveRecord`
- * @param {String} site - The site, as rendered by `fluid.renderSite`
- * @param {Map<String, fluid.component>} instances - The widget hosted by each shape, keyed by shape id
- * @return {ArenaSiteRef|null} The reference, or `null` if the site is not in any widget
- */
-fluid.tldraw.siteToRef = function (site, instances) {
-    const parsed = fluid.parseSite(site);
-    const widget = parsed.shadow ? fluid.tldraw.findWidget(parsed.shadow, instances) : null;
-    return widget ? {shapeId: widget.shapeId, component: fluid.ptf.segsToFilename(widget.segs), path: parsed.path} : null;
-};
-
-/**
- * Resolve a reference produced by `fluid.tldraw.siteToRef` to the site it now refers to - suitable for
- * `fluid.ptf.decodeLiveRecord`
- * @param {ArenaSiteRef} ref - The reference
- * @param {Map<String, fluid.component>} instances - The widget hosted by each shape, keyed by shape id
- * @return {String|null} The site, as rendered by `fluid.renderSite`, or `null` if it no longer exists
- */
-fluid.tldraw.refToSite = function (ref, instances) {
-    const that = instances.get(ref.shapeId);
-    const shadow = that && fluid.ptf.resolveShadow(fluid.ptf.componentToShadow(that), fluid.ptf.filenameToSegs(ref.component));
-    return shadow ? fluid.renderSite({shadow, segs: fluid.pathToSegs(ref.path)}) : null;
+fluid.tldraw.widgetMemberName = function (shapeId) {
+    return shapeId.replace(/[^\w-]/g, "-");
 };
 
 // The widget layers offered by the "New shape" menu, and their deletion
@@ -569,7 +531,7 @@ fluid.tldraw.dependentLayers = function (layerName) {
  * @return {String} The question
  */
 fluid.tldraw.deletionQuestion = function (layerName, widgetCount, dependents, isApple) {
-    const undo = fluid.tldraw.historyCommands.find(command => command.stack === "definitionHistory" && command.back);
+    const undo = fluid.tldraw.historyCommands.find(command => command.stack === "definitions" && command.back);
     return [
         `Delete the layer ${layerName}?`,
         ...(widgetCount > 0 ? [`The ${widgetCount === 1 ? "widget" : widgetCount + " widgets"} on the canvas made from it will be deleted too.`] : []),

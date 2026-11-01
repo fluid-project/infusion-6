@@ -1141,25 +1141,116 @@ fluid.def("fluid.tests.tabHolder", {
     selectedTab: null
 });
 
+/**
+ * Empty the undoable histories, so that a test may examine just the records it causes
+ */
+fluid.tests.clearHistories = function () {
+    fluid.history.mixedStacks.forEach(stack => {
+        stack.records.set([]);
+        stack.index.set(0);
+    });
+};
+
+/**
+ * Read the writes to live state recorded in the mixed history, in the order in which they were made
+ * @return {LiveHistoryRec[]} The records of the writes
+ */
+fluid.tests.liveWrites = function () {
+    return fluid.history.mixed.get().filter(entry => entry.record.type === "group").flatMap(entry => entry.record.records);
+};
+
 QUnit.test("Only writes beneath reactive roots recorded in the history", function (assert) {
     const that = fluid.tests.tabHolder();
     fluid.cell.stabilize();
-    const start = fluid.layerHistory.get().length;
+    fluid.tests.clearHistories();
     that.openTabs.push("first");
     that.selectedTab = "first";
     that.openTabs.splice(0, 1);
     that.selectedTab = null;
     fluid.cell.stabilize();
-    const added = fluid.layerHistory.get().slice(start);
+    const added = fluid.tests.liveWrites();
     assert.deepEqual(added.map(record => [record.oldValue, record.newValue]), [[[], ["first"]], [["first"], []]],
-        "Mutations of reactive array recorded, but not writes to plain member");
-    fluid.historyBack();
+        "Mutations of reactive array recorded, each as a step of its own, but not writes to plain member");
+    assert.equal(fluid.history.mixed.get().length, 2, "Each write is a step of the mixed history");
+    fluid.history.back();
     fluid.cell.stabilize();
     assert.deepEqual(fluid.unwrapProxy(that.openTabs), ["first"], "Stepping back reopens the closed tab");
-    fluid.historyForward();
+    fluid.history.forward();
     fluid.cell.stabilize();
     assert.deepEqual(fluid.unwrapProxy(that.openTabs), [], "Stepping forward closes it again");
     that.destroy();
+});
+
+// The mixed history interleaves the live and definition histories in the order in which their records were made, and
+// steps through them together - here without FluidPTF.js, whose layer sources hold text, so that redefinitions are
+// recorded and undone through the definitions themselves
+
+fluid.tests.mixedSubjectDef = value => ({
+    $layers: "fluid.component",
+    value,
+    state: {
+        $reactiveRoot: {
+            count: 0
+        }
+    }
+});
+
+fluid.def("fluid.tests.mixedSubject", fluid.tests.mixedSubjectDef(1));
+
+QUnit.test("Mixed history interleaves live writes and layer redefinitions", function (assert) {
+    const originalNow = fluid.history.now;
+    let time = 1000;
+    fluid.history.now = () => time;
+    const that = fluid.tests.mixedSubject();
+    fluid.cell.stabilize();
+    fluid.tests.clearHistories();
+    try {
+        that.state.count = 1;
+        time += 1000;
+        fluid.def("fluid.tests.mixedSubject", fluid.tests.mixedSubjectDef(2));
+        fluid.cell.stabilize();
+        time += 1000;
+        that.state.count = 2;
+        fluid.cell.stabilize();
+        const kinds = () => fluid.history.mixed.get().map(entry => entry.record.type);
+        assert.deepEqual(kinds(), ["group", "definition", "group"], "Records of both stacks interleaved in the order made");
+        assert.equal(that.value, 2, "Redefinition applied");
+
+        // A record restored from persistence keeps the time it was made, and is placed by it
+        fluid.history.pushToStack(fluid.history.definitions, {type: "restored", madeAt: 1500});
+        assert.deepEqual(kinds(), ["group", "restored", "definition", "group"], "Record placed by the time it was made");
+        // A record's own members are left alone, e.g. the "created" flag of the tldraw demo's records of widgets
+        fluid.history.pushToStack(fluid.history.definitions, {type: "restored", created: false});
+        const flagged = fluid.peek(fluid.history.definitions.records.get());
+        assert.deepEqual([flagged.created, typeof(flagged.madeAt)], [false, "number"], "Stamp does not clash with the record's own members");
+        fluid.history.definitions.records.set(fluid.history.definitions.records.get().filter(record => record.type !== "restored"));
+        fluid.history.definitions.index.set(1);
+
+        fluid.history.back();
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.value], [1, 2], "Latest write undone first");
+        fluid.history.back();
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.value], [1, 1], "Redefinition undone next, through its definition");
+        fluid.history.back();
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.value], [0, 1], "Earliest write undone last");
+        assert.notOk(fluid.history.back(), "Nothing further to undo");
+
+        fluid.history.forward();
+        fluid.history.forward();
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.value], [1, 2], "Redone in the order made");
+        fluid.history.forward();
+        fluid.cell.stabilize();
+        assert.deepEqual([that.state.count, that.value], [2, 2], "All redone");
+        assert.equal(fluid.history.mixed.get().filter(entry => !entry.applied).length, 0, "Every record applied");
+    } finally {
+        fluid.history.now = originalNow;
+        that.destroy();
+        fluid.def("fluid.tests.mixedSubject", fluid.tests.mixedSubjectDef(1));
+        fluid.tests.clearHistories();
+    }
 });
 
 // Members merged alongside a $reactiveRoot, which may be links to referenced values - FLUID-7025
@@ -1207,11 +1298,11 @@ QUnit.test("Reactive root members overridden by links and literals from another 
         prompt: "From source", colour: "red", nested: {size: 5, weight: 2}, data: "{not}.aReference"
     }, "Linked member drawn from its source, literal overrides initial value, and data within the root is not a link");
 
-    const start = fluid.layerHistory.get().length;
+    fluid.tests.clearHistories();
     that.source.text = "Changed at source";
     fluid.cell.stabilize();
     assert.equal(that.state.prompt, "Changed at source", "Linked member follows its source");
-    assert.equal(fluid.layerHistory.get().length, start, "Write through link not recorded in the history");
+    assert.equal(fluid.tests.liveWrites().length, 0, "Write through link not recorded in the history");
 
     that.state.colour = "blue";
     fluid.cell.stabilize();
@@ -1225,7 +1316,7 @@ QUnit.test("Reactive root members overridden by links and literals from another 
     fluid.cell.stabilize();
     assert.equal(that.state.prompt, "Written locally", "Linked member may be written");
     assert.equal(that.source.text, "Changed again", "Write to linked member does not reach its source");
-    assert.equal(fluid.layerHistory.get().length, start + 2, "Writes to the reactive root recorded in the history");
+    assert.equal(fluid.tests.liveWrites().length, 2, "Writes to the reactive root recorded in the history");
     that.source.text = "Changed once more";
     fluid.cell.stabilize();
     assert.equal(that.state.prompt, "Changed once more", "Linked member follows its source again once it changes");
@@ -1444,6 +1535,233 @@ QUnit.test("Live query over a $for-driven component list", function (assert) {
     assert.deepEqual(fluid.tests.queryEditorNames(query), ["beta"],
         "One editor remains matched after splice");
 
+    that.destroy();
+});
+
+fluid.def("fluid.tests.selectorHolder", {
+    $layers: "fluid.tests.editorHolder",
+    names: {
+        $reactiveRoot: ["alpha", "beta"]
+    },
+    others: {
+        $reactiveRoot: [1]
+    },
+    otherChildren: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{selectorHolder}.others",
+                valueAs: "value"
+            }
+        }
+    },
+    editorCount: "$compute:fluid.tests.countEditors({self fluid.tests.editor})",
+    editorNames: "$compute:fluid.tests.joinEditorNames({self fluid.tests.editor}.editorName)"
+});
+
+fluid.tests.selectorRuns = {count: 0, names: 0};
+
+fluid.tests.countEditors = function (editors) {
+    fluid.tests.selectorRuns.count++;
+    return editors.length;
+};
+
+fluid.tests.joinEditorNames = function (names) {
+    fluid.tests.selectorRuns.names++;
+    return names.join(",");
+};
+
+QUnit.test("Selector reference with a path yields the array of values at that path in each match", function (assert) {
+    const that = fluid.tests.selectorHolder();
+    fluid.cell.stabilize();
+    assert.equal(that.editorNames, "alpha,beta", "Values at path read from each matched component");
+
+    that.names.push("gamma");
+    fluid.cell.stabilize();
+    assert.equal(that.editorNames, "alpha,beta,gamma", "Values follow a newly matched component");
+
+    that.names.splice(0, 1, "delta");
+    fluid.cell.stabilize();
+    assert.equal(that.editorNames, "delta,beta,gamma", "Values follow a change in a matched component");
+
+    that.destroy();
+});
+
+QUnit.test("Selector results are not redelivered when the matched components are unchanged", function (assert) {
+    const that = fluid.tests.selectorHolder();
+    fluid.cell.stabilize();
+    assert.equal(that.editorCount, 2, "Initial matched count");
+    assert.equal(that.editorNames, "alpha,beta", "Initial matched names");
+
+    fluid.tests.selectorRuns.count = 0;
+    fluid.tests.selectorRuns.names = 0;
+    that.others.push(2);
+    fluid.cell.stabilize();
+    assert.equal(that.editorCount, 2, "Matched count unchanged");
+    assert.equal(that.editorNames, "alpha,beta", "Matched names unchanged");
+    assert.deepEqual(fluid.tests.selectorRuns, {count: 0, names: 0},
+        "Turnover of unmatched components beneath the root reevaluates neither computation");
+
+    that.names.push("gamma");
+    fluid.cell.stabilize();
+    assert.equal(that.editorCount, 3, "Matched count follows a genuine change");
+    assert.equal(that.editorNames, "alpha,beta,gamma", "Matched names follow a genuine change");
+    assert.deepEqual(fluid.tests.selectorRuns, {count: 1, names: 1}, "Each computation reevaluated once for the change");
+
+    that.destroy();
+});
+
+// A dynamic layer read from the component itself which has failed, e.g. one whose SFC script has a syntax error, must
+// not make the component oscillate between including and excluding it
+
+fluid.def("fluid.tests.failedDynamicLayerHolder", {
+    $layers: ["fluid.component", "{self}.extraLayers"],
+    extraLayers: ["fluid.tests.failedDynamicLayer"]
+});
+
+QUnit.test("A failed dynamic layer read from the component itself leaves it stably unavailable", function (assert) {
+    fluid.writeLayer("fluid.tests.failedDynamicLayer", fluid.unavailable({message: "Failure evaluating script", variety: "error"}));
+    const that = fluid.tests.failedDynamicLayerHolder();
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(that), "Component holding failed layer is unavailable, and stabilisation terminates");
+
+    fluid.def("fluid.tests.failedDynamicLayer", {
+        $layers: "fluid.component",
+        repaired: true
+    });
+    fluid.cell.stabilize();
+    assert.notOk(fluid.isUnavailable(that), "Component becomes available once the layer is repaired");
+    assert.equal(that.repaired, true, "Repaired layer is merged");
+    that.destroy();
+    fluid.deleteLayer("fluid.tests.failedDynamicLayer");
+});
+
+// References resolving to undefined pass over to the material they override
+
+fluid.def("fluid.tests.fallbackDefaults", {
+    $layers: "fluid.component",
+    limit: 100,
+    nested: {
+        depth: 3
+    },
+    title: "default title"
+});
+
+fluid.def("fluid.tests.fallbackMiddle", {
+    $layers: "fluid.tests.fallbackDefaults",
+    title: "{self}.options.middleTitle"
+});
+
+fluid.def("fluid.tests.fallbackReferrer", {
+    $layers: "fluid.tests.fallbackMiddle",
+    options: {
+        $reactiveRoot: {}
+    },
+    limit: "{self}.options.limit",
+    nested: {
+        depth: "{self}.options.depth"
+    },
+    title: "{self}.options.title"
+});
+
+QUnit.test("A reference resolving to undefined passes over to the layer below", function (assert) {
+    const that = fluid.tests.fallbackReferrer();
+    fluid.cell.stabilize();
+    assert.equal(that.limit, 100, "Top-level member falls back to weaker default");
+    assert.equal(that.nested.depth, 3, "Nested member falls back to weaker default");
+    assert.equal(that.title, "default title", "Fallback passes through a further reference which is also undefined");
+
+    that.options.middleTitle = "middle title";
+    fluid.cell.stabilize();
+    assert.equal(that.title, "middle title", "Fallback delivers a further reference once defined");
+
+    that.options.limit = 5;
+    that.options.depth = 7;
+    that.options.title = "own title";
+    fluid.cell.stabilize();
+    assert.equal(that.limit, 5, "Top-level member follows the reference once defined");
+    assert.equal(that.nested.depth, 7, "Nested member follows the reference once defined");
+    assert.equal(that.title, "own title", "Strongest reference wins once defined");
+
+    that.options.limit = undefined;
+    fluid.cell.stabilize();
+    assert.equal(that.limit, 100, "Top-level member falls back again once the reference is undefined");
+    that.destroy();
+});
+
+// $for members configured from data through layerAs
+
+fluid.def("fluid.tests.paneHandler", {
+    $layers: "fluid.component",
+    maxObs: 100,
+    title: "untitled",
+    widgets: {
+        base: {
+            $component: {
+                $layers: "fluid.component",
+                kind: "base"
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.obsPaneHandler", {
+    $layers: "fluid.tests.paneHandler",
+    obsPane: true
+});
+
+fluid.def("fluid.tests.paneHolder", {
+    $layers: "fluid.component",
+    obsRows: [1, 2, 3],
+    records: {
+        $reactiveRoot: [{
+            $layers: "fluid.tests.obsPaneHandler",
+            title: "History",
+            maxObs: 5,
+            widgets: {
+                plot: {
+                    $component: {
+                        $layers: "fluid.component",
+                        obsRows: "{paneHolder}.obsRows"
+                    }
+                }
+            }
+        }, {
+            title: "Status"
+        }]
+    },
+    panes: {
+        $component: {
+            $layers: "fluid.tests.paneHandler",
+            $for: {
+                source: "{paneHolder}.records",
+                layerAs: "paneRecord"
+            }
+        }
+    }
+});
+
+QUnit.test("$for members are configured from their source elements through layerAs", function (assert) {
+    const that = fluid.tests.paneHolder();
+    fluid.cell.stabilize();
+    const [history, status] = that.panes.list;
+    assert.equal(history.title, "History", "Element's member merged as configuration");
+    assert.equal(history.maxObs, 5, "Element's member overrides member's own layers");
+    assert.equal(status.maxObs, 100, "Member's own layers supply a member the element omits");
+    assert.ok(fluid.hasLayer(history, "fluid.tests.obsPaneHandler"), "Element's $layers added to member's");
+    assert.equal(history.obsPane, true, "Member from element's $layers merged");
+    assert.notOk(fluid.hasLayer(status, "fluid.tests.obsPaneHandler"), "Element without $layers adds none");
+    assert.ok(fluid.hasLayer(history.widgets.plot, "fluid.component"), "$component record within element instantiated");
+    assert.deepEqual([...history.widgets.plot.obsRows], [1, 2, 3], "Context reference within element resolved");
+    assert.equal(history.widgets.base.kind, "base", "Subcomponent record from member's own layers merged alongside");
+    assert.equal(fluid.layerForSite({shadow: history[fluid.metadataSymbol], segs: ["title"]}), "paneRecord",
+        "Element's merge record named by layerAs");
+
+    that.records.splice(1, 1, {title: "Status2", maxObs: 9});
+    fluid.cell.stabilize();
+    const [, status2] = that.panes.list;
+    assert.equal(status2.title, "Status2", "Member follows change in its element");
+    assert.equal(status2.maxObs, 9, "Member follows change in its element");
     that.destroy();
 });
 
@@ -2782,4 +3100,413 @@ QUnit.test("Layers named by a stronger subcomponent record are stronger, in the 
     assert.deepEqual(that.header.$layers, ["fluid.component", "fluid.tests.precedence.base", "fluid.tests.precedence.post"],
         "Layers ordered weakest first");
     that.destroy();
+});
+
+// Sources of writes, tracked through the merging of a component's layers - FLUID-5498
+
+fluid.def("fluid.tests.sourced", {
+    $layers: "fluid.component",
+    hash: {$reactiveRoot: {pane: "intro"}},
+    plain: "a",
+    log: [],
+    rootEffect: {
+        $effect: {
+            func: (log, pane) => log.push("root:" + pane),
+            args: ["{self}.log", "{self}.hash.pane"],
+            excludeSource: "hash"
+        }
+    },
+    plainEffect: {
+        $effect: {
+            func: (log, plain) => log.push("plain:" + plain),
+            args: ["{self}.log", "{self}.plain"],
+            excludeSource: "hash"
+        }
+    }
+});
+
+QUnit.test("Writes to component members with an excluded source are not delivered to effects", function (assert) {
+    const that = fluid.tests.sourced({log: []});
+    fluid.cell.stabilize();
+    const log = that.log;
+    log.length = 0;
+    fluid.cell.withAmbientSource("hash", () => {
+        that.hash.pane = "solow";
+    })();
+    fluid.cell.stabilize();
+    assert.deepEqual([...log], [], "Sourced write to a reactive root is excluded");
+    fluid.cell.withAmbientSource("hash", () => {
+        that.plain = "b";
+    })();
+    fluid.cell.stabilize();
+    assert.deepEqual([...log], [], "Sourced write to a plain member is excluded");
+    that.hash.pane = "history";
+    that.plain = "c";
+    fluid.cell.stabilize();
+    assert.deepEqual([...log].sort(), ["plain:c", "root:history"], "Unsourced writes are delivered");
+    that.destroy();
+});
+
+// As the story page of howe-sound - navigation by the hash selects a pane, but must not be taken as the user's own choice
+fluid.def("fluid.tests.storyPage", {
+    $layers: "fluid.component",
+    hash: {$reactiveRoot: {pane: "intro"}},
+    panes: ["intro", "history", "solow"],
+    activeSection: 0,
+    userChoices: [],
+    listenPaneHash: {
+        $effect: {
+            func: (self, pane, panes) => {
+                self.activeSection = Math.max(panes.indexOf(pane), 0);
+            },
+            args: ["{self}", "{self}.hash.pane", "{self}.panes"]
+        }
+    },
+    activePane: "$compute:fluid.identity({self}.activeSection)",
+    updatePaneHash: {
+        $effect: {
+            func: (userChoices, activePane) => userChoices.push(activePane),
+            args: ["{self}.userChoices", "{self}.activePane"],
+            excludeSource: "hash"
+        }
+    }
+});
+
+QUnit.test("A write made by an effect inherits the source of the change which triggered it - FLUID-5498", function (assert) {
+    const that = fluid.tests.storyPage({userChoices: []});
+    fluid.cell.stabilize();
+    const userChoices = that.userChoices;
+    userChoices.length = 0;
+    fluid.cell.withAmbientSource("hash", () => {
+        that.hash.pane = "solow";
+    })();
+    fluid.cell.stabilize();
+    assert.equal(that.activeSection, 2, "Section selected by the hash");
+    assert.deepEqual([...userChoices], [], "Selection driven by the hash is not taken as the user's choice");
+    that.activeSection = 1;
+    fluid.cell.stabilize();
+    assert.deepEqual([...userChoices], [1], "The user's own selection is delivered");
+    that.destroy();
+});
+
+// Asynchronous computation, detected from the result - G1 of the IMERSS requirements
+
+fluid.tests.loadRows = () => new Promise(resolve => setTimeout(() => resolve([1, 2, 3]), 5));
+
+fluid.tests.streamValues = async function* () {
+    yield 1;
+    await fluid.tests.wait(5);
+    yield 2;
+};
+
+fluid.tests.wait = delay => new Promise(resolve => setTimeout(resolve, delay));
+
+fluid.tests.countRuns = 0;
+
+fluid.tests.countRows = function (rows) {
+    ++fluid.tests.countRuns;
+    return rows.length;
+};
+
+fluid.def("fluid.tests.asyncCompute", {
+    $layers: "fluid.component",
+    rows: "$compute:fluid.tests.loadRows()",
+    count: "$compute:fluid.tests.countRows({self}.rows)",
+    streamed: "$compute:fluid.tests.streamValues()"
+});
+
+QUnit.test("$compute over a function returning a promise or async iterable", async function (assert) {
+    fluid.tests.countRuns = 0;
+    const that = fluid.tests.asyncCompute();
+    fluid.cell.stabilize();
+    const read = member => fluid.deSignal(fluid.getForComponent(that[fluid.metadataSymbol], [member]));
+    assert.ok(fluid.isPending(read("rows")), "Value pending whilst the promise is unsettled");
+    assert.ok(fluid.isPending(read("count")), "Dependent value pending");
+    assert.ok(fluid.isPending(read("streamed")), "Value of async generator pending before its first value");
+    await fluid.tests.wait(30);
+    fluid.cell.stabilize();
+    assert.deepEqual([...that.rows], [1, 2, 3], "Value is that resolved by the promise");
+    assert.equal(that.count, 3, "Dependent computed from the resolved value");
+    assert.equal(fluid.tests.countRuns, 1, "Dependent computed once, never from the promise itself");
+    assert.equal(that.streamed, 2, "Value is the last yielded by the async generator");
+    that.destroy();
+});
+
+// Members read within a computation, and components destroyed beneath it
+
+fluid.def("fluid.tests.trackedFilter", {
+    $layers: "fluid.component",
+    isActive: true,
+    filterState: null
+});
+
+fluid.tests.foldRuns = 0;
+
+fluid.tests.foldFilters = function (filters) {
+    ++fluid.tests.foldRuns;
+    return filters.map(filter => filter.isActive ? filter.filterState : "inactive");
+};
+
+fluid.def("fluid.tests.trackedFold", {
+    $layers: "fluid.component",
+    a: {$component: {$layers: "fluid.tests.trackedFilter"}},
+    b: {$component: {$layers: "fluid.tests.trackedFilter", filterState: 1}},
+    filters: "{self fluid.tests.trackedFilter}",
+    fold: "$compute:fluid.tests.foldFilters({self}.filters)"
+});
+
+QUnit.test("Members read through a component within a computation are its dependencies", function (assert) {
+    fluid.tests.foldRuns = 0;
+    const that = fluid.tests.trackedFold();
+    fluid.cell.stabilize();
+    assert.deepEqual([...that.fold], [null, 1], "Initial fold");
+    that.a.filterState = "x";
+    fluid.cell.stabilize();
+    assert.deepEqual([...that.fold], ["x", 1], "Fold reruns on a write to a member it read");
+    that.b.isActive = false;
+    fluid.cell.stabilize();
+    assert.deepEqual([...that.fold], ["x", "inactive"], "Fold reruns on a write to another member it read");
+    const runs = fluid.tests.foldRuns;
+    that.a.unread = true;
+    fluid.cell.stabilize();
+    assert.equal(fluid.tests.foldRuns, runs, "Fold does not rerun on a write to a member it did not read");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.consulting", {
+    $layers: "fluid.component",
+    open: false,
+    trigger: 0,
+    consult: {
+        $effect: {
+            func: (self, trigger) => {
+                // Whether open is consulted rather than depended upon
+                fluid.tests.consultRuns.push([trigger, fluid.cell.untracked(() => self.open)]);
+            },
+            args: ["{self}", "{self}.trigger"]
+        }
+    }
+});
+
+QUnit.test("A member consulted with fluid.cell.untracked is not a dependency", function (assert) {
+    fluid.tests.consultRuns = [];
+    const that = fluid.tests.consulting();
+    fluid.cell.stabilize();
+    that.open = true;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.consultRuns, [[0, false]], "Effect not rerun on a write to a member it only consulted");
+    that.trigger = 1;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.consultRuns, [[0, false], [1, true]], "Effect rerun on a write to its argument, consulting the member at its current value");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.destroyedReader", {
+    $layers: "fluid.component",
+    sibling: {
+        $component: {
+            $layers: "fluid.component",
+            value: 42
+        }
+    },
+    // Holds on to a proxy for the sibling, and reads one of its members within the computation
+    reading: {
+        $compute: {
+            func: (sibling) => {
+                ++fluid.tests.readerRuns;
+                return sibling.value;
+            },
+            args: ["{self}.sibling"]
+        }
+    }
+});
+
+QUnit.test("A destroyed component, and each of its members, reads as unavailable within a computation", function (assert) {
+    fluid.tests.readerRuns = 0;
+    const that = fluid.tests.destroyedReader();
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const reading = () => fluid.deSignal(fluid.getForComponent(shadow, ["reading"]));
+    assert.equal(reading(), 42, "Member of sibling read");
+    const sibling = that.sibling;
+    const siblingShadow = sibling[fluid.metadataSymbol] || sibling[fluid.proxySymbol]?.shadow;
+    const memberCell = fluid.getForComponent(siblingShadow, ["value"]);
+    const runs = fluid.tests.readerRuns;
+    that.sibling = null;
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(reading()), "Computation which read the destroyed component's member is unavailable");
+    assert.equal(fluid.tests.readerRuns - runs, 0, "The computation is not run with the destroyed component");
+    const memberValue = memberCell.get();
+    assert.ok(fluid.isUnavailable(memberValue), "Member cell of the destroyed component reads as unavailable");
+    assert.ok(/has been destroyed/.test(fluid.formatUnavailable(memberValue)), "Unavailable value reports the destruction");
+    assert.throws(() => sibling.value, /has been destroyed/, "Reading the destroyed component outside a computation is an error");
+    fluid.destroyComponent(fluid.proxyMat(shadow.computer, shadow, []));
+});
+
+// An effect which commits validated drafts to its own component - as for a shared validation service
+fluid.tests.commitRuns = [];
+
+fluid.def("fluid.tests.draftCommitter", {
+    $layers: "fluid.component",
+    draft: "[1]",
+    text: "[1]",
+    history: [],
+    validDraft: "$compute:fluid.tests.draftCommitter.validate({self}.draft)",
+    commitValid: {
+        $effect: {
+            func: (self, text) => {
+                fluid.tests.commitRuns.push(text);
+                // The current text and history are consulted, not depended on
+                fluid.cell.untracked(() => {
+                    self.history = [...self.history, self.text];
+                    self.text = text;
+                });
+            },
+            args: ["{self}", "{self}.validDraft"]
+        }
+    }
+});
+
+fluid.tests.draftCommitter.validate = draft => draft.startsWith("[") ? draft : fluid.unavailable("Draft is not valid");
+
+QUnit.test("An effect writing members of its own component is notified of each later change, once", assert => {
+    fluid.tests.commitRuns.length = 0;
+    const that = fluid.tests.draftCommitter();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.commitRuns, ["[1]"], "Initial draft committed once - its write of members it had not written before does not rerun it");
+    that.draft = "[13]";
+    fluid.cell.stabilize();
+    that.draft = "invalid";
+    fluid.cell.stabilize();
+    that.draft = "[134]";
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.commitRuns, ["[1]", "[13]", "[134]"], "Each later valid draft committed once");
+    assert.equal(that.text, "[134]", "Latest draft committed");
+    assert.deepEqual(fluid.deproxyMat(that.history), ["[1]", "[1]", "[13]"], "Each commit recorded in history once");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.escapedLiterals", {
+    $layers: "fluid.component",
+    text: "\\{\"a\": 1}",
+    price: "\\$5.00",
+    share: "\\\\server",
+    windowsPath: "C:\\temp",
+    reference: "{self}.price",
+    nested: {
+        deep: "\\{not a reference}"
+    },
+    echoed: {
+        $compute: {
+            func: x => x,
+            args: ["\\{argument}"]
+        }
+    }
+});
+
+QUnit.test("A configuration string escaped with a leading backslash is literal", function (assert) {
+    const that = fluid.tests.escapedLiterals();
+    assert.equal(that.text, "{\"a\": 1}", "Escaped brace is literal");
+    assert.equal(that.price, "$5.00", "Escaped dollar is literal");
+    assert.equal(that.share, "\\server", "Escaped backslash is literal");
+    assert.equal(that.windowsPath, "C:\\temp", "A backslash elsewhere in a string is unchanged");
+    assert.equal(that.reference, "$5.00", "An unescaped reference is resolved, to the literal value");
+    assert.equal(that.nested.deep, "{not a reference}", "Escaped string nested within a member is literal");
+    assert.equal(that.echoed, "{argument}", "Escaped argument of a computation is literal");
+    that.destroy();
+});
+
+// Each notification of an effect excluding "self", as [component, value]
+fluid.tests.declaredSourceSeen = [];
+
+fluid.def("fluid.tests.declaredSource", {
+    $layers: "fluid.component",
+    input: 1,
+    output: 0,
+    // As for a widget writing back what its user has entered
+    writeBack: {
+        $effect: {
+            func: (self, input) => self.output = input * 10,
+            args: ["{self}", "{self}.input"],
+            source: "self"
+        }
+    },
+    // As for a widget rendering the model, which should not hear its own write-back
+    render: {
+        $effect: {
+            func: output => fluid.tests.declaredSourceSeen.push(["self", output]),
+            args: "{self}.output",
+            excludeSource: "self"
+        }
+    },
+    observer: {
+        $component: {
+            $layers: "fluid.component",
+            render: {
+                $effect: {
+                    func: output => fluid.tests.declaredSourceSeen.push(["observer", output]),
+                    args: "{fluid.tests.declaredSource}.output",
+                    excludeSource: "self"
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Writes made by an $effect declaring a source carry it", function (assert) {
+    fluid.tests.declaredSourceSeen.length = 0;
+    const that = fluid.tests.declaredSource();
+    fluid.cell.stabilize();
+    fluid.tests.declaredSourceSeen.length = 0;
+    that.input = 2;
+    fluid.cell.stabilize();
+    assert.equal(that.output, 20, "Effect wrote its output");
+    assert.deepEqual(fluid.tests.declaredSourceSeen, [["observer", 20]],
+        "The write is marked as originated by the component - its own effect excluding \"self\" is not notified, another component's is");
+    that.output = 5;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.declaredSourceSeen, [["observer", 20], ["self", 5], ["observer", 5]],
+        "A write from elsewhere reaches both");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.methodFromEffect", {
+    $layers: "fluid.component",
+    draft: "a",
+    text: "",
+    history: [],
+    // An action reading the values it updates
+    commit: {
+        $method: {
+            func: (self, text) => {
+                self.history = [...self.history, self.text];
+                self.text = text;
+            },
+            args: ["{self}", "{0}"]
+        }
+    },
+    commitDraft: {
+        $effect: {
+            func: (self, draft) => self.commit(draft),
+            args: ["{self}", "{self}.draft"]
+        }
+    }
+});
+
+QUnit.test("Values read by a method invoked from an effect are not its dependencies", function (assert) {
+    const reported = [];
+    const oldReport = fluid.cell.reportCycle;
+    fluid.cell.reportCycle = message => reported.push(message);
+    try {
+        const that = fluid.tests.methodFromEffect();
+        fluid.cell.stabilize();
+        that.draft = "b";
+        fluid.cell.stabilize();
+        assert.equal(that.text, "b", "Latest draft committed");
+        assert.deepEqual(fluid.deproxyMat(that.history), ["", "a"], "Each draft committed once - the effect is not rerun by the method's own updates");
+        assert.deepEqual(reported, [], "No cycle reported");
+        that.destroy();
+    } finally {
+        fluid.cell.reportCycle = oldReport;
+    }
 });

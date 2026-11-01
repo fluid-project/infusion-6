@@ -1,0 +1,146 @@
+{
+    "title": "Infusion widgets in tldraw, with undoable widget state",
+    "page": "demo/tldraw/index.html",
+    "viewport": {"width": 1600, "height": 1000},
+    "ready": [
+        {"target": {"selector": ".tl-canvas"}, "count": {"equals": 1}},
+        {"target": {"selector": "button.history-button"}, "count": {"equals": 4}},
+        {"target": {"selector": "[data-shape-type='infusion']", "text": "Hello Infusion World"}, "count": {"equals": 1}},
+        {"target": {"selector": "button.history-button[aria-label='Undo widget change']:disabled"}, "count": {"equals": 1}}
+    ],
+    "steps": [{
+        "description": "Open the layer picker beside the \"New shape\" button",
+        "action": {"type": "click", "target": {"selector": "button.layer-picker-button"}},
+        "expect": [{
+            "description": "The top-level widget layers should be listed, including the counter",
+            "target": {"selector": ".layer-picker-option", "text": "fluid.demos.counter"},
+            "count": {"equals": 1},
+            "visible": true
+        }]
+    }, {
+        "description": "Choose fluid.demos.counter from the layer picker",
+        "action": {"type": "click", "target": {"selector": ".layer-picker-name", "exactText": "fluid.demos.counter"}},
+        "expect": [{
+            "description": "The counter should become the chosen layer",
+            "target": {"selector": ".layer-picker-choice"},
+            "text": {"equals": "fluid.demos.counter"}
+        }]
+    }, {
+        "description": "Press \"New shape\" to add a counter widget to the canvas",
+        "action": {"type": "click", "target": {"selector": "button", "exactText": "New shape"}},
+        "expect": [{
+            "description": "A counter widget should appear on the canvas",
+            "target": {"selector": "[data-shape-type='infusion'] .counter"},
+            "count": {"equals": 1},
+            "visible": true
+        }, {
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 0 times"}
+        }, {
+            "description": "and its creation should be undoable as a widget change",
+            "target": {"selector": "button.history-button[aria-label='Undo widget change']:not(:disabled)"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Click the counter's \"+1\" button",
+        "action": {"type": "click", "target": {"selector": "[data-shape-type='infusion'] .counter-button"}},
+        "expect": [{
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 1 times"}
+        }]
+    }, {
+        "description": "Click the counter's \"+1\" button again",
+        "action": {"type": "click", "target": {"selector": "[data-shape-type='infusion'] .counter-button"}},
+        "expect": [{
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 2 times"}
+        }]
+    }, {
+        "description": "Click the counter's \"+1\" button a third time",
+        "action": {"type": "click", "target": {"selector": "[data-shape-type='infusion'] .counter-button"}},
+        "expect": [{
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 3 times"}
+        }]
+    }, {
+        "description": "Press \"Undo widget change\"",
+        "action": {"type": "click", "target": {"selector": "button.history-button[aria-label='Undo widget change']"}},
+        "expect": [{
+            "description": "Only the last click should be undone, since each click is a gesture of its own",
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 2 times"}
+        }, {
+            "description": "and it should be possible to redo it",
+            "target": {"selector": "button.history-button[aria-label='Redo widget change']:not(:disabled)"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Delete the counter widget, which is still selected, with tldraw's delete button",
+        "action": {"type": "click", "target": {"selector": "[data-testid='quick-actions.delete']"}},
+        "expect": [{
+            "description": "The counter widget should disappear from the canvas",
+            "target": {"selector": "[data-shape-type='infusion'] .counter"},
+            "count": {"equals": 0}
+        }, {
+            "description": "and the hello world widget should remain",
+            "target": {"selector": "[data-shape-type='infusion']", "text": "Hello Infusion World"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Press \"Undo widget change\" to undo the deletion",
+        "action": {"type": "click", "target": {"selector": "button.history-button[aria-label='Undo widget change']"}},
+        "expect": [{
+            "description": "The counter widget should be reconstructed in its shape, holding the state it had when deleted",
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 2 times"}
+        }]
+    }, {
+        "description": "Press \"Undo widget change\" again",
+        "action": {"type": "click", "target": {"selector": "button.history-button[aria-label='Undo widget change']"}},
+        "expect": [{
+            "description": "A click recorded before the deletion should be undone on the reconstructed widget",
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 1 times"}
+        }]
+    }, {
+        "description": "Press \"Redo widget change\"",
+        "action": {"type": "click", "target": {"selector": "button.history-button[aria-label='Redo widget change']"}},
+        "expect": [{
+            "description": "The click should be redone on the reconstructed widget",
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 2 times"}
+        }]
+    }, {
+        "description": "Press \"Redo widget change\" again",
+        "action": {"type": "click", "target": {"selector": "button.history-button[aria-label='Redo widget change']"}},
+        "expect": [{
+            "description": "The deletion of the counter widget should be redone",
+            "target": {"selector": "[data-shape-type='infusion'] .counter"},
+            "count": {"equals": 0}
+        }, {
+            "description": "leaving nothing further to redo",
+            "target": {"selector": "button.history-button[aria-label='Redo widget change']:disabled"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Press \"Undo widget change\" to restore the counter once more",
+        "action": {"type": "click", "target": {"selector": "button.history-button[aria-label='Undo widget change']"}},
+        "expect": [{
+            "description": "The counter widget should be reconstructed again with its state",
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 2 times"}
+        }]
+    }, {
+        "description": "Click the reconstructed counter's \"+1\" button",
+        "action": {"type": "click", "target": {"selector": "[data-shape-type='infusion'] .counter-button"}},
+        "expect": [{
+            "description": "The reconstructed widget should respond as before",
+            "target": {"selector": "[data-shape-type='infusion'] .counter span"},
+            "text": {"equals": "Clicked 3 times"}
+        }, {
+            "description": "and the fresh click should discard what could be redone",
+            "target": {"selector": "button.history-button[aria-label='Redo widget change']:disabled"},
+            "count": {"equals": 1}
+        }]
+    }]
+}

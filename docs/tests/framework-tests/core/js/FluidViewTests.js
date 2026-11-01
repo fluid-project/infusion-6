@@ -45,7 +45,7 @@ QUnit.test("Basic static rendering test", function (assert) {
 });
 
 
-QUnit.test("Rendering machinery is hosted by a view subcomponent - fluid-project/infusion-6#19", function (assert) {
+QUnit.test("Rendering machinery is hosted by a view subcomponent - FLUID-7019", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.basicRender({container});
     fluid.cell.stabilize();
@@ -307,6 +307,39 @@ QUnit.test("Basic click test", function (assert) {
     assert.equal(that.value, 1, "Updated count 1");
 });
 
+fluid.def("fluid.tests.bindSeveral", {
+    $layers: "fluid.component",
+    clicks: 0,
+    hovers: 0,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><button @onclick="{self}.click()" @onmouseover="{self}.hover()" @onmouseout="{self}.hover()"/></div>`
+        }
+    },
+    click: "$method:fluid.tests.bindSeveral.increment({self}, clicks)",
+    hover: "$method:fluid.tests.bindSeveral.increment({self}, hovers)"
+});
+
+fluid.tests.bindSeveral.increment = function (self, member) {
+    self[member]++;
+};
+
+QUnit.test("Each of several handlers on one element is bound once", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.bindSeveral({container});
+    fluid.cell.stabilize();
+
+    const button = qs("button", container);
+    button.dispatchEvent(new MouseEvent("click"));
+    assert.equal(that.clicks, 1, "A single click is handled once");
+    button.dispatchEvent(new MouseEvent("mouseover"));
+    assert.equal(that.hovers, 1, "A single mouseover is handled once");
+    assert.deepEqual(Object.values(button.flEventsBound).flat(), ["click", "mouseover", "mouseout"],
+        "Each handler is noted as bound exactly once");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.multiClass", {
     $layers: "fluid.component",
     a: true,
@@ -328,7 +361,7 @@ fluid.tests.checkMultiClass = function (assert, container, expected, message) {
     assert.notOk(classAttr.includes(","), `No comma in class attribute: ${message}`);
 };
 
-QUnit.test("Multiple simultaneous dynamic classes - fluid-project/infusion-6#11", function (assert) {
+QUnit.test("Multiple simultaneous dynamic classes - FLUID-7011", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.multiClass({container});
 
@@ -669,21 +702,19 @@ fluid.def("fluid.tests.assigneeIf", {
 });
 
 
-// The conditional component's content must be removed along with it - fluid-project/infusion-6#24
+// The conditional component's content must be removed along with it - FLUID-7024
 QUnit.test("Conditional rendering", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.assigneeIf({container});
     fluid.cell.stabilize();
-    // The conditional component's container acquires a default id derived from its path, which it bears even whilst
-    // the component renders nothing - its element remains, since the record of a conditional subcomponent does not
-    // govern its element in the template, as an element bearing @if does
-    const assigneeId = `fl-id-${that[fluid.metadataSymbol].path}.assignee`;
-    const emptyMarkup = `<div id="${assigneeId}"></div>`;
+    // The conditional component's container remains whilst the component renders nothing, since the record of a
+    // conditional subcomponent does not govern its element in the template, as an element bearing @if does
+    const emptyMarkup = "<div></div>";
     assert.equal(container.innerHTML, emptyMarkup, "Initial render correct");
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: "Assigned"}]}, "Conditional render correct");
+    assert.assertNode(container, {$children: [{$tagName: "div", class: "assignee", $innerHTML: "Assigned"}]}, "Conditional render correct");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -691,7 +722,7 @@ QUnit.test("Conditional rendering", function (assert) {
 
     that.enabled = true;
     fluid.cell.stabilize();
-    assert.assertNode(container, {$children: [{$tagName: "div", id: assigneeId, class: "assignee", $innerHTML: "Assigned"}]}, "Conditional render correct 2");
+    assert.assertNode(container, {$children: [{$tagName: "div", class: "assignee", $innerHTML: "Assigned"}]}, "Conditional render correct 2");
 
     that.enabled = false;
     fluid.cell.stabilize();
@@ -725,21 +756,20 @@ fluid.def("fluid.tests.longFormIf", {
     }
 });
 
-QUnit.test("Conditional rendering with long-form $if record - fluid-project/infusion-6#13", function (assert) {
+QUnit.test("Conditional rendering with long-form $if record - FLUID-7013", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.longFormIf({container});
     fluid.cell.stabilize();
-    const distanceId = `fl-id-${that[fluid.metadataSymbol].path}.distanceLine`;
-    const emptyMarkup = `<div id="${distanceId}"></div>`;
+    const emptyMarkup = "<div></div>";
     assert.equal(container.innerHTML, emptyMarkup, "Initial render correct");
 
     that.distance = 0;
     fluid.cell.stabilize();
-    assert.assertNode(container, {$children: [{$tagName: "div", id: distanceId, class: "distance", $innerHTML: "0"}]}, "Falsy value accepted by condition renders");
+    assert.assertNode(container, {$children: [{$tagName: "div", class: "distance", $innerHTML: "0"}]}, "Falsy value accepted by condition renders");
 
     that.distance = 5;
     fluid.cell.stabilize();
-    assert.assertNode(container, {$children: [{$tagName: "div", id: distanceId, class: "distance", $innerHTML: "5"}]}, "Updated value renders");
+    assert.assertNode(container, {$children: [{$tagName: "div", class: "distance", $innerHTML: "5"}]}, "Updated value renders");
 
     that.distance = null;
     fluid.cell.stabilize();
@@ -778,21 +808,21 @@ fluid.def("fluid.tests.containerIds", {
     }
 });
 
-QUnit.test("Rendered containers acquire default ids derived from component paths", function (assert) {
+QUnit.test("Rendered containers acquire no ids from the framework", function (assert) {
     const container = qs(".container");
     const presetId = container.id;
     const that = fluid.tests.containerIds({container});
     fluid.cell.stabilize();
     assert.ok(presetId, "Fixture container has an id of its own");
     assert.equal(container.id, presetId, "Existing id of container is preserved");
-    assert.equal(qs(".plain", container).id, `fl-id-${that[fluid.metadataSymbol].path}.plain`, "Child container acquires id from component path");
-    assert.equal(qs(".identified", container).id, "own-id", "Id specified in template takes precedence");
+    assert.notOk(qs(".plain", container).hasAttribute("id"), "Child container acquires no id");
+    assert.equal(qs(".identified", container).id, "own-id", "Id specified in template is rendered");
     that.destroy();
 
     container.removeAttribute("id");
     const that2 = fluid.tests.containerIds({container});
     fluid.cell.stabilize();
-    assert.equal(container.id, `fl-id-${that2[fluid.metadataSymbol].path}`, "Root container without id acquires id from component path");
+    assert.notOk(container.hasAttribute("id"), "Root container without id acquires none");
     that2.destroy();
     container.id = presetId;
 });
@@ -828,7 +858,7 @@ fluid.def("fluid.tests.attrBinding", {
 
 fluid.tests.attrBinding.shout = text => text.toUpperCase();
 
-QUnit.test("Binding attributes and live state properties - fluid-project/infusion-6#14", function (assert) {
+QUnit.test("Binding attributes and live state properties - FLUID-7014", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.attrBinding({container});
     fluid.cell.stabilize();
@@ -911,7 +941,241 @@ QUnit.test("Binding attributes and live state properties - fluid-project/infusio
     assert.equal(qs("select", container).value, "a", "Select value property agrees");
 });
 
-// Cross-injection of views - fluid-project/infusion-6#20
+fluid.def("fluid.tests.rangeHolder", {
+    $layers: "fluid.component",
+    ranges: {
+        $reactiveRoot: [{label: "Jan"}, {label: "Feb"}]
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div @id="rows"></div>`
+        }
+    },
+    rows: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{rangeHolder}.ranges",
+                valueAs: "range"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<input class="range" value="@{range.label}"/>`
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Live state written back beneath a $for variable reaches the source", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.rangeHolder({container});
+    fluid.cell.stabilize();
+    const inputs = qsa(".range", container);
+    assert.deepEqual(inputs.map(input => input.value), ["Jan", "Feb"], "Rows rendered from source");
+
+    inputs[1].value = "February";
+    inputs[1].dispatchEvent(new Event("input"));
+    fluid.cell.stabilize();
+    assert.deepEqual([...that.ranges].map(range => range.label), ["Jan", "February"], "User input written back to source element");
+    assert.equal(that.rows.list[1].range.label, "February", "Member sees written value");
+    assert.equal(qsa(".range", container)[1].value, "February", "Input holds written value");
+
+    that.ranges[0].label = "January";
+    fluid.cell.stabilize();
+    assert.equal(qsa(".range", container)[0].value, "January", "Change in source still reaches the row");
+});
+
+// A reactive root holding a primitive, including a falsy one, renders correctly on the first render
+
+fluid.def("fluid.tests.primitiveRoots", {
+    $layers: "fluid.component",
+    flag: {
+        $reactiveRoot: false
+    },
+    count: {
+        $reactiveRoot: 0
+    },
+    label: {
+        $reactiveRoot: "x"
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><span class="flag">@{flag}</span><span class="count">@{count}</span><span class="label">@{label}</span><b @if="flag" class="on">on</b></div>`
+        }
+    }
+});
+
+QUnit.test("Reactive roots holding primitives render on the first render", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.primitiveRoots({container});
+    fluid.cell.stabilize();
+    assert.equal(qs(".flag", container).textContent, "false", "Root holding false renders");
+    assert.equal(qs(".count", container).textContent, "0", "Root holding 0 renders");
+    assert.equal(qs(".label", container).textContent, "x", "Root holding a String renders");
+    assert.notOk(qs(".on", container), "@if over root holding false omits its element");
+
+    that.flag = true;
+    that.label = "y";
+    fluid.cell.stabilize();
+    assert.equal(qs(".flag", container).textContent, "true", "Root updated by write");
+    assert.ok(qs(".on", container), "@if over root holding true renders its element");
+    assert.equal(qs(".label", container).textContent, "y", "String root updated by write");
+    that.destroy();
+});
+
+// Reconciliation of keyed list members and of nodes the rendering does not own, as in a document's head
+
+fluid.def("fluid.tests.headLike", {
+    $layers: "fluid.component",
+    sheets: {
+        $reactiveRoot: {
+            a: {href: "/a.css"},
+            c: {href: "/c.css"}
+        }
+    },
+    scripts: {
+        $reactiveRoot: {
+            one: {src: "/one.js"},
+            two: {src: "/two.js"}
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><meta class="first"><fluid-fragment @id="sheetTags"></fluid-fragment><fluid-fragment @id="scriptTags"></fluid-fragment><meta class="last"></div>`
+        }
+    },
+    sheetTags: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{headLike}.sheets",
+                valueAs: "sheet"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<link rel="stylesheet" href="@{sheet.href}">`
+                }
+            }
+        }
+    },
+    scriptTags: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{headLike}.scripts",
+                valueAs: "script"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<script src="@{script.src}"></script>`
+                }
+            }
+        }
+    }
+});
+
+/**
+ * Summarise the children of an element, as the tag of each element together with its href or src, or its class, or
+ * nothing if it has none of these
+ * @param {Element} element - The element
+ * @return {String[]} A summary of each of its element children
+ */
+fluid.tests.headSummary = function (element) {
+    // A browser reports a missing attribute as null, whereas linkedom reports a missing class as ""
+    return [...element.children].map(child => child.localName + ":" +
+        (child.getAttribute("href") ?? child.getAttribute("src") ?? child.getAttribute("class") ?? ""));
+};
+
+QUnit.test("Keyed list members keep their nodes, and nodes not rendered are left alone", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.headLike({container});
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.headSummary(container),
+        ["meta:first", "link:/a.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last"], "Initial render");
+    const [, linkA, linkC, scriptOne, scriptTwo, metaLast] = [...container.children];
+
+    // Nodes appended by others, e.g. a widget loader, and by injection for a Single File Component
+    const foreign = document.createElement("style");
+    foreign.className = "foreign";
+    container.appendChild(foreign);
+    const injected = document.createElement("style");
+    injected.id = "fl-style-test";
+    container.appendChild(injected);
+
+    that.sheets.b = {priority: "after:a", href: "/b.css"};
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.headSummary(container),
+        ["meta:first", "link:/a.css", "link:/b.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last", "style:foreign", "style:"],
+        "Inserted member's node placed after its predecessor, with nodes not rendered left after all rendered nodes");
+    const children = [...container.children];
+    assert.equal(children[1], linkA, "Node of member before insertion kept");
+    assert.equal(children[3], linkC, "Node of member after insertion kept, rather than rewritten");
+    assert.equal(children[4], scriptOne, "Script node of other list kept");
+    assert.equal(children[5], scriptTwo, "Script node of other list kept");
+    assert.equal(children[6], metaLast, "Following node kept");
+    assert.equal(children[7], foreign, "Node added by others survives rerendering");
+    assert.equal(children[8], injected, "Injected node survives rerendering");
+
+    that.scripts = {two: {src: "/two.js"}, one: {src: "/one.js"}};
+    fluid.cell.stabilize();
+    const reordered = [...container.children];
+    assert.deepEqual(fluid.tests.headSummary(container).slice(4, 6), ["script:/two.js", "script:/one.js"], "Members reordered");
+    assert.equal(reordered[4], scriptTwo, "Reordered member's node moved rather than rewritten");
+    assert.equal(reordered[5], scriptOne, "Reordered member's node moved rather than rewritten");
+
+    that.sheets = {};
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.headSummary(container),
+        ["meta:first", "script:/two.js", "script:/one.js", "meta:last", "style:foreign", "style:"], "Members of emptied list removed");
+
+    that.sheets = {z: {href: "/z.css"}};
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.headSummary(container),
+        ["meta:first", "link:/z.css", "script:/two.js", "script:/one.js", "meta:last", "style:foreign", "style:"],
+        "First member of an empty list placed after the node preceding its slot");
+    assert.notOk([...container.querySelectorAll("*")].some(element => element.hasAttribute("id") && element !== injected),
+        "No ids written by the framework");
+    that.destroy();
+});
+
+QUnit.test("Rendering against markup from an earlier rendering claims its nodes", function (assert) {
+    const container = qs(".container");
+    const first = fluid.tests.headLike({container});
+    fluid.cell.stabilize();
+    const markup = container.innerHTML;
+    first.destroy();
+
+    // As for a static page rendered by a build, with a script booting the framework added to it
+    const host = document.createElement("div");
+    host.innerHTML = markup + "<script fluid-hydrated=\"%infusion-6\" src=\"/boot.js\"></script>";
+    qs(".container").appendChild(host);
+    const staticNodes = [...host.children];
+    const that = fluid.tests.headLike({container: host});
+    fluid.cell.stabilize();
+    assert.equal(host.innerHTML, markup + "<script fluid-hydrated=\"%infusion-6\" src=\"/boot.js\"></script>", "Markup unchanged by rendering");
+    assert.deepEqual([...host.children], staticNodes, "Every node of the static markup claimed rather than rewritten");
+
+    that.sheets.b = {priority: "after:a", href: "/b.css"};
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.headSummary(host),
+        ["meta:first", "link:/a.css", "link:/b.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last", "script:/boot.js"],
+        "Claimed list members are keyed thereafter");
+    assert.equal(host.children[3], staticNodes[2], "Claimed node of member after insertion kept");
+    that.destroy();
+    host.remove();
+});
+
+// Cross-injection of views - FLUID-7020
 
 fluid.def("fluid.tests.crossInject.first", {
     $layers: "fluid.component",
@@ -953,7 +1217,7 @@ fluid.def("fluid.tests.crossInjectView", {
     view: "{view1}.view" // Note that "proleptic scoping" works - {view1} resolves before view1 is created
 });
 
-QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (assert) {
+QUnit.test("Cross-injected views - FLUID-7020", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.crossInjectView({
         view1: {
@@ -997,7 +1261,7 @@ QUnit.test("Cross-injected views - fluid-project/infusion-6#20", function (asser
     that.destroy();
 });
 
-// Top-level widgets, receiving host machinery broadcast onto their views - fluid-project/infusion-6#21
+// Top-level widgets, receiving host machinery broadcast onto their views - FLUID-7021
 
 fluid.def("fluid.tests.widget", {
     $layers: "fluid.topLevelWidget",
@@ -1028,7 +1292,7 @@ fluid.def("fluid.tests.widgetHost", {
     }
 });
 
-QUnit.test("Host machinery is broadcast onto the views of top-level widgets - fluid-project/infusion-6#21", function (assert) {
+QUnit.test("Host machinery is broadcast onto the views of top-level widgets - FLUID-7021", function (assert) {
     const container = qs(".container");
     const that = fluid.tests.widget({container, view: {$component: {hostId: 3}}});
     fluid.cell.stabilize();
@@ -1100,7 +1364,7 @@ fluid.def("fluid.tests.umbrellaWidget", {
     }
 });
 
-QUnit.test("Widget nested within another takes the bounds of the widget enclosing it - fluid-project/infusion-6#25", function (assert) {
+QUnit.test("Widget nested within another takes the bounds of the widget enclosing it - FLUID-7025", function (assert) {
     const container = qs(".container");
     const host = fluid.tests.nestingHost();
     const that = fluid.tests.umbrellaWidget({container, view: {$component: {hostId: 4}}});
@@ -1379,6 +1643,110 @@ QUnit.test("Element-level conditionals with @if and @else", function (assert) {
     that.destroy();
 });
 
+fluid.def("fluid.tests.removableSlot", {
+    $layers: ["fluid.component", "{self}.extraLayers"],
+    extraLayers: [],
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><header @id="header"></header><main class="main">Main</main><fluid-fragment @id="links"></fluid-fragment><span class="end">end</span></div>`
+        }
+    },
+    header: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<header class="header">Header</header>`
+                }
+            }
+        }
+    },
+    links: {
+        $component: {
+            $layers: "fluid.component",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: `<link class="link"/>`
+                }
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.removeSlots", {
+    header: null,
+    links: null
+});
+
+QUnit.test("Element bearing @id omitted whilst its member is removed with null", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.removableSlot({container});
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["header.header", "main.main", "link.link", "span.end"], "Initial render");
+    const main = qs(".main", container);
+
+    that.extraLayers = ["fluid.tests.removeSlots"];
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["main.main", "span.end"], "Elements of removed members omitted");
+    assert.equal(that.header, null, "Member removed");
+    const childNames = Object.keys(that[fluid.metadataSymbol].childComponents).filter(name => name !== "view");
+    assert.deepEqual(childNames, [], "Template slots allocate no components for removed members");
+
+    that.extraLayers = [];
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.childSummary(container), ["header.header", "main.main", "link.link", "span.end"],
+        "Elements rendered again once removal withdrawn");
+    assert.equal(qs(".main", container), main, "Unaffected element undisturbed throughout");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.separatedList", {
+    $layers: "fluid.component",
+    tags: {
+        beta: {name: "Beta"},
+        alpha: {priority: "first", name: "Alpha"},
+        gamma: {name: "Gamma"}
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<p @id="tagLinks"></p>`
+        }
+    },
+    tagLinks: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{separatedList}.tags",
+                valueAs: "tag",
+                positionAs: "position"
+            },
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    elideParent: false,
+                    template: `<span @if="!position.first" class="sep">, </span><a>@{tag.name}</a>`
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Separators between members of a keyed $for rendered using positionAs", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.separatedList({container});
+    fluid.cell.stabilize();
+    assert.equal(container.textContent, "Alpha, Beta, Gamma", "Separator precedes all members but the first");
+
+    that.tags = {gamma: {name: "Gamma"}, beta: {name: "Beta"}};
+    fluid.cell.stabilize();
+    assert.equal(container.textContent, "Gamma, Beta", "Separators follow change in membership");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.partialBase", {
     $layers: "fluid.component",
     view: {
@@ -1466,13 +1834,12 @@ QUnit.test("Partial templates composited by selector, in order of layer preceden
     const container = qs(".container");
     const that = fluid.initFreeComponent("fluid.tests.partialAll", {container});
     fluid.cell.stabilize();
-    const path = that[fluid.metadataSymbol].path;
     assert.deepEqual(fluid.tests.childSummary(container), ["b.first", "h1.title", "nav", "div.modal", "div.modal2", "div.new"],
         "Partials composited first, after, by member, replacing and removing");
-    // Of the layers listed as parents of fluid.tests.partialAll, those listed earlier are stronger
-    assert.deepEqual(fluid.tests.childSummary(qs("h1", container)), ["span.meta2", "span.meta"],
+    // Of the layers listed as parents of fluid.tests.partialAll, those listed later are stronger
+    assert.deepEqual(fluid.tests.childSummary(qs("h1", container)), ["span.meta", "span.meta2"],
         "Partials at the same cutpoint follow in order of layer precedence, weakest first");
-    assert.equal(qs("nav", container).id, `fl-id-${path}.navbar`, "Element of subcomponent bears id derived from its path");
+    assert.notOk(qs("nav", container).hasAttribute("id"), "Element of subcomponent bears no id from the framework");
     assert.notOk(qs(".first", container).hasAttribute("@relative"), "Own cutpoint of partial node not rendered");
     that.destroy();
 
@@ -1630,4 +1997,263 @@ QUnit.test("Only top-level blocks of an SFC define it", function (assert) {
     const vTree = fluid.parseHTMLToTree(`<script>fluid.def("x", {});</script><template><div><script src="client.js"></script><style>.a {}</style></div></template>`);
     assert.equal(fluid.sfcBlocks(vTree, "script").length, 1, "Script within the template is not a block of the SFC");
     assert.equal(fluid.sfcBlocks(vTree, "style").length, 0, "Style within the template is not a block of the SFC");
+});
+
+QUnit.module("Global dismissal");
+
+/**
+ * Press the pointer on an element, as a bubbling pointerdown event
+ * @param {Element} element - The element to be pressed
+ */
+fluid.tests.press = function (element) {
+    element.dispatchEvent(new Event("pointerdown", {bubbles: true}));
+};
+
+// A popup in the style of fluid.editor.menu, dismissed by a press outside its rendered container
+fluid.def("fluid.tests.dismissablePopup", {
+    $layers: "fluid.component",
+    open: false,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="popup"><button class="inside"></button></div>`
+        }
+    },
+    pressDismiss: {
+        $effect: {
+            func: "fluid.tests.dismissablePopup.pressDismiss",
+            args: ["{self}", fluid.globalDismissalSignal, "{self}.view.renderedContainer"]
+        }
+    }
+});
+
+fluid.tests.dismissablePopup.pressDismiss = function (self, press, container) {
+    // Whether the popup is open is consulted rather than depended upon - opening it is no reason to look again at a press
+    // made before it was opened
+    if (press && fluid.cell.untracked(() => self.open) && !container.contains(press.target)) {
+        self.open = false;
+    }
+};
+
+QUnit.test("A press anywhere in the document is recorded with its target", function (assert) {
+    const container = qs(".container");
+    container.innerHTML = `<button class="pressed"></button>`;
+    const button = qs(".pressed", container);
+    fluid.tests.press(button);
+    assert.equal(fluid.globalDismissalSignal.get().target, button, "Pressed element recorded as the target");
+    fluid.tests.press(container);
+    assert.equal(fluid.globalDismissalSignal.get().target, container, "A press elsewhere replaces the record");
+    container.innerHTML = "";
+});
+
+QUnit.test("Each press is recorded afresh, so that successive presses on one element notify", function (assert) {
+    const container = qs(".container");
+    container.innerHTML = `<button class="pressed"></button>`;
+    const button = qs(".pressed", container);
+    const notified = [];
+    const effect = fluid.cell.effect(press => notified.push(press), [fluid.globalDismissalSignal]);
+    fluid.cell.stabilize();
+    notified.length = 0; // Disregard the run with the most recent press made before the effect was created
+    fluid.tests.press(button);
+    fluid.cell.stabilize();
+    const first = fluid.globalDismissalSignal.get();
+    fluid.tests.press(button);
+    fluid.cell.stabilize();
+    assert.notEqual(fluid.globalDismissalSignal.get(), first, "A fresh record for a second press on the same element");
+    assert.equal(notified.length, 2, "Subscriber notified of both presses");
+    assert.ok(notified.every(press => press.target === button), "Both presses recorded on the element");
+    effect.dispose();
+    container.innerHTML = "";
+});
+
+QUnit.test("A popup is dismissed by a press outside it, but not by one inside it", function (assert) {
+    const container = qs(".container");
+    const outside = document.createElement("div");
+    container.appendChild(outside);
+    // A press made before the popup is constructed, outside it, which its effect sees when it first runs
+    fluid.tests.press(outside);
+    const popupContainer = document.createElement("div");
+    container.appendChild(popupContainer);
+    const that = fluid.tests.dismissablePopup({container: popupContainer});
+    fluid.cell.stabilize();
+    that.open = true;
+    fluid.cell.stabilize();
+    assert.equal(that.open, true, "Opening the popup is not undone by the press made before it was opened");
+
+    fluid.tests.press(qs(".inside", popupContainer));
+    fluid.cell.stabilize();
+    assert.equal(that.open, true, "Press inside the popup leaves it open");
+
+    fluid.tests.press(outside);
+    fluid.cell.stabilize();
+    assert.equal(that.open, false, "Press outside the popup dismisses it");
+
+    that.open = true;
+    fluid.cell.stabilize();
+    fluid.tests.press(outside);
+    fluid.cell.stabilize();
+    assert.equal(that.open, false, "Popup reopened is dismissed by a further press on the same outside element");
+
+    that.destroy();
+    container.innerHTML = "";
+});
+
+QUnit.test("A press whose propagation is stopped is still recorded", function (assert) {
+    const container = qs(".container");
+    container.innerHTML = `<div class="host"><button class="pressed"></button></div>`;
+    const button = qs(".pressed", container);
+    // A host such as a canvas, which takes presses within it as its own gestures
+    qs(".host", container).addEventListener("pointerdown", e => e.stopPropagation());
+    // The press is seen during capture, which a DOM such as linkedom's does not implement - check whether this one does
+    const order = [];
+    const captureProbe = () => order.push("capture");
+    document.addEventListener("pointerdown", captureProbe, true);
+    button.addEventListener("pointerdown", () => order.push("target"), {once: true});
+    fluid.tests.press(button);
+    document.removeEventListener("pointerdown", captureProbe, true);
+    if (order[0] === "capture") {
+        assert.equal(fluid.globalDismissalSignal.get().target, button, "Press recorded despite its propagation being stopped");
+    } else {
+        assert.ok(true, "This DOM has no capture phase, so recording a press whose propagation is stopped cannot be tested - run in a browser");
+    }
+    container.innerHTML = "";
+});
+
+// A dismissal listener bound to a supplied root rather than to the document
+fluid.def("fluid.tests.localDismissal", {
+    $layers: "fluid.globalDismissal",
+    root: null,
+    view: {
+        $component: {
+            container: "{fluid.tests.localDismissal}.root"
+        }
+    }
+});
+
+QUnit.test("Destroying a dismissal component removes its listener", function (assert) {
+    // A detached root, from which presses do not reach the document's own listener
+    const root = document.createElement("div");
+    root.innerHTML = `<button class="pressed"></button>`;
+    const button = qs(".pressed", root);
+    const that = fluid.tests.localDismissal({root});
+    fluid.cell.stabilize();
+    fluid.tests.press(button);
+    const record = fluid.globalDismissalSignal.get();
+    assert.equal(record.target, button, "Press within the root recorded");
+
+    that.destroy();
+    fluid.cell.stabilize();
+    fluid.tests.press(button);
+    assert.equal(fluid.globalDismissalSignal.get(), record, "Press after destruction not recorded");
+});
+
+QUnit.module("Source tracking");
+
+/** Each mirroring of shared state by an instance of fluid.tests.selfWidget, as [tag, member, value] */
+fluid.tests.mirrored = [];
+
+fluid.def("fluid.tests.selfWidget", {
+    $layers: "fluid.component",
+    tag: "",
+    container: null,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            container: "{fluid.tests.selfWidget}.container",
+            template: `<div><button @onclick="{fluid.tests.selfWidget}.bump()"/><input value="@{{fluid.tests.selfSourced}.text}"/></div>`
+        }
+    },
+    bump: {
+        $method: {
+            args: "{fluid.tests.selfSourced}",
+            func: owner => owner.level++
+        }
+    },
+    // As for a third-party widget, which needs to be told of each change it did not originate itself
+    mirrorLevel: {
+        $effect: {
+            func: (tag, level) => fluid.tests.mirrored.push([tag, "level", level]),
+            args: ["{self}.tag", "{fluid.tests.selfSourced}.level"],
+            excludeSource: "self"
+        }
+    },
+    mirrorText: {
+        $effect: {
+            func: (tag, text) => fluid.tests.mirrored.push([tag, "text", text]),
+            args: ["{self}.tag", "{fluid.tests.selfSourced}.text"],
+            excludeSource: "self"
+        }
+    }
+});
+
+fluid.def("fluid.tests.selfSourced", {
+    $layers: "fluid.component",
+    level: 0,
+    text: "",
+    // Derived from level by an effect, whose write carries the source of the change which triggered it - FLUID-5498
+    doubled: 0,
+    doubleLevel: {
+        $effect: {
+            func: (self, level) => self.doubled = 2 * level,
+            args: ["{self}", "{self}.level"]
+        }
+    },
+    containerA: null,
+    containerB: null,
+    widgetA: {
+        $component: {
+            $layers: "fluid.tests.selfWidget",
+            tag: "A",
+            container: "{fluid.tests.selfSourced}.containerA",
+            mirrorDoubled: {
+                $effect: {
+                    func: doubled => fluid.tests.mirrored.push(["A", "doubled", doubled]),
+                    args: "{fluid.tests.selfSourced}.doubled",
+                    excludeSource: "self"
+                }
+            }
+        }
+    },
+    widgetB: {
+        $component: {
+            $layers: "fluid.tests.selfWidget",
+            tag: "B",
+            container: "{fluid.tests.selfSourced}.containerB"
+        }
+    }
+});
+
+QUnit.test("An effect excluding \"self\" is not notified of changes its own component's view originated", function (assert) {
+    const container = qs(".container");
+    container.innerHTML = `<div class="a"></div><div class="b"></div>`;
+    const that = fluid.tests.selfSourced({containerA: qs(".a", container), containerB: qs(".b", container)});
+    fluid.cell.stabilize();
+    const takeMirrored = function () {
+        fluid.cell.stabilize();
+        const togo = fluid.tests.mirrored.slice();
+        fluid.tests.mirrored.length = 0;
+        return togo;
+    };
+    assert.deepEqual(takeMirrored(), [["A", "level", 0], ["A", "text", ""], ["A", "doubled", 0], ["B", "level", 0], ["B", "text", ""]],
+        "Each widget mirrors the initial state");
+
+    qs(".a button", container).dispatchEvent(new MouseEvent("click"));
+    assert.equal(that.level, 1, "Click in widget A updated the shared state");
+    assert.deepEqual(takeMirrored(), [["B", "level", 1]],
+        "Only widget B mirrors a change originated by widget A - A does not, nor the change it caused via an effect");
+
+    qs(".b button", container).dispatchEvent(new MouseEvent("click"));
+    assert.deepEqual(takeMirrored(), [["A", "level", 2], ["A", "doubled", 4]],
+        "Only widget A mirrors a change originated by widget B, including the change it caused via an effect");
+
+    const inputA = qs(".a input", container);
+    inputA.value = "Typed";
+    inputA.dispatchEvent(new Event("input"));
+    assert.equal(that.text, "Typed", "Input in widget A updated the shared state");
+    assert.deepEqual(takeMirrored(), [["B", "text", "Typed"]], "Only widget B mirrors input to widget A");
+
+    that.level = 5;
+    assert.deepEqual(takeMirrored(), [["A", "level", 5], ["B", "level", 5], ["A", "doubled", 10]],
+        "Both widgets mirror a change originated elsewhere");
+    that.destroy();
 });

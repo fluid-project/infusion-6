@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title>fluid.resizeBar Tests</title>
+
+        <link rel="stylesheet" media="screen" href="../../../lib/qunit/css/qunit.css" />
+
+        <script src="../../../../src/lib/lezer/lezer-javascript-browser.js" fluid-hydrated="%infusion-6"></script>
+
+        <script src="../../../../src/framework/core/js/FluidCore.js"></script>
+        <script src="../../../../src/framework/core/js/FluidSignals.js"></script>
+        <script src="../../../../src/framework/core/js/Fluid.js"></script>
+        <script src="../../../../src/framework/core/js/FluidIL.js"></script>
+        <script src="../../../../src/framework/core/js/template-parser.js"></script>
+        <script src="../../../../src/framework/core/js/sfc-parser.js"></script>
+        <script src="../../../../src/framework/core/js/FluidModules.js"></script>
+        <script src="../../../../src/framework/core/js/FluidView.js"></script>
+        <script src="../../../../src/framework/core/js/FluidPTF.js"></script>
+        <script src="../../../../src/framework/core/js/FluidView-browser.js"></script>
+
+        <script src="../../../lib/qunit/js/qunit.js"></script>
+        <script src="../../../test-core/qunit/js/qunit-fluid.js"></script>
+
+        <script src="../js/ResizeBarTests.js"></script>
+    </head>
+    <body>
+    <div id="qunit"></div>
+    <!-- Test HTML -->
+    <div id="qunit-fixture">
+        <div class="panes" style="display: flex; width: 504px; height: 100px">
+            <div class="before" style="flex: 0 0 200px"></div>
+            <div class="bar-holder"></div>
+            <div class="after" style="flex: 1 1 auto"></div>
+        </div>
+    </div>
+
+    </body>
+</html>

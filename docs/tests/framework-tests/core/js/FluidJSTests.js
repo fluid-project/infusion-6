@@ -77,7 +77,7 @@ QUnit.test("remove_if index stability and target", assert => {
     assert.deepEqual(target, [1, 2], "Target contains removed elements in original order");
 });
 
-// fluid-project/infusion-6#24
+// FLUID-7024
 QUnit.test("filterKeys and censorKeys do not require jQuery", assert => {
     const source = {a: 1, b: 2, c: 3};
     assert.deepEqual(fluid.filterKeys(source, ["a", "c", "d"]), {a: 1, c: 3}, "Listed keys retained");
@@ -87,7 +87,7 @@ QUnit.test("filterKeys and censorKeys do not require jQuery", assert => {
     assert.deepEqual(fluid.filterObjKeys(source, key => key !== "a"), {b: 2, c: 3}, "Keys filtered by predicate");
 });
 
-// fluid-project/infusion-6#24
+// FLUID-7024
 QUnit.test("Unavailable proxy renders as a string", assert => {
     const proxy = fluid.unavailableProxy(fluid.unavailable({message: "Gone missing", path: "a.b"}));
     assert.equal(String(proxy.deeper.member), "[Unavailable: Gone missing at path a.b]", "Single cause rendered");
@@ -203,7 +203,8 @@ QUnit.test("FLUID-4842 test - configurable \"soft failure\"", assert => {
     assert.expectFluidError("Configurable failure handler", function () {
         fluid.fail.apply(null, testArgs);
     }, "thingit");
-    fluid.failureEvent.removeListener("fail");
+    // Restore the framework's handler by displacing ours
+    fluid.failureEvent.addListener(fluid.builtinFail, "fail");
 });
 
 QUnit.test("FLUID-5807 tests - identify fluid.FluidError", assert => {
@@ -263,12 +264,11 @@ QUnit.test("FLUID-6330 test - interception of fluid.log", assert => {
         ["Zis guy", 42],
         "Logged to memory with interception"
     );
-    fluid.loggingEvent.removeListener(fluid.tests.doMemoryLog);
-    fluid.loggingEvent.removeListener("42");
-    const listeners = fluid.loggingEvent.sortedListeners.map(rec => rec.listener);
-    assert.false(listeners.includes(fluid.tests.insert42), "Intercepting listener removed");
-    assert.false(listeners.includes(fluid.tests.doMemoryLog), "Memory log listener removed");
-    assert.true(listeners.includes(fluid.doBrowserLog), "Browser log listener restored");
+    // Restore the framework's logging by displacing our listeners
+    fluid.loggingEvent.addListener(fluid.doBrowserLog, "log");
+    fluid.loggingEvent.addListener(fluid.identity, "42", "before:log");
+    fluid.log("Zis other guy");
+    assert.notOk(fluid.tests.memoryLog.some(args => args.includes("Zis other guy")), "Memory log listener displaced");
 });
 
 QUnit.test("Globals", assert => {
@@ -307,44 +307,51 @@ QUnit.test("Sorting listeners", assert => {
     assert.deepEqual(accumulate, [1, 2, 3, 4], "Listeners fire in priority order");
 });
 
-QUnit.test("Attach and remove listeners", assert => {
-    const testListener = function (shouldExecute) {
-        assert.ok(shouldExecute, "Listener firing " + (shouldExecute ? "" : "not ") + "expected");
-    };
-
-    assert.expect(2);
-    const firer = fluid.makeEventFirer();
-    firer.addListener(testListener);
-    firer.fire(true);
-    firer.removeListener(testListener);
-    firer.fire(false); // listener should not run and assertion should not execute
-
-    firer.addListener(testListener, "namespace");
-    firer.fire(true);
-    firer.removeListener(testListener);
-    firer.fire(false);
-    firer.removeListener("toRemoveNonExistent"); // for FLUID-4791
-    firer.fire(false);
-});
-
-QUnit.test("FLUID-5506 stack for namespaced listeners", assert => {
+QUnit.test("Namespaced listener displaces earlier one", assert => {
     const firer = fluid.makeEventFirer();
     const record = [];
 
     function addOne(arg) {
-        firer.addListener(function () {
-            record.push(arg);
+        firer.addListener(function (fired) {
+            record.push([arg, fired]);
         }, "namespace");
     }
 
     addOne(1);
-    addOne(2); // this one is top of stack
-    firer.fire();
-    firer.removeListener("namespace");
-    firer.fire(); // listener 1 is now top of stack
-    assert.deepEqual(record, [2, 1], "Listener removed by namespace reveals earlier");
+    firer.fire("first");
+    addOne(2);
+    firer.fire("second");
+    assert.deepEqual(record, [[1, "first"], [2, "second"]], "Listener displaced by one with the same namespace, and no listener notified other than on firing");
 });
 
+QUnit.test("Exception thrown by listener halts dispatch and is rethrown", assert => {
+    const firer = fluid.makeEventFirer({name: "throwing event"});
+    const record = [];
+    firer.addListener(arg => record.push("before " + arg), "before");
+    firer.addListener(() => {
+        throw new Error("Listener failure");
+    }, "throw", "after:before");
+    firer.addListener(arg => record.push("after " + arg), "after", "after:throw");
+    assert.throws(() => firer.fire(1), /Listener failure/, "Exception rethrown from fire");
+    assert.deepEqual(record, ["before 1"], "Dispatch halted at the throwing listener");
+    firer.addListener(fluid.identity, "throw", "after:before");
+    firer.fire(2);
+    assert.deepEqual(record, ["before 1", "before 2", "after 2"], "Event fires normally once throwing listener is displaced");
+});
+
+QUnit.test("Reentrant firing notifies listeners in turn", assert => {
+    const record = [];
+    const firer = fluid.makeEventFirer();
+    firer.addListener(arg => {
+        record.push("first " + arg);
+        if (arg === "outer") {
+            firer.fire("inner");
+        }
+    }, "first");
+    firer.addListener(arg => record.push("second " + arg), "second", "after:first");
+    firer.fire("outer");
+    assert.deepEqual(record, ["first outer", "first inner", "second inner", "second outer"], "Reentrant firing completes within the outer one");
+});
 
 fluid.tests.constraintTests = [{
     name: "one before",
@@ -505,6 +512,24 @@ QUnit.test("FLUID-4915: fluid.invokeGlobalFunction", function (assert) {
     fluid.invokeGlobalFunction("fluid.tests.invokeGlobalFunction.withoutArgs");
 });
 
+/**
+ * Constructs the "pedalo" hierarchy of https://opendylan.org/_static/c3-linearization.pdf, strongest parents first
+ * @param {String[]} pedalWheelBoatParents - The parents of the `pedalWheelBoat` layer
+ * @return {Object<String, String[]>} The parents of each layer in the hierarchy
+ */
+fluid.tests.pedaloDefs = function (pedalWheelBoatParents) {
+    return {
+        boat: [],
+        dayBoat: ["boat"],
+        wheelBoat: ["boat"],
+        engineless: ["dayBoat"],
+        smallMultihull: ["dayBoat"],
+        pedalWheelBoat: pedalWheelBoatParents,
+        smallCatamaran: ["smallMultihull"],
+        pedalo: ["pedalWheelBoat", "smallCatamaran"]
+    };
+};
+
 // C3 tests adapted from https://github.com/federicobond/c3-linearization/blob/master/test/test.js
 fluid.tests.c3tests = [{
     name: "single inheritance case",
@@ -549,18 +574,41 @@ fluid.tests.c3tests = [{
         O: [], X: ["O"], Y: ["O"], A: ["X", "Y"], B: ["Y", "X"], Z: ["A", "B"]
     },
     error: ["Inconsistent", "Z"]
+}, { // Figure 2 of https://opendylan.org/_static/c3-linearization.pdf
+    name: "Pedalo",
+    defs: fluid.tests.pedaloDefs(["engineless", "wheelBoat"]),
+    expected: {
+        pedalWheelBoat: ["pedalWheelBoat", "engineless", "dayBoat", "wheelBoat", "boat"],
+        pedalo: ["pedalo", "pedalWheelBoat", "engineless", "smallCatamaran", "smallMultihull", "dayBoat", "wheelBoat", "boat"]
+    }
+}, { // Restating an ancestor as stronger than its descendant is ignored rather than inconsistent
+    name: "Pedalo with ancestor restated stronger than its descendant",
+    defs: fluid.tests.pedaloDefs(["dayBoat", "engineless", "wheelBoat"]),
+    expected: {
+        pedalWheelBoat: ["pedalWheelBoat", "engineless", "dayBoat", "wheelBoat", "boat"],
+        pedalo: ["pedalo", "pedalWheelBoat", "engineless", "smallCatamaran", "smallMultihull", "dayBoat", "wheelBoat", "boat"]
+    }
+}, { // Restating an ancestor as weaker than another parent is retained and constrains its order
+    name: "Pedalo with ancestor restated weaker than another parent",
+    defs: fluid.tests.pedaloDefs(["engineless", "wheelBoat", "dayBoat"]),
+    expected: {
+        pedalWheelBoat: ["pedalWheelBoat", "engineless", "wheelBoat", "dayBoat", "boat"],
+        pedalo: ["pedalo", "pedalWheelBoat", "engineless", "wheelBoat", "smallCatamaran", "smallMultihull", "dayBoat", "boat"]
+    }
 }
 ];
 
 fluid.tests.c3tests.forEach(fixture => {
     QUnit.test(`C3 linearisation for FLUID-5800: ${fixture.name}`, function (assert) {
+        // The fixtures list parents, and expected linearisations, strongest first as for Python's MRO, whereas as for
+        // FLUID-5743 our $layers, and the linearisations we produce, list them weakest first
         // Check that grade registry is not corrupted by algorithm
-        const defs = fluid.freezeRecursive(fluid.transform(fixture.defs, def => ({$layers: def})));
+        const defs = fluid.freezeRecursive(fluid.transform(fixture.defs, def => ({$layers: [...def].reverse()})));
         if (fixture.expected) {
-            Object.keys(defs).forEach(key => {
+            Object.keys(fixture.expected).forEach(key => {
                 const message = "Linearization of layer " + key;
                 const lin = fluid.C3_precedence_parents([key], defs);
-                assert.deepEqual(lin, fixture.expected[key], message);
+                assert.deepEqual(lin, [...fixture.expected[key]].reverse(), message);
             });
         } else {
             const last = Object.keys(defs).reverse()[0];

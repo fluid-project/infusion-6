@@ -6,11 +6,18 @@ html[fl-docking-area-mode~="edge"] {
     display: flex;
 }
 
-html[fl-docking-area-mode~="edge"] > *:not(.fl-resizer) {
+html[fl-docking-area-mode~="edge"] > *:not(.fl-resize-bar) {
     flex: 1 1 auto;
+    /* Allow the docked areas to be shrunk by the resize bar below the size of their content */
+    min-width: 0;
     contain: paint;
     /* Temporarily get rid of this in favour of .fl-editor-root definition  */
     /* height: 100%;*/
+}
+
+/* The docked component's initial width, until the resize bar is dragged */
+html[fl-docking-area-mode~="edge"] > .fl-docking-area-component {
+    flex: 0 0 700px;
 }
 
 .fl-resizer:hover:before {
@@ -41,7 +48,7 @@ html[fl-docking-area-mode~="edge"] > *:not(.fl-resizer) {
     z-index: 5;
 }
 
-html[fl-docking-area-mode~="minimized"] > .fl-resizer {
+html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     display: none;
 }
 

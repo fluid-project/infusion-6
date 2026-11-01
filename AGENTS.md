@@ -22,8 +22,10 @@
 
 ## Testing instructions
  - Run npm test in node to run virtually all view tests
- - A couple of view-specific tests (e.g. verifying that CSS rules have applied) require manual test running by running
-tests/framework-tests/core/html/*.html in the browser
+ - A couple of view-specific tests (e.g. verifying that CSS rules have applied) require running in a real browser - run
+npm run test:browser-qunit to run the same test pages in headless Chromium, or pass it particular pages, e.g.
+tests/framework-tests/core/html/FluidViewTests.html
+ - Run npm run test:browser to run the demo scripts listed in infusion.tests.browser of package.json
  - Run, e.g. node tests/test-core/qunit/js/fqunit-cli.js tests/framework-tests/core/html/FluidILTests.html to run a single test file
 
 ## Code workflow

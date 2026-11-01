@@ -53,7 +53,7 @@ Numbers are occurrences across the files surveyed.
 | `options.x` / `{that}.options.x` | many | Every option is a plain member, `{self}.x` | Mechanical |
 | `distributeOptions` from a driver to a known path, e.g. `ecofield` → `{that regionFilter}.options.leadingFields` | 1 | A user layer with a nested `$component` override, or better a top-level integration member referenced by the filter | Idiom change |
 | `distributeOptions` to every matching descendant, e.g. howe.js `countTransform` → `{that hortis.libreMap.withObsGrid}` | 3 | `$linkage` with an output layer carrying the value, or a reference from the map to a value on the story page | Idiom change - see [G7](#g7-broadcast-of-configuration-to-matching-descendants) |
-| `dynamicComponents` with `sources`, `type: "{source}.type"`, `options: "{source}.options"` (pane handlers, widgets) | 2 | `$for`, but the members' layers and configuration come from data | **Gap** - see [G6](#g6-for-members-configured-from-data) |
+| `dynamicComponents` with `sources`, `type: "{source}.type"`, `options: "{source}.options"` (pane handlers, widgets) | 2 | `$for` with `layerAs` | Direct - was a gap, see [G6](#g6-for-members-configured-from-data) |
 | `"{sourcePath}"` as `paneKey` / `widgetKey` | 2 | `keyAs` in `$for` | Direct |
 | `fluid.queryIoCSelector(root, grade)` | 8 | Selector reference `"{self hortis.obsFilter}"`, or `fluid.liveQueryILSelector` | Direct, with caveats - see [G3](#g3-selector-references-with-a-path-fail) and [G4](#g4-selector-results-are-redelivered-whenever-the-tree-turns-over) |
 | `fluid.getForComponent(that, path)` | 6 | Proxy reads, or `fluid.getForComponent` on the shadow | Direct |
@@ -74,7 +74,7 @@ Numbers are occurrences across the files surveyed.
 | `fluid.invokeLater` to break cycles | 4 | Should not be needed. Each use is redesigned below | Delete |
 | `excludeSource: "init"` on model listeners | 3 | No direct equivalent. Make the effect idempotent against the world's current state | Idiom change - see [G9](#g9-no-analogue-of-excludesource-init) |
 | `modelListeners` / `modelRelay` / `applier.change` / `fluid.replaceModelValue` (story page, pane handlers, HashManager) | 17 | Plain members and `$compute`s, writes through the proxy, `$effect`s | Mechanical, see [HashManager](#hashmanager) |
-| `fluid.globalInstantiator.hashSource` flag to tell hash-driven updates apart | 1 | Source tracking with `withAmbientSource("hash", ...)` and `excludeSource: "hash"` - **currently broken** | **Gap** - see [G2](#g2-excludesource-sticks-to-a-cell-after-one-excluded-update) |
+| `fluid.globalInstantiator.hashSource` flag to tell hash-driven updates apart | 1 | Source tracking with `withAmbientSource("hash", ...)` and `excludeSource: "hash"` - broken until G2 was fixed | **Gap** - see [G2](#g2-excludesource-sticks-to-a-cell-after-one-excluded-update) |
 | `fluid.fetchJSON(url)` returning a signal | 1 | `fluid.fetchJSON` exists in Fluid.js and returns a cell. A `$compute` returning a cell is seen through **(probed)** | Direct |
 | Async loading: `hortis.csvReader` with `completionPromise`, `Promise.all` in `bindResources` | 3 | A `$compute` returning a cell which the loader sets, or a `$bindable` whose binder returns one | Idiom change - see [G1](#g1-async-compute-is-documented-but-not-implemented) |
 | `resources` / `fluid.resourceLoader` (story page `plotlyReady`, `storyVizPane` templates, `iNatComponentsPaneHandler`) | 3 | A `$compute` over `fluid.fetchText(url)`, or a binder returning a cell set by `HTMLWidgets.addPostRenderHandler` | Idiom change |
@@ -344,6 +344,12 @@ through **(probed)**.
 **Fix:** either make `$compute` detect a Promise or async iterator result and use `asyncComputed`, or correct the
 documentation.
 
+**Fixed, by folding asynchrony into every computation.** `Cell.computed` now detects a promise or async iterable from
+what its function returns, so a `$compute` over an `async` function, or a plain function returning a promise, is pending
+until it settles. Its dependants run once, with the settled value. `asyncComputed` and the `isAsync` property are
+removed. An edge remembers that it has returned a promise, so that later updates along it are marked pending and
+enlisted in a fit from the outset, as before. The cost is one type check per update, which is within measurement noise.
+
 ### G2: `excludeSource` sticks to a cell after one excluded update
 
 After a write made under `fluid.cell.withAmbientSource("hash", …)` has been excluded from an effect with
@@ -368,6 +374,22 @@ implementation reads `options.source`. `A.set("b", "hash")` is not excluded **(p
 This blocks every use of source tracking in the port: the HashManager, the story page's pane/hash interplay, and
 external widgets such as the dual range input and the autocomplete.
 
+**Fixed.** The real cause was in `fluid.cell.findFit`, not `endFits`. The sourced `set` starts a fit on the written
+cell, and the fit ends correctly. But the written cell is not one of the fit's `targetsConsumed`, so its `_fit` is never
+cleared and still points at the ended fit, which still carries `"hash"`. `findFit` returned any non-null `_fit` without
+checking `isActive`, so every later update along `_dirtyFrom` found the stale `"hash"` and was skipped. `findFit` now
+skips inactive fits. `Cell.set` also accepts a String as its second argument, as the documentation says. Both are covered
+by tests in FluidSignalsTests.js.
+
+That fix was correct for raw cells, but left `excludeSource` ineffective at the IL level. A write to a component member
+reaches an effect through the merge of the component's layers, and the write's fit was ended by a read along the way,
+before the effect was reached. A fit carrying sources is now held open until the end of the stabilization pass. Fixing
+this also showed that G2 alone would not have unblocked `updatePaneHash`: a hash-driven change passes through
+`listenPaneHash`, an effect whose write carried no source. Writes made by an effect now inherit the sources of the
+change which triggered it, as proposed in [FLUID-5498](https://issues.fluidproject.org/browse/FLUID-5498). The whole
+chain, hash to `activeSection` to `activePane` to `updatePaneHash`, is tested in FluidILTests.js, and the story page needs
+no `hashSource` global.
+
 ### G3: selector references with a path fail
 
 `"{self p.filter}"` resolves to the list of matching components **(probed)**. But `"{self p.filter}.filterState"`, which
@@ -375,6 +397,11 @@ the IL docs describe as yielding "the array of values at that path in each match
 {(intermediate value)}.computed is not a function` **(probed)**.
 
 **Workaround:** select the components and read their members inside the `$compute`.
+
+**Fixed.** A misplaced parenthesis in `fluid.fetchContextReference` called `.computed` on the options object. The path
+case also passed component proxies, not shadows, to `fluid.getForComponent`, and would have delivered an array of cells.
+It now reads the value at the path in each matched component and delivers them as one array, or the merged unavailable
+value if any are unavailable.
 
 ### G4: selector results are redelivered whenever the tree turns over
 
@@ -400,6 +427,21 @@ rows are identical. Since cells compare by identity, nothing downstream is notif
 **Fix:** the selector's cell should not deliver a new value when its list of matched components is unchanged, e.g.
 by comparing it element-wise before setting. Then only a genuine change in the matched set would reach consumers.
 
+**Fixed, as proposed.** `fluid.liveQueryILSelector` returns its previous array again if it matched the same components
+in the same order. Root proxies keep their identity across turnover, so identity comparison is enough. Selector
+references with a path stabilise their array of values in the same way, using `fluid.arrayEqual`. A
+turnover of unmatched components beneath the root no longer reevaluates consumers.
+
+Growth during start-up remains. An effect over `"{self p.filter}"` with two `$for` filters still first sees `[]`, then
+both filters. This is a genuine change in the matched set, which arises because the effect runs before the `$for`
+members are instantiated. The `hortis.filters.evaluate` cache is no longer needed for turnover, and the port has dropped it. At start-up,
+the fold still runs once for each distinct matched set seen.
+
+Stabilising the selector exposed that `hortis.filters.evaluate` had never depended on the filters' state: it read
+`filterState` and `isActive` through component proxies, which read plain members untracked, and it reran only because
+of the turnover. Members read through a proxy within a computation are now its dependencies, so the fold works as
+written. A destroyed component now reads as unavailable within a computation rather than throwing, which this needed.
+
 ### G5: no ordered multi-party event
 
 The howe-sound `reknitr.htmlWidget` grades rely on Infusion 4's event system to compose behaviour from independent
@@ -420,6 +462,11 @@ priorities: a new grade can't insert itself "before:impl" without the `impl` gra
 **Proposal:** an ordered bindable list, analogous to `$linkage`, keyed by namespace with the same `before:`/`after:`
 priority grammar.
 
+**Resolved by composite effects** ([FLUID-7028](https://github.com/fluid-project/infusion-6/issues/28)). `bindWidget`
+becomes a composite `$effect` over the widget's element, to which each grade contributes a namespaced record with a
+priority such as `"first"`, `"before:impl"` or `"after:impl"`, merged across layers. Records have no teardown, so the
+resize listener and the slider animation's timer belong in `$bindable`s which read the chain's final payload.
+
 ### G6: `$for` members configured from data
 
 The story page creates one pane handler per section from `reknitr.rawPaneHandlers`, a record written into the page by
@@ -427,16 +474,65 @@ the build. Each entry gives a `type` and arbitrary options, e.g. `widgets`, `max
 The handlers' widgets are created the same way. In Infusion 4 this is `dynamicComponents` with
 `type: "{source}.type", options: "{source}.options"`.
 
+The records are configuration, not data. In the howe-sound build output (`layouts/story/single.html`):
+
+- each pane record carries `gradeNames`;
+- the `History` pane's `widgets.speciesPlot` carries `type` and `gradeNames`, and
+  `members: {obsRows: "{vizLoader}.obsRows"}`, a context reference to be resolved in the widget's own context.
+
 In Infusion 6, `$for` gives each member its source element at `valueAs`, and `$layers` can name `"{self}.record.type"`
-as a dynamic layer. But there is no way to merge the rest of the record into the member as configuration. It can only
-be read through `{self}.record.x`, so every pane handler layer would need rewriting to read its options through that
-indirection.
+as a dynamic layer. `valueAs` is not enough, for three reasons, each **(probed)**:
+
+1. **The element arrives at one path.** `valueAs` writes a single entry into the member's variables layer: a global
+   reference to the element's site. Options are reachable only as `{self}.record.x`, but the pane handler layers read
+   `{self}.x`.
+2. **References do not fall through.** Rewriting each handler layer to say `x: "{self}.record.x"` would override the
+   layer's own default with `undefined` whenever the record omits `x`. Missing values are not passed to the layer
+   below. Over a layer with `maxObs: 100`, a record without `maxObs` gave `undefined`. A nested value is replaced,
+   not merged: over `nested: {a: 1, b: 2}`, the record's `nested: {b: 3}` gave `{b: 3}`.
+3. **Material reached through a reference is not expanded.** Through `{self}.record.x`, a context reference in the
+   element stays a literal string (`"{p.root}.obsRows"`), and a `$component` record stays a plain object, not a
+   subcomponent. This holds whether the `$for` source is a `$reactiveRoot` or plain configuration. The widgets'
+   `"{vizLoader}.obsRows"` and their subcomponent records would therefore never be instantiated.
+
+Point 3 follows a pattern which has now settled. Material in the live layer, a reactive root or the variables layer,
+and anything resulting from expanding a reference, is final and does not undergo further instantiation. Only
+material in definition layers is expanded. `valueAs` is a reference, so it cannot deliver configuration, and it should
+not: `$for` over reactive data relies on that data staying inert.
 
 **Workaround:** at start-up, `fluid.def` an anonymous layer per pane (`reknitr.pane.History` etc.) from the record,
-and have the `$for` member's `$layers` refer to it.
+and have the `$for` member's `$layers` refer to it. This works because it turns the record into definition-layer
+material, which is expanded in the member's context.
 
-**Fix:** a `$for` option such as `layerAs` / `mergeValue`, merging the source element as a layer at `variables`
-precedence.
+**Fix:** a new `$for` directive, alongside `valueAs`, which merges the source element into the member as a definition
+layer of its own record type. That layer should:
+
+- be expanded in the member's context, so that references and `$component` records inside it are instantiated;
+- sit above the member's own layers, as Infusion 4's `options` did, and below the variables and live layers.
+
+It cannot be done by merging the element into the variables layer, since that layer is not expanded. Open questions:
+
+- whether the directive's layer may contribute `$layers`, which would absorb `type` and `gradeNames`;
+- whether it is remerged when the element changes, or the member is turned over. `rawPaneHandlers` is fixed at build
+  time, so the story page needs neither.
+
+**Fixed.** `$for` now accepts `layerAs: "<name>"`. Each element is merged into its member as a merge record of the new
+type `forLayer`, named by `layerAs`, at priority 650: above `subcomponent` (700) and below `user` (600). The element is
+expanded in the member's context, as any other layer is. The open questions are settled as follows:
+
+- the element's `$layers` are added to the member's;
+- a changed element re-merges its member.
+
+Elements must be plain objects. This works over a `$reactiveRoot` source and over plain configuration.
+
+Point 2 is also fixed generally. Where a reference is the strongest of several values at a path, `fluid.mergeLayerKey`
+records the merge of the weaker layers in the layer map as a `fluid.referenceFallbackRecord`. `fluid.expandElement` then
+mounts a cell which delivers the weaker material whenever the reference resolves to `undefined`. This chains through
+further references. Only `undefined` passes over: a reference to a missing top-level member is unavailable, and stays
+so. One limitation: where the weaker material is itself a merged object, references nested within it get no fallbacks
+of their own.
+
+Both are documented in ponder's `content/docs/fluid-integration-language.md`, and tested in FluidILTests.js.
 
 ### G7: broadcast of configuration to matching descendants
 
@@ -494,6 +590,15 @@ the proxy from an `@onchange` method: `self.range.checked = event.target.checked
 **Fix:** `fluid.writeableAttrSite` should resolve a site beneath an iteration variable through the variable's lens, as
 the proxy does.
 
+**Fixed, as proposed.** A new function, `fluid.lensedWriteSite`, directs a write the same way the proxy does. It tries
+each prefix of the written path, shortest first. The first prefix sourced from another site, found through
+`fluid.upstreamSite`, redirects the write to that site with the rest of the path appended. The redirected site is then
+resolved again in the same way. A write to the sourced member itself is not redirected, since it rebinds the member
+locally, as through the proxy. `fluid.writeableAttrSite` resolves its site through it before applying the existing
+check against signal products. The test "Live state written back beneath a $for variable reaches the source", in
+FluidViewTests.js, uses a text input, since linkedom lacks `checked`. The checkbox goes through the same path. The
+workaround in the phenology filter can now be dropped.
+
 ### G12: smaller items
 
 - `FluidView-browser.js` calls `fluid.ptf.withinGesture` in every event handler, so `FluidPTF.js` must be loaded even
@@ -533,7 +638,7 @@ sequence maps onto a chain of bindables without loss. The checklist trees fit th
 `fluid.substrateTree` already uses.
 
 Only G2 blocks part of the port outright: correct exclusion of hash-sourced updates in howe-sound. The idempotent
-`pushState` covers the HashManager meanwhile. G1, G3, G4 and G11 have local workarounds, which the port uses. G5 and
+`pushState` covers the HashManager meanwhile. G1, G3, G4 and G11 had local workarounds, which the port has since dropped. G5 and
 G6 affect only the howe-sound story page, and can be worked around with data dependencies and per-pane layers. G8 is
 a choice of idiom.
 
@@ -556,16 +661,16 @@ bagatelle's `stage1-port-report.md`. Stage 2 completed the BBEA visualisation, a
 
 | File | Holds |
 |---|---|
-| `imerss-core.js` | Utilities, DOM listener and width helpers, `hortis.csvReader` (a `$compute` returning a cell), `hortis.vizLoader`, `hortis.taxa`, `hortis.selectorContainerView` (G8), `hortis.recordReporter` |
+| `imerss-core.js` | Utilities, DOM listener and width helpers, `hortis.csvReader` (an async `$compute`), `hortis.vizLoader`, `hortis.taxa`, `hortis.selectorContainerView` (G8), `hortis.recordReporter` |
 | `tooltip.js` | `hortis.withTooltip`, placed by Popper lite against a virtual element at the pointer - replaces jQuery UI tooltips, so the port has no jQuery dependency |
-| `filters.js` | Filter bases, `hortis.filters` fold with stabilised output (G4), sex and phenology filters (G11), grouped region filter (computed tree with two-way search), collector filter, elevation filter, accessible-autocomplete wrapper, reset control |
+| `filters.js` | Filter bases, `hortis.filters` fold, sex and phenology filters, grouped region filter (computed tree with two-way search), collector filter, elevation filter, accessible-autocomplete wrapper, reset control |
 | `dualRangeInput.js` | The dual range widget, with its range held as a `$reactiveRoot` whose members track the data's bounds |
 | `checklist.js` | `hortis.checklist` with default state plus user overlay, computed VNode tree, taxon tooltips, rank fold controls, search |
 | `libreMap.js` | Map start-up as a chain of bindables, tiles, observation grid with tooltip, grid selection filter, fit to bounds |
 | `polygonDraw.js` | MapboxDraw polygon filter, bound to the styled map |
 | `shell.js` | Pane grips, filter concertina with summary badges, view tabs, view download, fullscreen control, collector report links |
 | `views.js` | Interaction matrix (computed tree plus canvas), bipartite network, bee and plant lists, bee abundance, seed mix evaluator |
-| `hashManager.js` | `hortis.hashManager` |
+| `hashManager.js` | `hortis.hashManager`, excluding changes with source `"hash"` from `pushState` |
 | `imerss-bbea.js` | `hortis.beaVizLoader` wiring, `hortis.interactions` |
 
 - **Driver.** `indexBeasBCBA-6.html` renders the complete BCBA page. It loads Infusion 6 from `../fluid-infusion-6`
@@ -582,7 +687,7 @@ bagatelle's `stage1-port-report.md`. Stage 2 completed the BBEA visualisation, a
   node ../fluid-infusion-6/tests/test-core/qunit/js/fqunit-cli.js test/i6/html/BbeaCoreTests.html test/i6/html/BbeaMapTests.html test/i6/html/BbeaViewsTests.html test/i6/html/HashManagerTests.html
   ```
 
-  This runs 147 tests. The views suite renders against the BCBA page's own markup.
+  This runs 155 tests. The views suite renders against the BCBA page's own markup.
 
 **Still to port:** the howe-sound story map (stage 4). It needs G2 fixed, and G5 and G6 worked around or fixed. The
 standard viz loader, taxon display, data table and resize bars it consumes from bagatelle are part of that stage.
@@ -604,5 +709,5 @@ The probe scripts were run with node 18 against `require("../fluid-infusion-6")`
 | `Cell.set(v, "hash")` with a string source | Not excluded - the implementation reads `options.source` (G2) |
 | `$compute` returning `{a, b}` read as `"{self}.res.a"` | Tracks recomputation |
 | Proxy write `row.range.checked = true` to a `$for` member over a sited `$reactiveRoot` array | Reaches the source |
-| Template binding `checked="@{range.checked}"` in the same member, changed by the user | Member updated, source not (G11) |
+| Template binding `checked="@{range.checked}"` in the same member, changed by the user | Member updated, source not (G11) - reaches the source since G11 was fixed |
 | Selector over BBEA's filters, one click on a phenology month | Fold re-run three times with identical results (G4) |

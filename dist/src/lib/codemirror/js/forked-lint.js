@@ -248,7 +248,7 @@
       if (maxSeverity !== "error") {
           // Rendered by deferred auto-stabilization - a synchronous stabilize here would invoke codeMirror.refresh()
           // before it is constructed
-          cm.options.validText.set(value);
+          cm.options.onValidText(value);
       }
     if (options.onUpdateLinting) options.onUpdateLinting(annotationsNotSorted, annotations, cm);
   }
