@@ -1,0 +1,5 @@
+.rt-panel .rt-count {
+    font-weight: bold;
+    padding-left: 12px;
+    background: url("star.svg") no-repeat left center;
+}

@@ -713,7 +713,6 @@ const $fluidScope = function (fluid) {
     const $t = fluid.proxySymbol;
 
     fluid.unavailableSymbol = Symbol("fluid.unavailableTarget");
-    const $u = fluid.unavailableSymbol;
 
     // A special symbol used to store nested metadata at any level of the mat - see diagram for use via "$m"
     fluid.metadataSymbol = Symbol("fluid.metadata");
@@ -727,6 +726,10 @@ const $fluidScope = function (fluid) {
                 } else if (prop === Symbol.toPrimitive || prop === "toString") {
                     // Rendered as text when coerced, e.g. by interpolation into a string
                     return () => fluid.formatUnavailable(target);
+                } else if (typeof(prop) === "symbol") {
+                    // Any other symbol, e.g. Symbol.asyncIterator or Symbol.iterator probed to classify a value, is absent,
+                    // so that an unavailable value is not taken for an iterable
+                    return undefined;
                 } else {
                     // Properly this should wrap the updated path of the unavailable to give better provenance for the site
                     // but we have enough unavailable garbage as it is
@@ -741,12 +744,33 @@ const $fluidScope = function (fluid) {
         return proxy;
     };
 
-    // Intended to be used for object which has already passed fluid.isUnavailable
+    /**
+     * Recover the unavailable value fronted by a proxy which has passed `fluid.isUnavailable`, so that its members, e.g.
+     * `variety` and `causes`, may be read - reading through the proxy itself would read the proxy again, in the case of
+     * one made by `fluid.unavailableProxy`, or the material at the next path, in the case of a proxy onto the material of
+     * a component made by `fluid.proxyMat`. Each proxy is unwrapped through its target, which may itself be a signal,
+     * until the unavailable value is reached. A value which is not such a proxy is returned as it is.
+     * @param {any} target - The value, typically one which has passed `fluid.isUnavailable`
+     * @return {any} The unavailable value fronted by the proxy, or `target` if it fronts none
+     */
     fluid.deproxyUnavailable = function (target) {
-        return Object.getOwnPropertyDescriptor(target, $u) ? fluid.deSignal(target[$u]) : target;
+        let next = target;
+        // Bounded, in case a proxy were ever to front itself
+        for (let depth = 0; depth < 16 && fluid.isProxy(next); ++depth) {
+            next = fluid.deSignal(next[$t]);
+        }
+        return fluid.isUnavailable(next) && !fluid.isProxy(next) ? next : target;
     };
 
     fluid.unProxy = target => target?.[$t] ? target[$t] : target;
+
+    /**
+     * Determine whether a value is a proxy onto the material of a component or onto an unavailable value - see
+     * `fluid.proxyMat` and `fluid.unavailableProxy`.
+     * @param {any} value - The value to be tested
+     * @return {Boolean} `true` if the value is such a proxy
+     */
+    fluid.isProxy = value => !!value && typeof(value) === "object" && value[$t] !== undefined;
 
     fluid.deproxyAndDesignal = function (target) {
         const holder = target?.[$t];
@@ -987,6 +1011,10 @@ const $fluidScope = function (fluid) {
         return Array.isArray(source) ? source.slice() : {...source};
     };
 
+    // Written as a value at a path, e.g. through fluid.setImmutable or a component's write gateway, removes the member at
+    // that path rather than holding a value there
+    fluid.deleteMarker = fluid.makeMarker("Delete");
+
     /**
      * Set a value at a given path within an object or array, without mutating the original structure.
      * Containers along the path are shallow-copied only if the value at the path actually changes - if it is
@@ -994,7 +1022,7 @@ const $fluidScope = function (fluid) {
      *
      * @param {any} root - The root object to copy and modify.
      * @param {String|Array<String|Number>} path - A path expressed as a dot-separated String or an Array of segments.
-     * @param {any} newValue - The new value to set at the specified path.
+     * @param {any} newValue - The new value to set at the specified path - `fluid.deleteMarker` removes the member there
      * @return {any} `root` if nothing changed, otherwise a new structure sharing all unaffected branches with `root`.
      */
     fluid.setImmutable = function (root, path, newValue) {
@@ -1006,6 +1034,14 @@ const $fluidScope = function (fluid) {
             }
             const seg = segs[i];
             const container = fluid.isPlainObject(node);
+            if (i === segs.length - 1 && newValue === fluid.deleteMarker) {
+                let togo = node;
+                if (container && seg in node) {
+                    togo = fluid.shallowCopy(node);
+                    delete togo[seg];
+                }
+                return togo;
+            }
             const oldChild = container ? node[seg] : undefined;
             const newChild = setAt(oldChild, i + 1);
             if (container && Object.is(newChild, oldChild) && seg in node) {
@@ -3955,37 +3991,28 @@ const $fluidScope = function (fluid) {
      * @return {Signal<any>} A signal containing the processed data or an "unavailable" state.
      */
     fluid.fetch = function (url, options, strategy) {
-        const togo = fluid.cell(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "pending"}),
-            {name: `fluid.fetch for URL ${url}`});
-        const assignResult = data => {
+        // The I/O is the work of a computation returning a promise, so that the cell is pending within the reactive
+        // graph until it completes, and fluid.cell.settle waits for it - e.g. before a document rendered under node is
+        // written. It begins once the cell is first read
+        const load = async function () {
+            let togo;
             try {
-                togo.set(data);
-            } catch (e) { // Don't use catch's error handler since this will swallow it
-                fluid.fail("Error assigning I/O result: ", e);
-                throw e;
-            }
-        };
-        fetch(url, {...options, ...fluid.cacheOptions})
-            .then(response => {
+                const response = await fetch(url, {...options, ...fluid.cacheOptions});
                 if (!response.ok) {
-                    togo.set(fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"}));
+                    togo = fluid.unavailable({message: `HTTP error ${response.status} for URL ${url}`, variety: "error"});
                 } else {
-                    return strategy(response);
-                }
-            })
-            .then(data => {
-                if (!fluid.isErrorUnavailable(togo._value)) { // Fetch API provides an undefined response in the case response is not OK
+                    togo = await strategy(response);
                     if (options?.delay) {
-                        window.setTimeout(() => assignResult(data), options.delay);
-                    } else {
-                        assignResult(data);
+                        await new Promise(resolve => setTimeout(resolve, options.delay));
                     }
                 }
-            })
-            .catch(err => {
-                togo.set(fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"}));
-            });
-        return togo;
+            } catch (err) {
+                togo = fluid.unavailable({message: `I/O failure for URL ${url} - ${err}`, variety: "error"});
+            }
+            return togo;
+        };
+        return fluid.cell(fluid.unavailable({message: `Pending I/O for URL ${url}`, variety: "pending"}),
+            {name: `fluid.fetch for URL ${url}`}).computed(load, []);
     };
 
     /**

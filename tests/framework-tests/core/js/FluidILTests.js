@@ -3510,3 +3510,300 @@ QUnit.test("Values read by a method invoked from an effect are not its dependenc
         fluid.cell.reportCycle = oldReport;
     }
 });
+
+fluid.def("fluid.tests.writeThroughSource", {
+    $layers: "fluid.component",
+    state: {$reactiveRoot: {pane: "intro"}},
+    todos: {$reactiveRoot: [{text: "one"}, {text: "two"}]},
+    reader: {
+        $component: {
+            $layers: "fluid.component",
+            pane: "{writeThroughSource}.state.pane",
+            region: "{writeThroughSource}.state.region",
+            panes: [],
+            record: "$effect:fluid.tests.writeThroughSource.record({self}, {self}.pane)"
+        }
+    },
+    items: {
+        $component: {
+            $layers: "fluid.component",
+            $for: {
+                source: "{writeThroughSource}.todos",
+                valueAs: "todo"
+            }
+        }
+    }
+});
+
+fluid.tests.writeThroughSource.record = (that, pane) => that.panes.push(pane);
+
+QUnit.test("A write to a member defined by a reference is applied to its source", function (assert) {
+    const that = fluid.tests.writeThroughSource();
+    fluid.cell.stabilize();
+    const reader = that.reader;
+    reader.pane = "history";
+    fluid.cell.stabilize();
+    assert.equal(that.state.pane, "history", "Write to the member is applied to the source");
+    assert.equal(reader.pane, "history", "Member holds the written value");
+    that.state.pane = "solow";
+    fluid.cell.stabilize();
+    assert.equal(reader.pane, "solow", "Member still follows its source after being written");
+    assert.deepEqual([...reader.panes], ["intro", "history", "solow"], "Each value seen once");
+    reader.region = "north";
+    fluid.cell.stabilize();
+    assert.deepEqual({...that.state}, {pane: "solow", region: "north"}, "Write to a member the source lacks adds it to the source");
+
+    that.items.list[1].todo = {text: "replaced"};
+    fluid.cell.stabilize();
+    assert.deepEqual(that.todos.map(todo => todo.text), ["one", "replaced"], "Write to an iteration variable replaces the element of its source");
+    that.destroy();
+});
+
+/** $lens **/
+
+// A range of numbers held in a parent as {lower, upper}, or null for the whole of its bounds, viewed by its child as
+// {min, max} through a lens - as for an elevation filter and its dual range input
+fluid.def("fluid.tests.lensedRange", {
+    $layers: "fluid.component",
+    bounds: {lower: 0, upper: 100},
+    filterState: null,
+    // The range as seen through the lens, as read by a computation
+    rangeSeen: "$compute:fluid.identity({self}.input.range)",
+    input: {
+        $component: {
+            $layers: "fluid.component",
+            minRange: "{lensedRange}.bounds.lower",
+            maxRange: "{lensedRange}.bounds.upper",
+            range: {
+                $reactiveRoot: {min: null, max: null},
+                min: "{self}.minRange",
+                max: "{self}.maxRange"
+            }
+        }
+    }
+});
+
+fluid.def("fluid.tests.lensedRange.lensed", {
+    input: {
+        $component: {
+            range: {
+                $lens: {
+                    source: "{lensedRange}.filterState",
+                    forward: "fluid.tests.lensedRange.toRange({0}, {self}.minRange, {self}.maxRange)",
+                    backward: "fluid.tests.lensedRange.toState({0}, {self}.minRange, {self}.maxRange)"
+                }
+            }
+        }
+    }
+});
+
+fluid.tests.lensedRange.toRange = (state, min, max) => state ? {min: state.lower, max: state.upper} : {min, max};
+
+fluid.tests.lensedRange.toState = (range, min, max) => range.min === min && range.max === max ? null : {lower: range.min, upper: range.max};
+
+QUnit.test("A $lens laid over a reactive root relates it to its source in both directions", function (assert) {
+    const that = fluid.tests.lensedRange({$layers: "fluid.tests.lensedRange.lensed"});
+    fluid.cell.stabilize();
+    assert.deepEqual({...that.input.range}, {min: 0, max: 100}, "Lens follows the bounds whilst the source holds no state");
+    that.input.range.min = 20;
+    fluid.cell.stabilize();
+    assert.deepEqual(that.filterState, {lower: 20, upper: 100}, "Write beneath the lens is applied to its source through the backward arc");
+    assert.deepEqual({...that.input.range}, {min: 20, max: 100}, "Lens follows its source along the forward arc");
+    assert.deepEqual({...that.rangeSeen}, {min: 20, max: 100}, "Computation reading the lens is notified");
+    that.filterState = {lower: 30, upper: 60};
+    fluid.cell.stabilize();
+    assert.deepEqual({...that.input.range}, {min: 30, max: 60}, "Write to the source is seen through the lens");
+    that.input.range = {min: 0, max: 100};
+    fluid.cell.stabilize();
+    assert.equal(that.filterState, null, "Write of the whole lens restores the source's empty state");
+    that.destroy();
+});
+
+// A source held in a resolveRoot's reactive root, reached through a reference, and viewed through two lenses in turn
+fluid.def("fluid.tests.lensStore", {
+    $layers: "fluid.resolveRoot",
+    store: {
+        $reactiveRoot: {}
+    }
+});
+
+fluid.def("fluid.tests.lensChain", {
+    $layers: "fluid.component",
+    // The store's encoding of a set of keys as a comma-separated string
+    keys: {
+        $lens: {
+            source: "{lensStore}.store",
+            forward: "fluid.tests.lensChain.decode({0})",
+            backward: "fluid.tests.lensChain.encode({0}, {lensStore}.store)"
+        }
+    },
+    first: {
+        $lens: {
+            source: "{self}.keys",
+            forward: "fluid.tests.lensChain.first({0})",
+            backward: "fluid.tests.lensChain.withFirst({0}, {self}.keys)"
+        }
+    }
+});
+
+fluid.tests.lensChain.decode = store => store.keys ? Object.fromEntries(store.keys.split(",").map(key => [key, true])) : {};
+
+fluid.tests.lensChain.encode = (keys, store) => ({...store, keys: Object.keys(keys).filter(key => keys[key]).join(",") || undefined});
+
+fluid.tests.lensChain.first = keys => Object.keys(keys)[0] || null;
+
+fluid.tests.lensChain.withFirst = (first, keys) => ({[first]: true, ...keys});
+
+QUnit.test("A write through a chain of lenses reaches the site of the first lens's source", function (assert) {
+    const store = fluid.tests.lensStore();
+    const that = fluid.tests.lensChain();
+    fluid.cell.stabilize();
+    assert.deepEqual({...that.keys}, {}, "Empty store decodes to no keys");
+    that.keys.b = true;
+    fluid.cell.stabilize();
+    assert.equal(store.store.keys, "b", "Write beneath a lens over a resolveRoot's reactive root is encoded into it");
+    that.first = "a";
+    fluid.cell.stabilize();
+    assert.equal(store.store.keys, "a,b", "Write to a lens over a lens passes through both backward arcs");
+    assert.deepEqual({...that.keys}, {a: true, b: true}, "Intermediate lens follows the store");
+    store.store = {keys: "c"};
+    fluid.cell.stabilize();
+    assert.equal(that.first, "c", "Write to the store is seen through both lenses");
+    that.destroy();
+    store.destroy();
+});
+
+fluid.def("fluid.tests.siteEdgeHolder", {
+    $layers: "fluid.component",
+    child: {
+        $component: {
+            $layers: "fluid.component"
+        }
+    }
+});
+
+QUnit.test("Relations made from a site are keyed by its path, replaced on turnover and torn down with their component", function (assert) {
+    // A relation made onto a cell which already holds a value is trusted to agree with it, and is not run until a source
+    // changes - this one is fresh
+    const target = fluid.cell(undefined, {name: "target"});
+    const that = fluid.tests.siteEdgeHolder();
+    const shadow = that.child[fluid.metadataSymbol];
+    const first = fluid.cell(1, {name: "first"});
+    fluid.attachSiteEdge(shadow, ["arc"], target, x => x * 10, [first]);
+    assert.equal(target.get(), 10, "Relation from the site drives the target");
+    assert.equal(fluid.siteEdgeKey(shadow, ["arc"]), shadow.path + ":arc", "Key is the site's path in the component tree");
+    // As if the component turned over and allocated a fresh cell at the site
+    const second = fluid.cell(2, {name: "second"});
+    fluid.attachSiteEdge(shadow, ["arc"], target, x => x * 100, [second]);
+    assert.equal(target._inEdges.length, 1, "Relation made afresh from the same site replaces the first");
+    assert.equal(target.get(), 200, "Fresh relation drives the target");
+    fluid.attachSiteEdge(shadow, ["other"], target, x => x + 1, [first]);
+    assert.equal(target._inEdges.length, 2, "Relation from another site stands beside it");
+    fluid.detachSiteEdge(shadow, ["other"]);
+    assert.equal(target._inEdges.length, 1, "Relation detached by its site");
+    that.destroy();
+    fluid.cell.stabilize();
+    assert.equal(target._inEdges.length, 0, "Relation torn down when its component is destroyed");
+    second.set(3);
+    assert.equal(target.get(), 200, "Target no longer follows the destroyed component's source");
+});
+
+QUnit.test("fluid.deproxyUnavailable recovers the unavailable value fronted by any proxy", function (assert) {
+    const unavailable = fluid.unavailable({message: "Not here", variety: "pending"});
+    assert.equal(fluid.deproxyUnavailable(unavailable), unavailable, "An unavailable value which is not a proxy is returned as it is");
+    const proxy = fluid.unavailableProxy(unavailable);
+    assert.ok(fluid.isUnavailable(proxy), "The proxy of an unavailable value reads as unavailable");
+    assert.equal(fluid.deproxyUnavailable(proxy), unavailable, "The proxy of an unavailable value is unwrapped");
+    assert.equal(fluid.deproxyUnavailable(proxy).variety, "pending", "Its members may then be read");
+    const plain = {variety: "pending"};
+    assert.equal(fluid.deproxyUnavailable(plain), plain, "A value which fronts no unavailable value is returned as it is");
+});
+
+// A lens viewing a store whose value may become unavailable, e.g. whilst it is being loaded
+fluid.def("fluid.tests.pendingLens", {
+    $layers: "fluid.component",
+    range: {
+        $lens: {
+            source: "{lensStore}.store",
+            forward: "fluid.tests.pendingLens.copy({0})",
+            backward: "fluid.tests.pendingLens.copy({0})"
+        }
+    }
+});
+
+fluid.tests.pendingLens.copy = range => ({...range});
+
+QUnit.test("A cell holding the proxy of a member whose material becomes unavailable can update", function (assert) {
+    const store = fluid.tests.lensStore();
+    store.store = {lower: 1, upper: 5};
+    const that = fluid.tests.pendingLens();
+    fluid.cell.stabilize();
+    // A cell whose value is the proxy of the lensed member, as a cell holds the range of a dual range input. When it
+    // updates, it reads the stale value of its old value should that read as unavailable
+    const holder = fluid.cell(undefined, {name: "Holder of range proxy"}).computed(() => that.range);
+    assert.equal(holder.get().upper, 5, "Cell holds the proxy of the member");
+    store.store = fluid.unavailable({message: "Store is being loaded", variety: "pending"});
+    let updated;
+    try {
+        updated = holder.get();
+    } catch (error) {
+        updated = error;
+    }
+    assert.ok(!(updated instanceof Error), "Cell updates without failing once the member's material is unavailable - " + updated);
+    assert.ok(fluid.isUnavailable(updated), "Proxy of the member reads as unavailable");
+    assert.ok(fluid.isUnavailable(store.store), "Updating the cell leaves the store's own unavailable value as it was");
+    assert.equal(fluid.deproxyUnavailable(updated).variety, "pending", "The unavailable value fronted by the member's proxy is recovered");
+    assert.equal(fluid.deproxyUnavailable(store.store).message, "Store is being loaded",
+        "The unavailable value fronted by a proxy onto the material of a component is recovered");
+    store.store = {lower: 2, upper: 8};
+    fluid.cell.stabilize();
+    assert.equal(holder.get().upper, 8, "Cell holds the member again once its material is available");
+    that.destroy();
+    store.destroy();
+});
+
+// A lens which owns a single address within a store shared with other members
+fluid.def("fluid.tests.addressLens", {
+    $layers: "fluid.component",
+    storeKey: "keys",
+    keys: {
+        $lens: {
+            source: "{lensStore}.store",
+            path: "{self}.storeKey",
+            forward: "fluid.tests.addressLens.decode({0})",
+            backward: "fluid.tests.addressLens.encode({0})"
+        }
+    }
+});
+
+fluid.tests.addressLens.decode = text => text ? Object.fromEntries(text.split(",").map(key => [key, true])) : {};
+fluid.tests.addressLens.encode = keys => Object.keys(keys).filter(key => keys[key]).join(",") || fluid.deleteMarker;
+
+QUnit.test("A lens with a path owns only its address, and writes through its registered address writer", function (assert) {
+    const store = fluid.tests.lensStore();
+    store.store = {keys: "a", other: "x"};
+    const that = fluid.tests.addressLens();
+    fluid.cell.stabilize();
+    assert.deepEqual({...that.keys}, {a: true}, "Lens views the value at its address");
+    const sources = [];
+    const writer = fluid.siteWriterOf(that[fluid.metadataSymbol], ["keys"]);
+    assert.equal(writer.key, fluid.siteEdgeKey(that[fluid.metadataSymbol], ["keys"]), "Writer registered under the lens's site key");
+    const storeCell = fluid.pathToLive(store[fluid.metadataSymbol], "store");
+    const watcher = fluid.cell.effect(() => {
+        sources.push(fluid.cell.findFit(watcher)?.sources.slice() || []);
+    }, [storeCell]);
+    that.keys.b = true;
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.copy(store.store), {keys: "a,b", other: "x"}, "Write leaves the store's other members as they were");
+    assert.ok(fluid.peek(sources).includes(writer.key), "Write carries the writer's key as its source");
+    assert.equal(writer.lastWrite.value, "a,b", "Writer records its last write");
+    that.keys = {};
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.copy(store.store), {other: "x"}, "Backward arc returning the delete marker removes the address");
+    store.store = {keys: "c", other: "y"};
+    fluid.cell.stabilize();
+    assert.deepEqual({...that.keys}, {c: true}, "Write to the store is seen through the lens");
+    watcher.dispose();
+    that.destroy();
+    store.destroy();
+});

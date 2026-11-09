@@ -43,6 +43,8 @@
         "test:browser": "node tests/test-core/browser/js/demo-runner.js",
         "test:browser-qunit": "node tests/test-core/browser/js/qunit-browser-runner.js",
         "hydrate-test": "node tests/framework-tests/server/hydrate-test.js",
+        "hydrate-roundtrip-test": "node tests/framework-tests/server/hydrate-roundtrip-test.js",
+        "copyout-test": "node tests/framework-tests/server/copyout-test.js",
         "output-documents-test": "node tests/framework-tests/server/output-documents-test.js"
     },
     "engines": {

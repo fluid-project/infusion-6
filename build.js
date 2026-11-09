@@ -20,7 +20,12 @@ const parseDocument = function (path) {
 };
 
 
+// The files a page loads to boot Infusion, as listed by its bootstrap
+const fluidBoot = require("./src/framework/core/js/FluidBoot.js");
+
 const buildIndex = {
+    // Bundled as the "built" form of a page's bootstrap - see fluid.writeBootScript in server-support.js
+    bootSource: fluidBoot.files,
     coreSource: [
         "src/framework/core/js/FluidCore.js",
         "src/framework/core/js/FluidSignals.js",
@@ -210,8 +215,13 @@ const doBuild = async function (buildIndex) {
     });
 
     await makeJSBundle(buildIndex, "coreSource", "fluid.core.min.js");
+    await makeJSBundle(buildIndex, "bootSource", fluidBoot.builtFile.replace(/^dist\//, ""));
 };
 
-doBuild(buildIndex).then(null, function (error) {
-    console.log(error);
-});
+if (require.main === module) {
+    doBuild(buildIndex).then(null, function (error) {
+        console.log(error);
+    });
+}
+
+module.exports = {buildIndex, makeJSBundle};

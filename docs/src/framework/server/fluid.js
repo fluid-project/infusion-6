@@ -57,7 +57,11 @@ const context = vm.createContext({
     process: process, // Enable straightforward ContextAwareness check
     require: require,
     URL: URL,
-    fetch: nodeFetch
+    // As in a browser, a relative URL is resolved against the document - here the document most recently booted, see
+    // fluid.loadAndBootDocument in server-support.js
+    fetch: (url, options) => nodeFetch(context.fluid.resolveServerFetchUrl(url), options),
+    // Node runs no script in a document's markup, nor any payload for the browser alone - see fluid.hostRunsMarkupScripts
+    fluidHost: {runsMarkupScripts: false, evaluatesClientScripts: false}
 });
 
 context.window = context;

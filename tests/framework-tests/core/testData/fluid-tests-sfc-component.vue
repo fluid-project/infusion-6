@@ -23,3 +23,8 @@ fluid.def("fluid.tests.sfc.component", {
     color: rgb(255, 0, 0);
 }
 </style>
+<symbols>
+    <symbol id="fluid-tests-sfc-chevron" viewBox="0 0 16 16">
+        <path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    </symbol>
+</symbols>

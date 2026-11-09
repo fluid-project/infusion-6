@@ -624,3 +624,25 @@ QUnit.test("A source made stale again whilst a later source is brought up to dat
     assert.equal(both.get(), "20:go", "Both sources' current values received");
     assert.equal(both.get(), "20:go", "And held");
 });
+
+QUnit.test("Edges identified by an explicit key", function (assert) {
+    const a = fluid.cell(1, {name: "a"}), b = fluid.cell(10, {name: "b"});
+    const target = fluid.cell(undefined, {name: "target"});
+    target.computed(x => x + 1, [a], {key: "site"});
+    assert.equal(target.get(), 2, "Edge with explicit key computes");
+    target.computed(x => x + 2, [b], {key: "site"});
+    assert.equal(target._inEdges.length, 1, "Edge with the same key but different sources replaces the first");
+    assert.equal(target.get(), 12, "Replacing edge computes from its own sources");
+    a.set(5);
+    assert.equal(target.get(), 12, "Replaced edge's source no longer drives the cell");
+    target.computed(x => x * 2, [b]);
+    assert.equal(target._inEdges.length, 2, "An edge keyed by its first source stands beside one with an explicit key, even sharing that source");
+    target.computed(x => x + 1, [a]);
+    target.computed(x => x + 3, [a]);
+    assert.equal(target._inEdges.length, 3, "Re-establishing an edge with the same key does not duplicate it");
+    target.get();
+    target.computed(null, null, {key: "site"});
+    assert.equal(target._inEdges.length, 2, "Edge torn down by its explicit key");
+    b.set(20);
+    assert.equal(target.get(), 40, "Remaining edge keyed by its source drives the cell");
+});

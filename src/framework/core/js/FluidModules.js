@@ -39,21 +39,57 @@ fluid.module.register = function (name, url, origUrl, abs) {
     };
 };
 
+// A module reference, `%name/rest`, where the name may be that of a scoped npm package, e.g. `%@mapbox/mapbox-gl-draw/`
+fluid.module.refRegex = /^%((?:@[^/]+\/)?[^/]+)\/(.*)$/;
+
+/**
+ * A function which is consulted for a module which is referred to but has not been registered, and which may register
+ * it - e.g. as installed by copyOut.js, which finds the module's source where node would find the package of that
+ * name. Otherwise `null`, and a module is known only once registered, e.g. by `<fluid-module>` or a module map
+ * @type {Function|null}
+ */
+fluid.module.unregisteredResolver = null;
+
+/**
+ * Look up the record of a registered module, consulting `fluid.module.unregisteredResolver` if it is not registered
+ * @param {String} name - The name of the module
+ * @return {Object|undefined} The module's record, with members `url`, `origUrl` and `abs`, if it is registered
+ */
+fluid.module.lookup = function (name) {
+    if (!fluid.module.modules[name] && fluid.module.unregisteredResolver) {
+        fluid.module.unregisteredResolver(name);
+    }
+    return fluid.module.modules[name];
+};
+
+/**
+ * Register the modules listed in a module map - an object mapping the name of each module to its directory, relative
+ * to the map's own URL. A module already registered, e.g. by `<fluid-module>`, keeps its registration.
+ * @param {String} mapUrl - The absolute URL of the map
+ * @param {Object<String, String>} map - The map
+ */
+fluid.module.registerMap = function (mapUrl, map) {
+    Object.entries(map).forEach(([name, dir]) => {
+        if (!fluid.module.modules[name]) {
+            const abs = /^[a-z][a-z0-9+.-]*:/i.test(dir);
+            const url = abs ? dir.replace(/\/$/, "") : new URL(dir.replace(/\/$/, "") + "/", mapUrl).href.replace(/\/$/, "");
+            fluid.module.register(name, url, dir, abs);
+        }
+    });
+};
+
 /**
  * Resolves a path expression that may begin with a module reference of the form `%moduleName/`
  * into an absolute path using the database of base directories registered with `fluid.module.register`.
- * If the path does not begin with a module reference, it is returned unchanged.
- *
- * This function:
- * - Retrieves the mapping of registered module base paths.
- * - Interpolates the module reference in the input path using the registered paths.
+ * If the path does not begin with a reference to a known module, it is returned unchanged.
  *
  * @param {String} path - The path expression to resolve, possibly containing a module reference.
  * @return {String} The resolved absolute path, or the original path if no module reference is present.
  */
 fluid.module.resolvePath = function (path) {
-    const terms = fluid.getMembers(fluid.module.modules, "url");
-    return fluid.percStringTemplate(path, terms);
+    const match = fluid.module.refRegex.exec(path);
+    const moduleRecord = match && fluid.module.lookup(match[1]);
+    return moduleRecord ? moduleRecord.url + "/" + match[2] : path;
 };
 
 /**
@@ -65,14 +101,12 @@ fluid.module.resolvePath = function (path) {
  * @return {String} The resolved path, or the original path if no module reference is present.
  */
 fluid.module.resolveRelativePath = function (base, path) {
-    const moduleRefRegex = /^%([^/]+)\/(.*)$/;
-    const match = moduleRefRegex.exec(path);
+    const match = fluid.module.refRegex.exec(path);
 
     if (match) {
         const moduleName = match[1];
         const rest = match[2];
-        const moduleRecord = fluid.module.modules[moduleName];
-
+        const moduleRecord = fluid.module.lookup(moduleName);
         if (moduleRecord) {
             const moduleBase = moduleRecord.url;
 

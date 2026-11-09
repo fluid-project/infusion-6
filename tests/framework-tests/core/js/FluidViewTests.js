@@ -169,9 +169,10 @@ fluid.def("fluid.tests.nestedInner", {
     }
 });
 
+// The container's own class is kept, after that of the template's root, which is elided onto it
 fluid.tests.nestedExpect = {
     $tagName: "div",
-    "class": "outer",
+    "class": "outer container",
     $children: {
         $tagName: "div",
         "class": "outerInner",
@@ -1233,7 +1234,7 @@ QUnit.test("Cross-injected views - FLUID-7020", function (assert) {
     const viewShadow = that.view1.view[fluid.metadataSymbol];
     const view2Shadow = that.view2[fluid.metadataSymbol];
 
-    assert.assertNode(container, {$tagName: "div", "class": "first", $nodeValue: "First"}, "First component's view rendered into its container");
+    assert.assertNode(container, {$tagName: "div", "class": "first container", $nodeValue: "First"}, "First component's view rendered into its container");
     assert.equal(qsa(".second", container).length, 0, "Second component's own template is not rendered");
 
     assert.equal(that.view, that.view1.view, "Outer component's view is the first component's view");
@@ -1250,7 +1251,7 @@ QUnit.test("Cross-injected views - FLUID-7020", function (assert) {
 
     that.view1.text = "Updated";
     fluid.cell.stabilize();
-    assert.assertNode(container, {$tagName: "div", "class": "first", $nodeValue: "Updated"}, "Shared view rerenders on update");
+    assert.assertNode(container, {$tagName: "div", "class": "first container", $nodeValue: "Updated"}, "Shared view rerenders on update");
 
     that.view1.destroy();
     fluid.cell.stabilize();
@@ -2255,5 +2256,261 @@ QUnit.test("An effect excluding \"self\" is not notified of changes its own comp
     that.level = 5;
     assert.deepEqual(takeMirrored(), [["A", "level", 5], ["B", "level", 5], ["A", "doubled", 10]],
         "Both widgets mirror a change originated elsewhere");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.assignThroughSubcomponent", {
+    $layers: "fluid.component",
+    open: false,
+    state: {
+        $reactiveRoot: {colour: "white"}
+    },
+    panel: {
+        $component: {
+            $layers: "fluid.component",
+            shown: false
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div>
+                <button class="show" @onclick="{self}.panel.shown = true">Show</button>
+                <button class="toggle" @onclick="{self}.panel.shown = !{self}.panel.shown">Toggle</button>
+                <button class="own" @onclick="{self}.open = true">Open</button>
+                <button class="colour" @onclick="{self}.state.colour = crimson">Colour</button>
+                <span class="shown">@{panel.shown}</span>
+            </div>`
+        }
+    }
+});
+
+QUnit.test("Event assignment to a path passing through a subcomponent writes into the subcomponent", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.assignThroughSubcomponent({container});
+    fluid.cell.stabilize();
+    const click = selector => {
+        qs(selector, container).dispatchEvent(new MouseEvent("click", {bubbles: true}));
+        fluid.cell.stabilize();
+    };
+    click(".show");
+    assert.equal(that.panel.shown, true, "Assignment written into the subcomponent");
+    assert.equal(qs(".shown", container).textContent, "true", "Binding to the subcomponent's member updated");
+    click(".toggle");
+    assert.equal(that.panel.shown, false, "Negated assignment through the subcomponent toggles its member");
+    click(".own");
+    assert.equal(that.open, true, "Assignment to a member of the component itself is unaffected");
+    click(".colour");
+    assert.equal(that.state.colour, "crimson", "Assignment beneath a reactive root is unaffected");
+    that.destroy();
+});
+
+// Merging of the classes of a container written both by the element bearing @id in its parent's template, and by the
+// root of its own template elided onto it - either may re-render without the other, in either order
+
+fluid.tests.classMerge = {
+    // A bound class of the element bearing @id is written by interpolation - a @class on it belongs to the child's
+    // placeholder template
+    parentTemplate: variant => `<div class="wrap"><span @id="child" class="slot slot-${variant} @{pClass}"></span><i>${variant}</i></div>`,
+    pClass: pOn => pOn ? "p-on" : "",
+    childTemplate: variant => `<span class="kid kid-${variant}" @class="c-on:@{cOn}">${variant}</span>`
+};
+
+fluid.def("fluid.tests.classMerge", {
+    $layers: "fluid.component",
+    variant: "a",
+    pOn: false,
+    pClass: "$compute:fluid.tests.classMerge.pClass({self}.pOn)",
+    child: {
+        $component: {
+            $layers: "fluid.component",
+            variant: "a",
+            cOn: false,
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: "$compute:fluid.tests.classMerge.childTemplate({$parent}.variant)"
+                }
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "$compute:fluid.tests.classMerge.parentTemplate({$parent}.variant)"
+        }
+    }
+});
+
+/**
+ * Render a fresh instance in a given state, and report the class attributes of its elements
+ * @param {Object} state - Members `variant`, `pOn`, and `child`, holding `variant` and `cOn`
+ * @return {Object} Members `slot` and `wrap`, the class attributes of the container of the child and of the root
+ */
+fluid.tests.classMerge.freshClasses = function (state) {
+    const container = document.createElement("div");
+    qs(".container").appendChild(container);
+    const that = fluid.tests.classMerge({container, variant: state.variant, pOn: state.pOn,
+        child: {$component: {variant: state.child.variant, cOn: state.child.cOn}}});
+    fluid.cell.stabilize();
+    const togo = {slot: qs(".slot", container).getAttribute("class"), wrap: container.getAttribute("class")};
+    that.destroy();
+    container.remove();
+    return togo;
+};
+
+QUnit.test("Classes of a container are merged from its parent's template and its own, in any order of rendering", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.classMerge({container});
+    fluid.cell.stabilize();
+    const slot = () => qs(".slot", container);
+    const slotClass = () => slot().getAttribute("class");
+    assert.equal(slotClass(), "slot slot-a kid kid-a", "Classes of the parent's template and the child's root merged");
+    assert.equal(container.getAttribute("class"), "wrap container", "Container's own class kept beside its template root's");
+    const element = slot();
+
+    that.variant = "b";
+    fluid.cell.stabilize();
+    assert.equal(slotClass(), "slot slot-b kid kid-a", "Parent re-rendering alone keeps the child's classes");
+    assert.equal(slot(), element, "Container element kept");
+
+    that.child.variant = "b";
+    fluid.cell.stabilize();
+    assert.equal(slotClass(), "slot slot-b kid kid-b", "Child re-rendering alone keeps the parent's classes");
+
+    that.pOn = true;
+    fluid.cell.stabilize();
+    assert.equal(slotClass(), "slot slot-b p-on kid kid-b", "Bound class of the parent's template merged");
+    that.child.cOn = true;
+    fluid.cell.stabilize();
+    assert.equal(slotClass(), "slot slot-b p-on kid kid-b c-on", "Bound class of the child's root merged");
+
+    slot().classList.add("widget");
+    that.variant = "c";
+    that.child.variant = "c";
+    fluid.cell.stabilize();
+    assert.equal(slotClass(), "slot slot-c p-on kid kid-c c-on widget", "Class added by another agent kept through re-rendering of both, after those of the templates");
+
+    that.pOn = false;
+    fluid.cell.stabilize();
+    that.child.cOn = false;
+    that.variant = "d";
+    fluid.cell.stabilize();
+    assert.equal(slotClass(), "slot slot-d kid kid-c widget", "Classes no longer written are removed, and others kept");
+    assert.equal(slot(), element, "Container element kept throughout");
+
+    // The same final state reached by the opposite order of changes
+    const other = document.createElement("div");
+    container.appendChild(other);
+    const reversed = fluid.tests.classMerge({container: other});
+    fluid.cell.stabilize();
+    reversed.child.cOn = true;
+    reversed.child.variant = "c";
+    fluid.cell.stabilize();
+    reversed.pOn = true;
+    reversed.variant = "d";
+    fluid.cell.stabilize();
+    reversed.child.cOn = false;
+    fluid.cell.stabilize();
+    reversed.pOn = false;
+    fluid.cell.stabilize();
+    assert.equal(qs(".slot", other).getAttribute("class"), "slot slot-d kid kid-c", "Opposite order of re-rendering gives the same classes");
+    reversed.destroy();
+    other.remove();
+
+    const fresh = fluid.tests.classMerge.freshClasses({variant: "d", pOn: false, child: {variant: "c", cOn: false}});
+    assert.equal(fresh.slot, "slot slot-d kid kid-c", "A fresh rendering in the same state gives the same classes");
+    that.destroy();
+});
+
+QUnit.test("Classes of claimed markup from an earlier rendering are rewritten, dropping any no longer written", function (assert) {
+    const container = qs(".container");
+    const first = fluid.tests.classMerge({container, pOn: true, child: {$component: {cOn: true}}});
+    fluid.cell.stabilize();
+    const markup = container.innerHTML;
+    first.destroy();
+    assert.ok(markup.includes("class=\"slot slot-a p-on kid kid-a c-on\""), "Earlier rendering holds the bound classes");
+
+    // A host with a class of its own, rendered into as by a static build, which records the class as the host's own
+    const builtHost = document.createElement("div");
+    builtHost.setAttribute("class", "host");
+    container.appendChild(builtHost);
+    const built = fluid.tests.classMerge({container: builtHost, pOn: true, child: {$component: {cOn: true}}});
+    fluid.cell.stabilize();
+    assert.equal(builtHost.getAttribute("fluid-own-class"), "host", "Own class of a fresh container recorded");
+    const hostMarkup = builtHost.outerHTML;
+    built.destroy();
+    builtHost.remove();
+
+    // As for a page written by a static build, then booted in a state in which the bound classes are off
+    const holder = document.createElement("div");
+    holder.innerHTML = hostMarkup;
+    const host = holder.firstElementChild;
+    container.appendChild(host);
+    const staticSlot = qs(".slot", host);
+    const that = fluid.tests.classMerge({container: host});
+    fluid.cell.stabilize();
+    assert.equal(qs(".slot", host), staticSlot, "Container of the child claimed from the markup");
+    assert.equal(staticSlot.getAttribute("class"), "slot slot-a kid kid-a", "Classes no longer written dropped from claimed markup");
+    assert.equal(host.getAttribute("class"), "wrap host", "Own class of a claimed container kept");
+    that.child.variant = "b";
+    fluid.cell.stabilize();
+    assert.equal(staticSlot.getAttribute("class"), "slot slot-a kid kid-b", "Claimed container merges thereafter");
+    that.destroy();
+    host.remove();
+});
+
+fluid.def("fluid.tests.pendingClass", {
+    $layers: "fluid.component",
+    extra: fluid.unavailable({message: "Pending I/O", variety: "pending"}),
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="box @{extra}"><span class="inner">Text</span></div>`
+        }
+    }
+});
+
+QUnit.test("An interpolated class whose value is pending contributes no classes, rather than an error", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.pendingClass({container});
+    fluid.cell.stabilize();
+    assert.ok(qs(".inner", container), "Element rendered whilst its class is pending");
+    assert.equal(qsa(".fl-error", container).length, 0, "No error rendered");
+    assert.equal(container.getAttribute("class"), "container", "Pending binding contributes no classes");
+    that.extra = "ready";
+    fluid.cell.stabilize();
+    assert.equal(container.getAttribute("class"), "box ready container", "Classes contributed once available");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.foreignAttrs", {
+    $layers: "fluid.component",
+    variant: "a",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "$compute:fluid.tests.foreignAttrs.template({$parent}.variant)"
+        }
+    }
+});
+
+fluid.tests.foreignAttrs.template = variant => variant === "a" ?
+    `<div><input class="field" title="first" data-variant="a"/><span>a</span></div>` :
+    `<div><input class="field" data-variant="b"/><span>b</span></div>`;
+
+QUnit.test("Attributes written by other agents survive re-rendering, whilst those a template ceases to write are removed", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.foreignAttrs({container});
+    fluid.cell.stabilize();
+    const input = qs(".field", container);
+    // As a widget might mark an element of the template
+    input.setAttribute("data-ready", "true");
+    that.variant = "b";
+    fluid.cell.stabilize();
+    assert.equal(qs(".field", container), input, "Element reused on re-rendering");
+    assert.equal(input.getAttribute("data-ready"), "true", "Attribute written by another agent survives re-rendering");
+    assert.notOk(input.hasAttribute("title"), "Attribute the template no longer writes is removed");
+    assert.equal(input.getAttribute("data-variant"), "b", "Attribute the template writes is updated");
     that.destroy();
 });

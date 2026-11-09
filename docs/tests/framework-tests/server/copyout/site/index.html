@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Copy out</title>
+        <!-- A page of a project which depends on two modules, whose files copyout-test.js copies into the project from
+             their checkouts - Infusion itself, located by its bootstrap, and the Single File Components of the round
+             trip fixture, located by the module map. Its data is its own -->
+        <!-- The one reference to the location of Infusion - every other is relative, or through a module -->
+        <script src="vendor/infusion/src/framework/core/js/FluidBoot.js"></script>
+        <!-- The module holding the page, and its map of the modules it depends upon, which copyOut.js writes -->
+        <fluid-module id="fluid-tests-copyout-site" src="./" modules="fluid-modules.json"></fluid-module>
+        <fluid-import src="%fluid-tests-rt/sfc/fluid-tests-rt-app.vue"></fluid-import>
+    </head>
+    <body>
+        <div fluid-layers="fluid.tests.rt.app"></div>
+    </body>
+</html>

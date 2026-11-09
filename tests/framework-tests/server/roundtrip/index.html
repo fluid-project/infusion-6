@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Hydration round trip</title>
+        <!-- A minimal page for hydrate-roundtrip-test.js - it names its root Single File Component, and holds no markup of
+             its own -->
+        <!-- The one reference to the location of Infusion - every other is relative, or through a module -->
+        <script src="../../../../src/framework/core/js/FluidBoot.js"></script>
+        <!-- The module holding the page, and its map of the modules it depends upon -->
+        <fluid-module id="fluid-tests-rt" src="./" modules="fluid-modules.json"></fluid-module>
+        <fluid-import src="sfc/fluid-tests-rt-app.vue"></fluid-import>
+    </head>
+    <body>
+        <div fluid-layers="fluid.tests.rt.app"></div>
+    </body>
+</html>

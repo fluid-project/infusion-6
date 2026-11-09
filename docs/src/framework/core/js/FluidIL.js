@@ -1163,31 +1163,58 @@ const $fluidILScope = function (fluid) {
      * reactive root of a user component, as is done for the mutating methods of an array
      * @return {Cell<Object>} Signal for the value at the updated path, which will now have been raised into the live layer
      */
+    /**
+     * Resolve a path written into a component which may pass through its subcomponents, e.g. "shell.fullScreen" written
+     * into a component with a subcomponent `shell`, to the component which holds the path's final member and the
+     * remainder of the path within it. The path descends into a subcomponent for as long as its leading segment names
+     * one, so that the final segment is always left to be written.
+     * @param {ComponentComputer} component - The component into which the path is written
+     * @param {String|String[]} path - The path
+     * @return {Object} Members `component`, the component holding the path's final member, and `segs`, the path within it
+     */
+    fluid.descendSubcomponentPath = function (component, path) {
+        let shadow = component[$m];
+        let segs = fluid.pathToSegs(path);
+        while (segs.length > 1 && shadow.childComponents?.[segs[0]]) {
+            shadow = shadow.childComponents[segs[0]];
+            segs = segs.slice(1);
+        }
+        return {component: shadow === component[$m] ? component : fluid.deSignal(shadow.availableInstance), segs};
+    };
+
     fluid.setForComponent = function (component, path, inValue, options = {}) {
         const value = fluid.deproxyMat(inValue);
         const segs = fluid.pathToSegs(path),
             shadow = component[$m];
-        const reactiveSegs = fluid.findReactiveRoot(shadow.shadowMap, segs);
+        // A write at or beneath a lens is applied to its source rather than held here
+        const lensSite = fluid.findLensSite(shadow, segs);
+        let togo;
+        if (lensSite) {
+            togo = fluid.putThroughLens(lensSite.lens, segs.slice(lensSite.length), value);
+        } else {
+            const reactiveSegs = fluid.findReactiveRoot(shadow.shadowMap, segs);
 
-        const existing = fluid.pathToLive(shadow, reactiveSegs || segs);
-        const existingValue = existing._value;
+            const existing = fluid.pathToLive(shadow, reactiveSegs || segs);
+            const existingValue = existing._value;
 
-        const surplusSegs = reactiveSegs && segs.slice(reactiveSegs.length, segs.length);
-        const updated = reactiveSegs ? fluid.setImmutable(existingValue, surplusSegs, value) : value;
-        if (updated !== existingValue) {
-            existing.set(updated);
-            // Writes beneath a reactive root of a user component are recorded at the whole of the root. Writes to its
-            // other members are not, since its reactive roots alone are the state which navigating its history restores
-            // - e.g. the editor records its open tabs but not which of them is selected
-            if (options.recordHistory || reactiveSegs && fluid.isUserLayer(fluid.peek(component.$layers))) {
-                // We'd like this to be asynchronous but then source tracking breaks down
-                //fluid.invokeLater(() => {
-                const layerName = fluid.renderSite({shadow, segs: reactiveSegs || segs});
-                fluid.history.push({type: "updateLayer", oldValue: existingValue, newValue: updated, layerName});
-                //});
+            const surplusSegs = reactiveSegs && segs.slice(reactiveSegs.length, segs.length);
+            const updated = reactiveSegs ? fluid.setImmutable(existingValue, surplusSegs, value) : value;
+            if (updated !== existingValue) {
+                existing.set(updated);
+                // Writes beneath a reactive root of a user component are recorded at the whole of the root. Writes to its
+                // other members are not, since its reactive roots alone are the state which navigating its history restores
+                // - e.g. the editor records its open tabs but not which of them is selected
+                if (options.recordHistory || reactiveSegs && fluid.isUserLayer(fluid.peek(component.$layers))) {
+                    // We'd like this to be asynchronous but then source tracking breaks down
+                    //fluid.invokeLater(() => {
+                    const layerName = fluid.renderSite({shadow, segs: reactiveSegs || segs});
+                    fluid.history.push({type: "updateLayer", oldValue: existingValue, newValue: updated, layerName});
+                    //});
+                }
             }
+            togo = existing;
         }
-        return existing;
+        return togo;
     };
 
     /**
@@ -1412,7 +1439,7 @@ const $fluidILScope = function (fluid) {
     fluid.isMatForming = function (shadow, segs) {
         const upSignals = fluid.get(shadow.shadowMap, segs)?.[$m]?.hasSignalChild;
         const inReactive = fluid.findReactiveRoot(shadow.shadowMap, segs);
-        return upSignals || inReactive;
+        return upSignals || inReactive || !!fluid.findLensSite(shadow, segs);
     };
 
     // TODO: flattenSignals is currently just a crude approximation to its final form - really needs to be divided into
@@ -1643,6 +1670,219 @@ const $fluidILScope = function (fluid) {
         const togo = fluid.cell(undefined, {name}).computed(dispatchCompute, fluid.flattenedArgCells(resolvedArgs, name));
         togo.$variety = "$compute";
         return togo;
+    };
+
+    /**
+     * Upgrade an arc of a `$lens` record, which may be a compact string or a function record, to a function record
+     * @param {String|FuncRecord} arc - The arc
+     * @param {String} type - The type of compact record it is parsed as, "$compute" or "$method"
+     * @return {FuncRecord} The arc as a function record
+     */
+    fluid.expandLensArc = function (arc, type) {
+        return typeof(arc) === "string" ? fluid.compactStringToRec(arc, type) : arc;
+    };
+
+    /**
+     * Expands a lens record into a cell holding a view of the value held at an address within another site, together
+     * with an address writer which writes back through the view. A lens names the matching forward and backward arcs
+     * of a relation in one place:
+     *  - `source` - a reference to the site holding the viewed data;
+     *  - `path` - optionally, the path of the address viewed within the source's value, as a String, an Array of
+     *    segments or a reference resolving to either - the lens owns only this address, and writes through it leave the
+     *    rest of the source's value as it was;
+     *  - `forward` - a compute-style record computing the lens's value, in whose arguments `{0}` designates the value
+     *    at the lens's address;
+     *  - `backward` - a method-style record computing the value for the lens's address alone from a value written to
+     *    the lens, which it receives as `{0}`. Returning `fluid.deleteMarker` removes the address from the source.
+     * A write to the lens's site, or beneath it, is not held locally - see `fluid.putThroughLens`. The backward arc is
+     * not an edge in the graph of cells but an address writer, registered under the stable key of the lens's site -
+     * see `fluid.siteWriterOf`.
+     * @param {Object} record - The lens record, holding `source`, `forward` and `backward`, and optionally `path`
+     * @param {Shadow} shadow - The shadow of the component holding the lens
+     * @param {String[]} segs - The path where this record appears in its component
+     * @return {Cell<any>} A computed cell holding the lens's value, which includes a `$variety` property set to "$lens"
+     */
+    fluid.expandLensRecord = function (record, shadow, segs) {
+        const lensSegs = [...segs, "$lens"];
+        const name = `$lens at path ${segs} of component at path ${shadow.path}`;
+        const source = fluid.fetchContextReference(record.source, shadow, [...lensSegs, "source"]);
+        const pathMaterial = record.path === undefined ? [] : fluid.resolveArgMaterial(record.path, shadow, [...lensSegs, "path"]);
+        const [pathCell] = fluid.flattenedArgCells([pathMaterial], name + " path");
+        const addressSegs = fluid.cell(undefined, {name: name + " address"}).computed(path => fluid.pathToSegs(path ?? []), [pathCell]);
+        const [sourceCell] = fluid.flattenedArgCells([source], name + " source");
+        const viewed = fluid.cell(undefined, {name: name + " viewed"}).computed((value, addSegs) =>
+            addSegs.length === 0 ? value : fluid.get(value, addSegs), [sourceCell, addressSegs]);
+        const forward = fluid.expandLensArc(record.forward, "$compute");
+        const func = fluid.resolveFuncReference(forward, shadow, [...lensSegs, "forward"]);
+        const argSegs = [...lensSegs, "forward", "args"];
+        const resolvedArgs = fluid.makeArray(forward.args).map((arg, i) =>
+            arg === "{0}" ? viewed : fluid.resolveArgMaterial(arg, shadow, [...argSegs, i]));
+        const togo = fluid.cell(undefined, {name}).computed(fluid.makeFuncDispatcher(func), fluid.flattenedArgCells(resolvedArgs, name));
+        togo.$variety = "$lens";
+        togo.lensSource = source;
+        togo.addressSegs = addressSegs;
+        togo.backward = fluid.expandMethodRecord(fluid.expandLensArc(record.backward, "$method"), shadow, [...lensSegs, "backward"]);
+        togo.writer = fluid.registerSiteWriter(shadow, segs, togo);
+        return togo;
+    };
+
+    /**
+     * @typedef {Object} AddressWriter
+     * @property {String} key - The stable key of the site from which the writer writes - see `fluid.siteEdgeKey`
+     * @property {Cell} lens - The lens whose writes it carries
+     * @property {Object|null} lastWrite - A record of its last write, for explanation - members `lensValue`, the value
+     * written to the lens, `address`, the rendered address written, and `value`, the value written there
+     */
+
+    /**
+     * Register the address writer of a lens with its component, under the stable key of the lens's site. A lens
+     * allocated afresh at the same site, e.g. as its component turns over, replaces the writer registered before, and
+     * the writers are discarded with their component.
+     * @param {Shadow} shadow - The shadow of the component holding the lens
+     * @param {String[]} segs - The path of the lens within the component
+     * @param {Cell} lens - The lens's cell
+     * @return {AddressWriter} The writer
+     */
+    fluid.registerSiteWriter = function (shadow, segs, lens) {
+        const key = fluid.siteEdgeKey(shadow, segs);
+        const writers = shadow.siteWriters = shadow.siteWriters || Object.create(null);
+        return writers[key] = {key, lens, lastWrite: null};
+    };
+
+    /**
+     * Find the address writer registered for a site within a component
+     * @param {Shadow} shadow - The shadow of the component
+     * @param {String[]} segs - The path of the site within the component
+     * @return {AddressWriter|undefined} The writer, if one is registered
+     */
+    fluid.siteWriterOf = function (shadow, segs) {
+        return shadow.siteWriters?.[fluid.siteEdgeKey(shadow, segs)];
+    };
+
+    /**
+     * Find the site of a lens at or above a path within a component, if there is one
+     * @param {Shadow} shadow - The shadow of the component
+     * @param {String[]} segs - The path within the component
+     * @return {Object|null} Members `lens`, the lens's cell, and `length`, the number of segments of the path which
+     * designate its site, or `null` if no lens is found
+     */
+    fluid.findLensSite = function (shadow, segs) {
+        let node = shadow.shadowMap;
+        let togo = null;
+        for (let i = 0; i < segs.length && node && !togo; ++i) {
+            node = node[segs[i]];
+            const rec = node?.[$m];
+            if (rec?.handlerRecord?.key === "$lens" && rec.signalProduct) {
+                togo = {lens: rec.signalProduct, length: i + 1};
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * Find the site from which a signal draws its value, by following its chain of signals upstream to the last
+     * `$sitedRef` within it
+     * @param {Signal} signal - The signal
+     * @return {Site|null} The site, or `null` if the signal is not drawn from any site
+     */
+    fluid.terminalSiteOf = function (signal) {
+        let ref = signal, site = null;
+        while (fluid.isSignal(ref) && ref.$variety !== "$component") {
+            if (ref.$variety === "$sitedRef") {
+                site = ref.site;
+            }
+            ref = ref.get(ref.$variety === "$bareValue");
+        }
+        return site;
+    };
+
+    /**
+     * Compute the stable key of a relation made from a site within a component - the path of the site in the component
+     * tree. Unlike the cells along the relation, this survives the turnover of the component, so that a relation made
+     * afresh from the same site replaces the one made before, rather than standing beside it
+     * @param {Shadow} shadow - The shadow of the component holding the site
+     * @param {String[]} segs - The path of the site within the component
+     * @return {String} The key, e.g. "elevationFilter.dualRangeInput:range"
+     */
+    fluid.siteEdgeKey = function (shadow, segs) {
+        return shadow.path + ":" + segs.join(".");
+    };
+
+    /**
+     * Establish a computed relation onto a cell, which may be held by another component, on behalf of a site within a
+     * component. The relation is keyed by the path of the site, so that it is replaced when the site makes it afresh,
+     * e.g. as its component turns over and allocates fresh cells along it, and is torn down when the component is
+     * destroyed. The target cell may thereby hold several relations, e.g. the arcs of a bidirectional relation, each
+     * identified by the site which made it. As for any relation made onto a cell which already holds a value, it is
+     * trusted to agree with that value, and is first run when one of its sources changes
+     * @param {Shadow} shadow - The shadow of the component holding the site
+     * @param {String[]} segs - The path of the site within the component
+     * @param {Cell} target - The cell onto which the relation is made
+     * @param {Function} fn - The function computing the target's value from the sources'
+     * @param {Cell[]} staticSources - The relation's sources
+     * @param {ComputedProps} [props] - Any further properties of the relation
+     * @return {Cell} The target cell
+     */
+    fluid.attachSiteEdge = function (shadow, segs, target, fn, staticSources, props) {
+        const key = fluid.siteEdgeKey(shadow, segs);
+        target.computed(fn, staticSources, {...props, key});
+        const siteEdges = shadow.frameworkEffects.siteEdges = shadow.frameworkEffects.siteEdges || [];
+        const existing = siteEdges.findIndex(rec => rec.key === key);
+        const record = {key, target, dispose: () => target.computed(null, null, {key})};
+        if (existing === -1) {
+            siteEdges.push(record);
+        } else {
+            siteEdges[existing] = record;
+        }
+        return target;
+    };
+
+    /**
+     * Tear down a relation made by `fluid.attachSiteEdge`
+     * @param {Shadow} shadow - The shadow of the component holding the site
+     * @param {String[]} segs - The path of the site within the component
+     */
+    fluid.detachSiteEdge = function (shadow, segs) {
+        const key = fluid.siteEdgeKey(shadow, segs);
+        const siteEdges = shadow.frameworkEffects.siteEdges || [];
+        const existing = siteEdges.findIndex(rec => rec.key === key);
+        if (existing !== -1) {
+            siteEdges[existing].dispose();
+            siteEdges.splice(existing, 1);
+        }
+    };
+
+    /**
+     * Write a value through a lens, as its address writer - the lens's current value with the value applied at a path
+     * within it is passed through its backward arc, and the result written at the lens's address within the site of its
+     * source, through the source component's write gateway, `fluid.setForComponent`, leaving the rest of the source's
+     * value as it was. The write carries the writer's key as its source marker. See `fluid.expandLensRecord`.
+     * @param {Cell} lens - The lens's cell
+     * @param {String[]} innerSegs - The path within the lens's value at which the value is written
+     * @param {any} value - The value to be written
+     * @return {Cell} The lens's cell
+     */
+    fluid.putThroughLens = function (lens, innerSegs, value) {
+        fluid.cell.untracked(() => {
+            const current = fluid.deSignal(lens);
+            if (innerSegs.length > 0 && fluid.isUnavailable(current)) {
+                fluid.fail(`Cannot write to path ${innerSegs.join(".")} beneath ${lens.name} whose value is unavailable`);
+            }
+            const updated = innerSegs.length === 0 ? value : fluid.setImmutable(current, innerSegs, value);
+            const addressValue = lens.backward(updated);
+            const site = fluid.terminalSiteOf(lens.lensSource);
+            if (!site) {
+                fluid.fail(`Cannot write through ${lens.name} since its source is not drawn from any site`);
+            }
+            const addressSegs = [...site.segs, ...lens.addressSegs.get()];
+            const writer = lens.writer;
+            writer.lastWrite = {lensValue: updated, address: fluid.renderSite({shadow: site.shadow, segs: addressSegs}), value: addressValue};
+            // The write carries the writer's key as its source, so that a reader may recognise, or decline, writes which
+            // arrived through this lens
+            fluid.cell.withAmbientSource(writer.key, () =>
+                fluid.setForComponent(site.shadow.that, addressSegs, addressValue))();
+        });
+        return lens;
     };
 
     /**
@@ -2543,6 +2783,10 @@ const $fluidILScope = function (fluid) {
         handler: fluid.expandLinkageRecord,
         isEffect: true
     }, {
+        // Placed before $reactiveRoot, since a lens may be laid over a reactive root, e.g. a filter's state
+        key: "$lens",
+        handler: fluid.expandLensRecord
+    }, {
         key: "$reactiveRoot",
         handler: fluid.expandReactiveRecord,
         // Supplied with the element as a whole, since members alongside its record also contribute to its value
@@ -3328,6 +3572,10 @@ const $fluidILScope = function (fluid) {
                     return undefined;
                 } else if (prop === Symbol.toStringTag) {
                     return Array.isArray(deTarget) ? "Array" : deTarget[Symbol.toStringTag];
+                } else if (typeof(prop) === "symbol") {
+                    // A symbol, e.g. Symbol.asyncIterator probed by the signal graph to detect an async iterable, is never
+                    // a path into the mat - it is read from the material itself
+                    return deTarget[prop];
                 } else {
                     const nextSegs = [...segs, prop];
                     // Note that logic is quite similar to fluid.flattenSignals
@@ -3337,9 +3585,14 @@ const $fluidILScope = function (fluid) {
                     // member alone - the instance itself is read untracked above, since it turns over whenever any of its
                     // members changes
                     const memberRead = segs.length === 0 && typeof(prop) === "string" && !fluid.isUnavailable(deTarget) && prop in deTarget;
-                    const next = fluid.isUnavailable(deTarget) && segs.length > 0 ? undefined : proxyNext || memberRead ?
+                    const unavailableWithin = fluid.isUnavailable(deTarget) && segs.length > 0;
+                    const next = unavailableWithin ? undefined : proxyNext || memberRead ?
                         fluid.getForComponent(shadow, nextSegs) : deTarget[prop];
-                    if (Array.isArray(deTarget) && typeof(deTarget[prop]) === "function") {
+                    if (unavailableWithin) {
+                        // Material within the component which is unavailable, e.g. a lens whose source is pending, reads
+                        // as that unavailable value, so that e.g. its staleValue may be read by a cell holding the proxy
+                        return deTarget[prop];
+                    } else if (Array.isArray(deTarget) && typeof(deTarget[prop]) === "function") {
                         if (fluid.mutatingArrayMethods[prop]) {
                             // For any mutating array methods, assemble a shallow copy of the array's current value,
                             // apply the mutation to that, and after it is done, write it back via fluid.setForComponent,
@@ -3377,12 +3630,17 @@ const $fluidILScope = function (fluid) {
                 }
             };
             // Note that writes into material sourced from another site are already directed upstream since getHandler
-            // will have handed off to a proxy onto that site via fluid.proxyUpstream. A write to the member itself
-            // rebinds it locally.
+            // will have handed off to a proxy onto that site via fluid.proxyUpstream. A write to a member which is
+            // itself sourced from another site, e.g. one defined by a reference such as "{hashManager}.hash.pane",
+            // follows the fish upstream in the same way, as a deletion does, and is applied to the original site,
+            // rather than rebinding the member locally and severing it from its source.
             const setHandler = function (target, prop, value) {
                 fluid.expectLiveComponent(shadow, prop);
                 const nextSegs = [...segs, prop];
-                fluid.setForComponent(shadow.that, nextSegs, value);
+                // A member already raised into the live layer is held locally, and is written in place
+                const upstream = segs.length === 0 && !(prop in shadow.liveLayer);
+                const site = upstream ? fluid.upstreamSite(shadow, nextSegs) : {shadow, segs: nextSegs};
+                fluid.setForComponent(site.shadow.that, site.segs, value);
                 return true;
             };
             // A deletion of a member sourced from another site, e.g. `delete item.todo` for an iteration variable,

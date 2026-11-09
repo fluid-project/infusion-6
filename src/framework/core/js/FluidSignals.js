@@ -709,12 +709,26 @@ const $fluidSignalsScope = function (fluid) {
      * @typedef {Object} ComputedProps
      * @property {Boolean} isFree - Indicates if this is a "free" computation that will deliver unavailable values
      * @property {Function} [mapArg] - Optional function to map arguments supplied to computation
+     * @property {any} [key] - The identity of the relation amongst the cell's relations, overriding its first static
+     * source - e.g. the path of the site in the component tree from which the relation is made, which survives the
+     * replacement of the cells along it. See `fluid.cell.edgeKey`
      */
 
     /**
+     * Determine the key identifying a computed relation amongst those of its cell - see `fluid.cell.prototype.computed`
+     * @param {Cell[]} [staticSources] - The static sources of the relation
+     * @param {ComputedProps} [props] - The properties of the relation, whose `key`, if any, takes precedence
+     * @return {any} The relation's key
+     */
+    fluid.cell.edgeKey = function (staticSources, props) {
+        return props?.key !== undefined ? props.key : staticSources && staticSources[0] || null;
+    };
+
+    /**
      * Establish a computed relation which will lazily and reactively compute this cell's value given the values of a number
-     * of other cells with which the relationship is made, or tear down such relation. These relations are keyed by the first
-     * member of any `staticSources` supplied as arguments of the relation, or `null` if there are no such sources.
+     * of other cells with which the relationship is made, or tear down such relation. These relations are keyed by any `key`
+     * supplied in `props`, or else by the first member of any `staticSources` supplied as arguments of the relation, or
+     * `null` if there are no such sources. A relation established with the key of an existing one replaces it.
      *
      * @param {Function|null} fn - The function which will reactively evaluate this cell's value, or null if an existing relation
      * is to be torn down. If it returns a promise, the cell is pending until the promise settles, and then holds the value it
@@ -727,8 +741,7 @@ const $fluidSignalsScope = function (fluid) {
      * @this {Cell}
      */
     fluid.cell.prototype.computed = function (fn, staticSources, props) {
-        // The edge's key is either its first source or null
-        const key = staticSources && staticSources[0] || null;
+        const key = fluid.cell.edgeKey(staticSources, props);
         if (!this._inEdges) {
             this._inEdges = [];
         }
@@ -748,6 +761,7 @@ const $fluidSignalsScope = function (fluid) {
             if (!inEdge) {
                 inEdge = Object.create(null);
                 inEdge.key = key;
+                this._inEdges.push(inEdge);
             }
 
             inEdge.fn = fn;
@@ -761,7 +775,6 @@ const $fluidSignalsScope = function (fluid) {
             inEdge.excludeSource = props?.excludeSource || false;
             inEdge.mapArg = props?.mapArg || null;
             inEdge.dispatcher = props?.dispatcher || null;
-            this._inEdges.push(inEdge);
 
             // Set up observer links from static sources to this cell immediately - this is from new signature
             if (staticSources) {
@@ -794,12 +807,12 @@ const $fluidSignalsScope = function (fluid) {
      * Finds the incoming edge corresponding to the given static sources and triggers an update for this cell along that edge.
      *
      * @param {Cell[]} [staticSources] - An optional array of static source cells to identify the computation edge to be refreshed
+     * @param {ComputedProps} [props] - Any properties with which the edge was established, whose `key` identifies it
      * @this {Cell} The cell for which an incoming edge is to be refreshed
      */
-    fluid.cell.prototype.refresh = function (staticSources) {
-        // The edge's key is either its first source or null
+    fluid.cell.prototype.refresh = function (staticSources, props) {
         if (this._inEdges) {
-            const key = staticSources && staticSources[0] || null;
+            const key = fluid.cell.edgeKey(staticSources, props);
             const inEdge = this._inEdges.find(edge => edge.key === key);
             if (inEdge) {
                 fluid.cell.update(this, inEdge);
@@ -850,7 +863,11 @@ const $fluidSignalsScope = function (fluid) {
                 cell._state = state;
                 cell._dirtyFrom = dirtyFrom;
             } else {
-                cell._value = cell._value.staleValue;
+                // A pending value which resolved to its stale value restores it - a cell with no pending value, e.g.
+                // one never yet computed, has none to restore
+                if (fluid.isUnavailable(cell._value)) {
+                    cell._value = cell._value.staleValue;
+                }
                 if (cell._isEffect) {
                     cell._state = CacheDirty;
                 }
@@ -1053,8 +1070,10 @@ const $fluidSignalsScope = function (fluid) {
      *       or `null` if no unavailable values are found.
      */
     fluid.cell.mapSignalArgs = function (args, oldValue) {
-        // Reuse a pending unavailable with its staleValue if there is one
-        let unavailable = fluid.isPending(oldValue) ? oldValue : null;
+        // Reuse a pending unavailable with its staleValue if there is one. It is reused only if it is the cell's own -
+        // a proxy, e.g. onto a member of a component whose material is unavailable, reads as unavailable through it,
+        // but annotating it would write through it, overwriting the material at its site with a plain copy
+        let unavailable = fluid.isPending(oldValue) && !fluid.isProxy?.(oldValue) ? oldValue : null;
         let causes = null;
         for (let i = 0; i < args.length; ++i) {
             let arg = args[i];

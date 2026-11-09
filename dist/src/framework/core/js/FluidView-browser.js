@@ -158,7 +158,9 @@ const $fluidViewBrowserScope = function (fluid) {
                 if (negate) {
                     rvalue = !rvalue;
                 }
-                fluid.setForComponent(fluid.deSignal(target), parsedLH.path, rvalue);
+                // The target's path may pass through subcomponents, e.g. {self}.shell.fullScreen
+                const {component, segs} = fluid.descendSubcomponentPath(fluid.deSignal(target), parsedLH.path);
+                fluid.setForComponent(component, segs, rvalue);
             });
         } else {
             const parsed = fluid.compactStringToRec(onValue, "DOMEventBind");

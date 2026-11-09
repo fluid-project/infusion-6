@@ -23,7 +23,8 @@ const fs = require("fs"),
     vm = require("vm"),
     {pathToFileURL, fileURLToPath} = require("url"),
     linkedom = require("linkedom"),
-    nodeFetch = require("../../../../src/framework/server/node-fetch-wrapper.js");
+    nodeFetch = require("../../../../src/framework/server/node-fetch-wrapper.js"),
+    fluidBoot = require("../../../../src/framework/core/js/FluidBoot.js");
 
 const fQUnit = fluid.registerNamespace("fQUnit");
 
@@ -178,6 +179,8 @@ fQUnit.makeBrowserContext = function (htmlPath) {
         document,
         location,
         navigator: {userAgent: "fqunit-html (linkedom)"},
+        // This mockup cannot run payload meant for the browser alone, such as widget libraries - see fluid.hostEvaluatesClientScripts
+        fluidHost: {evaluatesClientScripts: false},
         // As in the browser, relative URLs are resolved against the document's location
         fetch: (url, options) => nodeFetch(new URL(url, location).href, options),
         addEventListener: eventTarget.addEventListener.bind(eventTarget),
@@ -222,10 +225,26 @@ fQUnit.loadDocumentScripts = function (context, htmlPath) {
     const scripts = [...context.document.querySelectorAll("script")];
     scripts.forEach(script => {
         const src = script.getAttribute("src");
-        if (src) {
+        const runFile = file => {
+            const scriptPath = fileURLToPath(new URL(file, context.location));
+            vm.runInContext(fs.readFileSync(scriptPath, "utf8"), context, {filename: scriptPath});
+        };
+        const bareSrc = src && src.replace(/[?#].*$/, "");
+        if (bareSrc && bareSrc.endsWith(fluidBoot.bootPath)) {
+            // The bootstrap of Infusion, FluidBoot.js, which in the browser declares Infusion's module and writes a
+            // script for each of its files - here done directly, since the context supports neither currentScript nor
+            // document.write
+            const root = bareSrc.substring(0, bareSrc.length - fluidBoot.bootPath.length);
+            if (!context.document.querySelector(`fluid-module[id="${fluidBoot.moduleName}"]`)) {
+                const moduleNode = context.document.createElement("fluid-module");
+                moduleNode.setAttribute("id", fluidBoot.moduleName);
+                moduleNode.setAttribute("src", root);
+                script.parentNode.insertBefore(moduleNode, script);
+            }
+            fluidBoot.files.forEach(file => runFile(root + file));
+        } else if (src) {
             if (fQUnit.isLoadableScript(src)) {
-                const scriptPath = fileURLToPath(new URL(src, context.location));
-                vm.runInContext(fs.readFileSync(scriptPath, "utf8"), context, {filename: scriptPath});
+                runFile(src);
             } else {
                 fQUnit.log("Skipping script " + src + " in " + path.basename(htmlPath));
             }

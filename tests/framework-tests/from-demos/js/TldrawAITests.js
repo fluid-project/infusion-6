@@ -1524,7 +1524,7 @@ QUnit.test("Problems in templates which render nonetheless are diagnosed", funct
     assert.ok(notMarkup.length === 1 && notMarkup[0].includes("must be markup held as a String"), "Template which is not markup reported");
     const empty = diagnosed("empty");
     assert.equal(empty.length, 1, "One problem in widget rendering nothing");
-    assert.ok(empty[0].includes("rendered without failure, but shows nothing") && empty[0].includes("class=\"empty\""),
+    assert.ok(empty[0].includes("rendered without failure, but shows nothing") && empty[0].includes("class=\"empty container\""),
         "Widget rendering nothing described, quoting its markup");
     fluid.deleteLayer("fluid.tests.tldrawAI.templated");
     Object.keys(fluid.tests.tldrawAI.templates).forEach(key => fluid.deleteLayer("fluid.tests.tldrawAI.templated." + key));

@@ -60,6 +60,11 @@ fluid.tldraw.ai.maxOutputTokens = 32768;
  */
 fluid.tldraw.ai.deriveToken = async function (password) {
     const {salt, iterations, bytes} = fluid.tldraw.ai.tokenDerivation;
+    // The browser provides Web Crypto only to a secure context - a page served over https, or from localhost
+    if (!window.crypto?.subtle) {
+        throw new Error("the browser provides no Web Crypto to this page, since it is not a secure context - serve it " +
+            "over https, or open it at http://localhost rather than " + window.location.host);
+    }
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
     const bits = await crypto.subtle.deriveBits({

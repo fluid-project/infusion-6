@@ -225,24 +225,25 @@ const fluidViewScope = function (fluid) {
         return root;
     };
 
-    fluid.scriptInjectionComplete = function (token) {
-        fluid.lastCompletedInjection = token;
+    // Formerly called at the end of every injected script to confirm that its evaluation completed - retained as a
+    // no-op so that pages hydrated whilst it was, which still call it, continue to boot. See
+    // fluid.applyEvaluatedScriptInjection for how a failed evaluation is now detected
+    fluid.scriptInjectionComplete = function () {
     };
 
     /**
      * Wrap source text in a function scope without disturbing its line numbers. The prefix shares line 1 with the original
      * text so that only columns on that line shift, and any leading "use strict" remains in the function's directive
-     * prologue. A completion marker is appended so that the injector can detect a failed evaluation.
+     * prologue.
      * @param {String} text - The source text to be wrapped.
      * @param {String} absUrl - The absolute URL to be reported to the debugger.
      * @param {String} scope - A injection scope style - "global" is supported
-     * @param {String} token - A unique token identifying this injection, reported on successful completion.
      * @return {String} The wrapped source, ready for insertion into a script element.
      */
-    fluid.wrapScriptSource = function (text, absUrl, scope, token) {
+    fluid.wrapScriptSource = function (text, absUrl, scope) {
         return (scope !== "global" ? "(function () {" : "") + text +
             (scope !== "global" ? "\n}).call(globalThis);" : "") +
-            "\nfluid.scriptInjectionComplete(\"" + token + "\");\n//# sourceURL=" + absUrl;
+            "\n//# sourceURL=" + absUrl;
     };
 
     /**
@@ -260,11 +261,25 @@ const fluidViewScope = function (fluid) {
         });
     };
 
-    fluid.injectionId = 0;
+    /**
+     * Find the node of a document's head after which a fresh injection is placed - the last node injected into it, or
+     * else its last `<fluid-import>`. Injections are so placed in the order they are made, before any stylesheet or
+     * script which the page holds after its imports, whether the head is still being parsed, as when a page boots in
+     * the browser, or complete, as when it is rendered under node - so that the cascade of a page's own stylesheets
+     * over those of its Single File Components is the same in its hydrated form as in its minimal one.
+     * @param {Document} dokkument - The document into which a node is injected.
+     * @return {Node|null} The node after which it is placed, or `null` if it is to be appended to the head.
+     */
+    fluid.injectionAnchor = function (dokkument) {
+        const last = dokkument.fluidLastInjected;
+        const imports = dokkument.head.querySelectorAll("fluid-import");
+        return last && last.isConnected !== false && last.parentNode === dokkument.head ? last :
+            imports.length > 0 ? imports[imports.length - 1] : null;
+    };
 
     /**
      * Connect a freshly built injection node to the document, replacing any existing node with the same id or else
-     * appending it to the document's head.
+     * placing it in the document's head after the anchor found by `fluid.injectionAnchor`.
      * @param {Document} dokkument - The document into which the node is injected.
      * @param {Element|null} existing - Any existing node with the injection's id.
      * @param {Element} fresh - The fresh node, which must already carry the injection's id.
@@ -274,43 +289,246 @@ const fluidViewScope = function (fluid) {
         if (existing) {
             existing.replaceWith(fresh);
         } else {
-            dokkument.head.appendChild(fresh);
+            const anchor = fluid.injectionAnchor(dokkument);
+            if (anchor) {
+                dokkument.head.insertBefore(fresh, anchor.nextSibling);
+            } else {
+                dokkument.head.appendChild(fresh);
+            }
         }
+        dokkument.fluidLastInjected = fresh;
     };
 
     /**
      * Commit a script injection. Since a script element evaluates only once, on connection, every commit builds a fresh
      * element. Evaluation happens synchronously during the swap, reporting any syntax or runtime error to the window's
-     * error event where a temporary listener captures it, and a completed evaluation is confirmed by the marker appended
-     * by `fluid.wrapScriptSource`.
+     * error event where a temporary listener captures it. A script which cannot run at all - in a document with no
+     * window, or one refused by a content security policy - is reported as a failure, as is any error captured.
      * @param {DocInjectionRecord} docInjRec - The injection payload, whose `material` holds members `text` and `sourceUrl`.
      * @param {Element|null} existing - Any existing node with the injection's id.
      * @return {Boolean|Unavailable} `true` if evaluation completed, otherwise an unavailable value describing the failure.
      */
     fluid.applyScriptInjection = function ({dokkument, injRec, material}, existing) {
         let togo;
-        const token = "fluid-injection-" + fluid.injectionId++;
+        if (injRec.client && !fluid.hostEvaluatesClientScripts()) {
+            togo = fluid.recordClientScriptInjection(dokkument, injRec, existing);
+        } else {
+            togo = fluid.applyEvaluatedScriptInjection({dokkument, injRec, material}, existing);
+        }
+        return togo;
+    };
+
+    // `true` whilst a document is being rendered statically, e.g. by hydrate.js, rather than live in the browser - set
+    // by fluid.loadAndBootDocument in server-support.js before the document is booted. A component bearing
+    // fluid.withPlaceholder then fetches its placeholder in place of its genuine data
+    fluid.renderingStatically = false;
+
+    // A mixin for a component which fetches data from its `url`, as it does through its member `fetchUrl` - e.g.
+    // fluid.jsonReader - supplying as `placeholderUrl` a short file of the same shape, which is fetched in its place when
+    // the document is rendered statically. So the static rendering, e.g. a page written by hydrate.js, is rendered from
+    // the placeholder, and is replaced once the page boots in the browser and fetches the genuine data. The component's
+    // `isPlaceholder` is then `true`, so that it, or what holds it, can render as it should until its genuine data
+    // arrives, e.g. by showing a loading indicator. Each such component is listed in fluid.withPlaceholder.instances, so
+    // that the hydrater can find, without knowing the design, every file a page fetches and what stands in for it
+    fluid.def("fluid.withPlaceholder", {
+        // url: String - the genuine URL, relative to the document
+        placeholderUrl: null,
+        isPlaceholder: "$compute:fluid.withPlaceholder.isPlaceholder({self}.placeholderUrl)",
+        fetchUrl: "$compute:fluid.withPlaceholder.fetchUrl({self}.url, {self}.placeholderUrl)",
+        registration: {
+            $bindable: {
+                bind: "fluid.withPlaceholder.register({self})",
+                unbind: "fluid.withPlaceholder.deregister({boundValue})"
+            }
+        }
+    });
+
+    /**
+     * Determine whether a component bearing `fluid.withPlaceholder` fetches its placeholder in place of its genuine data
+     * @param {String|null} placeholderUrl - The URL of its placeholder, if it has one
+     * @return {Boolean} `true` if the document is rendered statically, and the component has a placeholder
+     */
+    fluid.withPlaceholder.isPlaceholder = placeholderUrl => fluid.renderingStatically && !!placeholderUrl;
+
+    /**
+     * Determine the URL fetched by a component bearing `fluid.withPlaceholder`
+     * @param {String} url - Its genuine URL
+     * @param {String|null} placeholderUrl - The URL of its placeholder, if it has one
+     * @return {String} The URL of its placeholder if it is fetched in place of its genuine data, else its genuine URL
+     */
+    fluid.withPlaceholder.fetchUrl = (url, placeholderUrl) => fluid.withPlaceholder.isPlaceholder(placeholderUrl) ? placeholderUrl : url;
+
+    // Each component bearing fluid.withPlaceholder which is live
+    fluid.withPlaceholder.instances = new Set();
+
+    fluid.withPlaceholder.register = function (that) {
+        fluid.withPlaceholder.instances.add(that);
+        return that;
+    };
+
+    fluid.withPlaceholder.deregister = function (that) {
+        fluid.withPlaceholder.instances.delete(that);
+    };
+
+    /**
+     * Determine whether any of a set of components bearing `fluid.withPlaceholder` fetches its placeholder - e.g. to
+     * decide whether what holds them is rendering placeholder data
+     * @param {...Boolean} isPlaceholders - The `isPlaceholder` member of each component
+     * @return {Boolean} `true` if any of them fetches its placeholder
+     */
+    fluid.withPlaceholder.any = (...isPlaceholders) => isPlaceholders.some(isPlaceholder => isPlaceholder);
+
+    // A loader for a JSON file at `url`. Its `data` member is pending until the file has been loaded and parsed. It
+    // fetches its `fetchUrl`, which is its `url` unless it bears fluid.withPlaceholder
+    fluid.def("fluid.jsonReader", {
+        $layers: "fluid.component",
+        // url: String
+        fetchUrl: "{self}.url",
+        data: "$compute:fluid.fetchJSON({self}.fetchUrl)"
+    });
+
+    /**
+     * Express a URL relative to a base URL, e.g. that of a document, if they share an origin - so that a document
+     * written to a file, e.g. by a static build, refers to its resources wherever it is served from
+     * @param {String|URL} base - The base URL
+     * @param {String} target - The URL to be expressed, which may itself be relative to the base
+     * @return {String} The relative URL, or the absolute URL if the two have different origins
+     */
+    fluid.relativeUrl = function (base, target) {
+        const baseUrl = new URL(base);
+        const targetUrl = new URL(target, baseUrl);
+        let togo;
+        if (baseUrl.protocol === targetUrl.protocol && baseUrl.host === targetUrl.host) {
+            const baseSegs = baseUrl.pathname.split("/").slice(0, -1);
+            const targetSegs = targetUrl.pathname.split("/");
+            let common = 0;
+            while (common < baseSegs.length && common < targetSegs.length - 1 && baseSegs[common] === targetSegs[common]) {
+                ++common;
+            }
+            togo = [...new Array(baseSegs.length - common).fill(".."), ...targetSegs.slice(common)].join("/") + targetUrl.search + targetUrl.hash;
+        } else {
+            togo = targetUrl.href;
+        }
+        return togo;
+    };
+
+    /**
+     * Determine whether the host runs the scripts held in a document's markup as it loads, as a browser does. A
+     * document rendered by a static build holds the scripts injected for its Single File Components - where the host
+     * has run them, they are adopted rather than injected afresh - see `fluid.adoptMarkupInjections`. A host which
+     * does not, e.g. node, declares so by supplying `fluidHost.runsMarkupScripts: false` in its global object
+     * @return {Boolean} `true` if scripts in markup have been run
+     */
+    fluid.hostRunsMarkupScripts = function () {
+        return fluid.global.fluidHost?.runsMarkupScripts ?? true;
+    };
+
+    /**
+     * Find the script in a document's markup, written by a static build, which was injected from a given source - see
+     * `fluid-src` as written by the injection styles
+     * @param {Document} dokkument - The document
+     * @param {String} url - The absolute URL of the script's source
+     * @return {Element|undefined} The script element, if it is present and has not been injected by this session
+     */
+    fluid.markupScriptFrom = function (dokkument, url) {
+        const location = fluid.documentLocation(dokkument);
+        return [...dokkument.querySelectorAll("script[fluid-src]")].find(node => !node.flInjected &&
+            new URL(node.getAttribute("fluid-src"), location).href === new URL(url, location).href);
+    };
+
+    /**
+     * Adopt the injections of a Single File Component which a document's markup already holds, e.g. as written by a
+     * static build of the document, rather than injecting them afresh - so that a script is not run a second time, nor
+     * a stylesheet loaded again. Styles and symbols are always adopted. Scripts are adopted only where the host has run
+     * those in the markup - see `fluid.hostRunsMarkupScripts`. An adopted injection is taken to be the one its record
+     * describes, since the document was rendered from the same SFC - should the SFC change, it is injected afresh.
+     * @param {Document} dokkument - The document
+     * @param {Object<String, InjectRecord>} injRecs - The injection records of the SFC
+     * @return {Object<String, InjectRecord>} The records adopted, keyed by node id
+     */
+    fluid.adoptMarkupInjections = function (dokkument, injRecs) {
+        const adopted = {};
+        Object.values(injRecs).forEach(injRec => {
+            const node = dokkument.getElementById(injRec.nodeId);
+            if (node && !node.flInjected && (injRec.variety !== "script" || fluid.hostRunsMarkupScripts())) {
+                node.flInjected = true;
+                adopted[injRec.nodeId] = injRec;
+            }
+        });
+        return adopted;
+    };
+
+    /**
+     * Determine whether the host evaluates scripts which are payload for the browser alone, bearing `fluid-client`. A
+     * real browser does - a host mocking one, e.g. the node test runner, declares that it does not by supplying
+     * `fluidHost.evaluatesClientScripts: false` in its global object
+     * @return {Boolean} `true` if such scripts are evaluated
+     */
+    fluid.hostEvaluatesClientScripts = function () {
+        return fluid.global.fluidHost?.evaluatesClientScripts ?? true;
+    };
+
+    /**
+     * Record in a document a script for the browser alone which the host does not evaluate, as a link to its source
+     * @param {Document} dokkument - The document into which the script is injected
+     * @param {InjectRecord} injRec - The injection record, whose `url` is the script's URL
+     * @param {Element|null} existing - Any existing node with the injection's id
+     * @return {Boolean} `true`, since recording the script cannot fail
+     */
+    fluid.recordClientScriptInjection = function (dokkument, injRec, existing) {
         const fresh = dokkument.createElement("script");
-        fresh.text = fluid.wrapScriptSource(material.text, material.sourceUrl, injRec.scope, token);
+        const src = fluid.module.resolveRelativePath(fluid.documentLocation(dokkument), injRec.url);
+        fresh.setAttribute("src", src);
+        fresh.setAttribute("fluid-src", src);
+        fresh.setAttribute("fluid-client", "");
         fresh.id = injRec.nodeId;
+        fluid.swapInjectedNode(dokkument, existing, fresh);
+        return true;
+    };
+
+    /**
+     * Commit a script injection by evaluating it - see `fluid.applyScriptInjection`
+     * @param {DocInjectionRecord} docInjRec - The injection payload, whose `material` holds members `text` and `sourceUrl`.
+     * @param {Element|null} existing - Any existing node with the injection's id.
+     * @return {Boolean|Unavailable} `true` if evaluation completed, otherwise an unavailable value describing the failure.
+     */
+    fluid.applyEvaluatedScriptInjection = function ({dokkument, injRec, material}, existing) {
+        let togo;
+        const fresh = dokkument.createElement("script");
+        fresh.text = fluid.wrapScriptSource(material.text, material.sourceUrl, injRec.scope);
+        fresh.id = injRec.nodeId;
+        if (injRec.client) {
+            fresh.setAttribute("fluid-client", "");
+        }
+        // A script from a source records it, so that a static build of the document may be adopted - see fluid.markupScriptFrom
+        if (injRec.url) {
+            fresh.setAttribute("fluid-src", material.sourceUrl);
+        }
 
         let captured = null;
+        let refused = false;
         const view = dokkument.defaultView;
         const errorListener = event => {
             captured = event.error ?? event.message;
         };
+        const refusalListener = () => {
+            refused = true;
+        };
         view?.addEventListener("error", errorListener);
+        dokkument.addEventListener?.("securitypolicyviolation", refusalListener);
         try {
             fluid.swapInjectedNode(dokkument, existing, fresh);
         } finally {
             view?.removeEventListener("error", errorListener);
+            dokkument.removeEventListener?.("securitypolicyviolation", refusalListener);
         }
 
-        if (fluid.lastCompletedInjection === token) {
+        if (view && !refused && captured === null) {
             togo = true;
         } else {
             togo = fluid.unavailable({
-                message: `Failure evaluating script at ${material.sourceUrl}` + (captured === null ? " - see console for details" : ""),
+                message: `Failure evaluating script at ${material.sourceUrl}` + (!view ? " - its document has no window in which to run it" :
+                    refused ? " - refused by the document's content security policy" : ""),
                 cause: captured
             });
         }
@@ -346,7 +564,9 @@ const fluidViewScope = function (fluid) {
         link: {
             prepare: (injRec, dokkument) => {
                 const resolved = fluid.module.resolveRelativePath(dokkument.location, injRec.url);
-                return fluid.fetchInjectionText(resolved).then(text => ({text, sourceUrl: resolved}));
+                // A script for the browser alone which the host does not evaluate needs no text
+                return injRec.client && !fluid.hostEvaluatesClientScripts() ? {text: null, sourceUrl: resolved} :
+                    fluid.fetchInjectionText(resolved).then(text => ({text, sourceUrl: resolved}));
             },
             apply: fluid.applyScriptInjection
         }
@@ -395,6 +615,69 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    // The SVG namespace, in which the hosts of injected symbols are created
+    fluid.svgNamespace = "http://www.w3.org/2000/svg";
+
+    // The id of the single hidden <svg> element in a document's body holding the symbols injected for every Single File
+    // Component - see fluid.symbolsInjectionStyles. It matches the pattern of fluid.isInjectedNode, so that a rendering
+    // of the body leaves it alone
+    fluid.symbolsHostId = "fl-symbols-host";
+
+    /**
+     * Find, or else create, the hidden `<svg>` element in a document's body which hosts the symbols injected for Single
+     * File Components. The symbols are held in the body rather than the head, since an HTML parser reading a document
+     * written with them would move them there anyway.
+     * @param {Document} dokkument - The document
+     * @return {Element} The host element
+     */
+    fluid.symbolsHost = function (dokkument) {
+        let host = dokkument.getElementById(fluid.symbolsHostId);
+        if (!host) {
+            host = dokkument.createElementNS(fluid.svgNamespace, "svg");
+            host.setAttribute("id", fluid.symbolsHostId);
+            host.setAttribute("aria-hidden", "true");
+            host.setAttribute("style", "position: absolute; width: 0; height: 0; overflow: hidden");
+            host.flInjected = true;
+            dokkument.body.prepend(host);
+        }
+        return host;
+    };
+
+    // The symbols of a Single File Component are injected as a <defs> element holding the markup of its <symbols> block,
+    // within the shared host - see fluid.symbolsHost. Since symbols are inert, an existing <defs> is updated in place,
+    // and any <use> referring to them updates live
+    fluid.symbolsInjectionStyles = {
+        literal: {
+            apply: ({dokkument, injRec}, existing) => {
+                if (existing?.localName === "defs") {
+                    existing.innerHTML = injRec.text;
+                } else {
+                    const fresh = dokkument.createElementNS(fluid.svgNamespace, "defs");
+                    fresh.setAttribute("id", injRec.nodeId);
+                    fresh.innerHTML = injRec.text;
+                    fresh.flInjected = true;
+                    if (existing) {
+                        existing.replaceWith(fresh);
+                    } else {
+                        fluid.symbolsHost(dokkument).appendChild(fresh);
+                    }
+                }
+                return true;
+            }
+        }
+    };
+
+    /**
+     * Select the injection styles appropriate for an injection record's variety
+     * @param {InjectRecord} injRec - The injection record
+     * @param {Document} dokkument - The document into which it is injected
+     * @return {Object<String, InjectionStyle>} The injection styles, keyed by `literal` and `link`
+     */
+    fluid.injectionStylesForRecord = function (injRec, dokkument) {
+        return injRec.variety === "script" ? fluid.scriptInjectionStylesFor(dokkument) :
+            injRec.variety === "symbols" ? fluid.symbolsInjectionStyles : fluid.cssInjectionStyles;
+    };
+
     /**
      * Load phase: acquire the material for an injection without touching the document or executing anything. Styles
      * without a `prepare` method need no material.
@@ -421,11 +704,12 @@ const fluidViewScope = function (fluid) {
     /**
      * @typedef {Object} InjectRecord
      * @property {String} nodeId - The unique identifier for the DOM node to be injected.
-     * @property {String} variety - The type of injection, either "script" or "style".
+     * @property {String} variety - The type of injection, either "script", "style" or "symbols".
      * @property {String} [url] - A resolved URL for the script or style source.
      * @property {String} [text] - The inline script or style content with a source map comment.
      * @property {String} [scope] - For a "script" its injection scope style
      * @property {Boolean} [ownLayer] - For a "script", `true` if it holds the definition of the SFC's own layer
+     * @property {Boolean} [client] - For a "script", `true` if it is payload for the browser alone - see `ScriptNodeInfo`
      */
 
     /**
@@ -437,7 +721,7 @@ const fluidViewScope = function (fluid) {
      * @return {Boolean} `true` if the node was injected
      */
     fluid.isInjectedNode = function (node) {
-        return !!node.flInjected || node.nodeType === 1 /* Node.ELEMENT_NODE */ && /^fl-(script|style)-/.test(node.id);
+        return !!node.flInjected || node.nodeType === 1 /* Node.ELEMENT_NODE */ && /^fl-(script|style|symbols)-/.test(node.id);
     };
 
     /**
@@ -540,6 +824,9 @@ const fluidViewScope = function (fluid) {
     /**
      * Acquires all `<fluid-module>` elements within the given DOM root and populates the fluid module registry.
      * Each `<fluid-module>` element must have an `id` and a `src` attribute. The `src` is normalized to ensure it does not end with a "/".
+     * It may also have a `modules` attribute, naming a module map, relative to the module's directory, which locates the
+     * modules it depends upon - see `fluid.module.registerMap`. A page declares in this way the module which holds it,
+     * e.g. `<fluid-module id="my-project" src="../" modules="fluid-modules.json">`.
      *
      * @param {Document} dokkument - The document for/from which the module should be registered
      * @param {VNode|Element} root - The root DOM element to search for `<fluid-module>` elements.
@@ -554,7 +841,9 @@ const fluidViewScope = function (fluid) {
             const abs = fluid.isAbsolutePath(origSrc);
             const src = abs ? origSrc : fluid.deSlash(new URL(origSrc, dokkument.location.href).href);
             fluid.module.register(id, src, origSrc, abs);
-            return [id, {node, path: src}];
+            // The module's map of the modules it depends upon, relative to its directory - see fluid.module.registerMap
+            const mapUrl = node.attrs.modules ? new URL(node.attrs.modules, src + "/").href : undefined;
+            return [id, {node, path: src, mapUrl}];
         });
         return Object.fromEntries(entries);
     };
@@ -586,7 +875,9 @@ const fluidViewScope = function (fluid) {
         const importMap = {};
         const importNodes = fluid.querySelectorAll(root, "fluid-import");
         importNodes.forEach(node => {
-            const path = node.attrs.src;
+            // A relative path is relative to the document, and is resolved so that the paths within the imported SFC,
+            // which are relative to the SFC, can be resolved in turn - see fluid.resolveSFCPath
+            const path = fluid.resolveSFCPath(fluid.documentLocation(dokkument)?.href, node.attrs.src);
             const layerName = node.attrs.layer || fluid.pathToLayerName(path);
             if (!layerName) {
                 // TODO: Feed this back to any UI editing the document
@@ -647,6 +938,8 @@ const fluidViewScope = function (fluid) {
      * @property {DefMap} [defMaps] - The parsed defMap for inline script content.
      * @property {String} [text] - The original text of the inline script.
      * @property {String} [scope] - A possible scope marker for a script injection style - supported value is "global"
+     * @property {Boolean} [client] - `true` if the script bears `fluid-client`, marking it as payload for the browser
+     * alone, e.g. a widget library, which the server records but does not evaluate
      */
 
     /**
@@ -664,7 +957,7 @@ const fluidViewScope = function (fluid) {
         const defMapList = scriptNodes.map((scriptNode) => {
             const src = scriptNode.attrs?.src;
             if (src) {
-                return {url: src, scope: scriptNode.attrs["data-fl-scope"]};
+                return {url: src, scope: scriptNode.attrs["data-fl-scope"], client: scriptNode.attrs["fluid-client"] !== undefined};
             } else {
                 const text = scriptNode.children[0]?.text;
                 const defMaps = fluid.parseDefMaps(text, 0);
@@ -723,6 +1016,55 @@ const fluidViewScope = function (fluid) {
      */
     fluid.sfcBlocks = function (vTree, tag) {
         return vTree.children.filter(child => child.tag === tag);
+    };
+
+    /**
+     * Resolve a path written in a Single File Component, e.g. the `src` of a `<script>`, `<style>` or `<fluid-import>`
+     * block. A path beginning with a module reference `%module/`, or which is absolute, is returned unchanged, to be
+     * resolved once it is used - see `fluid.module.resolveRelativePath`. Any other path is relative to the SFC itself,
+     * and is resolved against its URL, so that a set of SFCs and the files they refer to may be moved together, e.g. by
+     * copying them into another project.
+     * @param {String} [sfcUrl] - The absolute URL of the SFC. If it is not supplied, the path is returned unchanged
+     * @param {String} path - The path to be resolved
+     * @return {String} The resolved path
+     */
+    fluid.resolveSFCPath = function (sfcUrl, path) {
+        return sfcUrl && !path.startsWith("%") && !fluid.isAbsolutePath(path) ? new URL(path, sfcUrl).href : path;
+    };
+
+    /**
+     * Collect the imports declared by the top-level `<fluid-import src="..." [layer="..."]>` blocks of a Single File
+     * Component, whose paths are resolved by `fluid.resolveSFCPath`. As for a `<fluid-import>` in a document, the
+     * layer name defaults to the name of the imported file - see `fluid.pathToLayerName`.
+     * @param {VNode} vTree - The parsed SFC
+     * @param {String} [sfcUrl] - The absolute URL of the SFC
+     * @return {Object<String, Object>} An import map, suitable for `fluid.loadImportMap`, keyed by layer name
+     */
+    fluid.sfcImportMap = function (vTree, sfcUrl) {
+        const importMap = {};
+        fluid.sfcBlocks(vTree, "fluid-import").forEach(node => {
+            const path = fluid.resolveSFCPath(sfcUrl, node.attrs.src);
+            const layerName = node.attrs.layer || fluid.pathToLayerName(path);
+            if (!layerName) {
+                fluid.log(fluid.logLevel.FAIL, "Error in SFC structure: couldn't determine layer name from import ", node);
+            } else if (!fluid.importMap[layerName]) {
+                importMap[layerName] = {path, node};
+            }
+        });
+        return importMap;
+    };
+
+    /**
+     * Read verbatim the markup held within a top-level block of a Single File Component, e.g. its `<symbols>` block,
+     * whose SVG content would not survive conversion through the HTML template parser's tree
+     * @param {String} text - The text of the SFC
+     * @param {VNode} node - The parsed block, bearing the `start` and `end` offsets of its tags in `text`
+     * @return {String} The markup between the block's opening and closing tags, trimmed
+     */
+    fluid.sfcBlockInnerText = function (text, node) {
+        const from = text.indexOf(">", node.start) + 1;
+        const to = text.lastIndexOf("</", node.end);
+        return text.slice(from, to).trim();
     };
 
     /**
@@ -867,9 +1209,13 @@ const fluidViewScope = function (fluid) {
      *
      * @param {VNode} vTree - The virtual DOM tree representing the Single File Component (SFC).
      * @param {String} layerName - The name of the layer associated with the SFC.
+     * @param {String} [text] - The text of the SFC from which `vTree` was parsed, from which the markup of any
+     * `<symbols>` block is read verbatim. Without it, any such block is ignored.
+     * @param {String} [sfcUrl] - The absolute URL of the SFC, against which relative `src` paths of its blocks are
+     * resolved - see `fluid.resolveSFCPath`
      * @return {Object<String, InjectRecord>} A map of injection records keyed by node ID, or `undefined` if an error occurs.
      */
-    fluid.sfcToInjRecs = function (vTree, layerName) {
+    fluid.sfcToInjRecs = function (vTree, layerName, text, sfcUrl) {
         const reject = message => {
             const unavailable = fluid.unavailable(message);
             fluid.def(layerName, unavailable);
@@ -944,7 +1290,7 @@ const fluidViewScope = function (fluid) {
                 defMapList.forEach((sni, index) => {
                     const nodeId = `fl-script-${layerName}-${index}`;
                     const injRec = sni.url ?
-                        {url: sni.url, scope: sni.scope} :
+                        {url: fluid.resolveSFCPath(sfcUrl, sni.url), scope: sni.scope, client: sni.client} :
                         {text: sni.text};
                     injRec.defMaps = sni.defMaps;
                     injRec.nodeId = nodeId;
@@ -958,12 +1304,23 @@ const fluidViewScope = function (fluid) {
                     const nodeId = `fl-style-${layerName}-${index}`;
                     const src = styleNode.attrs?.src;
                     const injRec = src ?
-                        {url: src} :
+                        {url: fluid.resolveSFCPath(sfcUrl, src)} :
                         {text: styleNode.children[0]?.text ?? ""};
                     injRec.nodeId = nodeId;
                     injRec.variety = "style";
                     injRecs[nodeId] = injRec;
                 });
+
+                if (text !== undefined) {
+                    fluid.sfcBlocks(vTree, "symbols").forEach((symbolsNode, index) => {
+                        const nodeId = `fl-symbols-${layerName}-${index}`;
+                        injRecs[nodeId] = {
+                            text: fluid.sfcBlockInnerText(text, symbolsNode),
+                            nodeId,
+                            variety: "symbols"
+                        };
+                    });
+                }
             }
         }
         return injRecs;
@@ -1005,7 +1362,10 @@ const fluidViewScope = function (fluid) {
             const previousText = oldText;
             oldText = text;
             const vTree = fluid.parseHTMLToTree(text);
-            const injRecs = fluid.sfcToInjRecs(vTree, layerName);
+            // Load any SFCs this one imports before its own script executes, so that their layers are known to be
+            // forthcoming when it is instantiated
+            fluid.loadImportMap(fluid.sfcImportMap(vTree, rec.url));
+            const injRecs = fluid.sfcToInjRecs(vTree, layerName, text, rec.url);
             const ownScriptText = Object.values(injRecs).find(injRec => injRec.ownLayer)?.text;
             // An edit which leaves the script defining our layer unchanged, e.g. to the template alone, will not
             // reinject it, and so will not reach fluid.writeLayer - record the edit in the history here instead
@@ -1079,8 +1439,19 @@ const fluidViewScope = function (fluid) {
         }
     };
 
+    /**
+     * Fetch the parsed `<template>` block of a Single File Component from the template store. The SFC's layer may be
+     * defined before its template has been parsed - e.g. in a page written by a static build, whose markup holds the
+     * SFC's script, which defines its layer as the page loads, before the SFC itself has been fetched - and its
+     * template is then pending until it has been.
+     * @param {String} layerName - The name of the layer defined by the SFC
+     * @return {VNode|Unavailable} The parsed template, or an unavailable value if it is not yet parsed
+     */
     fluid.fetchParsedTemplate = function (layerName) {
-        // TODO: fall back to the layer's templateTree if it is not in the store
+        if (!fluid.templateStore[layerName]) {
+            fluid.templateStore[layerName] = fluid.cell(fluid.unavailable({message: `Template of SFC for ${layerName} is not yet loaded`,
+                variety: "pending"}), {name: `template store for layer ${layerName}`});
+        }
         return fluid.templateStore[layerName].get();
     };
 
@@ -1154,6 +1525,63 @@ const fluidViewScope = function (fluid) {
 
 
     /**
+     * @typedef {Object} SharedScriptClaim
+     * @property {String} layerName - The layer whose SFC first claimed the script
+     * @property {Promise} done - A promise which resolves once the claiming SFC's injections have been committed
+     * @property {Function} resolve - Resolves `done`
+     */
+
+    /** @type {WeakMap<Document, Map<String, SharedScriptClaim>>} */
+    fluid.sharedScriptClaims = new WeakMap();
+
+    /**
+     * Arrange that a script referred to by its `src` from several Single File Components, e.g. a library such as a
+     * map widget, or a file of utilities and base layers shared by a family of SFCs, is executed only once in a
+     * document. The first SFC whose injections reach the script claims it, and injects it. Any other SFC refers to the
+     * script as resolved through `fluid.resolveSFCPath` and `fluid.module.resolvePath`, so a script referred to by
+     * different relative paths is still recognised, and omits it - instead committing its own injections only once
+     * those of the claiming SFC are committed, so that its scripts may rely on the shared one having executed.
+     * @param {Document} dokkument - The document into which injections are being made
+     * @param {String} layerName - The layer whose SFC's injections are being made
+     * @param {DocInjectionRecord[]} docInjRecs - The injections to be made
+     * @return {Object} Members `docInjRecs`, the injections which are to be made, `claimed`, the claims made by this
+     * SFC, to be resolved once its injections are committed, and `awaited`, promises for those of other SFCs
+     */
+    fluid.claimSharedScripts = function (dokkument, layerName, docInjRecs) {
+        let claims = fluid.sharedScriptClaims.get(dokkument);
+        if (!claims) {
+            claims = new Map();
+            fluid.sharedScriptClaims.set(dokkument, claims);
+        }
+        const claimed = [], awaited = [];
+        const togo = docInjRecs.filter(docInjRec => {
+            const {injRec} = docInjRec;
+            let keep = true;
+            if (injRec.variety === "script" && injRec.url) {
+                const key = fluid.module.resolvePath(injRec.url);
+                let existing = claims.get(key);
+                // A script already run from the document's markup, e.g. as written by a static build, has executed
+                if (!existing && fluid.hostRunsMarkupScripts() && fluid.markupScriptFrom(dokkument, key)) {
+                    existing = {layerName: null, done: Promise.resolve(), resolve: fluid.identity};
+                    claims.set(key, existing);
+                }
+                if (existing && existing.layerName !== layerName) {
+                    awaited.push(existing.done);
+                    keep = false;
+                } else if (!existing) {
+                    let resolve;
+                    const done = new Promise(resolveDone => resolve = resolveDone);
+                    const claim = {layerName, done, resolve};
+                    claims.set(key, claim);
+                    claimed.push(claim);
+                }
+            }
+            return keep;
+        });
+        return {docInjRecs: togo, claimed, awaited};
+    };
+
+    /**
      * Bind injections from the specified SFC layer to the supplied document.
      * @param {String} layerName - The name of the layer for which injections are to be bound
      * @param {Document} dokkument - The document object into which any injection directives will be injected
@@ -1169,16 +1597,25 @@ const fluidViewScope = function (fluid) {
             const injDone = fluid.cell(fluid.unavailable(`Injection in progress for layer ${layerName}`, "pending"), {name: `Injections for layer ${layerName}`});
             injDone.layerName = layerName;
             injDone.dokkument = dokkument;
+            let adoptChecked = false;
             const newDocEffect = fluid.cell.effect(async function docInjectEffect(injRecs) {
+                let claimed = [];
+                if (!adoptChecked) {
+                    adoptChecked = true;
+                    oldInjRecs = fluid.adoptMarkupInjections(dokkument, injRecs);
+                }
                 try {
                     /** @type {DocInjectionRecord[]} */
-                    const scriptStyles = fluid.scriptInjectionStylesFor(dokkument);
-                    const docInjRecs = Object.values(injRecs).map(injRec =>
+                    const decoded = Object.values(injRecs).map(injRec =>
                         fluid.decodeInjectSFCElement(dokkument, injRec, rec.url, oldInjRecs,
-                            injRec.variety === "script" ? scriptStyles : fluid.cssInjectionStyles)
+                            fluid.injectionStylesForRecord(injRec, dokkument))
                     ).filter(injRec => injRec);
+                    const shared = fluid.claimSharedScripts(dokkument, layerName, decoded);
+                    claimed = shared.claimed;
                     // Load phase - acquire all material, executing nothing
-                    const prepared = await Promise.all(docInjRecs.map(fluid.prepareSFCElement));
+                    const prepared = await Promise.all(shared.docInjRecs.map(fluid.prepareSFCElement));
+                    // Any script shared with another SFC which claimed it first must have executed before ours do
+                    await Promise.all(shared.awaited);
                     // Commit phase - one synchronous block, so no stabilisation can observe a partial set of definitions
                     // Stylesheet links return promises which settle once the sheet is applied
                     const outcomes = await Promise.all(prepared.map(fluid.doInjectSFCElement));
@@ -1187,6 +1624,7 @@ const fluidViewScope = function (fluid) {
                         fluid.log(fluid.logLevel.FAIL, `Injection failure for layer ${layerName}: `, outcome));
                     console.log(`Injections for ${layerName} committed`);
                 } finally {
+                    claimed.forEach(claim => claim.resolve());
                     injDone.set(true);
                 }
 
@@ -1490,6 +1928,28 @@ const fluidViewScope = function (fluid) {
             });
             templateEffects.push(bindEffect);
         }
+    };
+
+    /**
+     * Bind the classes interpolated into the class attribute of a template node, contributing them as one of the
+     * writers of its element's classes - see `fluid.applyClassTokens`. As for any attribute binding, whilst the value is
+     * unavailable, e.g. pending I/O, it contributes no classes, rather than rendering an error in place of the element.
+     * @param {Effect[]} templateEffects - The effects of the template, to which the binding effect is added
+     * @param {VNode} vnode - The template node
+     * @param {Cell<String>} rendered - The rendered value of the class attribute
+     */
+    fluid.bindDomClassTokens = function (templateEffects, vnode, rendered) {
+        const bindEffect = fluid.allocateVNodeEffect(vnode, vnode => {
+            const togo = fluid.cell.effect(function (element, text) {
+                if (!fluid.isUnavailable(element)) {
+                    fluid.applyClassTokens(element, fluid.classWriterOf(vnode), fluid.isUnavailable(text) ? null : text);
+                }
+            }, [vnode.elementSignal, rendered], {isFree: true, name: "bindDomClassTokens"});
+            togo.$variety = "bindDomTokens";
+            togo.$vnode = vnode;
+            return togo;
+        });
+        templateEffects.push(bindEffect);
     };
 
     let domId = 1;
@@ -1910,6 +2370,12 @@ const fluidViewScope = function (fluid) {
             const withClassDirective = key === "class" && (vnode["class"] !== undefined || "@class" in vnode.attrs);
             if (fluid.isSignal(rendered) && withClassDirective) {
                 rendered.$source = value;
+                vnode.attrs[key] = rendered;
+            } else if (fluid.isSignal(rendered) && key === "class") {
+                // An interpolated class contributes its classes as one of the writers of the element's classes, as does
+                // @class - see fluid.applyClassTokens
+                rendered.$source = value;
+                fluid.bindDomClassTokens(templateEffects, vnode, rendered);
                 vnode.attrs[key] = rendered;
             } else if (fluid.isSignal(rendered)) {
                 rendered.$source = value;
@@ -2575,7 +3041,7 @@ const fluidViewScope = function (fluid) {
                         });
                     allClass.$variety = "$allClass";
                     allClass.$source = clazzSource;
-                    fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => node.setAttribute("class", text));
+                    fluid.bindDomTokens(templateEffects, vnode, allClass, (node, text) => fluid.applyClassTokens(node, fluid.classWriterOf(vnode), text));
                     vnode.attrs["class"] = allClass;
                 }
                 if (vnode.children !== undefined) {
@@ -2688,11 +3154,25 @@ const fluidViewScope = function (fluid) {
     fluid.patchAttrs = function (vnode, element, isRoot) {
         // The attributes of a container are written both by the template in which it appears, e.g. as an element
         // bearing @id, and by the root of the template rendered into it. Each removes only those attributes which it
-        // wrote itself and no longer writes, recorded as flJointAttrs and flRootAttrs respectively
-        const owned = new Set([...Object.keys(vnode.attrs ?? {}), ...Object.keys(vnode.defaultAttrs ?? {})]);
+        // wrote itself and no longer writes, recorded as flJointAttrs and flRootAttrs respectively. The class attribute
+        // is instead the union of the classes each writes - see fluid.applyClassTokens
+        const classValue = vnode.attrs?.["class"] ?? vnode.defaultAttrs?.["class"];
+        // Whether the element is claimed from earlier markup is decided now, before its children are rendered
+        fluid.initClassWriters(element, isRoot ? "root" : "joint");
+        // A bound class is written by its own effect, allocated in fluid.activateTemplate
+        if (!fluid.isSignal(classValue)) {
+            fluid.applyClassTokens(element, isRoot ? "root" : "joint", classValue);
+        }
+        const owned = new Set([...Object.keys(vnode.attrs ?? {}), ...Object.keys(vnode.defaultAttrs ?? {}), "class"]);
         const ownedByOther = isRoot ? element.flJointAttrs : element.flRootAttrs;
+        // An attribute is removed only if this writer wrote it before - not if it was written by some other agent, e.g. a
+        // widget marking an element of the template. On the first patch of an element by the template in which it
+        // appears, whatever it holds was written by that template, e.g. in markup claimed from a static build, since
+        // an element created by rendering holds nothing until then
+        const previouslyWritten = attrName => isRoot ? !!element.flRootAttrs?.has(attrName) :
+            element.flJointAttrs ? element.flJointAttrs.has(attrName) : true;
         const removable = attrName => !owned.has(attrName) && !attrName.startsWith("data-fl-transient") && !ownedByOther?.has(attrName) &&
-            (!isRoot || !!element.flRootAttrs?.has(attrName));
+            previouslyWritten(attrName);
         for (let i = element.attributes.length - 1; i >= 0; i--) {
             const attrName = element.attributes[i].name;
             if (removable(attrName)) {
@@ -2700,7 +3180,7 @@ const fluidViewScope = function (fluid) {
             }
         }
         for (const [key, value] of Object.entries(vnode.attrs ?? {})) {
-            if (!fluid.isSignal(value) && element.getAttribute(key) !== value) {
+            if (key !== "class" && !fluid.isSignal(value) && element.getAttribute(key) !== value) {
                 fluid.applyAttr(element, key, value);
             }
         }
@@ -2708,7 +3188,7 @@ const fluidViewScope = function (fluid) {
         const ownedDefaults = Object.keys(vnode.defaultAttrs ?? {}).filter(key =>
             !element.hasAttribute(key) || (isRoot ? element.flRootAttrs : element.flJointAttrs)?.has(key));
         for (const [key, value] of Object.entries(vnode.defaultAttrs ?? {})) {
-            if (!element.hasAttribute(key)) {
+            if (key !== "class" && !element.hasAttribute(key)) {
                 fluid.applyAttr(element, key, value);
             }
         }
@@ -2719,6 +3199,97 @@ const fluidViewScope = function (fluid) {
             element.flJointAttrs = written;
         }
     };
+
+    // The writers of an element's classes, in the order in which their classes appear in its class attribute - the
+    // template in which the element appears, and the root of any template elided onto it
+    fluid.classWriters = ["joint", "root"];
+
+    /**
+     * Determine which of the writers of an element's classes a VNode is - see `fluid.applyClassTokens`
+     * @param {VNode} vnode - The VNode
+     * @return {String} "root" if the VNode is the root of a template rendered onto the element, otherwise "joint"
+     */
+    fluid.classWriterOf = vnode => vnode.renderedAsRoot ? "root" : "joint";
+
+    // Split a class attribute into its classes
+    fluid.classTokens = value => (value ?? "").split(/\s+/).filter(token => token);
+
+    /**
+     * Begin tracking the writers of an element's classes, on the first occasion that one of them renders it, before its
+     * children are rendered - see `fluid.applyClassTokens`
+     * @param {Element} element - The element
+     * @param {String} writer - The writer which is rendering it, one of `fluid.classWriters`
+     */
+    fluid.initClassWriters = function (element, writer) {
+        if (!element.flClassWriters) {
+            const tokens = fluid.classTokens;
+            const current = tokens(element.getAttribute("class"));
+            element.flClassWriters = {};
+            // A container which already holds markup when the template rendered into it first writes it was rendered
+            // earlier from that template, e.g. by a static build - its children are claimed by position, and its
+            // classes likewise were written by its templates, apart from any recorded as its own. Since its attributes
+            // are written before its children, a fresh container holds none at this point
+            const claimed = writer === "root" && element.children.length > 0;
+            const own = new Set(tokens(element.getAttribute(fluid.ownClassAttribute)));
+            element.flClassPrior = new Set(current.filter(token => !own.has(token)));
+            element.flClassClaimed = claimed;
+            if (writer === "root" && !claimed && current.length > 0) {
+                // The classes of a fresh container which the template rendered into it did not write, e.g. those of an
+                // element booted by fluid-layers, are recorded, so that they survive as its own should the rendered
+                // markup be written by a static build and claimed later
+                element.setAttribute(fluid.ownClassAttribute, current.join(" "));
+            }
+        }
+    };
+
+    /**
+     * Write the classes which one writer contributes to an element's class attribute. An element serving as the
+     * container of a view whose template's root is elided onto it is written by two templates - its own as the
+     * element bearing @id in its parent's template, and the template rendered into it. Either may re-render without
+     * the other, in either order, so rather than each writing the whole attribute, each contributes a set of classes,
+     * and the attribute holds their union. A writer removes only those of its classes which it no longer writes, and
+     * which no other writer holds. Classes written by no template, e.g. added by a widget, are kept, after the written
+     * ones, which appear in the order of `fluid.classWriters` - so the attribute is the same whatever the order in which
+     * the writers rendered, and whether a writer renders before or after another agent adds a class.
+     * An element claimed from existing markup, e.g. rendered by a static build, records no writers - the classes it
+     * holds are taken to have been written by the templates which are about to render it once the template in which it
+     * appears has written it, and are then dropped unless written again. Likewise for the container of a free
+     * component, e.g. one booted by `fluid-layers`, which already holds markup when the template rendered into it
+     * first writes it - apart from those classes recorded as its own in its `fluid-own-class` attribute. This is
+     * written when a template first renders into a fresh container holding classes of its own, so that they survive
+     * in the container's markup as written by a static build.
+     * @param {Element} element - The element
+     * @param {String} writer - The writer, one of `fluid.classWriters`
+     * @param {String|null|undefined} text - The classes the writer contributes, separated by whitespace - none if absent
+     */
+    fluid.applyClassTokens = function (element, writer, text) {
+        const tokens = fluid.classTokens;
+        fluid.initClassWriters(element, writer);
+        const current = tokens(element.getAttribute("class"));
+        const writers = element.flClassWriters;
+        writers[writer] = new Set(tokens(text));
+        // The classes the element held before any writer wrote are taken to have been written by its templates, once
+        // the template in which it appears has written it, or if it was claimed from earlier markup
+        const previous = new Set([...(element.flClassWritten ?? []), ...(writers.joint || element.flClassClaimed ? element.flClassPrior : [])]);
+        const written = new Set(fluid.classWriters.flatMap(oneWriter => [...(writers[oneWriter] ?? [])]));
+        // Classes neither written now nor previously by any writer were added by some other agent
+        const foreign = current.filter(token => !written.has(token) && !previous.has(token));
+        // Classes of other agents follow those of the templates, since an agent adding a class with classList.add places
+        // it last - so the attribute is in the same order whether or not a template writes after the agent has
+        const updated = [...written, ...foreign].join(" ");
+        element.flClassWritten = written;
+        if (updated === "") {
+            if (element.hasAttribute("class")) {
+                element.removeAttribute("class");
+            }
+        } else if (element.getAttribute("class") !== updated) {
+            element.setAttribute("class", updated);
+        }
+    };
+
+    // The attribute recording the classes of the container of a free component which are its own rather than written by
+    // the template rendered into it - see fluid.applyClassTokens
+    fluid.ownClassAttribute = "fluid-own-class";
 
     fluid.vnodeToSegs = function (vnode) {
         // TODO: Extract path to root of template
@@ -2847,6 +3418,9 @@ const fluidViewScope = function (fluid) {
      * @param {Boolean} [isRoot] - `true` if this rendering is of a container root - if so, this will skip deleting mismatching attributes
      */
     fluid.patchChildren = function (vnode, element, isRoot = false) {
+        // Recorded before binding, so that the effect binding any class of the node writes it as the same writer - see
+        // fluid.classWriterOf
+        vnode.renderedAsRoot = isRoot;
         fluid.bindDom(vnode, element); // Will assign to elementSignal and allocate binding effects
         if (vnode.text !== undefined && !fluid.isSignal(vnode.text) && vnode.text !== element.nodeValue) {
             element.nodeValue = vnode.text;
@@ -3372,6 +3946,32 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Fetch a module map named by the `modules` attribute of a `<fluid-module>` - see `fluid.module.registerMap`. A map
+     * which cannot be fetched is taken to be empty, with a warning, e.g. when copyOut.js boots a page before writing
+     * its map for the first time, and locates its modules for itself.
+     * @param {String} mapUrl - The absolute URL of the map
+     * @return {Cell<Object<String, String>>} A cell holding the map, pending whilst it is fetched
+     */
+    fluid.fetchModuleMap = function (mapUrl) {
+        const load = async function () {
+            let togo = {};
+            try {
+                const response = await fetch(mapUrl);
+                if (response.ok) {
+                    togo = await response.json();
+                } else {
+                    fluid.log(fluid.logLevel.WARN, "Module map " + mapUrl + " could not be fetched - status " + response.status);
+                }
+            } catch (err) {
+                fluid.log(fluid.logLevel.WARN, "Module map " + mapUrl + " could not be fetched - " + err);
+            }
+            return togo;
+        };
+        return fluid.cell(fluid.unavailable({message: `Pending I/O for module map ${mapUrl}`, variety: "pending"}),
+            {name: `fluid.fetchModuleMap for URL ${mapUrl}`}).computed(load, []);
+    };
+
+    /**
      * Creates an effect that automatically instantiates self-booting Fluid components for elements
      * in the document that have the `fluid-layers` attribute.
      *
@@ -3413,7 +4013,8 @@ const fluidViewScope = function (fluid) {
      * and initializing self-booting components.
      *
      * This function performs the following steps:
-     * - On document load, it acquires all `<fluid-module>` elements and registers them.
+     * - On document load, it acquires all `<fluid-module>` elements and registers them, together with the modules
+     *   located by any of their module maps, which are first fetched.
      * - It processes all `<fluid-import>` elements to build the import map and initiate SFC loading.
      * - It returns an effect that tracks and instantiates self-booting components found in the document.
      *
@@ -3422,8 +4023,21 @@ const fluidViewScope = function (fluid) {
      */
     fluid.bootDocument = function (dokkument) {
         fluid.applyOnLoad(() => {
-            fluid.acquireModules(dokkument, dokkument.documentElement);
-            fluid.docToImportMap(dokkument, dokkument.documentElement);
+            const modules = fluid.acquireModules(dokkument, dokkument.documentElement);
+            const mapUrls = Object.values(modules).map(rec => rec.mapUrl).filter(mapUrl => mapUrl);
+            if (mapUrls.length === 0) {
+                fluid.docToImportMap(dokkument, dokkument.documentElement);
+            } else {
+                // The document's imports may refer to modules located by the maps, which are first loaded
+                let acquired = false;
+                fluid.cell.effect((...maps) => {
+                    if (!acquired) {
+                        acquired = true;
+                        maps.forEach((map, i) => fluid.module.registerMap(mapUrls[i], map));
+                        fluid.docToImportMap(dokkument, dokkument.documentElement);
+                    }
+                }, mapUrls.map(fluid.fetchModuleMap), {name: `Module maps for document at ${dokkument.location}`});
+            }
         });
         const effect = fluid.makeSelfBootEffect(dokkument);
         fluid.cell.stabilize();
