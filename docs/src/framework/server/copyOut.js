@@ -30,6 +30,7 @@
 //   --hydrate    Also write each page's hydrated form beside it, as hydrate.js does
 //   --ignore-missing  A regular expression matching references to files which may be missing without failing, e.g.
 //                those of a stylesheet written for another site - may be given several times
+// Unless a checkout of Infusion 6 is given, its own files are copied from the Infusion 6 running this tool.
 // Files demanded by a page which lie outside any module's directory are not copied, but must exist.
 
 const fs = require("fs"),
@@ -325,6 +326,9 @@ fluid.copyOut.main = async function (args) {
         process.exitCode = 1;
     } else {
         const moduleSources = fluid.copyOut.parseSources(parsedArgs);
+        // Unless another checkout is given for it, Infusion's own files are copied from the Infusion running this
+        // tool, e.g. that installed by npm in the project's node_modules
+        moduleSources[fluid.bootRecord.moduleName] = moduleSources[fluid.bootRecord.moduleName] || path.resolve(__dirname, "../../..");
         const demands = [];
         const maps = {};
         // Each page is booted in turn - the registries a booted page populates are global, so that those demanded by

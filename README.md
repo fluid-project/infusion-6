@@ -25,10 +25,27 @@ Demos here in [GitHub Pages](https://fluid-project.github.io/infusion-6/demo/).
 
 ### Dependencies
 
-* [Preact signals core](https://www.npmjs.com/package/@preact/signals-core)
-(Hacked, [lithified](https://ponder.org.uk/term/lithification/) distribution)
+Infusion runs in the browser with no dependencies of its own installed - the libraries it uses there are held in
+`src/lib`, e.g. a hacked, [lithified](https://ponder.org.uk/term/lithification/) distribution of
+[Preact signals core](https://www.npmjs.com/package/@preact/signals-core).
 
-Development dependencies will be installed by running the following from the project root:
+Under node, e.g. when a site rendering its pages statically with `hydrate.js` depends on Infusion through npm, these
+are its only hard dependencies, which are installed with it:
+
+* [linkedom](https://www.npmjs.com/package/linkedom) - the document in which pages are booted and rendered under node
+* [he](https://www.npmjs.com/package/he) - decoding of HTML entities in templates
+* [minimist](https://www.npmjs.com/package/minimist) - argument parsing for the command-line tools
+* [json5](https://www.npmjs.com/package/json5) - reading `moduleOverrides.json5` and copyOut's `--sources`
+
+Node 18 or later is required, for its built-in `fetch`.
+
+A site depending on Infusion through npm may run its command-line tools from the scripts of its `package.json` as
+`fluid-hydrate`, `fluid-dehydrate` and `fluid-copyout` - see [bin/boot.js](bin/boot.js). If the site holds a
+`moduleOverrides.json5`, an entry for `infusion-6` names a checkout of Infusion whose tools are run in place of the
+installed one, and `fluid-copyout` reads every module the file names from its checkout.
+
+Development dependencies, e.g. those for linting, testing and building, and the sources of the libraries in `src/lib`,
+will be installed by running the following from the project root:
 
 ```bash
 npm install

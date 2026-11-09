@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Hydration round trip - bootstrap in the body</title>
+        <!-- As index.html, but laid out as a page built by a site generator such as Hugo, whose layout writes the
+             bootstrap of Infusion and its imports into the body, after markup of its own - the scripts injected into
+             its hydrated form must still run only once Infusion has loaded. See hydrate-roundtrip-test.js -->
+    </head>
+    <body>
+        <nav class="rt-site-nav">Site navigation</nav>
+        <!-- The one reference to the location of Infusion - every other is relative, or through a module -->
+        <script src="../../../../src/framework/core/js/FluidBoot.js"></script>
+        <!-- The module holding the page, and its map of the modules it depends upon -->
+        <fluid-module id="fluid-tests-rt" src="./" modules="fluid-modules.json"></fluid-module>
+        <fluid-import src="sfc/fluid-tests-rt-app.vue"></fluid-import>
+        <div fluid-layers="fluid.tests.rt.app"></div>
+    </body>
+</html>

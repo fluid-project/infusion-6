@@ -16,7 +16,7 @@ const fluidHydrationRoundTrip = require("../../test-core/browser/js/hydration-ro
 const repoRoot = path.resolve(__dirname, "../../..");
 
 const failures = [];
-const expect = function (condition, message) {
+const expectAll = function (condition, message) {
     if (!condition) {
         failures.push(message);
     }
@@ -42,10 +42,15 @@ const initial = `(() => ({
     loading: !!document.querySelector(".rt-app.rt-loading")
 }))()`;
 
-const main = async function () {
+// The pages tested - index.html, whose bootstrap and imports are in its head, and body-boot.html, laid out as a page built
+// by a site generator such as Hugo, whose bootstrap and imports are in its body after markup of its own
+const pages = ["index.html", "body-boot.html"];
+
+const roundTrip = async function (pageName) {
+    const expect = (condition, message) => expectAll(condition, pageName + ": " + message);
     const result = await fluidHydrationRoundTrip.run({
         root: repoRoot,
-        page: "tests/framework-tests/server/roundtrip/index.html",
+        page: "tests/framework-tests/server/roundtrip/" + pageName,
         ready, snapshot, initial,
         timeout: 30000
     });
@@ -66,6 +71,13 @@ const main = async function () {
     expect(!!document.querySelector("link[href='sfc/parts/panel.css']"), "Stylesheet of a nested SFC linked relative to the page");
     expect(!!document.querySelector("#fl-symbols-host symbol#rt-star"), "Symbol of the root SFC injected");
     expect(!document.querySelector(".rt-widget-live"), "Widget for the browser alone not bound in the hydrated page");
+    // The scripts injected into the hydrated page run as it is parsed, and so must follow the bootstrap of Infusion
+    const bootScript = [...document.querySelectorAll("script[src]")].find(node => node.getAttribute("src").endsWith("FluidBoot.js"));
+    const injected = [...document.querySelectorAll("script[id^='fl-script-']")];
+    const allScripts = [...document.querySelectorAll("script")];
+    const misplaced = injected.filter(node => allScripts.indexOf(node) < allScripts.indexOf(bootScript));
+    expect(injected.length > 0 && misplaced.length === 0, "Every injected script follows the bootstrap of Infusion - found " +
+        misplaced.map(node => node.id).join(", "));
 
     // The hydrated page shows its static markup before booting
     expect(result.hydrated.initial.items.join() === "Placeholder" && result.hydrated.initial.loading,
@@ -83,12 +95,18 @@ const main = async function () {
     const difference = fluidHydrationRoundTrip.firstDifference(result.dehydrated.snapshot, result.hydrated.snapshot);
     expect(difference === null, "Dehydrated and hydrated pages render identically - " + difference);
 
-    const timings = `hydrated in ${result.hydrateTime}ms; ready in browser: dehydrated ${result.dehydrated.readyTime}ms, ` +
-        `hydrated ${result.hydrated.readyTime}ms`;
+    console.log(`${pageName}: hydrated in ${result.hydrateTime}ms; ready in browser: dehydrated ${result.dehydrated.readyTime}ms, ` +
+        `hydrated ${result.hydrated.readyTime}ms`);
+};
+
+const main = async function () {
+    for (const pageName of pages) {
+        await roundTrip(pageName);
+    }
     if (failures.length === 0) {
-        console.log("hydrate-roundtrip-test PASS: " + timings);
+        console.log("hydrate-roundtrip-test PASS");
     } else {
-        console.log("hydrate-roundtrip-test FAIL (" + timings + "):\n  " + failures.join("\n  "));
+        console.log("hydrate-roundtrip-test FAIL:\n  " + failures.join("\n  "));
         process.exitCode = 1;
     }
 };

@@ -324,23 +324,32 @@ fluid.dehydrateDocument = function (dokkument) {
  * layer configuring a visualisation, which the element on which it boots names - as the browser would evaluate them
  * before booting it. Infusion's own scripts, scripts for the browser alone, records of injections and scripts of any
  * type other than JavaScript are not evaluated - see `fluid.isServerEvaluableScript`. A script with a `src` is read
- * from its file relative to the document, and one held elsewhere, e.g. on a CDN, is not evaluated.
+ * from its file relative to the document, and one held elsewhere, e.g. on a CDN, is not evaluated. A script which fails,
+ * e.g. one written for the browser alone, is reported, and those after it are still evaluated, as in the browser.
  * @param {Document} dokkument - The document, before it is booted
  */
 fluid.evaluatePageScripts = function (dokkument) {
     [...dokkument.querySelectorAll("script")].filter(node => fluid.classifyScriptNode(node) === "page" &&
         fluid.isServerEvaluableScript(node)).forEach(node => {
         const src = node.getAttribute("src");
-        if (src) {
-            const url = new URL(src, dokkument.location);
-            if (url.protocol === "file:") {
-                const filename = fileURLToPath(url);
-                vm.runInContext(fs.readFileSync(filename, "utf8"), fluid.V8Context, {filename});
+        const where = src || "inline script of " + fileURLToPath(dokkument.location);
+        try {
+            if (src) {
+                const url = new URL(src, dokkument.location);
+                if (url.protocol === "file:") {
+                    const filename = fileURLToPath(url);
+                    vm.runInContext(fs.readFileSync(filename, "utf8"), fluid.V8Context, {filename});
+                } else {
+                    fluid.log("Not evaluating remote script on server: ", src);
+                }
             } else {
-                fluid.log("Not evaluating remote script on server: ", src);
+                vm.runInContext(node.textContent, fluid.V8Context, {filename: fileURLToPath(dokkument.location)});
             }
-        } else {
-            vm.runInContext(node.textContent, fluid.V8Context, {filename: fileURLToPath(dokkument.location)});
+        } catch (error) {
+            // As in the browser, a script which fails does not prevent those after it from running - a page's own
+            // scripts may be written for the browser alone, e.g. a theme's script reading localStorage
+            fluid.log(`Script ${where} failed on the server, as it may if written for the browser alone - ` +
+                `continuing: ${error.message}`);
         }
     });
 };

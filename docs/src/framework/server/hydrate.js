@@ -21,6 +21,11 @@ fluid.hydratedFilename = function (inputFile) {
 
 const inFilename = parsedArgs._[0];
 
+if (!inFilename) {
+    console.error("Usage: node hydrate.js <page.html> [-o <output.html>] [--framework boot|source|built]");
+    process.exit(1);
+}
+
 const outFilename = parsedArgs["o"] || fluid.hydratedFilename(inFilename);
 
 const dokkument = fluid.loadAndBootDocument(path.resolve(inFilename));

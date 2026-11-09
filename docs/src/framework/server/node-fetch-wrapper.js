@@ -1,8 +1,8 @@
 /* eslint-env node */
 "use strict";
 
-const fetch = require("node-fetch"); // v2
-const { Response } = fetch;
+// A fetch for node which also serves file: URLs, as the browser's would for a page loaded from a file. Other URLs are
+// fetched by node's own fetch, available as a global since node 18
 const fs = require("fs");
 
 /**
@@ -13,33 +13,28 @@ const fs = require("fs");
  * @param {String} path - The path to normalize
  * @return {String} - The normalized path
  */
-const deDrivePath = function(path) {
+const deDrivePath = function (path) {
     return path.replace(/^\/([a-zA-Z]:)/, "$1");
 };
 
 module.exports = async function fetchWrapper(url, options) {
     const parsedUrl = new URL(url);
-
+    let togo;
     if (parsedUrl.protocol === "file:") {
         const filePath = deDrivePath(decodeURIComponent(parsedUrl.pathname));
-
-        if (!fs.existsSync(filePath)) {
-            return new Response(null, {
+        if (fs.existsSync(filePath)) {
+            togo = new Response(await fs.promises.readFile(filePath), {
+                status: 200,
+                statusText: "OK"
+            });
+        } else {
+            togo = new Response(null, {
                 status: 404,
                 statusText: "NOT FOUND"
             });
         }
-
-        // Construct a readable stream – valid Response body type in node-fetch@2
-        const stream = fs.createReadStream(filePath);
-
-        return new Response(stream, {
-            status: 200,
-            statusText: "OK"
-            // node-fetch@2 doesn't support explicit `url` here, but we can set it after
-        });
     } else {
-        // Normal HTTP fetch
-        return fetch(url, options);
+        togo = await fetch(url, options);
     }
+    return togo;
 };

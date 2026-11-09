@@ -23,6 +23,11 @@ fluid.dehydratedFilename = function (inputFile) {
 
 const inFilename = parsedArgs._[0];
 
+if (!inFilename) {
+    console.error("Usage: node dehydrate.js <page-hydrated.html> [-o <output.html>]");
+    process.exit(1);
+}
+
 const outFilename = parsedArgs["o"] || fluid.dehydratedFilename(inFilename);
 
 const dokkument = fluid.serverDocumentParser(fs.readFileSync(inFilename, "utf8"));

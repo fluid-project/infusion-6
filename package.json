@@ -1,7 +1,7 @@
 {
     "name": "infusion-6",
     "description": "Infusion is an application framework for developing flexible stuff with JavaScript",
-    "version": "6.1.0",
+    "version": "6.2.0",
     "author": "Fluid Project",
     "bugs": "https://issues.fluidproject.org/browse/FLUID",
     "homepage": "https://www.fluidproject.org/",
@@ -19,6 +19,11 @@
     ],
     "repository": "git://github.com/fluid-project/infusion-6.git",
     "main": "./src/framework/server/fluid.js",
+    "bin": {
+        "fluid-hydrate": "bin/fluid-hydrate.js",
+        "fluid-dehydrate": "bin/fluid-dehydrate.js",
+        "fluid-copyout": "bin/fluid-copyout.js"
+    },
     "scripts": {
         "clean": "run-p clean:*",
         "clean:build": "rimraf build products",
@@ -48,45 +53,45 @@
         "output-documents-test": "node tests/framework-tests/server/output-documents-test.js"
     },
     "engines": {
-        "node": ">=16"
+        "node": ">=18"
     },
     "browserslist": [
         "extends browserslist-config-fluid"
     ],
     "dependencies": {
         "linkedom": "0.18.10",
-        "node-fetch": "2.7.0",
         "he": "1.2.0",
-        "@preact/signals-core": "1.7.0",
-        "@preact/signals": "2.0.1",
-        "preact": "10.25.4",
-        "codemirror": "5.65.19",
-        "jshint": "2.13.2",
-        "jsonlint": "1.6.3",
-        "htmlhint": "1.1.4",
-        "csslint": "1.0.5",
-        "acorn": "8.14.1",
-        "acorn-loose": "8.5.0"
+        "minimist": "1.2.6",
+        "json5": "2.2.3"
     },
     "devDependencies": {
-        "fs-extra": "11.2.0",
-        "glob": "10.3.12",
+        "@preact/signals": "2.0.1",
+        "@preact/signals-core": "1.7.0",
+        "acorn": "8.14.1",
+        "acorn-loose": "8.5.0",
         "browserslist-config-fluid": "0.1.0",
+        "codemirror": "5.65.19",
         "cpy": "8.1.2",
         "cpy-cli": "3.1.1",
+        "csslint": "1.0.5",
         "eslint": "8.57.0",
         "eslint-config-fluid": "2.1.1",
-        "fluid-lint-all": "1.2.10",
         "eslint-plugin-jsdoc": "39.6.2",
         "eslint-plugin-vue": "9.33.0",
-        "vue-eslint-parser": "9.4.3",
-        "minimist": "1.2.6",
+        "fluid-lint-all": "1.2.10",
+        "fs-extra": "11.2.0",
+        "glob": "10.3.12",
+        "htmlhint": "1.1.4",
+        "jshint": "2.13.2",
+        "jsonlint": "1.6.3",
         "npm-run-all2": "6.2.0",
+        "preact": "10.25.4",
+        "puppeteer": "19.4.0",
+        "qunit": "2.21.0",
         "rimraf": "3.0.2",
         "serve": "13.0.2",
         "terser": "5.39.0",
-        "puppeteer": "19.4.0",
-        "qunit": "2.21.0",
+        "vue-eslint-parser": "9.4.3",
         "xhr-mock": "2.5.1"
     },
     "infusion": {
