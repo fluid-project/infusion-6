@@ -22,6 +22,9 @@ instrumented/
 products/
 reports/
 tests/*.*
+# Retained since fqunit-cli.js reads the imports of the test framework from it, for projects running their tests
+# against the npm package
+!tests/package.json
 tests/*-tests
 a-scratch/
 31-fixes.md
