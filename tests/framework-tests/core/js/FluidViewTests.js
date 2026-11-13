@@ -942,6 +942,51 @@ QUnit.test("Binding attributes and live state properties - FLUID-7014", function
     assert.equal(qs("select", container).value, "a", "Select value property agrees");
 });
 
+// A control bound to a path within a computed value - the case of a form whose controls show a model computed from
+// the component's state, e.g. bioreportr.curationForm in the bioReportR projects. User input into such a control has
+// nowhere legitimate to go: the value is derived, and a write into it should be refused, as it is for a control bound to
+// a computed member itself (see FLUID-7014 above). Were the write accepted at the path, it would replace the computed
+// member with a writable value holding only the path written. The member would then no longer follow its inputs, and
+// every other binding to it would be left showing whatever it last computed.
+fluid.def("fluid.tests.computedPathBinding", {
+    $layers: "fluid.component",
+    source: "first",
+    model: "$compute:fluid.tests.computedPathBinding.model({self}.source)",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div>
+        <input class="label" value="@{model.label}"/>
+        <span class="echo">@{model.echo}</span>
+    </div>`
+        }
+    }
+});
+
+fluid.tests.computedPathBinding.model = source => ({label: "Label of " + source, echo: "Echo of " + source});
+
+QUnit.test("User input into a control bound within a computed value does not detach it from its inputs", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.computedPathBinding({container});
+    fluid.cell.stabilize();
+    const input = qs(".label", container);
+    const echo = qs(".echo", container);
+    assert.equal(input.value, "Label of first", "Initial label rendered from computed value");
+    assert.equal(echo.textContent, "Echo of first", "Initial echo rendered from computed value");
+
+    input.value = "Typed";
+    input.dispatchEvent(new Event("input"));
+    fluid.cell.stabilize();
+    assert.equal(that.model.echo, "Echo of first", "Sibling of the path written is intact after user input");
+
+    that.source = "second";
+    fluid.cell.stabilize();
+    assert.equal(that.model.echo, "Echo of second", "Computed value follows its input after user input into a bound control");
+    assert.equal(echo.textContent, "Echo of second", "Other binding to the computed value is updated");
+    assert.equal(input.value, "Label of second", "Bound control is updated from the recomputed value");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.rangeHolder", {
     $layers: "fluid.component",
     ranges: {

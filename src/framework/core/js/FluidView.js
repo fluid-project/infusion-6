@@ -2154,8 +2154,21 @@ const fluidViewScope = function (fluid) {
     fluid.writeableAttrSite = function (token) {
         const sited = fluid.deSignalToSite(token);
         const site = fluid.isSignal(sited) && sited.$variety === "$sitedRef" ? fluid.lensedWriteSite(sited.site) : null;
-        const rec = site && fluid.get(site.shadow.shadowMap, [...site.segs, $m]);
-        const isProduct = rec?.signalRecord && rec.handlerRecord !== fluid.reactiveLinkExpanderRecord;
+        // Refuse a write to a computed member, or to any path within one, which would otherwise replace the member
+        // with a writable value holding only the path written, detaching it from its inputs. A reactive root is
+        // writable throughout, so the search ends at one
+        let isProduct = false;
+        if (site) {
+            for (let i = 1; i <= site.segs.length; ++i) {
+                const rec = fluid.get(site.shadow.shadowMap, [...site.segs.slice(0, i), $m]);
+                if (rec?.reactiveRoot) {
+                    break;
+                } else if (rec?.signalRecord && rec.handlerRecord !== fluid.reactiveLinkExpanderRecord) {
+                    isProduct = true;
+                    break;
+                }
+            }
+        }
         return site && !isProduct ? site : null;
     };
 

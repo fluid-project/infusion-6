@@ -3807,3 +3807,22 @@ QUnit.test("A lens with a path owns only its address, and writes through its reg
     that.destroy();
     store.destroy();
 });
+
+// queryILSelector from the root of the component tree
+
+fluid.def("fluid.tests.queryRootTarget", {
+    $layers: "fluid.component",
+    value: 42
+});
+
+QUnit.test("queryILSelector may search the whole tree from its root, which holds simple components", function (assert) {
+    const that = fluid.tests.queryRootTarget();
+    fluid.cell.stabilize();
+    // The root, and its child resolveRootComponent, are simple components, which have no availableInstance. Any
+    // unavailable components elsewhere in the tree, e.g. left by other tests, are reported as unavailable values
+    const results = fluid.queryILSelector(fluid.globalInstantiator.rootComponent, "fluid.tests.queryRootTarget");
+    const found = results.filter(result => !fluid.isUnavailable(result));
+    assert.equal(found.length, 1, "The one component matching the selector is found");
+    assert.equal(found[0].value, 42, "It is the component created");
+    that.destroy();
+});
