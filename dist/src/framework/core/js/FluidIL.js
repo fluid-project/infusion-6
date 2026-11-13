@@ -142,8 +142,12 @@ const $fluidILScope = function (fluid) {
      * simply <code>"fluid.viewComponent"</code> will match all component views below the root.
      * @param {Boolean} [flat] - <code>true</code> if the search should just be performed at top level of the component tree
      * Note that with <code>flat=false</code> this search will scan every component below the root and may well be very slow.
-     * @return {Unavailable|Component[]} An array holding all components matching the selector, or an unavailable value if any
-     * unavailable components were traversed
+     * @return {Array<Component|Unavailable>} An array holding all components matching the selector, together with the
+     * unavailable value of each unavailable component traversed, whether or not it matches - its layers may not yet be
+     * known, so it can't be matched. Such a value's `message` says why the component is unavailable, e.g. that one of its
+     * layers is not defined - test for it with `fluid.isUnavailable`, or use `fluid.liveQueryILSelector`, which merges
+     * them into a single unavailable result. Reading any other member of one outside a computation is an error reporting
+     * why - see fluid.unavailableComponentProxy
      */
     fluid.queryILSelector = function (root, selector, flat = false) {
         const parsed = fluid.parseSelector(selector, fluid.ILSSMatcher);
@@ -154,7 +158,7 @@ const $fluidILScope = function (fluid) {
             // available
             const thisUnavailable = shadow.availableInstance ? shadow.availableInstance.get() : shadow.that;
             if (fluid.isUnavailable(thisUnavailable)) {
-                togo.push(thisUnavailable);
+                togo.push(fluid.unavailableComponentProxy(shadow, thisUnavailable));
             } else if (fluid.matchILSelector(parsed, shadowStack, scopes, 1)) {
                 togo.push(fluid.proxyMat(shadow.computer, shadow, []));
             }
@@ -183,7 +187,7 @@ const $fluidILScope = function (fluid) {
             let previous = null;
             return shadow.queryILMap[key] = fluid.cell(undefined, {name: `liveQueryILSelector for ${selector}`}).computed(() => {
                 const results = fluid.queryILSelector(root, selector, flat);
-                const unavailableComponents = fluid.mergeUnavailables(results);
+                const unavailableComponents = fluid.mergeUnavailables(results.map(fluid.deproxyUnavailable));
                 if (unavailableComponents) {
                     return unavailableComponents;
                 } else {
@@ -2859,6 +2863,22 @@ const $fluidILScope = function (fluid) {
      */
     fluid.layerForSite = site => fluid.get(site.shadow.layerMap, site.segs)?.[$m]?.source;
 
+    // USER-FACING METHOD
+    /**
+     * Find which layer supplied the value of a member of a component - the strongest of its layers writing the member,
+     * or the layer of the parent configuring it onto a subcomponent, e.g. to diagnose why a layer's definition of a
+     * member is overridden. A component's own definition is stronger than every layer it names amongst its `$layers`.
+     * @param {Component} component - The component
+     * @param {String|String[]} path - The path of the member within the component, which may pass through its
+     * subcomponents, e.g. "checklist.renderTooltip"
+     * @return {String|undefined} The name of the layer supplying the member, or `undefined` if no layer supplies it, e.g.
+     * if it was written at run time
+     */
+    fluid.layerForMember = function (component, path) {
+        const {component: holder, segs} = fluid.descendSubcomponentPath(component, path);
+        return holder ? fluid.layerForSite({shadow: holder[$m], segs}) : undefined;
+    };
+
     /**
      * Apply a site address to a signalised product in the form of members `site, segs`
      * @param {Cell} signal - A signalised product to be assigned a site address
@@ -3481,6 +3501,56 @@ const $fluidILScope = function (fluid) {
         }
     };
 
+    // Members probed by generic code on any value, e.g. "then" by `await` and promise resolution, which read quietly from
+    // a component which is unavailable - see fluid.expectAvailableComponent
+    fluid.probedMembers = Object.fromEntries(["then", "toJSON", "constructor"].map(key => [key, true]));
+
+    /**
+     * Read a member through the proxy of a component which is unavailable, e.g. one whose layers can't be resolved.
+     * Within a computation, the member reads as the component's unavailable value, and the computation depends on the
+     * component's availability, so that it runs again once the component is available - as for a component which has
+     * been destroyed, which reads as unavailable within a computation. Elsewhere, the member would read as `undefined`,
+     * making the component look empty rather than unavailable, so reading it is an error reporting why the component is
+     * unavailable - as reading a component which has been destroyed is, see fluid.expectLiveComponent. The members of
+     * the unavailable value itself, e.g. its `message`, and those probed by generic code, e.g. `then`, are read as
+     * normal, and do not reach here.
+     * @param {Shadow} shadow - The shadow of the component
+     * @param {Unavailable} unavailable - The component's unavailable value
+     * @param {String} prop - The member being read
+     * @return {Proxy<Unavailable>} A proxy onto the unavailable value, within a computation
+     */
+    fluid.readUnavailableComponent = function (shadow, unavailable, prop) {
+        if (fluid.trackingVars.CurrentReaction) {
+            // Read tracked, unlike for an available component, since an unavailable instance turns over only on becoming
+            // available, or on the reason for its unavailability changing
+            shadow.availableInstance?.get();
+            return fluid.unavailableProxy(unavailable);
+        } else {
+            throw Error(`Cannot access member ${prop} of component at path ${shadow.path}, which is unavailable: ${unavailable.message}`);
+        }
+    };
+
+    /**
+     * Front the unavailable value of a component which is unavailable, as returned amongst the results of
+     * fluid.queryILSelector, with a proxy which reads as that component would through its own proxy: the members of the
+     * unavailable value itself, e.g. its `message`, read as normal, as do those probed by generic code, e.g. `then`,
+     * and any other member is read as by fluid.readUnavailableComponent - an error outside a computation reporting why
+     * the component is unavailable, rather than a silent `undefined`. It passes `fluid.isUnavailable`, and is unwrapped
+     * by `fluid.deproxyUnavailable`.
+     * @param {Shadow} shadow - The shadow of the component
+     * @param {Unavailable} unavailable - The component's unavailable value
+     * @return {Proxy<Unavailable>} The proxy
+     */
+    fluid.unavailableComponentProxy = function (shadow, unavailable) {
+        return new Proxy(unavailable, {
+            get: function (target, prop) {
+                return prop === $t ? target : typeof(prop) === "symbol" || prop in target || fluid.probedMembers[prop] ?
+                    target[prop] : fluid.readUnavailableComponent(shadow, target, prop);
+            },
+            getPrototypeOf: () => Object.getPrototypeOf(unavailable)
+        });
+    };
+
     fluid.mutatingArrayMethods = Object.fromEntries(["copyWithin", "fill", "pop", "push",
         "reverse", "shift", "sort", "splice", "unshift"].map(key => [key, true]));
 
@@ -3603,6 +3673,8 @@ const $fluidILScope = function (fluid) {
                     // A symbol, e.g. Symbol.asyncIterator probed by the signal graph to detect an async iterable, is never
                     // a path into the mat - it is read from the material itself
                     return deTarget[prop];
+                } else if (segs.length === 0 && fluid.isUnavailable(deTarget) && !(prop in deTarget) && !fluid.probedMembers[prop]) {
+                    return fluid.readUnavailableComponent(shadow, deTarget, prop);
                 } else {
                     const nextSegs = [...segs, prop];
                     // Note that logic is quite similar to fluid.flattenSignals
@@ -3905,11 +3977,6 @@ const $fluidILScope = function (fluid) {
     };
 
     fluid.def("fluid.component", {
-        events: { // Three standard lifecycle points common to all components
-            onCreate: 0,
-            onDestroy: 0,
-            afterDestroy: 0
-        },
         destroy: "$method:fluid.destroyComponent({self})",
         $variety: "framework"
     });

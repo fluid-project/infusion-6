@@ -4031,6 +4031,18 @@ const fluidViewScope = function (fluid) {
      * @param {Document} dokkument - The document to boot the Fluid framework within.
      * @return {Effect} An effect that manages self-booting component instantiation.
      */
+    /**
+     * Report any layers which are demanded but undefined, with fluid.reportUndefinedLayers, each time the graph of cells
+     * falls idle - allocated once, by the first document to boot
+     */
+    fluid.reportUndefinedLayersOnIdle = function () {
+        fluid.undefinedLayersEffect ||= fluid.cell.effect(idle => {
+            if (idle) {
+                fluid.reportUndefinedLayers();
+            }
+        }, [fluid.cell.idleSignal], {name: "Report of undefined layers"});
+    };
+
     fluid.bootDocument = function (dokkument) {
         fluid.applyOnLoad(() => {
             const modules = fluid.acquireModules(dokkument, dokkument.documentElement);
@@ -4051,6 +4063,9 @@ const fluidViewScope = function (fluid) {
         });
         const effect = fluid.makeSelfBootEffect(dokkument);
         fluid.cell.stabilize();
+        // Whenever loading has settled, any layer still demanded but undefined is reported, since whatever needs it will
+        // otherwise wait silently forever - an SFC loaded on demand may demand further layers after the first settling
+        fluid.reportUndefinedLayersOnIdle();
         return effect;
     };
 

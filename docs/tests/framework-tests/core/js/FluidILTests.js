@@ -15,13 +15,13 @@ QUnit.test("Basic live merging", function (assert) {
     });
     const testDef = fluid.tests.testComponent();
     assert.strictEqual(testDef.testValue, 0, "Retrieve basic value");
-    assert.strictEqual(testDef.events.onCreate, 0, "Retrieve merged value");
+    assert.strictEqual(typeof(testDef.destroy), "function", "Retrieve member merged from fluid.component");
     fluid.def("fluid.tests.testComponent", {
         $layers: "fluid.component",
         testValue: 1
     });
     assert.strictEqual(testDef.testValue, 1, "Updated basic value");
-    assert.strictEqual(testDef.events.onCreate, 0, "Merged value unchanged");
+    assert.strictEqual(typeof(testDef.destroy), "function", "Merged member unchanged");
 });
 
 fluid.def("fluid.tests.chainBase", {
@@ -3873,5 +3873,165 @@ QUnit.test("An effect writing a value does not come to depend on it", function (
     fluid.cell.stabilize();
     assert.deepEqual(fluid.unwrapProxy(that.draft), {subject: "second", comment: ""}, "Draft seeded afresh when its seed changes");
     assert.equal(that.plain, "second", "Plain member seeded afresh when its seed changes");
+    that.destroy();
+});
+
+// Diagnosis of a component waiting for a layer which is not defined
+
+fluid.def("fluid.tests.pageNeedingMixin", {
+    $layers: ["fluid.component", "fluid.tests.undefinedMixin"],
+    member: "from the page"
+});
+
+fluid.def("fluid.tests.pageHolder", {
+    $layers: "fluid.component",
+    page: {
+        $component: {
+            $layers: "fluid.tests.pageNeedingMixin"
+        }
+    }
+});
+
+QUnit.test("A component waiting for a layer which is not defined is reported as such", function (assert) {
+    const holder = fluid.tests.pageHolder();
+    fluid.cell.stabilize();
+    const page = holder.page;
+    const results = fluid.queryILSelector(holder, "fluid.tests.pageNeedingMixin");
+    assert.equal(results.length, 1, "The waiting component is traversed by a query");
+    assert.ok(fluid.isUnavailable(results[0]), "It is returned as unavailable, since its layers can't be resolved to match it");
+    assert.equal(results[0].message, "Layer fluid.tests.undefinedMixin is not defined", "Its unavailable value says why");
+    assert.throws(() => results[0].member, /Cannot access member member of component at path .*page, which is unavailable: Layer fluid.tests.undefinedMixin is not defined/,
+        "Reading a member of the query's entry for it outside a computation reports why it is unavailable");
+    assert.ok(fluid.isUnavailable(fluid.deproxyUnavailable(results[0])) && !fluid.isProxy(fluid.deproxyUnavailable(results[0])),
+        "The entry unwraps to the component's unavailable value");
+    const live = fluid.liveQueryILSelector(holder, "fluid.tests.pageNeedingMixin").get();
+    assert.ok(fluid.isUnavailable(live) && !fluid.isProxy(live) && live.message === "Layer fluid.tests.undefinedMixin is not defined",
+        "The live query is the component's unavailable value");
+
+    assert.throws(() => page.member, /Cannot access member member of component at path .*page, which is unavailable: Layer fluid.tests.undefinedMixin is not defined/,
+        "Reading a member of the waiting component outside a computation reports why it is unavailable, rather than reading undefined");
+    assert.equal(page.then, undefined, "A member probed by generic code, e.g. by await, reads quietly");
+    assert.equal(page.message, "Layer fluid.tests.undefinedMixin is not defined", "A member of the unavailable value itself may be read");
+
+    const record = fluid.undefinedLayers().find(rec => rec.layerName === "fluid.tests.undefinedMixin");
+    assert.ok(record, "The undefined layer is listed");
+    assert.deepEqual(record.requiredBy, ["fluid.tests.pageNeedingMixin"], "The layer requiring it is recorded");
+    assert.ok(record.componentPaths.some(path => path.endsWith("page")), "The path of the waiting component is recorded");
+    assert.equal(record.imported, false, "No import supplies it");
+    assert.ok(/required by layer fluid.tests.pageNeedingMixin for component at path .*page is not defined: no import or module supplies it/.test(record.message),
+        "Its message names who waits for it and why it is missing");
+    assert.ok(record.message.includes("foo-barBaz.vue for foo.barBaz"), "Its message explains how imported Single File Components are loaded");
+
+    fluid.importMap["fluid.tests.undefinedMixin"] = {path: "fluid-tests-undefinedMixin.vue"};
+    const imported = fluid.undefinedLayers().find(rec => rec.layerName === "fluid.tests.undefinedMixin");
+    assert.ok(imported.imported && imported.message.endsWith("the file imported for it was loaded but did not define it"),
+        "A layer registered for import which is still undefined is reported as not defined by its file");
+    delete fluid.importMap["fluid.tests.undefinedMixin"];
+
+    const logged = [];
+    const capture = args => logged.push(args.join(" "));
+    fluid.loggingEvent.addListener(capture, "testCapture", "after:describeUnavailableArgs");
+    const reported = fluid.reportUndefinedLayers();
+    const reportedAgain = fluid.reportUndefinedLayers();
+    fluid.loggingEvent.removeListener("testCapture");
+    assert.ok(reported.some(rec => rec.layerName === "fluid.tests.undefinedMixin"), "The undefined layer is reported");
+    assert.ok(logged.some(line => line.includes("Layer fluid.tests.undefinedMixin, required by layer fluid.tests.pageNeedingMixin")),
+        "Its report is logged");
+    assert.notOk(reportedAgain.some(rec => rec.layerName === "fluid.tests.undefinedMixin"), "It is reported only once");
+
+    fluid.def("fluid.tests.undefinedMixin", {
+        mixinMember: "from the mixin"
+    });
+    fluid.cell.stabilize();
+    assert.equal(holder.page.member, "from the page", "Once the layer is defined, the component is available");
+    assert.equal(holder.page.mixinMember, "from the mixin", "The layer contributes its members");
+    assert.notOk(fluid.undefinedLayers().some(rec => rec.layerName === "fluid.tests.undefinedMixin"), "The layer is no longer listed");
+    holder.destroy();
+});
+
+QUnit.test("A member of an unavailable component may be read within a computation", function (assert) {
+    fluid.def("fluid.tests.pageNeedingLaterMixin", {
+        $layers: ["fluid.component", "fluid.tests.laterMixin"],
+        member: "from the page"
+    });
+    const holder = fluid.tests.pageHolder({
+        page: {
+            $component: {
+                $layers: "fluid.tests.pageNeedingLaterMixin"
+            }
+        }
+    });
+    fluid.cell.stabilize();
+    const page = holder.page;
+    const reader = fluid.cell(undefined, {name: "Reader of member of waiting component"}).computed(() => page.member);
+    let initial;
+    try {
+        initial = reader.get();
+        assert.ok(true, "Reading a member of the waiting component within a computation does not throw");
+    } catch (e) {
+        assert.ok(false, "Reading within a computation threw: " + e.message);
+    }
+    assert.ok(initial === undefined || fluid.isUnavailable(initial), "The member reads as not yet available");
+    fluid.def("fluid.tests.laterMixin", {});
+    fluid.cell.stabilize();
+    assert.equal(reader.get(), "from the page", "The computation reads the member once the component is available");
+    holder.destroy();
+});
+
+QUnit.test("Unavailable values logged are described as text", function (assert) {
+    const unavailable = fluid.unavailable({message: "Something is missing"}, "config");
+    const args = ["Failure for layer x:", unavailable, "and", fluid.unavailable({message: "Another"})];
+    fluid.describeUnavailableArgs(args);
+    assert.deepEqual(args.filter(arg => typeof(arg) === "string"),
+        ["Failure for layer x:", "[unavailable (config): Something is missing]", "and", "[unavailable (error): Another]"],
+        "Each unavailable value is preceded by its variety and message");
+    assert.strictEqual(args[2], unavailable, "The value itself is kept, for inspection");
+
+    const logged = [];
+    const capture = args => logged.push([...args]);
+    fluid.loggingEvent.addListener(capture, "testCapture", "after:describeUnavailableArgs");
+    fluid.log(fluid.logLevel.FAIL, "Logged:", unavailable);
+    fluid.loggingEvent.removeListener("testCapture");
+    assert.ok(logged.some(args => args.includes("[unavailable (config): Something is missing]")), "fluid.log describes unavailable arguments");
+});
+
+// Finding which layer supplied a member
+
+fluid.def("fluid.tests.memberBase", {
+    $layers: "fluid.component",
+    shared: "from the base",
+    baseOnly: "from the base"
+});
+
+fluid.def("fluid.tests.memberMixin", {
+    shared: "from the mixin",
+    mixinOnly: "from the mixin",
+    child: {
+        $component: {
+            childMember: "from the mixin"
+        }
+    }
+});
+
+fluid.def("fluid.tests.memberHost", {
+    $layers: ["fluid.tests.memberBase", "fluid.tests.memberMixin"],
+    shared: "from the host",
+    child: {
+        $component: {
+            $layers: "fluid.component"
+        }
+    }
+});
+
+QUnit.test("The layer supplying a member may be found", function (assert) {
+    const that = fluid.tests.memberHost();
+    fluid.cell.stabilize();
+    assert.equal(that.shared, "from the host", "A component's own definition is stronger than the layers it names");
+    assert.equal(fluid.layerForMember(that, "shared"), "fluid.tests.memberHost", "The component's own layer is reported as supplying it");
+    assert.equal(fluid.layerForMember(that, "mixinOnly"), "fluid.tests.memberMixin", "A member supplied by a mixin is found");
+    assert.equal(fluid.layerForMember(that, "baseOnly"), "fluid.tests.memberBase", "A member supplied by a base layer is found");
+    assert.equal(that.child.childMember, "from the mixin", "A mixin's configuration of a subcomponent is merged");
+    assert.equal(fluid.layerForMember(that, "child.childMember"), "fluid.tests.memberMixin", "A member of a subcomponent is found by its path");
+    assert.equal(fluid.layerForMember(that, "nonesuch"), undefined, "A member no layer supplies has none");
     that.destroy();
 });
