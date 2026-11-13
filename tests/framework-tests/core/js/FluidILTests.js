@@ -3826,3 +3826,52 @@ QUnit.test("queryILSelector may search the whole tree from its root, which holds
     assert.equal(found[0].value, 42, "It is the component created");
     that.destroy();
 });
+
+// A write does not make its writer depend on what it overwrites, e.g. an effect seeding a reactive root which the user
+// then edits, as a form seeds the draft of its user's entries from what it is showing
+fluid.def("fluid.tests.seededDraft", {
+    $layers: "fluid.component",
+    subject: "first",
+    seed: "$compute:fluid.tests.seededDraft.seed({self}.subject)",
+    draft: {
+        $reactiveRoot: {}
+    },
+    seedDraft: "$effect:fluid.tests.seededDraft.seedDraft({self}, {self}.seed)",
+    plain: null,
+    seedPlain: "$effect:fluid.tests.seededDraft.seedPlain({self}, {self}.seed)"
+});
+
+fluid.tests.seededDraft.seed = subject => ({subject, comment: ""});
+
+fluid.tests.seededDraft.runs = 0;
+
+fluid.tests.seededDraft.seedDraft = function (that, seed) {
+    ++fluid.tests.seededDraft.runs;
+    that.draft = seed;
+};
+
+fluid.tests.seededDraft.seedPlain = function (that, seed) {
+    that.plain = seed.subject;
+};
+
+QUnit.test("An effect writing a value does not come to depend on it", function (assert) {
+    fluid.tests.seededDraft.runs = 0;
+    const that = fluid.tests.seededDraft();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.draft), {subject: "first", comment: ""}, "Draft seeded");
+    assert.equal(that.plain, "first", "Plain member seeded");
+    assert.equal(fluid.tests.seededDraft.runs, 1, "Seeding effect run once");
+
+    that.draft.comment = "Typed";
+    that.plain = "Overwritten";
+    fluid.cell.stabilize();
+    assert.equal(that.draft.comment, "Typed", "Write beneath the seeded reactive root is held");
+    assert.equal(that.plain, "Overwritten", "Write to the seeded plain member is held");
+    assert.equal(fluid.tests.seededDraft.runs, 1, "Seeding effect not run again by writes to what it wrote");
+
+    that.subject = "second";
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.draft), {subject: "second", comment: ""}, "Draft seeded afresh when its seed changes");
+    assert.equal(that.plain, "second", "Plain member seeded afresh when its seed changes");
+    that.destroy();
+});

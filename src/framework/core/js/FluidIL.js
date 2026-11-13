@@ -1184,7 +1184,23 @@ const $fluidILScope = function (fluid) {
         return {component: shadow === component[$m] ? component : fluid.deSignal(shadow.availableInstance), segs};
     };
 
-    fluid.setForComponent = function (component, path, inValue, options = {}) {
+    /**
+     * Write a value at a path within a component. A write is not a read: whatever the write consults - the site it is
+     * applied to, the value it overwrites, the component's layers and the history recording it - does not become a
+     * dependency of a computation or effect which makes it, which would otherwise be notified, and run again, by
+     * changes to what it wrote. E.g. an effect seeding a form's draft of its user's entries would undo each entry.
+     * @param {Component} component - The component to write into
+     * @param {String|String[]} path - The path within the component to write at
+     * @param {any} inValue - The value to write
+     * @param {Object} [options] - Options for the write - `recordHistory`, if `true`, records the write in the history
+     * whether or not it is beneath a reactive root of a user component
+     * @return {Cell} The live cell which received the write
+     */
+    fluid.setForComponent = function (component, path, inValue, options) {
+        return fluid.cell.untracked(() => fluid.setForComponentImpl(component, path, inValue, options));
+    };
+
+    fluid.setForComponentImpl = function (component, path, inValue, options = {}) {
         const value = fluid.deproxyMat(inValue);
         const segs = fluid.pathToSegs(path),
             shadow = component[$m];
@@ -3510,7 +3526,18 @@ const $fluidILScope = function (fluid) {
      * parent path within the component
      * @return {Cell<Object>} Signal for the value at the parent path, which will now have been raised into the live layer
      */
+    /**
+     * Delete the material at a path within a component. As for a write, nothing a deletion consults becomes a dependency
+     * of a computation or effect which makes it - see fluid.setForComponent
+     * @param {Component} component - The component to delete from
+     * @param {String|String[]} path - The path within the component to delete
+     * @return {any} The result of the deletion
+     */
     fluid.deleteForComponent = function (component, path) {
+        return fluid.cell.untracked(() => fluid.deleteForComponentImpl(component, path));
+    };
+
+    fluid.deleteForComponentImpl = function (component, path) {
         const segs = fluid.pathToSegs(path);
         let togo;
         if (segs.length > 1) {
@@ -3634,21 +3661,26 @@ const $fluidILScope = function (fluid) {
             // itself sourced from another site, e.g. one defined by a reference such as "{hashManager}.hash.pane",
             // follows the fish upstream in the same way, as a deletion does, and is applied to the original site,
             // rather than rebinding the member locally and severing it from its source.
+            // Neither a write nor a deletion tracks what it consults in finding its site - see fluid.setForComponent
             const setHandler = function (target, prop, value) {
                 fluid.expectLiveComponent(shadow, prop);
-                const nextSegs = [...segs, prop];
-                // A member already raised into the live layer is held locally, and is written in place
-                const upstream = segs.length === 0 && !(prop in shadow.liveLayer);
-                const site = upstream ? fluid.upstreamSite(shadow, nextSegs) : {shadow, segs: nextSegs};
-                fluid.setForComponent(site.shadow.that, site.segs, value);
+                fluid.cell.untracked(() => {
+                    const nextSegs = [...segs, prop];
+                    // A member already raised into the live layer is held locally, and is written in place
+                    const upstream = segs.length === 0 && !(prop in shadow.liveLayer);
+                    const site = upstream ? fluid.upstreamSite(shadow, nextSegs) : {shadow, segs: nextSegs};
+                    fluid.setForComponent(site.shadow.that, site.segs, value);
+                });
                 return true;
             };
             // A deletion of a member sourced from another site, e.g. `delete item.todo` for an iteration variable,
             // follows the fish upstream and removes the original element from its source
             const deleteHandler = function (target, prop) {
                 fluid.expectLiveComponent(shadow, prop);
-                const site = fluid.upstreamSite(shadow, [...segs, prop]);
-                fluid.deleteForComponent(site.shadow.that, site.segs);
+                fluid.cell.untracked(() => {
+                    const site = fluid.upstreamSite(shadow, [...segs, prop]);
+                    fluid.deleteForComponent(site.shadow.that, site.segs);
+                });
                 return true;
             };
 
