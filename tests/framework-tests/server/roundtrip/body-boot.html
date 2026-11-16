@@ -14,6 +14,14 @@
         <!-- The module holding the page, and its map of the modules it depends upon -->
         <fluid-module id="fluid-tests-rt" src="./" modules="fluid-modules.json"></fluid-module>
         <fluid-import src="sfc/fluid-tests-rt-app.vue"></fluid-import>
-        <div fluid-layers="fluid.tests.rt.app"></div>
+        <script>
+            "use strict";
+            // A runnable application of the fixture, rendered from its real data, relative to this page
+            fluid.def("fluid.tests.rt.page", {
+                $layers: "fluid.tests.rt.app",
+                recordsUrl: "data/records.json"
+            });
+        </script>
+        <div fluid-layers="fluid.tests.rt.page"></div>
     </body>
 </html>

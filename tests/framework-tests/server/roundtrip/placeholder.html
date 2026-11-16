@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Hydration round trip - placeholder</title>
+        <!-- A test fixture for hydrate-roundtrip-test.js - as index.html, but using the root Single File Component as it
+             is, so that it is rendered from the placeholder its layer declares - see FLUID-7032 -->
+        <!-- The one reference to the location of Infusion - every other is relative, or through a module -->
+        <script src="../../../../src/framework/core/js/FluidBoot.js"></script>
+        <!-- The module holding the page, and its map of the modules it depends upon -->
+        <fluid-module id="fluid-tests-rt" src="./" modules="fluid-modules.json"></fluid-module>
+        <fluid-import src="sfc/fluid-tests-rt-app.vue"></fluid-import>
+    </head>
+    <body>
+        <div fluid-layers="fluid.tests.rt.app"></div>
+    </body>
+</html>

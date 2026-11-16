@@ -4,10 +4,10 @@
 // Support for testing that a page renders identically whether booted in the browser from its minimal, dehydrated form,
 // or from the form written for it by src/framework/server/hydrate.js. The dehydrated page holds only its bootstrap of
 // Infusion, the imports of its Single File Components and the elements on which its components boot - its booting
-// discovers and injects every SFC, script, stylesheet and symbol, fetches its real data, and renders its markup. The
-// hydrated page holds all of those as rendered from the placeholders of its data - see fluid.withPlaceholder - which
-// the browser adopts and then rerenders
-// with its real data. Once each is ready, the markup of their components and the set of their injections must agree.
+// discovers and injects every SFC, script, stylesheet and symbol, fetches its data, and renders its markup. The hydrated
+// page holds all of those as rendered under node from the same data - its real data, for a runnable application, or the
+// placeholders its layers declare, for a test fixture, see FLUID-7032 - which the browser adopts. Once each is ready,
+// the markup of their components and the set of their injections must agree.
 
 const childProcess = require("child_process"),
     fs = require("fs"),

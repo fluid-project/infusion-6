@@ -30,11 +30,19 @@
 //   --hydrate    Also write each page's hydrated form beside it, as hydrate.js does
 //   --ignore-missing  A regular expression matching references to files which may be missing without failing, e.g.
 //                those of a stylesheet written for another site - may be given several times
+//   --skip-version-check  Copy the modules whatever their versions - see below
+// Before anything is copied, the version of each module copied from an installed npm package is checked against the
+// version the project's package.json names for it, and nothing is copied if they differ - since a stale node_modules,
+// e.g. one not reinstalled after package.json was updated, would otherwise revert the project's copies of its modules
+// to older releases. A module copied from a checkout given by --source or --sources, as in development, is not held to
+// its version, but a warning is given if the checkout's version differs from that named, or if any of the files copied
+// from it have uncommitted changes, since those files then match no release.
 // Unless a checkout of Infusion 6 is given, its own files are copied from the Infusion 6 running this tool.
 // Files demanded by a page which lie outside any module's directory are not copied, but must exist.
 
 const fs = require("fs"),
     path = require("path"),
+    childProcess = require("child_process"),
     {pathToFileURL, fileURLToPath} = require("url");
 
 const minimist = require("minimist"),
@@ -81,8 +89,7 @@ fluid.copyOut.isLocalRef = function (ref) {
 
 /**
  * Collect the URLs of the local files referred to by a booted document - by its scripts, stylesheets, images and
- * imports, whether written in the page itself or injected by its Single File Components, and by the data and
- * placeholders of its components bearing fluid.withPlaceholder
+ * imports, whether written in the page itself or injected by its Single File Components
  * @param {Document} dokkument - The booted document
  * @return {String[]} The absolute URLs of the files
  */
@@ -99,15 +106,8 @@ fluid.copyOut.documentRefs = function (dokkument) {
     collect("img[src]", "src");
     collect("source[src]", "src");
     collect("fluid-import[src]", "src");
-    // The genuine data of each component bearing fluid.withPlaceholder, which is not fetched under node, as well as its
-    // placeholder, which is
-    fluid.documentPlaceholders(dokkument).forEach(record => {
-        [record.url, record.placeholderUrl].forEach(url => {
-            if (url && url.startsWith("file:")) {
-                refs.push(url);
-            }
-        });
-    });
+    // The data a page's components fetch, whether real or the file of a placeholder, is fetched under node as it
+    // boots, and so is among fluid.serverFetchedUrls - see FLUID-7032
     return refs;
 };
 
@@ -317,15 +317,154 @@ fluid.copyOut.writeMap = function (mapFile, map, dryRun) {
     return status;
 };
 
+/**
+ * Determine whether a version satisfies a version specification as written in a package.json - an exact version, a
+ * range introduced by "^" or "~", or one with "x" or "*" in place of a component. Any other specification, e.g. a
+ * compound range, a tag, or a URL or path to the package, is not understood.
+ * @param {String} version - The version, e.g. "6.2.4"
+ * @param {String} spec - The specification, e.g. "6.2.4", "^6.2.0", "~6.2.1" or "6.x"
+ * @return {Boolean|null} Whether the version satisfies the specification, or `null` if the specification is not understood
+ */
+fluid.copyOut.versionSatisfies = function (version, spec) {
+    // Parse a version, or the version of a specification, into its three numeric components, each null if written as a
+    // wildcard or omitted, and its prerelease suffix
+    const parse = text => {
+        const match = /^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(-[0-9A-Za-z.-]+)?$/.exec(text.trim());
+        return match && {
+            parts: match.slice(1, 4).map(part => part === undefined || /^[xX*]$/.test(part) ? null : +part),
+            pre: match[4] || ""
+        };
+    };
+    // Compare two lists of version components, as numbers would be compared
+    const compare = (a, b) => {
+        const i = a.findIndex((value, index) => value !== b[index]);
+        return i === -1 ? 0 : a[i] - b[i];
+    };
+    const trimmed = spec.trim();
+    const operator = /^[\^~=]/.test(trimmed) ? trimmed[0] : "";
+    const wanted = parse(operator ? trimmed.substring(1) : trimmed);
+    const got = parse(version);
+    let togo = null;
+    if (trimmed === "*" || trimmed === "") {
+        togo = true;
+    } else if (wanted && got && got.parts.every(part => part !== null)) {
+        const [major, minor] = got.parts;
+        const [wMajor, wMinor, wPatch] = wanted.parts;
+        if (operator === "^" || operator === "~") {
+            const floor = [wMajor ?? 0, wMinor ?? 0, wPatch ?? 0];
+            const order = compare(got.parts, floor);
+            // A prerelease satisfies a range only at the very version the range names, as npm treats it
+            const atLeast = order > 0 && !got.pre || order === 0 && (!got.pre || got.pre === wanted.pre);
+            // "~" fixes the major and minor version, "^" the leftmost non-zero component of those named
+            const ceilingHolds = operator === "~" ? major === wMajor && (wMinor === null || minor === wMinor) :
+                wMajor !== 0 ? major === wMajor :
+                    wMinor !== null && wMinor !== 0 ? major === 0 && minor === wMinor :
+                        compare(got.parts, floor) === 0 || wPatch === null && major === 0 && (wMinor === null || minor === wMinor);
+            togo = atLeast && ceilingHolds;
+        } else if (wanted.parts.every(part => part !== null)) {
+            togo = compare(got.parts, wanted.parts) === 0 && got.pre === wanted.pre;
+        } else {
+            togo = wanted.parts.every((part, i) => part === null || part === got.parts[i]) && !got.pre;
+        }
+    }
+    return togo;
+};
+
+/**
+ * Read the version specifications a project gives its dependencies, from its package.json
+ * @param {String} projectDir - The directory holding the project's package.json
+ * @return {Object<String, String>} The specification of each dependency, by package name, or an empty object if the
+ * directory holds no package.json
+ */
+fluid.copyOut.dependencySpecs = function (projectDir) {
+    const file = path.join(projectDir, "package.json");
+    const pkg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+    return {...pkg.devDependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies, ...pkg.dependencies};
+};
+
+/**
+ * List those of a set of files, all within a git checkout, which have uncommitted changes
+ * @param {String} dir - The checkout's directory
+ * @param {String[]} files - The absolute paths of the files
+ * @return {String[]|null} The paths, relative to the checkout, of those with uncommitted changes, or `null` if the
+ * directory is not within a git checkout or git can't be run
+ */
+fluid.copyOut.uncommittedFiles = function (dir, files) {
+    let togo = null;
+    if (files.length > 0) {
+        try {
+            const output = childProcess.execFileSync("git", ["-C", dir, "status", "--porcelain", "--", ...files.map(file => path.relative(dir, file))],
+                {encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]});
+            togo = output.split("\n").filter(line => line.trim()).map(line => line.substring(3));
+        } catch (e) {
+            togo = null;
+        }
+    } else {
+        togo = [];
+    }
+    return togo;
+};
+
+/**
+ * @typedef {Object} VersionCheck
+ * @property {String[]} errors - A message for each module copied from an installed package whose version differs from
+ * that the project names for it
+ * @property {String[]} warnings - A message for each module copied from a checkout whose version differs from that the
+ * project names for it, or from which files with uncommitted changes are copied
+ */
+
+/**
+ * Check the version of each module whose files are to be copied against the version the project's package.json names
+ * for it - see the head of this file
+ * @param {Object} options - Members `projectDir`, the directory holding the project's package.json, `modules`, the
+ * absolute path of the source of each module copied, by name, `checkouts`, the names of those whose source is a
+ * checkout given by --source or --sources, and `plan`, the copying planned, as returned by `fluid.copyOut.plan`
+ * @return {VersionCheck} The problems found
+ */
+fluid.copyOut.checkVersions = function (options) {
+    const specs = fluid.copyOut.dependencySpecs(options.projectDir);
+    const errors = [], warnings = [];
+    Object.entries(options.modules).forEach(([name, dir]) => {
+        const spec = specs[name];
+        const pkgFile = path.join(dir, "package.json");
+        const version = fs.existsSync(pkgFile) ? JSON.parse(fs.readFileSync(pkgFile, "utf8")).version : undefined;
+        const satisfies = spec === undefined || version === undefined ? null : fluid.copyOut.versionSatisfies(version, spec);
+        const isCheckout = options.checkouts.has(name);
+        // Every file the project's copies are taken from, whether or not it is copied this time, since a copy made
+        // earlier from an uncommitted file matches no release either
+        const copied = options.plan.filter(entry => entry.source && entry.source.startsWith(dir + path.sep)).map(entry => entry.source);
+        if (satisfies === false) {
+            if (isCheckout) {
+                warnings.push(`${name} is copied from the checkout at ${dir}, at version ${version}, but package.json names ${spec} - ` +
+                    "its copies will match no release named by the project");
+            } else {
+                errors.push(`${name} is installed at version ${version} in ${dir}, but package.json names ${spec} - ` +
+                    "run \"npm install\" so that its copies are not reverted to the installed version");
+            }
+        }
+        if (isCheckout) {
+            const uncommitted = fluid.copyOut.uncommittedFiles(dir, copied);
+            if (uncommitted && uncommitted.length > 0) {
+                warnings.push(`${name} is copied from the checkout at ${dir}, which has uncommitted changes to files the project's copies are taken from - ` +
+                    `${uncommitted.join(", ")} - so that they will match no release`);
+            }
+        }
+    });
+    return {errors, warnings};
+};
+
 fluid.copyOut.main = async function (args) {
-    const parsedArgs = minimist(args, {boolean: ["n", "list", "hydrate", "in-place"], string: ["source", "sources", "vendor", "framework", "ignore-missing"]});
+    const parsedArgs = minimist(args, {boolean: ["n", "list", "hydrate", "in-place", "skip-version-check"],
+        string: ["source", "sources", "vendor", "framework", "ignore-missing"]});
     const pages = parsedArgs._.map(page => path.resolve(page));
     if (pages.length === 0) {
         console.error("Usage: node copyOut.js <page.html>... --source <module>=<checkout> [--sources <file>] [--vendor <dir>] " +
-            "[--in-place] [--framework boot|source|built] [-n] [--list] [--hydrate]");
+            "[--in-place] [--framework boot|source|built] [-n] [--list] [--hydrate] [--skip-version-check]");
         process.exitCode = 1;
     } else {
         const moduleSources = fluid.copyOut.parseSources(parsedArgs);
+        // The modules whose checkouts are given, rather than found amongst the installed packages
+        const checkouts = new Set(Object.keys(moduleSources));
         // Unless another checkout is given for it, Infusion's own files are copied from the Infusion running this
         // tool, e.g. that installed by npm in the project's node_modules
         moduleSources[fluid.bootRecord.moduleName] = moduleSources[fluid.bootRecord.moduleName] || path.resolve(__dirname, "../../..");
@@ -352,29 +491,42 @@ fluid.copyOut.main = async function (args) {
         const plan = fluid.copyOut.plan(fluid.copyOut.closeDemands(demands));
         const counts = {new: 0, changed: 0, unchanged: 0, missing: 0, ignored: 0};
         const projectDir = process.cwd();
-        const ignorable = [].concat(parsedArgs["ignore-missing"] || []).map(pattern => new RegExp(pattern));
-        plan.forEach(entry => {
-            if (entry.status === "missing" && ignorable.some(pattern => pattern.test(entry.target))) {
-                entry.status = "ignored";
-            }
-            ++counts[entry.status];
-            if (parsedArgs.list || entry.status !== "unchanged") {
-                console.log(entry.status + ": " + path.relative(projectDir, entry.target) +
-                    (entry.source ? " <- " + path.relative(projectDir, entry.source) : ""));
-            }
-        });
-        Object.entries(maps).forEach(([mapFile, map]) => {
-            const status = fluid.copyOut.writeMap(mapFile, map, parsedArgs.n);
-            console.log("module map " + status + ": " + path.relative(projectDir, mapFile));
-        });
-        if (!parsedArgs.n) {
-            fluid.copyOut.execute(plan);
-        }
-        console.log(`\n${counts.new} new, ${counts.changed} changed, ${counts.unchanged} unchanged, ${counts.missing} missing` +
-            (counts.ignored ? `, ${counts.ignored} missing but ignored` : "") +
-            (parsedArgs.n ? " (dry run - nothing copied)" : ""));
-        if (counts.missing > 0) {
+        // Every module copied - those the maps locate, and Infusion - with the directory its files were read from
+        const moduleNames = new Set([fluid.bootRecord.moduleName, ...Object.values(maps).flatMap(map => Object.keys(map))]);
+        const modules = Object.fromEntries([...moduleNames].map(name => [name,
+            fluid.serverModuleSourcesById[name] || fluid.copyOut.findSource(name, moduleSources, [projectDir])]).filter(([, dir]) => dir));
+        const check = parsedArgs["skip-version-check"] ? {errors: [], warnings: []} :
+            fluid.copyOut.checkVersions({projectDir, modules, checkouts, plan});
+        check.warnings.forEach(warning => console.warn("Warning: " + warning));
+        check.errors.forEach(error => console.error("Error: " + error));
+        if (check.errors.length > 0) {
+            console.error("\nNothing was copied - correct the versions, or give --skip-version-check to copy regardless");
             process.exitCode = 1;
+        } else {
+            const ignorable = [].concat(parsedArgs["ignore-missing"] || []).map(pattern => new RegExp(pattern));
+            plan.forEach(entry => {
+                if (entry.status === "missing" && ignorable.some(pattern => pattern.test(entry.target))) {
+                    entry.status = "ignored";
+                }
+                ++counts[entry.status];
+                if (parsedArgs.list || entry.status !== "unchanged") {
+                    console.log(entry.status + ": " + path.relative(projectDir, entry.target) +
+                        (entry.source ? " <- " + path.relative(projectDir, entry.source) : ""));
+                }
+            });
+            Object.entries(maps).forEach(([mapFile, map]) => {
+                const status = fluid.copyOut.writeMap(mapFile, map, parsedArgs.n);
+                console.log("module map " + status + ": " + path.relative(projectDir, mapFile));
+            });
+            if (!parsedArgs.n) {
+                fluid.copyOut.execute(plan);
+            }
+            console.log(`\n${counts.new} new, ${counts.changed} changed, ${counts.unchanged} unchanged, ${counts.missing} missing` +
+                (counts.ignored ? `, ${counts.ignored} missing but ignored` : "") +
+                (parsedArgs.n ? " (dry run - nothing copied)" : ""));
+            if (counts.missing > 0) {
+                process.exitCode = 1;
+            }
         }
     }
 };

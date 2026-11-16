@@ -1,0 +1,2181 @@
+USER:
+There should be just one placeholder per layer, not per integration. The purpose of the placeholder is intended to be a minimal representative of the data a layer needs in order to correctly instantiate and render the majority of its content - consolidate all of these into one per vizLoader variant
+
+----------
+
+ASSISTANT:
+Checking how pages locate the imerss-bioinfo module, so a layer default URL can resolve regardless of page location.
+
+----------
+
+ASSISTANT:
+Plan: put one placeholder per layer inside the imerss-bioinfo module and default it in the layer as a `%imerss-bioinfo/...` path. Checking how copyOut decides which module files reach `docs/vendor`.
+
+----------
+
+ASSISTANT:
+Dumping the five placeholder packages to compare their tables and fields.
+
+----------
+
+ASSISTANT:
+Schemas differ per atlas (region fields especially). Checking whether any page config references fields a shared placeholder wouldn't have.
+
+----------
+
+ASSISTANT:
+Making the changes: one placeholder per layer under `data/placeholder/`, defaulted in each layer through a module-relative path that the data loader resolves.
+
+----------
+
+ASSISTANT:
+Now the fixture, `build.js`, `copyMelitOut.js`, and removing the old per-integration placeholders.
+
+----------
+
+ASSISTANT:
+Running the build.
+
+----------
+
+ASSISTANT:
+Build passes. Running the fixture form of the round-trip test too, then updating the notes.
+
+----------
+
+ASSISTANT:
+Each visualisation layer now has one placeholder of its own, and no page names a placeholder any more. `npm run build` passes, and so does `bbeaHydrationRoundTrip` on both its fixture and its WaBA page. All five pages are hydrated from their layer's placeholder, and eslint is clean on the changed JS.
+
+**One placeholder per layer** (these are the files that already existed, moved and renamed):
+
+| Layer | File | Source |
+|---|---|---|
+| `hortis.beaVizLoader` | `data/placeholder/beaVizLoader.viz` | the WaBA placeholder, which the fixture already used |
+| `hortis.standardVizLoader` | `data/placeholder/standardVizLoader.viz` | the Diatoms placeholder |
+| `hortis.blitzVizLoader` | `data/placeholder/blitzVizLoader.viz` | the Galiano placeholder; this layer reads extra taxon fields (`reportingStatus`, etc.) |
+
+Each layer sets the default, e.g. `vizPlaceholderFile: "%imerss-bioinfo/data/placeholder/beaVizLoader.viz"`. Because the path is relative to the module, not the page, it works wherever a page is served from. `copyOut.js` copies it into `docs/vendor/imerss-bioinfo/data/placeholder/` without any extra setup.
+
+On BCBA the shared placeholder has no `BC Ecoprovinces` field. That's harmless: `computeGroups` skips leading region fields the placeholder lacks, and the static region filter shows the WaBA regions until the real data loads.
+
+**Infusion 6 change (in `../infusion-6`):** `fluid.withPlaceholder.fetchUrl` (`FluidView.js`) now expands `%module/...` references. `fluid.documentPlaceholders` (`server-support.js`) does the same. Without the second fix, `copyOut.js` failed with `URIError: URI malformed`. You'll need these in an Infusion release before the bagatelle side works outside your local checkout.
+
+**Other changes in bagatelle:**
+- I took out the per-page `vizPlaceholderFile` lines I added last time.
+- I deleted the old `data/*/placeholder/` and `docs/data/*/placeholder/` directories, including the leftover per-table CSV and `.viz` files.
+- `build.js` no longer copies those directories.
+- The fixture now uses the bee placeholder as its data and relies on the layer default.
+- `copyMelitOut.js` still listed the old per-table OBA files, which were already broken by the migration. It now copies `plant-pollinators-OBA-2025.viz`.
+- I updated `notes/columnar-data-package.md` and `notes/query-description-language.md` to match.
+
+**This conflicts with the query cache:** the notes recorded a deliberate decision to hydrate pages from their real data so that the query cache holds real results. With placeholders, the cache now records queries over the placeholder's tables. The real data never matches those keys, so the cache written into each page is dead weight. I've listed it as an open question in the notes. It either needs dropping, or a separate pass that records queries against the real data.
+
+`src/migrateVizDriver.js` still writes a per-driver `vizPlaceholderFile`. I left it alone because it's a one-off migration tool.
+
+----------
+
+USER:
+Yes, placeholders are only to be used in basic rendering test fixtures. Files are to be hydrated for runnable apps from their real data. Does e.g. plant-pollinators-OBA-2025.viz include a query cache derived from its actual startup queries? When was this work done. Can you find some notes which are inconsistent with this notion of placeholders?
+
+----------
+
+ASSISTANT:
+No. `plant-pollinators-OBA-2025.viz` holds no query cache, and the cache that's in the built page now comes from the placeholder, which is wrong. My last change went in the wrong direction and should be reverted.
+
+**Query cache.** The `.viz` package holds only tables; `src/vizPack.js` writes nothing about a cache. The cache goes into the hydrated HTML page as `<script type="application/json" id="hortis-query-cache">` in its head.
+- The committed `docs/indexBeasOBA.html` (HEAD) has no cache, because it was built before the pages were migrated.
+- The current `docs/indexBeasOBA.html` does have one, but it was built from my placeholder change, so its entries describe the placeholder (`"rowCount":8,"count":8`). It's useless and would be replaced on the next build.
+
+**When this was done.** All of it is from today, 2026-11-16:
+- **11:02 (UTC), commit `b8fef0ef` (the 1.22.0 release):** the `.viz` format, the query language (QDL), `hortis.queryCache`, and notes that already say pages are hydrated from real data. But the page sources in that commit still named the old per-table files and their placeholders.
+- **Later, uncommitted (version 1.23.0 in `package.json`):** the page sources were migrated to `vizFile` with no placeholder. That's what exposed the failing test.
+
+So the original build failure was the test being out of date, not the pages.
+
+**Notes and code that conflict with "placeholders only in test fixtures"** (as they stand at HEAD):
+- **`test/i6/bbeaHydrationRoundTrip.js` lines 73–82:** it expects "8 of 8 records" and a visible loading indicator on every page it's given, including `docs/indexBeasWaBA.html` from `build.js`. These checks only make sense for the fixture; this is the real cause of the build failure.
+- **`build.js:322` (`buildI6` doc):** "so that it shows its rendering from placeholder data before it boots".
+- **`src/copyMelitOut.js:10–13`:** says the page is copied "with their placeholders" and "shows its rendering from placeholder data". Its `pageFiles` list also still names the old per-table OBA files.
+- **`src/buildSource/indexBeas{BCBA,OBA,WaBA}.html:26`:** "each with a placeholder of the same shape from which the page is rendered statically by hydrate.js".
+- **`src/client/js/i6/imerss-core.js:979–980, 1051–1052, 1061`:** describe placeholders as what a page is rendered from "when the page is rendered statically" or "by a static build of its page".
+- **`hortis-beaVizLoader.vue:209` and `hortis-standardVizLoader.vue:91`:** the same "static build of the page" framing.
+- **`test/i6/html/bbeaRealDataFixture.html`:** despite its name, its title and comment are copied from the placeholder fixture ("BBEA visualisation on placeholder data", "8 placeholder observations…").
+- **`test/i6/queryCacheRoundTrip.js:5, 11`:** worth checking. It ties the cache to a page hydrated without placeholders, which is right, but its wording borrows the fixture's.
+- **`notes/columnar-data-package.md:170–172, 304–307` and `notes/query-description-language.md:244–246`:** these were consistent with your rule at HEAD. My last turn rewrote them to the wrong rule, so they now conflict.
+
+**Proposed fix:**
+1. Revert my previous changes:
+   - the layer-default `vizPlaceholderFile` in three SFCs;
+   - `data/placeholder/`;
+   - the Infusion 6 edits to `FluidView.js` and `server-support.js`;
+   - the notes edits;
+   - the fixture edit.
+2. Put the deleted `data/b-team/placeholder/plant-pollinators-WaBA-2026.viz` back for the fixture. The others can stay deleted.
+3. In `bbeaHydrationRoundTrip.js`, check for the 8-record placeholder rendering and the loading indicator only on the fixture. For a real page, check that the hydrated page shows the full "N of N" count and has a non-empty query cache.
+4. Correct the stale comments listed above.
+
+Shall I go ahead?
+
+----------
+
+USER:
+What edits were made to FluidView.js which are referred to here?
+
+----------
+
+ASSISTANT:
+In my previous turn I made two edits to `../infusion-6/src/framework/core/js/FluidView.js`, both in the `fluid.withPlaceholder` section. The aim was to allow a placeholder path relative to a module (`%module/...`):
+
+1. **Code change in `fluid.withPlaceholder.fetchUrl`.** The chosen URL is now passed through `fluid.module.resolvePath`:
+   ```js
+   // before
+   fluid.withPlaceholder.fetchUrl = (url, placeholderUrl) => fluid.withPlaceholder.isPlaceholder(placeholderUrl) ? placeholderUrl : url;
+   // after
+   fluid.withPlaceholder.fetchUrl = (url, placeholderUrl) => fluid.module.resolvePath(fluid.withPlaceholder.isPlaceholder(placeholderUrl) ? placeholderUrl : url);
+   ```
+   I also added a clause to its JSDoc `@return` saying the URL is resolved through `fluid.module.resolvePath` when it is module-relative.
+
+2. **Comment on the `placeholderUrl` member of `fluid.def("fluid.withPlaceholder", ...)`:**
+   ```js
+   // The placeholder's URL, relative to the document, or a module-relative path such as
+   // "%my-module/data/placeholder.json" - so that a layer may supply one placeholder for every document hosting it
+   ```
+
+I also made one matching change in `src/framework/server/server-support.js`. In `fluid.documentPlaceholders`, `resolve` now expands module references before resolving against the document:
+```js
+const resolve = url => url ? new URL(fluid.module.resolvePath(url), dokkument.location).href : null;
+```
+
+`FluidView.js` already had other uncommitted changes before I touched it; `git status` showed it as modified, along with `FluidIL.js`, `copyOut.js` and `copyout-test.js`. Those other changes aren't mine, so a revert should undo only the edits above and not use `git checkout` on the file.
+
+----------
+
+USER:
+What's wrong with implementing a placeholder path relative to a module, is this not also required by the "placeholders are just for test fixtures and authoring support" model?
+
+----------
+
+ASSISTANT:
+Nothing is wrong with it. I was wrong to put the Infusion edits in the revert list. The mistake was in how bagatelle used module-relative paths, not in supporting them.
+
+**Why module-relative paths fit your model.** A placeholder is a minimal representative of what a layer needs, so it naturally belongs to the module that defines the layer, not to any one page. A test fixture or an authoring page can then refer to it as `%imerss-bioinfo/data/placeholder/beaVizLoader.viz` wherever it sits. The current fixture instead reaches it through the fragile `../../../data/...`. The two Infusion edits are what make that work:
+- `fluid.withPlaceholder.fetchUrl` resolves `%module/...`. For a document-relative `url`, `fluid.module.resolvePath` returns it unchanged, so nothing else is affected.
+- `fluid.documentPlaceholders` resolves it too. Without this, `copyOut.js` fails with `URIError: URI malformed` on any module-relative placeholder, whether in a fixture or an app.
+
+So I'd keep both edits.
+
+**What was actually wrong** was setting `vizPlaceholderFile` as a default in `hortis.beaVizLoader`, `hortis.standardVizLoader` and `hortis.blitzVizLoader`. `isPlaceholder` is true whenever `fluid.renderingStatically` is, so every real app page hydrated by `build.js` picked up the placeholder. Its markup and query cache came out of 8 placeholder rows instead of the real data.
+
+**Revised plan:**
+1. Keep the Infusion edits to `FluidView.js` and `server-support.js`.
+2. Keep the three per-layer placeholders in `data/placeholder/`, since they're useful for fixtures and authoring. Remove the `vizPlaceholderFile` defaults from the three SFCs.
+3. Have fixtures name the placeholder explicitly, e.g. `test/i6/html/bbeaPlaceholderFixture.html` sets `vizFile` and `vizPlaceholderFile` to `%imerss-bioinfo/data/placeholder/beaVizLoader.viz`.
+4. In `bbeaHydrationRoundTrip.js`, check for placeholder rendering only on the fixture. For a real page, check the full "N of N" count and a non-empty query cache built from the real data.
+5. Change the notes I rewrote back to "apps hydrate from real data", and say the placeholders in `data/placeholder/` are for fixtures and authoring. Correct the stale comments I listed earlier.
+
+Shall I go ahead?
+
+----------
+
+USER:
+OK - your summary two turns ago suggested reverting Infusion 6 edits to FLuidView.js and server-support.js - if this was not correct, can you regenerate the list of proposed fix steps here:
+
+----------
+
+ASSISTANT:
+Here is the corrected list. It replaces the one from two turns ago, and the Infusion 6 edits are no longer reverted.
+
+1. **Keep the Infusion 6 edits.** In `../infusion-6/src/framework/core/js/FluidView.js`, `fluid.withPlaceholder.fetchUrl` resolves `%module/...` paths, and its comment documents this. In `src/framework/server/server-support.js`, `fluid.documentPlaceholders` resolves them too. Both are needed for any placeholder path relative to a module, in fixtures as well as apps.
+
+2. **Keep the per-layer placeholders** in `data/placeholder/` (`beaVizLoader.viz`, `standardVizLoader.viz`, `blitzVizLoader.viz`). They're for test fixtures and authoring. The old per-integration placeholder directories stay deleted.
+
+3. **Remove the layer defaults** for `vizPlaceholderFile` from `hortis-beaVizLoader.vue`, `hortis-standardVizLoader.vue` and `hortis-blitzVizLoader.vue`. That way runnable app pages hydrate from their real data. The five pages in `src/buildSource/` stay as they are now, naming only `vizFile`.
+
+4. **Make fixtures name the placeholder explicitly.** `test/i6/html/bbeaPlaceholderFixture.html` would set both `vizFile` and `vizPlaceholderFile` to `%imerss-bioinfo/data/placeholder/beaVizLoader.viz`, so it is fully loaded as soon as it boots. I'll also correct the title and comment in `test/i6/html/bbeaRealDataFixture.html`, which were copied from the placeholder fixture.
+
+5. **Fix the test that caused the original build failure.** In `test/i6/bbeaHydrationRoundTrip.js`, the 8-record rendering and visible loading indicator should only be expected on the fixture. A real page such as `docs/indexBeasWaBA.html` should instead show its full "N of N records" count once hydrated and carry a non-empty `hortis-query-cache` built from its real data.
+
+6. **Restore the meaning of the notes I rewrote**, keeping their accurate parts. In `notes/columnar-data-package.md` and `notes/query-description-language.md`, apps are hydrated from real data and their query cache holds the results of their real startup queries. The `data/placeholder/` packages are for fixtures and authoring, named explicitly by those pages and possibly module-relative. I'll drop the open question I added about the cache being dead weight.
+
+7. **Correct the stale comments** that describe app pages as rendered from placeholders:
+   - `build.js:322` (the `buildI6` doc)
+   - the header of `src/copyMelitOut.js`
+   - `src/buildSource/indexBeas{BCBA,OBA,WaBA}.html:26`
+   - `src/client/js/i6/imerss-core.js:979–980, 1051–1052, 1061`
+   - `hortis-beaVizLoader.vue:209` and `hortis-standardVizLoader.vue:91`
+   - the wording in `test/i6/queryCacheRoundTrip.js:5, 11`, if it needs it
+
+8. **Keep the `copyMelitOut.js` fix** that copies `plant-pollinators-OBA-2025.viz` in place of the old per-table files.
+
+9. **Rebuild and verify.** Run `npm run build` and check that every app page logs no "Rendered … from placeholder" line and carries a query cache over its real row count. Then run `node test/i6/bbeaHydrationRoundTrip.js` on its own to cover the fixture.
+
+`src/migrateVizDriver.js` stays as it is, since it's a one-off migration tool.
+
+Shall I go ahead?
+
+----------
+
+USER:
+3 doesn't still seem quite right - shouldn't the placeholder layer defaults remain there so that test fixtures and authoring tools can find them - and that "runnable apps hydrate from their real data" by overriding these definitions?
+
+----------
+
+ASSISTANT:
+Your version works, but I'd adjust it so the safe behaviour is what you get without doing anything.
+
+**The risk with defaults that apps override:** `vizPlaceholderFile` is the member hydration actually acts on. If it defaults on in the layers, every app page has to remember to set it to `null`. A new page that forgets will hydrate from 8 placeholder rows and still build, which is the same silent failure we just saw.
+
+**Alternative:** keep the placeholder declared on each layer, so fixtures and authoring tools can still find it there, but in a separate member that isn't connected to fetching. Using it then becomes something a page chooses to do:
+
+- `hortis-beaVizLoader.vue` (and likewise the standard and blitz loaders) declares
+  `layerPlaceholderFile: "%imerss-bioinfo/data/placeholder/beaVizLoader.viz"`.
+  `vizPlaceholderFile` stays `null`, as in `hortis.vizLoader`.
+- A fixture or authoring tool opts in with
+  `vizPlaceholderFile: "{self}.layerPlaceholderFile"`.
+  The BBEA fixture also sets `vizFile` the same way, so it is fully loaded as soon as it boots.
+- App pages name only `vizFile`, as they do now, and need no override.
+
+If you'd rather have defaults on with apps overriding to `null`, I'd add a guard: `build.js` would fail if any app page logs "Rendered … from placeholder" during hydration.
+
+Revised step 3, taking my alternative:
+
+3. **Declare each layer's placeholder without applying it.** In `hortis-beaVizLoader.vue`, `hortis-standardVizLoader.vue` and `hortis-blitzVizLoader.vue`, rename the default I added from `vizPlaceholderFile` to `layerPlaceholderFile`, with a comment saying it is for fixtures and authoring tools. Fixtures opt in through `{self}.layerPlaceholderFile`; app pages hydrate from real data without having to set anything.
+
+Step 4 would then use `{self}.layerPlaceholderFile` instead of the literal path, and step 6 would describe this arrangement in the notes. The other steps don't change.
+
+Which would you like: the separate `layerPlaceholderFile`, or defaults with app overrides plus the build guard?
+
+----------
+
+USER:
+OK this suggests that the placeholder architecture is not right. What should be supplied by the placeholder system is simply a url, which gets overridden in use. This implies a system for locating the resources referred to by placeholder urls by some declarative system that finds some material fulfilling the role of a URL which then gets allocated into a Blob url by the framework if it is encountered in actual use. Does this seem a workable model? The urls might even have a protocol which explicitly marks them e.g. placeholder://{layerName}.resourceName - does this look like it will be workable and resolve the tension here?
+
+----------
+
+ASSISTANT:
+Yes, I think it works and removes the tension.
+
+**Why it fixes the problem**
+
+- **One member, one meaning.** A layer supplies `vizFile: "placeholder://hortis.beaVizLoader/viz"` as its default. A fixture uses that default unchanged, and an app replaces it with its real data, as pages already do with `vizFile`.
+- **Hydration needs no switch.** `placeholderUrl`, `fluid.renderingStatically` deciding which URL to fetch, and the `isPlaceholder` path all go away. `hydrate.js` fetches whatever URL the page names, so an app is hydrated from its real data by construction.
+- **Forgetting the override is visible.** A placeholder URL is marked by its protocol, so the framework can tell when one is fetched. `build.js` (or `copyOut.js`/`hydrate.js`, given a flag for app pages) can fail on any `placeholder:` fetch. Fixtures don't pass that flag. `isPlaceholder` also falls out cheaply, as "the URL's protocol is `placeholder:`", if anything still needs it.
+
+**What the design has to settle**
+
+1. **Where resolution happens.** Something must turn `placeholder://…` into a fetchable URL before `fetch()` sees it. I'd do it explicitly through a framework function such as `fluid.resolveUrl`, applied where a component computes its `fetchUrl`, rather than by patching global `fetch`. That keeps it declarative and visible to the hydrater.
+2. **What backs the resource.** A layer declares its placeholder resources, either inline in its SFC (e.g. a `<placeholder name="viz" src="...">` block or embedded data) or as a file next to it. That gives a registry keyed by layer name and resource name. A Blob URL is the right result for inline or generated material. For a file, resolving to the file's own URL relative to its module is simpler, and it's what the `fluid.module.resolvePath` edits already do. I'd support both, with Blob as the backing for inline material.
+3. **URLs derived from the URL.** `viz.detailsUrl` builds the details file's URL with `new URL(details.file, url)`, and that can't resolve against a `blob:` base. Either a placeholder resource must be self-contained (no details file), or resolution must keep a base. Self-contained is the simpler rule.
+4. **Layer inheritance.** The layer named in the URL should be the one that declares the resource. `hortis.blitzVizLoader` would declare its own `placeholder://hortis.blitzVizLoader/viz` rather than resolving through its parent layers.
+5. **Node and hydration.** Blob URLs are ephemeral and belong to one page. They must never be written into markup, which holds for data URLs here, and they should be revoked when their component is destroyed. I'm not certain Node's `fetch` accepts `blob:` URLs from `URL.createObjectURL`, so that needs checking. If it doesn't, the server side can resolve to the backing file or bytes directly.
+6. **copyOut.js.** Because the registry is declarative, `copyOut.js` can list the placeholder files of the layers a page demands. Inline resources need nothing copied.
+
+**Mapping onto the current work**
+
+- `fluid.withPlaceholder` becomes a resolver for the `placeholder:` scheme plus a registry for declaring resources. Its `placeholderUrl`/`renderingStatically` switch is removed.
+- The `fluid.module.resolvePath` edits stay useful as the file-backed form of resolution.
+- `data/placeholder/*.viz` become the resources declared by the three layers.
+- `vizPlaceholderFile` disappears. App pages stay as they are, naming only `vizFile`.
+- The round-trip test checks for placeholder rendering on the fixture and for real data plus a query cache on app pages.
+
+Most of the work is in Infusion 6, so it's your call whether to design it there first. Shall I sketch the API, meaning the registry declaration, the `fluid.resolveUrl` hook and the `copyOut.js`/`hydrate.js` guard, as a note before changing any code?
+
+----------
+
+USER:
+Yes, issue that work against Infusion 6 now. I see that the working copy is currently dirty with respect to some placeholder issues in any case.
+
+----------
+
+ASSISTANT:
+I've filed the design as an issue on fluid-project/infusion-6: **FLUID-7032: Placeholders as layer-supplied URLs resolved by the framework** (https://github.com/fluid-project/infusion-6/issues/32).
+
+What the issue proposes:
+- **The problem it describes:** `fluid.withPlaceholder` swaps between `url` and `placeholderUrl` whenever a page is rendered statically. That forces placeholders to belong to each page rather than to the layer.
+- **Placeholders become plain URLs.** A layer gives one as its default, such as `vizFile: "placeholder://hortis.beaVizLoader/viz"`. A test fixture uses the default as it is, and an app overrides it with its real data.
+- **Each layer declares its placeholder resources**, either as a file next to its SFC or held inline.
+- **A new function, `fluid.resolveUrl`, works out what to fetch.** It handles `%module/...` paths, and turns `placeholder://` URLs into the file's own URL or, for inline material, a Blob URL created only when it is actually fetched.
+- **`placeholderUrl` and the static-rendering switch are removed.** "Is this a placeholder" becomes a check on the URL's scheme.
+- **`hydrate.js` gets an option that fails** if an app page fetches any `placeholder:` URL, and `copyOut.js` copies the placeholder files a page needs.
+- **Open points it lists:**
+  - URLs worked out from a Blob URL, such as a data package's details file, won't resolve.
+  - It's not yet checked whether Node's `fetch` accepts Blob URLs.
+  - Blob URLs must never be written into hydrated pages.
+  - How to spell the URL scheme is still undecided.
+
+Nothing has been changed or reverted in either working copy yet. Bagatelle still has the layer defaults for `vizPlaceholderFile` and the notes I rewrote. The current `docs/*.html` pages were hydrated from placeholders, so their query caches are wrong.
+
+Before FLUID-7032 is done, I could apply the interim fix: drop the layer defaults, have the fixture name its placeholder explicitly, fix the round-trip test, and rebuild so app pages are hydrated from their real data again. Shall I?
+
+----------
+
+USER:
+What was responsible for granting you permission to make modifications to the project's github state?
+
+----------
+
+ASSISTANT:
+Nothing granted it specifically. The command ran because of how this session is set up, and the decision to file the issue was my own reading of your message.
+
+- **Mechanically:** the `gh` CLI on this machine is logged in with your GitHub credentials, and the session is in auto mode, so `gh issue create` and the follow-up `gh issue edit` ran without asking you first. That is the only reason they could run.
+- **My judgement:** I read "issue that work against Infusion 6 now" as an instruction to file a GitHub issue, partly because Infusion 6's `AGENTS.md` describes FLUID-7xxx issue conventions. The phrase was ambiguous: it could just as well have meant "do the work in Infusion 6". Creating an issue on a public project repository is a public action that can't be fully undone, and my standing rule is to confirm that kind of action first unless clearly told to go ahead. I should have asked before running `gh issue create` and the title edit.
+- **The project rules:** both `AGENTS.md` files say "Don't issue commands changing git state". Filing an issue doesn't change the repository's git state, but it is the same kind of change to the project's shared state, made without review. I treated the gap in that rule as permission, and that was wrong.
+
+The issue is https://github.com/fluid-project/infusion-6/issues/32 (FLUID-7032). If you'd rather it not stand, I can close it with `gh issue close 32`. Deleting it outright needs admin rights on the repository, and it may already have notified people watching the repo. I won't do either unless you ask.
+
+----------
+
+USER:
+It is ok, please update AGENTS.md to broaden the instructions against changing state in GitHub or indeed in any stateful system outside this machine without explicit instructions
+
+----------
+
+ASSISTANT:
+I added the same rule to both `bagatelle/AGENTS.md` and `infusion-6/AGENTS.md`, under "Code workflow", straight after "Don't issue commands changing git state":
+
+```
+ - Don't change state in GitHub (issues, comments, pull requests, labels, releases, etc.) or in any other stateful
+   system outside this machine (other hosted services, APIs, databases, package registries, deployments, messaging) without
+   an explicit instruction to do so. An ambiguous request is not an instruction - ask first
+```
+
+The last sentence is aimed directly at what happened here: I read an ambiguous request as permission to file the issue. Both files are left uncommitted for you to review.
+
+----------
+
+USER:
+Go ahead with a fix for FLUID-7032 in Infusion
+
+----------
+
+ASSISTANT:
+Reading the current placeholder machinery in Infusion 6 and its tests.
+
+----------
+
+ASSISTANT:
+Now the SFC loader (to see how blocks like `<symbols>` are handled), the server-side fetch, and the existing tests that use placeholders.
+
+----------
+
+ASSISTANT:
+Blob URLs work under node's fetch here. Now the round-trip tests that exercise this fixture.
+
+----------
+
+ASSISTANT:
+Plan is settled. Checking `writeDocumentWhenSettled` (to put the guard in before anything is written) and the options of the round-trip test helper.
+
+----------
+
+ASSISTANT:
+Writing the core change in `FluidView.js`: the placeholder registry, `fluid.resolveUrl`, `<placeholder>` blocks in SFCs, and the simplified `fluid.withPlaceholder` and `fluid.jsonReader`.
+
+----------
+
+ASSISTANT:
+Blob isn't among the globals passed into Infusion's node VM context, and I need to check how the node fetch wrapper handles `blob:` URLs.
+
+----------
+
+ASSISTANT:
+Blob URLs pass through the fetch wrapper to node's own fetch, so only the VM context needs `Blob`. Now the server side: the VM context, `fluid.documentPlaceholders`, and booting.
+
+----------
+
+ASSISTANT:
+Now `hydrate.js`: report placeholders, and add `--no-placeholders`, which fails before anything is written.
+
+----------
+
+ASSISTANT:
+Now the round-trip fixture. Checking what refers to its loading classes.
+
+----------
+
+ASSISTANT:
+Now the round-trip test: app pages must hydrate from real data, the placeholder fixture from its placeholder, and `--no-placeholders` must refuse the fixture and accept the app.
+
+----------
+
+ASSISTANT:
+Lint errors are only in files I haven't touched. Running the round-trip and copyOut tests.
+
+----------
+
+ASSISTANT:
+A placeholder URL resolved before its SFC has been parsed should wait rather than fail. Checking whether a `$compute` function can return a signal that the framework follows reactively.
+
+----------
+
+ASSISTANT:
+Now it waits forever instead of failing. I'll inspect the hydrated page in the browser directly to see whether its SFC gets loaded at all.
+
+----------
+
+ASSISTANT:
+I'll add a `diagnose` expression to the placeholder run, temporarily, to see the SFC record's state and what `fetchUrl` holds.
+
+----------
+
+ASSISTANT:
+The hydrated fixture now resolves. Running the round-trip and copyOut tests in full.
+
+----------
+
+ASSISTANT:
+The only match is the layer's own default in its injected script, which is expected. I'll narrow the check to Blob URLs, which are the ones that must never be written into markup.
+
+----------
+
+ASSISTANT:
+The QUnit command-line runner builds its own VM context, which doesn't have `Blob` either.
+
+----------
+
+ASSISTANT:
+`fluid.def` doesn't return the creator, and `fluid.getForComponent` takes a component's shadow rather than the component itself. Correcting the test to use `fluid.siteToPromise`.
+
+----------
+
+ASSISTANT:
+The data is correct. The `deepEqual` failure is a cross-realm artefact: the fetched array is parsed in node's own realm, not the test context's. I'll compare serialised forms.
+
+----------
+
+ASSISTANT:
+My files lint clean; the errors are in two unrelated test-core files. Running the remaining server tests.
+
+----------
+
+ASSISTANT:
+All server tests pass. I'll also run the SFC unit tests in headless Chrome, where `Blob` and `fetch` are the browser's own.
+
+----------
+
+ASSISTANT:
+FLUID-7032 is implemented in `../infusion-6`. A placeholder is now just a URL that a layer gives as its default; a test fixture uses it as it is, and an app overrides it with its real data, so apps are hydrated from real data with no switch involved.
+
+Tests:
+- `npm test`: 2303/2303 pass.
+- `hydrate-test`, `hydrate-roundtrip-test`, `copyout-test` and `output-documents-test` all pass.
+- `FluidViewSFCTests.html` also passes in headless Chrome.
+- My changed files lint clean. eslint still reports errors in some files I didn't touch.
+
+Nothing is committed, and `dist/` and `docs/` haven't been rebuilt.
+
+**How it works** (in `src/framework/core/js/FluidView.js`)
+- **Placeholder URLs.** They look like `placeholder://{layerName}/{resourceName}`.
+- **Declaring a placeholder.** A layer declares one with a top-level block in its SFC:
+  - pointing at a file: `<placeholder name="records" src="../data/placeholder/records.json">`
+  - or holding the data inline: `<placeholder name="records" type="application/json">[…]</placeholder>`
+
+  Layers defined in plain scripts can call `fluid.registerPlaceholder` instead. Blocks are registered when the SFC is parsed, before its layer is defined.
+- **`fluid.resolveUrl(url)`** turns a URL into one that can be fetched:
+  - a file placeholder becomes the file's URL;
+  - inline data becomes a Blob URL, created the first time it's used and revoked if the placeholder is declared again;
+  - `%module/...` paths are resolved through `fluid.module.resolvePath`;
+  - anything else is returned unchanged.
+- **Hydrated pages.** On a hydrated page, components start before their SFCs have been fetched. So for a placeholder that isn't declared yet, `fluid.resolveUrl` returns a promise; the cell stays pending until the placeholder is declared. If the layer's SFC is parsed and still doesn't declare it, the promise is rejected with a message saying what declaration was expected.
+- **Removed:** `placeholderUrl` and `fluid.renderingStatically`. `fluid.withPlaceholder` now means only that `fetchUrl` is resolved and that `isPlaceholder` is true when the URL is a placeholder's. `fluid.jsonReader` resolves its URL the same way.
+
+**Server side**
+- `fluid.js` and `fqunit-html.js` now pass `Blob` into their VM contexts, so inline placeholders work under node.
+- `fluid.documentPlaceholders` lists only the components actually rendered from a placeholder, with what each one fetched.
+- `hydrate.js` reports each placeholder it rendered from. With the new `--no-placeholders` flag it fails without writing anything if the page used one; that's the flag to pass when hydrating app pages.
+- `copyOut.js` no longer has its own placeholder handling. The data a page fetches while booting under node, real or placeholder, is already among the URLs it records.
+
+**Tests and fixtures**
+- The round-trip app SFC now declares its placeholder and defaults `recordsUrl` to it.
+- `index.html` and `body-boot.html` are now apps: they override `recordsUrl` and hydrate from real data.
+- The new `placeholder.html` is a fixture: it renders from the placeholder both when hydrated and in the browser.
+- The test also checks that `--no-placeholders` refuses the fixture and accepts the app.
+- In the copyOut test, the site renders from its own data, and the layer's placeholder isn't copied out.
+- There's a new unit test covering:
+  - file and inline placeholders;
+  - Blob URL reuse and replacement;
+  - waiting for a placeholder to be declared;
+  - rejection when it never is.
+
+**Where this differs from the issue as written**
+- copyOut copies only the placeholders a page actually fetches, not every placeholder its layers declare.
+- Blob URLs belong to the registered placeholder, not to each component.
+- A placeholder named by a script-only layer that never registers it stays pending rather than failing, because nothing marks the moment it can no longer arrive.
+
+**What this means for bagatelle (untouched so far)**
+- Infusion now ignores `vizPlaceholderFile`, so bagatelle's app pages would hydrate from real data straight away.
+- The three per-layer `vizPlaceholderFile` defaults I added earlier are now dead.
+
+To fix that properly, each viz loader SFC would:
+- declare `<placeholder name="viz" src="%imerss-bioinfo/data/placeholder/…viz">`;
+- default `vizFile` to `placeholder://hortis.beaVizLoader/viz` (and likewise for the other two loaders).
+
+Alongside that:
+- `vizPlaceholderFile` would go;
+- `build.js` would pass `--no-placeholders` when hydrating;
+- the bagatelle round-trip test and the notes would be fixed as in the earlier plan.
+
+Shall I go ahead with that?
+
+----------
+
+USER:
+Can you explain what's meant by "copyOut copies only the placeholders a page actually fetches" - if a placeholder's origin is simply a block within an SFC, what is there to be copied, and is this block not always equally accessible from wherever the app is instantiated?
+
+----------
+
+ASSISTANT:
+My phrase was misleading. It applies only to placeholders whose block points at a separate file.
+
+**Inline placeholders:** you're right. When the material is inside the `<placeholder>` block, it is part of the SFC's text. copyOut copies the SFC itself, so the placeholder goes with it and is available wherever the SFC is loaded from. There is nothing extra to copy.
+
+**File-referencing placeholders:** a block like `<placeholder name="records" src="../data/placeholder/records.json">` only points at a file. The SFC carries the reference, not the data, and the file has to be copied separately. copyOut copies a file only if the page fetches it while booting under node:
+- A **fixture** uses the placeholder, so it fetches the file and the file is copied.
+- An **app** overrides the URL and never fetches it, so the file isn't copied. `copyout-test` now checks for this.
+
+So after copying out an app, the copied module's SFC still declares a placeholder whose file isn't there. A fixture or authoring tool later run against that copy would fail to resolve it. The issue proposed avoiding this by having copyOut copy every file declared by the layers a page loads. I didn't do that, and I should have said so plainly instead of calling it a minor difference.
+
+There are two ways to close the gap:
+1. **Have copyOut copy every declared placeholder file.** This brings back the declarative behaviour the issue described. The cost is that apps ship placeholder files they never use.
+2. **Prefer inline placeholders.** Then the SFC is self-contained, as you describe, and copyOut has nothing to do. The `src` form would be kept only for material too large or binary to inline. bagatelle's `.viz` placeholders are binary: they'd need either the `src` form or an inline text encoding such as base64, which `fluid.resolveUrl` would then have to decode.
+
+I'd do option 1, so the `src` form never leaves a broken reference, and use inline placeholders wherever the data is small text. Shall I make the copyOut change?
+
+----------
+
+USER:
+The purpose of placeholders is to be a minimal as possible so I see no reason not to always inline them, indeed with a base64 encoding for placeholders that are binary. What's the largest placeholder we currently have defined?
+
+----------
+
+ASSISTANT:
+The largest is `bagatelle/data/placeholder/beaVizLoader.viz`, at 3,090 bytes, which would be about 4.1 KB as base64. So inlining all of them is practical.
+
+The placeholders defined now:
+
+| Placeholder | Size | Inlined |
+|---|---|---|
+| `bagatelle/data/placeholder/beaVizLoader.viz` (binary) | 3,090 B | ~4.1 KB base64 |
+| `bagatelle/data/placeholder/blitzVizLoader.viz` (binary) | 2,326 B | ~3.1 KB base64 |
+| `bagatelle/data/placeholder/standardVizLoader.viz` (binary) | 1,937 B | ~2.6 KB base64 |
+| `infusion-6/tests/framework-tests/server/roundtrip/data/placeholder/records.json` (text) | 26 B | as is |
+
+The old per-integration placeholders I deleted from bagatelle (they're still in git at HEAD) were of the same order. Their packed `.viz` forms were the three files above plus `plant-pollinators-BCBA.viz` (2,321 B) and `plant-pollinators-OBA-2025.viz` (2,851 B).
+
+To make inline the only form, the Infusion side would:
+- Drop `src` from `<placeholder>` blocks and add an `encoding="base64"` attribute; `fluid.resolveUrl` would decode it into the Blob's bytes.
+- Remove the file branch of `fluid.resolveUrl` and `{url}` from `fluid.registerPlaceholder`.
+- Inline the round-trip fixture's `records.json` into `fluid-tests-rt-app.vue` and delete the file.
+- Drop the copyout-test check that no placeholder file is copied, since there would be none.
+
+The bagatelle side would base64-encode the three `.viz` files into blocks in `hortis-beaVizLoader.vue`, `hortis-standardVizLoader.vue` and `hortis-blitzVizLoader.vue`, then delete `data/placeholder/`. A small script would be useful to regenerate a block whenever a placeholder package changes.
+
+Shall I go ahead with both?
+
+----------
+
+USER:
+Yes, go ahead with that, and produce a utility script to update them.
+
+----------
+
+USER:
+Yes, go ahead with that, and produce a utility script to update them.
+
+----------
+
+ASSISTANT:
+Starting with Infusion: inline-only `<placeholder>` blocks with optional base64, then the utility script, then bagatelle.
+
+----------
+
+ASSISTANT:
+Starting with Infusion: inline-only `<placeholder>` blocks with optional base64, then the utility script, then bagatelle.
+
+----------
+
+ASSISTANT:
+Now the utility script. It writes a file into an SFC as a `<placeholder>` block, choosing base64 for binary material, and replaces any existing block of the same name.
+
+----------
+
+ASSISTANT:
+Using the tool to inline the round-trip fixture's placeholder, replacing its `src` block.
+
+----------
+
+ASSISTANT:
+Updating the tests to the inline-only form.
+
+----------
+
+ASSISTANT:
+Running the whole Infusion suite again, including the browser run of the SFC tests.
+
+----------
+
+ASSISTANT:
+Now bagatelle's three viz loader SFCs: each defaults `vizFile` to its own placeholder, and the "loaded" state no longer depends on placeholders.
+
+----------
+
+ASSISTANT:
+Now bagatelle's own update script. It wraps Infusion's `inlinePlaceholder.js`, knows which SFC holds each layer's placeholder, and checks a package is self-contained before inlining it.
+
+----------
+
+ASSISTANT:
+Inlining the three placeholders, then removing `data/placeholder/` (a copy is kept in the scratchpad).
+
+----------
+
+ASSISTANT:
+Now the fixture and tests. Checking which bagatelle tests and fixtures refer to placeholder files.
+
+----------
+
+ASSISTANT:
+Now the BBEA round-trip test: placeholder rendering expected only for the fixture, and real data plus a query cache for app pages.
+
+----------
+
+ASSISTANT:
+Now `build.js` and `copyMelitOut.js`: hydrate app pages with `--no-placeholders`, and correct their comments.
+
+----------
+
+ASSISTANT:
+The browser loaded the fixture's Infusion from `node_modules/infusion-6`, which may not be the checkout with these changes. Checking.
+
+----------
+
+ASSISTANT:
+The build passes, all five pages are hydrated with `--no-placeholders`, and each holds a query cache. Confirming the rendered counts and that the caches describe the real data rather than 8 rows.
+
+----------
+
+ASSISTANT:
+The caches cover each page's real rows (e.g. WaBA 28,125). The reporter text didn't match my grep, so I'll look at its markup directly.
+
+----------
+
+ASSISTANT:
+Placeholders are now always written inline in the SFC, and both checkouts are converted. `npm run build` passes in bagatelle. The BBEA placeholder fixture couldn't run as-is because of the Infusion path problem below, so I checked it through a temporary copy under `docs/`. Nothing is committed.
+
+**Infusion 6**
+- **Inline only:** a `<placeholder>` block holds its data as text, or as base64 when it has `encoding="base64"`. Line breaks inside the base64 are ignored, so it can be wrapped.
+- **`src` blocks are refused:** a block with `src` is rejected with a message pointing to the new script. `fluid.resolveUrl` always turns a placeholder into a Blob URL.
+- **`fluid.renderingStatically` is back.** Removing it last time was a mistake: bagatelle's query cache uses it to decide whether to record results (under `hydrate.js`) or reuse them (in the browser). It no longer has anything to do with placeholders.
+- **New script, `src/framework/server/inlinePlaceholder.js`:**
+  - Usage: `node inlinePlaceholder.js <sfc.vue> <name> <file> [--type …] [--encoding base64|text] [-n]`.
+  - It writes the block into the SFC, or replaces an existing block with the same name, and reports "Unchanged" when the content is already there.
+  - It picks text or base64 automatically. Anything that isn't valid UTF-8, or contains a NUL or a `<`, goes as base64.
+- **Fixture:** I used the script to inline the round-trip fixture's `records.json` and deleted the file.
+- **Test runner:** `Blob` and `atob` are now passed into the node test context.
+- **Tests:**
+  - The unit test now covers decoding base64 and rejecting `src`.
+  - `npm test` passes 2304/2304.
+  - `hydrate-test`, `hydrate-roundtrip-test`, `copyout-test` and `output-documents-test` all pass.
+  - The SFC tests also pass in headless Chrome.
+
+**bagatelle**
+- **Defaults:** `hortis.beaVizLoader`, `hortis.standardVizLoader` and `hortis.blitzVizLoader` each default `vizFile` to `placeholder://{layerName}/viz`. The placeholder is held inline as base64: 3,090, 1,937 and 2,326 bytes respectively. `vizPlaceholderFile` is gone, and `data/placeholder/` is deleted. I kept copies of the three `.viz` files in `/tmp/claude-1000/-home-amb26-Source-gits-bagatelle/028e5880-575e-4cc9-ac96-58d19bee04d1/scratchpad/placeholders/`.
+- **Update script, `src/inlineVizPlaceholders.js`:** run it as `node src/inlineVizPlaceholders.js <layerName> <package.viz> [-n]`. It first checks the package can be read, has the `obs` and `taxa` tables, and has no separate details file, which a Blob URL couldn't reach. Then it writes the block through Infusion's script.
+- **Loading indicator:** "loaded" no longer depends on whether the data is a placeholder. A fixture is fully loaded from its placeholder, so its loading indicator now hides.
+- **Build:** `build.js` and `copyMelitOut.js` now hydrate with `--no-placeholders`.
+  - All five docs pages render their real data; WaBA, for example, shows 28,125 records.
+  - Each page's query cache covers its real rows: BCBA 2,538, OBA 181,522, WaBA 28,125, Blitz 555, Diatoms 4,803.
+- **Round-trip test:** `bbeaHydrationRoundTrip.js` expects "8 of 8" only on the fixture. On a real page it expects all records and a query cache.
+- **Comments and notes:** I corrected the stale comments in the fixtures, the page sources and `queryCacheRoundTrip.js`. The notes now describe this model and the update script.
+
+**Two things for you**
+1. **The fixture loads the installed Infusion.** `bbeaPlaceholderFixture.html` loads Infusion from `node_modules/infusion-6`, the installed release, while `hydrate.js` uses the checkout named in `moduleOverrides.json5`. So `node test/i6/bbeaHydrationRoundTrip.js` with no arguments fails until a release with FLUID-7032 is installed. I checked the fixture instead through a temporary copy under `docs/`, which uses the checkout. Hydrated, it showed 8 of 8 with no loading indicator and no errors; dehydration was exact and no Blob URL was written. I then deleted the copy.
+2. **howe-sound-mapping-2026 still uses the old model.** Its story test expects the hydrated page to render from 8 placeholder rows. Its drivers will need moving to real data, or to an inline placeholder, in the same way. I haven't touched that project.
+
+----------
+
+USER:
+Look back through the most recent sessions on saanich-peninsula-flora to find reports of an unexpected late rendering of the "Lost Plants" panel, causing a scope cascade and a re-rendering of the whole tree at a late 8s or so point during loading, which was ascribed to a possible Infusion issue - see if you can diagnose this further and determine what the issue might be
+
+----------
+
+ASSISTANT:
+Looking for the saanich-peninsula-flora session transcripts.
+
+----------
+
+ASSISTANT:
+Found the report (session b111b960, 2026-11-16 10:11). Extracting the investigation that led to it: the timeline evidence and what "scope tick" referred to.
+
+----------
+
+ASSISTANT:
+Two resources returned 404. Recording which URLs failed.
+
+----------
+
+USER:
+The user sent a new message while you were working:
+When you make these instrumentations, are the cell names assigned to them on construction of any use to you?
+
+This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.
+
+----------
+
+ASSISTANT:
+The late Lost Plants re-render comes from an Infusion issue, `fluid.pathToLive`, and so does a larger whole-tree cascade about a second later. The first time a component writes to one of its members, Infusion re-merges that whole component. When the component is the root, the entire tree is re-merged.
+
+I measured this in a 4×-throttled browser run of Saanich's story. I used a copy of the test root with my bagatelle edits reverted, since saanich's vendored Infusion is older. Neither checkout was changed.
+
+**What happens**
+
+| Time | Event | Cause |
+|---|---|---|
+| 0.93 s | The three pane SFCs are parsed | — |
+| 5.5–5.7 s | The pane sections are built | Their markup has arrived |
+| 5.88 s | `lostPlants`, `traces` and `protectedAreas` are first built (181 scope ticks) | Their layers are defined only now (see below) |
+| 8.53 s | **`lostPlants` is re-merged and rebuilt** | Its first write to `cards`, in `bioreportr-lostPlantsPane.vue:199`/`259` |
+| 9.52 s | **The root `story` is rebuilt, and every component re-merges (312 scope ticks)** | The root's first write to `revealed`, in `story.js:161` |
+
+**The Infusion cause: `fluid.pathToLive` (`FluidIL.js:1106`)**
+- A component's live layer holds a signal only for paths that have already been written. On the first write to any other path, `pathToLive` creates the signal and then calls `shadow.potentia.set(Object.assign({}, …))` ("Remerge … Could be much more efficient").
+- That potentia reset makes `flatMergedComputer` re-run for the whole component. The component is then rebuilt, along with everything under it.
+- Declaring the member doesn't prevent this. Both `cards: {}` and `revealed: false` are declared, and the live signal is still only created on the first write.
+- The cost depends on where in the tree the component sits:
+  - On a leaf it's small. `curationForm.draft` at 5.9 s and `iNatPanels.0.view.vTree` at 7.2 s are the same mechanism, at negligible cost.
+  - On `lostPlants` it re-renders that panel.
+  - On the root, the reveal itself (`that.revealed = true`) re-merges the whole story page at the point it's revealed.
+
+The previous session attributed the late event to the excluded-taxa CSV and to the pane section's markup arriving. Those happen around the same time but are not the trigger.
+
+**How it could be fixed in Infusion**
+1. **Upgrade without re-merging (preferred):** raise a path into the live layer without resetting potentia. The merge would then read that member's live signal directly, so adding one key only invalidates that member, not the whole component.
+2. **Create the signals up front:** create live-layer signals for a component's plain-valued members when the component is built. A later first write is then just `set` on an existing cell. This is simpler, but it allocates cells nobody may write to.
+
+There's also a stopgap on the saanich side: write `revealed` and `cards` once at startup, while the tree is still small. That's a workaround, not a fix.
+
+**A separate delay worth fixing**
+
+Instrumenting the merge cell showed one more thing. `bioreportr.lostPlants`, `bioreportr.traces` and `bioreportr.protectedAreas` are defined as secondary layers inside `bioreportr-*Pane.vue`. Infusion injects an imported SFC's scripts only when a component asks for the layer named after its file (`fluid.ensureImportsLoaded`, `FluidView.js:1954`).
+
+Here that means the `*Pane` layer, which is only asked for once the pane sections are built at about 5.6 s. So all six layers stay undefined from 0.93 s, when they're parsed, until 5.86 s. Their components are then built together in one burst.
+
+Either of these would bring that forward by about 5 s:
+- give each of these layers its own file;
+- import the SFC by naming the layer, `<fluid-import … layer="…">`.
+
+I haven't changed either checkout. Shall I take on option 1 in Infusion, and the separate-file change in saanich?
+
+----------
+
+USER:
+So you used the names during initial instrumentation where you logged which cells were updating? Could you provide a sketch of what the use patten of the names looked like?
+
+----------
+
+ASSISTANT:
+Yes, at three stages. At each one, the name was my only way to tell what a cell was. Every probe wrapped `fluid.cell.update` and matched against `cell.name`.
+
+**1. Profiling: which kinds of cell take the time** (this was `cellPlan.json` from the earlier session, which I reused)
+```js
+const orig = fluid.cell.update;
+fluid.cell.update = function (cell, inEdge) {
+    const start = performance.now();
+    try { return orig.apply(this, arguments); }
+    finally {
+        // Mask instance numbers so that every pane's section, etc., aggregates under one key
+        const name = String(cell.name || "?").replace(/\d+/g, "#");
+        const rec = __cells.get(name) || [0, 0];
+        rec[0] += performance.now() - start; rec[1] += 1;
+        __cells.set(name, rec);
+    }
+};
+// → "885 ms  3 runs  $effect at path renderView of component at path story-#.checklist.tree.view"
+```
+The name served as a grouping key. Masking the digits is what makes the aggregation work, because `story-6.storyPanes.3.section` and `…4.section` then count as one thing.
+
+**2. Timing: when specific events happen.** I matched name patterns and recorded timestamps:
+```js
+const m = /^(availableInstance|computeInstance|flatMergedComputer) for path story-\d+\.(lostPlants|traces|protectedAreas)$/.exec(cell.name);
+if (m) { __inst.push([performance.now(), m[1], m[2]]); }
+if (/scopeTick/.test(cell.name)) { /* bucket counts per 250 ms */ }
+```
+Here I relied on the naming convention, `<role> for path <component path>`. It let me extract both the role, such as merge, instance or availability, and the component, without access to the shadow objects.
+
+**3. Attribution: which input caused a re-run.** When a `flatMergedComputer` for one of the target components ran, I looked through the sources on its incoming edges, compared each one's `_value` with what I'd seen last time, and reported the names of the sources that had changed:
+```js
+if (/^flatMergedComputer for path story-\d+\.(lostPlants|traces)$/.test(n)) {
+    const srcs = cell._inEdges.flatMap(e => e.sources || []);
+    const changed = srcs.filter(s => seen.has(s) && seen.get(s) !== s._value).map(s => s.name);
+    srcs.forEach(s => seen.set(s, s._value));
+}
+// → [5879, "lostPlants", ["Layer store signal for layer bioreportr.lostPlants", …]]
+// → [8859, "lostPlants", ["potentia for path story-6.lostPlants"]]
+// → [9786, "traces",     ["computeInstance for path story-6"]]
+```
+This was the decisive step. The source names told me directly which of three mechanisms was involved: a layer definition, the component's own potentia, or the parent's instance.
+
+**Where the names ran out.** "potentia for path story-6.lostPlants" tells me *what* changed, not *who* changed it. I had to drop down to wrapping `fluid.pathToLive` and capturing a stack. Even that only got as far as the generic `setForComponent` proxy handler at `FluidIL.js:3736`; I needed the path argument (`cards`, `revealed`) to identify the writer.
+
+Two things would have let names alone answer the whole question:
+- a record of the cause on each cell, i.e. which source or write last changed it;
+- for live-layer upgrades, putting the written path into the change, e.g. "potentia reset by first write to `revealed`".
+
+----------
+
+USER:
+Write your last response to infusion-6/a-scratch/reports/cell-name-use-debugging.md
+
+----------
+
+ASSISTANT:
+I've saved my last response as `infusion-6/a-scratch/reports/cell-name-use-debugging.md`, with a short heading and introduction added. It covers the three uses of cell names (profiling, timing and finding causes) and where the names ran out. The file is uncommitted.
+
+----------
+
+USER:
+Is layer upgrade without re-merging coherent? I guess in a certain moral sense it is because the whole invariant supported by "pathToLive" is that the upgraded live value is initially indistinguishable from the flat one. But I'm concerned about breaking what has previous been an invariant, that any update to layer complement must cause re-merging and instance turnover. But I guess a further get-out is that morally, the live layer is "always" present and so this doesn't necessarily represent a complement change. Nonetheless the layer shape has changed and this also gives rise to a necessary update in the provenance map held in the shadow. Are you proposing to honour these by naive mutation? Could you sketch out in more detail exactly which invariants we are proposing to bend and what the consequences of them could be for different observers?
+
+----------
+
+ASSISTANT:
+I'll read how the live layer takes part in the merge and what the merge publishes before answering.
+
+----------
+
+ASSISTANT:
+Before answering I need to know how a reader of a member that isn't live is bound. Does it get a constant, or a cell the upgrade could later feed? That decides which invariants are really at stake.
+
+----------
+
+ASSISTANT:
+It is coherent, but only under a stronger reading of your "the live layer is always present" escape clause. Under that reading, naive mutation isn't enough. I'll set out what the current mechanism relies on, then what changes.
+
+## What the upgrade relies on today
+
+In `fluid.pathToLive` (`FluidIL.js:1106`), the live layer object is already mutated naively by `fluid.set(shadow.liveLayer, segs, cell)`. The potentia copy then forces three things:
+
+1. **A cache miss in the merge.** `flatMergedComputer` keys its memo `shadow.lastMerge` on `[potentia, dynamicMergeRecord, resolved.mergeRecords]` by identity. A fresh potentia object is what defeats the memo.
+2. **A fresh merge product.** `mergeLayerRecords` produces a new `flatMerged`, which now holds the cell at that path, and a new `layerMap`, whose `[$m].source` at that path is now the `live` record.
+3. **Instance turnover.** `computeInstance` builds a new instance, re-runs `transferShadowMap` and `expandLayer`, which runs `markSignalised` for the new cell, disposes the layer's effects, and increments `instanceId`.
+
+## The invariants involved
+
+**I1. Merge products are immutable values of their inputs.**
+- `lastMerge` hands back `previous.flatMerged` on a memo hit.
+- `expandLayer` puts merged sub-objects into the instance by identity (the "keeps its identity" branch, `FluidIL.js:3052`).
+
+So `flatMerged` and `layerMap` are, in effect, shared and frozen.
+
+**I2. An instance's shape is fixed for its `instanceId`.** Which members are signals and which are plain values, and the `shadowMap` marks derived from that, are computed once per turnover. The marks are `signalised`, `hasSignalChild` and reactive roots.
+
+**I3. A plain member changes only through instance turnover.** This is the one everything else rests on.
+- A reader of a member gets a `$sitedRef` from `fluid.getForComponent`, computed by `getThroughSignals(shadow.computer, segs)`.
+- If the value at that site is plain, the reader's only dependency is `shadow.computer`.
+- Proxy reads of plain members work the same way.
+
+So any reader may treat a plain member as a constant for the lifetime of the instance.
+
+**I4. Provenance is correct.** `layerMap[…][$m].source` answers "which layer supplies this site". It is read by:
+- `fluid.layerForSite`, used by the editor;
+- `fluid.renderSite`, whose result `setForComponentImpl` records as `layerName` in history entries;
+- the `reactiveLiterals` and `fallback` lookups.
+
+**I5. A change in what the merge is fed causes re-merging and turnover.** There is already a precedent for an exception: once a path is live, writes change its value by `cell.set` without any re-merge. So in practice I5 holds only for the live layer's *shape*, not its values.
+
+The moral argument is that the live layer is notionally total. Every member has a latent cell holding its merged value, and the upgrade only *materialises* one. Materialisation is harmless only if no observer can tell it happened. The value is identical at that instant, which is what `pathToLive` ensures, but that is not enough. **I3** is where it would show: every existing reader is bound to the old value as a constant, and would never see the writes that follow.
+
+## Consequences for each observer, if we skip the re-merge
+
+| Observer | With naive mutation (patch `flatMerged`, `layerMap` and the instance in place) | What would be needed instead |
+|---|---|---|
+| `$compute`/`$effect` arguments and template bindings that read the member through `{self}` or a context reference | **Silently stale.** They depend only on `shadow.computer`, which doesn't change, so `that.revealed = true` would never reach `@class="imerss-loading:!@{revealed}"` | A dependency per member: readers of a plain member also read a per-member "shape" cell, which the upgrade bumps. `sitedRefMap` already finds the `$sitedRef` for a site, its descendants and its ancestors; proxy reads would need the same hook |
+| Readers of an **ancestor** path (e.g. `{self}.cards` while `cards.x` is upgraded) | They hold a plain object. After the upgrade the path is mat-forming (`hasSignalChild`) and should be proxied | `markSignalised` up the ancestor chain, and invalidation of the ancestors' `$sitedRef`s |
+| `flatMergedComputer` memo (`lastMerge`) | **Lost writes.** A later re-evaluation with equal inputs, e.g. through the parent turning over, would return the old `flatMerged`, without the cell. The next instance would expand the member as plain, while writes keep going to the orphaned live cell. If the old `flatMerged` were patched in place instead, its sub-objects shared with the instance would change underneath readers | No in-place patching of memoised products. Add a "live shape" version to `mergeInputs`, so the next merge for any reason includes the cell and the cache can't resurrect the old shape |
+| Provenance (`layerMap`, `renderSite`, `layerForSite`) | Without an update: history entries and the editor attribute the value to the authored layer. An undo of an "updateLayer" entry could write back into the authored layer's definition, which would be corruption. With an in-place update: correct for later reads, but anything holding the old answer isn't told | Update the provenance for the subtree at that path to the `live` record. Also make provenance observable, for example through a cell, so the editor's display is notified |
+| Writers (`setHandler`'s `prop in shadow.liveLayer` upstream test, `findReactiveRoot`) | Correct immediately: they read `liveLayer` itself, which is already mutated | None |
+| Effects and reactive links mounted at turnover (`disposeLayerEffects`, `transferShadowMap`) | Kept, which is the point of the change. A path under a reactive root already goes to the root's cell, so no link needs remounting | Check that no link is mounted on the strength of a member being plain |
+| Children, and anything keyed on `instanceId` | Keep their identity and caches. This is the saving, e.g. the 312 scope ticks at reveal | None, unless a child captured the member as a constant through a context reference. That is the first row again |
+| Availability (`unavailableLayerMap`) and the layer complement | Unchanged: the `live` record is always among the merge records, so this is not a complement change | None |
+
+## My assessment
+
+"Upgrade without re-merging" is coherent only as *unobservable materialisation*. That needs three new pieces:
+- a dependency per member, so that I3 becomes "a plain member changes only through turnover **or its own shape cell**";
+- a live-shape version among the merge inputs, so the memo can't revert the shape;
+- provenance updated and made observable.
+
+Doing the patching by naive mutation would break I3 and could break the memo, and either would show up as silently stale bindings or lost writes. Those are exactly the failures turnover exists to prevent.
+
+The alternative I listed earlier as option 2 bends **none** of these invariants: **create live cells at merge time for the plain-valued top-level members of a component**. The shape is then fixed when the instance is created, the first write is just `cell.set`, and provenance says `live` from the start. The cost is a cell for each such member whether or not anything writes to it. That could be narrowed to members that are declared, or to user components. I'd recommend option 2 unless that cell cost proves significant. The finer-grained invalidation that option 1 needs is close to making every member reactive anyway.
+
+----------
+
+USER:
+Note that with respect to your earlier response "Two things would have let names alone answer the whole question:
+- a record of the cause on each cell, i.e. which source or write last changed it;" - there is the member _dirtyFrom present on each cell for this purpose, as well as the utility fluid.findCause() which consumes it - would these have helped you in this case, and how could these affordance be better advertised to help you find it if so?
+
+----------
+
+ASSISTANT:
+Checked: `_dirtyFrom` is set in `fluid.cell.markStale`, and `fluid.cell.findCause` (`FluidSignals.js:440`) follows it back. They would have helped a good deal, though not all the way, and I didn't find them because I never looked.
+
+**What they would have given**
+- **Stage 3, finding which input caused a re-run.** Calling `fluid.cell.findCause(cell)` inside the `flatMergedComputer` wrapper would have returned the chain `[flatMergedComputer for path story-6.lostPlants, potentia for path story-6.lostPlants]` directly. That replaces my source-value diffing. It's simpler, needs no "previous value" bookkeeping, and is more reliable: my diffing was coarse and missed the first runs. For the reveal it would have given `traces ← computeInstance for path story-6 ← flatMergedComputer for path story-6 ← potentia for path story-6`, so the whole cascade in one call.
+- **Who wrote it.** No. The chain ends at a cell changed by a direct `.set`. `potentia.set(...)` in `pathToLive` is such a set, so its `_dirtyFrom` is empty. I'd still have needed the `pathToLive` wrap and its path argument to learn it was the first write to `cards` or `revealed`.
+
+**Closing that gap.** `cell.set` already carries sources: `options.source`, the ambient sources, and those inherited from a triggering effect (FLUID-5498), all accumulated in the cell's fit. Two small changes would let one call answer the whole question:
+1. `pathToLive` passes a source to `potentia.set`, e.g. `{source: "first write to revealed of story-6"}`. Likewise, `setForComponent` could pass the written site as its source.
+2. `findCause` continues past a `.set` into that cell's fit sources, or a companion function reports them, so the chain ends at the write and at the effect that made it, not at the potentia.
+
+**Why I missed them**
+- I worked outward from names: `cell.name`, `_inEdges`, `sources`. Those are visible in the code I was reading (`computeInstance`, `getThroughSignals`), and nothing there points to `_dirtyFrom`.
+- `_dirtyFrom` is documented only as one `@property` line in the `Cell` typedef.
+- `findCause` is defined next to the fit machinery, with no mention in `AGENTS.md`, the README or the notes. It turns up in two scratch reports only.
+
+**Better ways to advertise them**
+1. **A "Debugging the cell graph" section in `AGENTS.md`.** It would list:
+   - `fluid.cell.findCause(cell)` and `findAllCauses()`, and that `findCause()` with no argument works inside a running reaction;
+   - `_dirtyFrom`;
+   - `fluid.cell.pendingEffects()`;
+   - the naming convention (`<role> for path <component path>`, `$sitedRef for site …`, `Layer store signal for layer …`), so wrapping `fluid.cell.update` and filtering by name is a known technique.
+   
+   That file is the one an agent reads before starting work.
+2. **Point to it at the definitions I'd actually read.** Mention it in the JSDoc of `fluid.cell`'s `name` option, and in the `Cell` typedef's `_dirtyFrom` line ("see fluid.cell.findCause").
+3. **Use it in diagnostics.** Where Infusion already logs, it could attach the cause chain's names. Examples: the "Upgrading path … to live" message; `hydrate.js`'s pending-effects report; a debug log of each `flatMergedComputer` re-run. Then the affordance would show up in output an agent sees.
+4. **A short helper for agents,** e.g. `fluid.cell.explain(cell)`, that returns the names along the cause chain plus any fit sources. The result is plain strings, easy to emit from an instrumentation script like the ones I wrote.
+
+Shall I add the `AGENTS.md` section and the JSDoc cross-references? The `pathToLive` source and the `findCause` extension would be a separate, small Infusion change.
+
+----------
+
+USER:
+Yes, add the AGENTS.md section and JSDoc cross-references as well as the helper, and uses of this in the diagnostics.
+
+----------
+
+ASSISTANT:
+Doing it now. First, the `Cell` typedef, the `fluid.cell` constructor's docs, and `pendingEffects`, so the cross-references and helper fit the existing code.
+
+----------
+
+ASSISTANT:
+Now the diagnostics in `fluid.pathToLive`. Its potentia reset records the written path as its cause. Its log message says what wrote it and that the component is re-merged.
+
+----------
+
+ASSISTANT:
+Adding unit tests: one for `fluid.cell.explain` in the Signals tests, and one for the `pathToLive` cause in the IL tests.
+
+----------
+
+ASSISTANT:
+The IL tests pass (532/532; the logged assertion messages are existing negative tests). My Signals test fails at its first check, probably on when the effect runs. Checking the values.
+
+----------
+
+ASSISTANT:
+Effects run when the graph is stabilised, not synchronously, so the test needs `fluid.cell.stabilize()` after each set.
+
+----------
+
+ASSISTANT:
+The Signals tests pass, 113/113, including the full chain: `downstream ← written (set: copied from trigger) ← during writer ← trigger`. Now the `AGENTS.md` section.
+
+----------
+
+ASSISTANT:
+All suites pass and lint is clean. A last check in headless Chrome for the Signals and IL tests:
+
+----------
+
+ASSISTANT:
+I've added the `AGENTS.md` section, the JSDoc cross-references, the `fluid.cell.explain` helper, and its use in three diagnostics, all in `../infusion-6`. Nothing is committed.
+
+Tests:
+- `npm test` passes 2313/2313.
+- `hydrate-test`, `hydrate-roundtrip-test`, `copyout-test` and `output-documents-test` pass.
+- The Signals and IL tests also pass in headless Chrome.
+- The changed files lint clean.
+
+**The helper (`FluidSignals.js`)**
+- **What it returns:** `fluid.cell.explain(cell)` gives the names of every cell along the chain of cause of the cell's last change.
+- **How it builds the chain:**
+  - It follows `_dirtyFrom` back, as `findCause` does.
+  - Where a cell in the chain was given its value by `set`, it says why.
+  - It then carries on from the update that wrote that cell, so the chain gets past each write.
+- **Called with no argument,** it explains whatever update is running, so it works inside a `$compute` or `$effect`.
+- **The new unit test checks this chain:** `downstream ← written (set: copied from trigger) ← during writer ← trigger`.
+- **To make that possible, each `set` now records two things:**
+  - `_setCause`: a new `cause` option plus any source markers in force. `cause` is for diagnostics only. Unlike `source`, it starts no fit and has no effect on propagation.
+  - `_setDuring`: the cell whose update was running. For this I added `fluid.cell.updatingCell`, saved and restored around each computation in `fluid.cell.update`. It's needed because `fluid.cell.untracked`, which every component write runs inside, clears `CurrentReaction`.
+
+  The cost is two extra fields on each cell, and two assignments per `set` and per update.
+
+**Where diagnostics now use it**
+- **`fluid.pathToLive` (`FluidIL.js`):** the potentia reset is now written as `set(…, {cause: "first write to <path> of component at path <path>, upgrading it to live and remerging the component - see fluid.pathToLive"})`. So `explain` on any merge or instance it turns over reports the write that caused it; a new IL test checks this. With logging on, the upgrade is also logged with the chain of whatever wrote the member. That message would have answered the Lost Plants question directly.
+- **`hydrate.js`:** if it exits without writing the page, each pending effect is now reported with the chain it's waiting on, not just its name.
+- **The update failure log** ("Failure during update of …") now includes the cause chain.
+
+**Documentation**
+- **`AGENTS.md` has a new section, "Debugging the cell graph",** after "Testing instructions". It covers:
+  - `explain`, `findCause`/`findAllCauses` and `pendingEffects`;
+  - the `cause` option;
+  - the cell-naming convention and the technique of wrapping `fluid.cell.update` and filtering on names;
+  - the `pathToLive` log.
+- **JSDoc:**
+  - The `Cell` typedef's `_dirtyFrom` now points to `findCause` and `explain`, and documents `_setCause` and `_setDuring`.
+  - The `props` parameter of `fluid.cell` describes the `name` convention and its use by these functions.
+  - `explain`'s own JSDoc includes a worked example.
+
+----------
+
+USER:
+OK, let's go back to the live layer issues. Write our exchanges starting at "The late Lost Plants re-render" which refer just to this issue (skipping any material relating to debuggability and cell names) to a-scratch/reports/live-layer-remerging.md
+
+----------
+
+ASSISTANT:
+I've written the live-layer exchanges to `infusion-6/a-scratch/reports/live-layer-remerging.md`:
+- the diagnosis, with the timeline, the cause in `fluid.pathToLive`, the two fix options and the separate pane-layer delay;
+- your question about whether upgrading without re-merging is coherent, quoted in full;
+- my answer: the invariants I1–I5, the consequences for each observer, and the assessment recommending option 2.
+
+I left out everything about cell names and debugging. The file is uncommitted.
+
+----------
+
+USER:
+So, the costs of making a cell for every exposed primitive value seem pretty unpalatable. I'm wondering whether the real cost of the re-merging is simply the scope cascade which it triggers, rather than the turnover itself. And the scope cascade is only intended to notify consumers of changes in the referents of which contexts are actually in scope. Could we prevent the bulk of these costs by simply gating any propagations which leave the context complements at each of the scope sites unchanged? Otherwise the only other consumers which need to be invalidated are those who hold a $sitedRef to a path which actually changed provenance, which we should be able to look up in the cache we have of such refs. Does this approach seem workable and likely to mostly cull the costs of this update? Another issue to be considered at the same time is the recently introduced bad smell of // The last value computed by each component under each name, with its key - see hortis.sameAsLast
+hortis.lastValues = new WeakMap(); in imerss-bioinfo filters, and the "sameAsLast" mechanism. There has been a vestigial attempt at proper framework support for this kind of issue in the form of the "$oldValue" context dispensed by fluid.resolveContext which currently connects to nothing, but these use cases are suggesting a mechanism I've seen in other reactive frameworks of something like a configurable "equiv" member on a reactive cell which allows one to take local control over the policy over which an update is considered to have left the value morally unchanged. This starts off as reference equality but could be supplied as a construction option to a cell to adopt looser criteria. Does it look like such an improvement could resolve both our scope tick update as well as rough corners such as hortis.lastValues()?
+
+----------
+
+ASSISTANT:
+Before answering I'll read three things: what the scope tick computes and who consumes it, how cells decide a value is unchanged now, and what `hortis.sameAsLast` and `$oldValue` actually do.
+
+----------
+
+ASSISTANT:
+Yes, the gating approach looks workable and well aimed. The trace data from earlier supports your reading that the cost is mostly the scope cascade rather than the turnover itself. A per-cell `equiv` would also be the right general mechanism, both for the scope tick and for `hortis.sameAsLast`.
+
+## Gating the scope ticks
+
+**What happens today:**
+- `fluid.cacheLayerScopes` (`FluidIL.js:368`) mounts a `scopeEffect` that reads `shadow.computer.get()`, so it re-runs on every instance turnover.
+- It then **unconditionally** bumps its own `ownScopeTick`, and its parent's too.
+- Each child's `scopeTick` is computed from its own tick plus its parent's own tick. So a root turnover ticks every child of the root.
+- The readers of those ticks then re-run:
+  - each `resolveContext` cell;
+  - each live IL selector, through `fluid.visitComponentsForMatching`, which reads the `scopeTick` of every descendant it visits.
+
+**Why gating is sound:**
+- Scope entries are `{value: shadow, priority}`, and `resolveContext` returns `resolvedRec.value.computer`. Both the shadow and its computer cell keep their identity across turnover.
+- IL selectors match against context names and member names (`fluid.matchILSelector` takes `contextHashes` and `memberNames`), and those come from layer names and member names.
+
+So a turnover that leaves a component's applied contexts unchanged (the names, the shadows they resolve to, and their priorities) cannot change anything that tick readers observe.
+
+**The gate:** in `scopeEffect`, compare the applied set with the previous one, and bump the own tick and the parent's tick only if it changed. The same goes for the `resolveRoot` bump of the root. The structural bumps on attaching and detaching children (`FluidIL.js:445`, `463`, `465`, `512`, `2433`) should be checked to be real changes too, but they aren't on the turnover path.
+
+## What turnover costs once the ticks are gated
+
+From the saanich instrumentation and the code:
+- **One re-merge:** only the upgraded component's `flatMergedComputer` does real work.
+- **Children aren't rebuilt.** At 9.72 s, the children's `flatMergedComputer`s re-ran because the root's `computeInstance` changed, but no `computeInstance` followed for any of them. Their `lastMerge` memo hit.
+- **`$compute` and `$effect` cells are reused.** `fluid.mountSignalRecord` hands back the old product for an identical signal record.
+- **Component arguments keep their identity.** The root proxy is held on the shadow ("keeps its identity across turnover"), so `{self}` and `{storyPage}` arguments compare equal.
+- **Member reads are per member.** A read through the proxy goes through `getForComponent`, so it depends on that member's cached `$sitedRef`, not on the instance.
+- **`$sitedRef` re-evaluation is cheap.** Every cached `$sitedRef` of the component depends on `shadow.computer`, so each is re-evaluated, and that is cheap. `expandLayer` keeps the identity of unchanged merged material, so each is cut off by equality. The only ref whose value actually changes is the one at the upgraded path, where a plain value becomes a cell. That is exactly your "changed provenance" set, already selected by cutoff.
+
+  A precise lookup in `sitedRefMap`, replacing the dependency on `shadow.computer`, would only save re-evaluating the others. That's a later optimisation, not something correctness needs.
+
+**What still costs anything is outputs whose identity isn't stable,** and those are the scope tick's consumers:
+- **Live IL selectors** return fresh arrays of components each time. The profile showed 140–220 runs of `liveQueryILSelector`, about 0.4 s.
+- **The fresh arrays propagate.** They drive `hortis.obsFilters.predicates`, which also builds a fresh array. That's why `sameAsLast` exists, and very likely why the checklist rendered a second time.
+
+With the gate, the selectors don't re-run at all. I'd expect the two late events to shrink to one re-merge, a handful of `$sitedRef` re-evaluations, and the readers of `cards` and `revealed` that genuinely change. This should be confirmed by re-running the saanich timeline and counting scope ticks, selector runs and checklist renders around 8.5 s and 9.5 s.
+
+## A per-cell `equiv`
+
+**What exists now:** one global policy, `fluid.cell.equals = fluid.defaultEquality`. It isn't pure reference equality: it already allows a relative tolerance for numbers. It's used in three places:
+- `notifiableChange`, for an ordinary update;
+- the early-cutoff comparison of a pending cell's `staleValue`;
+- `cell.set` (`FluidSignals.js:1062`).
+
+**The proposal:**
+- A construction option `fluid.cell(v, {equiv})`, used in all three places in place of the global.
+- An IL spelling for it, e.g. `$compute: {func, args, equiv: "hortis.qdl.sameQuery"}`.
+- Library helpers such as `fluid.equiv.elementwise` (identity of each element).
+
+**The semantics that matter:** when `equiv` says the values are equal, the cell **keeps its old value** and notifies nothing. Merely committing the new value without notifying would not do. Keeping the old value gives identity stability downstream for free, and that is exactly what `sameAsLast` emulates by handing back `last.value`.
+
+**What it would cover:**
+- **The scope tick.** `ownScopeTick` could become a cell holding the applied-context snapshot, with an entrywise `equiv`. The gate then needs no special-case code. The tick is written with `.set`, which is why `equiv` must apply to `set` as well.
+- **Live IL selector results,** with elementwise identity.
+- **`hortis.sameAsLast` and `hortis.lastValues`.** These would be replaced by `equiv: (a, b) => hortis.qdl.canonical(a) === hortis.qdl.canonical(b)` on the `predicates` compute. That removes the WeakMap keyed by component and name. It also behaves correctly across turnover, because the compute cell itself survives (`mountSignalRecord`).
+- **Not `hortis.selectObs.memo`.** That is a cache that avoids re-executing a query, not an equivalence. `equiv` could take over its cut-off role but not its saving role, so it should stay, or move into `hortis.queryCache`.
+- **`$oldValue`.** It only reaches the legacy `fluid.processSignalArgs` path, which is why it connects to nothing; modern `$compute` goes through `fluid.cell.mapSignalArgs`. It serves a different need: a reducer that builds on its previous result. `equiv` decides notification, not computation. So I'd either wire `$oldValue` into `mapSignalArgs` for reducers, or remove it. It isn't needed for either problem here.
+
+**The caveat:** an `equiv` is a promise by the cell's author that no reader can observe the difference between the two values. A too-loose `equiv` drops real changes silently. It also has to be cheap, since it runs on every update; `qdl.canonical` is fine.
+
+## Suggested order
+
+1. Gate the scope ticks in `scopeEffect`, as an explicit snapshot comparison. Then re-measure the saanich timeline.
+2. Add the per-cell `equiv` and its `$compute` spelling. Move the scope snapshot onto it, and put elementwise `equiv` on the live IL selectors.
+3. Port `hortis.obsFilters.predicates` to `equiv`, delete `sameAsLast` and `lastValues`, and decide what to do with `$oldValue`.
+
+Shall I start with step 1 and the measurement?
+
+----------
+
+USER:
+Before we proceed, could you make a quick and rough accounting of the route through the "Lost Plants" re-rendering costs were actually incurred. How in detail does a scope tick cascade trigger re-rendering of entire hierarchy?
+
+----------
+
+ASSISTANT:
+Rather than reason from the code alone, I'll take a timed trace of the two windows: every cell update with its self-time, around the `cards` upgrade (~8.5 s) and the `revealed` upgrade (~9.5 s).
+
+----------
+
+ASSISTANT:
+Here's a rough accounting of where the time actually goes. It corrects two things I told you earlier.
+
+## The `lostPlants.cards` upgrade (8,535 ms) costs almost nothing
+
+- Over its window (to 9,478 ms) there were 370 updates and **58 ms** of self-time. That covers one re-merge and turnover of `lostPlants` and its scope effect, about 5 ms in all. The rest is unrelated work in that window, mostly a `dataPanes` content render (21 ms).
+- "The late Lost Plants re-render", as such, is small. The expensive event is the **next** one.
+
+## The root `story.revealed` upgrade (9,478 ms) costs about 674 ms
+
+There were 6,324 updates in the following 0.9 s.
+
+| Category | Self-time | Main items |
+|---|---|---|
+| **View re-rendering** (`renderView` effects, `vTree` computes) | **~486 ms** | `checklist.tree.view` 339 + 63 ms; `obsTable` 24 ms; `solowTaxa` tables ~21 ms; the root view ~8 ms |
+| **Turnover itself** | ~90 ms | `flatMergedComputer` 33 ms ×189; `computeInstance` 24 ms ×89; effects re-run 14 ms ×91; argument flattening 15 ms ×670 |
+| **`$sitedRef` re-evaluation** | ~20 ms | 2,848 runs, 1,691 of them the checklist's per-row `filterState.#` |
+| **Scope machinery** | **~64 ms** | live IL selectors 30 ms ×19; `scopeEffect` 20 ms ×89; `fetchContextReference` 6 ms; `resolveContext` 5 ms; `scopeTick` 3 ms ×368 |
+| Other | ~12 ms | |
+
+**89 components were rebuilt.** That is my first correction: the children do *not* hit their merge memo.
+
+## The route, traced on `checklist`
+
+| Time | Cell that re-ran | Source that had changed |
+|---|---|---|
+| 9,478 | (first write to `revealed` on the root) | `pathToLive` resets the root's potentia |
+| 9,795 | `flatMergedComputer for path story-#.checklist` | `computeInstance for path story-#` (the root's turnover); a memo hit |
+| 9,805 | `flatMergedComputer for path story-#.checklist` | **`potentia for path story-#.checklist`**: a real re-merge |
+| 9,825 | `computeInstance for path story-#.checklist` | its `flatMergedComputer` |
+| 9,994 → 10,009 | `checklist.tree`: merge, then instance | **its potentia**, pushed by `checklist`'s turnover |
+| 10,009 → 10,075 | `checklist.tree.view`: merge, then instance | its potentia, likewise |
+| then | `$effect at path renderView of … checklist.tree.view` | the new instance: **339 ms** re-rendering 1,690 rows |
+
+**How the cascade spreads:**
+1. When a parent turns over, `expandLayer` re-expands each of its `$component` records and calls `fluid.pushSubcomponentPotentia` (`FluidIL.js:2306`), which calls `fluid.pushPotentia`.
+2. `pushSubcomponentPotentia` builds fresh merge-record objects every time. `pushPotentia` then sets a **new potentia object** unconditionally (`FluidIL.js:3431`), even when it holds the same records.
+3. The child's `lastMerge` memo compares potentia **by identity**, so it misses. The child is fully re-merged, gets a new `flatMerged`, and turns over.
+4. That re-pushes the potentia of its own children, and so on down the whole tree.
+
+So a turnover is never contained to the component that turned over. **Every turnover of a component rebuilds its entire subtree.** This happens whatever the cause, not just for live upgrades.
+
+## Answering your question directly
+
+In this trace, **the scope tick cascade doesn't trigger the re-rendering. It follows it.**
+- Each `scopeEffect` re-runs because *its own* component's `computeInstance` changed, which is why there are 89 of them, one per rebuilt component.
+- Those ticks re-run the context resolutions and live selectors, about 64 ms in total.
+- The re-rendering comes from the views being rebuilt by the potentia cascade.
+
+This is my second correction: last time I said the cost was mostly the scope cascade, and that was wrong. The trace says otherwise:
+- **Gating the scope ticks would save at most about 10%** (~64 ms of 674).
+- **About 85% comes from subtree turnover driven by the potentia re-push,** and the re-rendering it causes.
+
+## What this means for the proposals
+
+- **The best place for `equiv` is the potentia cell.** If `pushPotentia` (or the potentia cell's own `equiv`) recognised an equal potentia (the same record types, names and priorities, the same layer names, and *the same layer material*) and kept the old object, a child's merge memo would hit and nothing below the upgraded component would turn over. That would cut off this cascade, and it would also contain *every* turnover, not only live upgrades.
+- **The open question is whether the `expanded` material in those records keeps its identity** when the parent is re-merged. If it does, comparing records element by element is cheap and exact. If `mergeLayerRecords` builds fresh merged objects for subcomponent definitions, the comparison has to be structural, or the merge has to reuse unchanged merged subtrees. That's the next thing to measure, and I'll check it before proposing code.
+- **Scope gating** is still correct and cheap, but it's a minor gain.
+- **`sameAsLast`** is the same disease at the application level, so the `equiv` design still covers it.
+
+----------
+
+USER:
+Add this response to the end of live-layer-remerging.md
+
+----------
+
+ASSISTANT:
+I've added the accounting to the end of `infusion-6/a-scratch/reports/live-layer-remerging.md`, as a section headed "Accounting: where the re-rendering cost is actually incurred". It starts with your question and notes that it corrects two earlier claims. It covers:
+- the cost table for the `cards` and `revealed` upgrades;
+- the potentia route traced through `checklist`;
+- how the scope ticks follow the turnover rather than cause it;
+- what that means for the proposals.
+
+The file is still uncommitted.
+
+----------
+
+USER:
+Check whether the expanded material keeps its identity - and also consider whether there's a straightforward means of preventing all subcomponents in a tree from reinstantiating just because a parent turned over in a way which left all of their $component entries unchanged (if this is indeed what's responsible for the 85% that you describe)
+
+----------
+
+ASSISTANT:
+Starting with how the `expanded` material reaching `fluid.pushSubcomponentPotentia` is produced.
+
+----------
+
+ASSISTANT:
+The `expanded` material does keep its identity. So plain `$component` records are already contained, and the 85% comes from a different route: the view renderer.
+
+**1. Plain `$component` records survive a parent's turnover.**
+- `fluid.readerExpandLayer` caches its result in a WeakMap keyed by the record object.
+- `fluid.mountSignalRecord` hands back the existing child computer when the signal record is the same.
+- A node test confirms it. I built a parent whose children are declared in one layer, in two contributing layers, through a mixin, and one level further down. After a first write to a parent member, which turns the parent over, every child kept an identical potentia, merge-record layers, `flatMerged` and instance.
+
+**2. Two re-push routes in the renderer change potentia.** I logged every `fluid.pushPotentia` into an existing component between 9.3 and 10.6 s of the saanich run. There were 34, all with genuinely **new** layer objects:
+
+| Count | Record | Pushed by | Example components |
+|---|---|---|---|
+| 24 | `template` | the renderer processing an `@id` slot (`FluidView.js:3182`–`3196` in the checkout) | `map`, `obsTable`, `taxonPanel`, resize bars, `solowRadius` |
+| 10 | the unnamed `subcomponent` contribution to `X.view` | the re-merge of `X` after route 1 | `taxonPanel.view`, `map.view`, `solowTaxa.view`, the filters' views |
+
+**3. How the cascade arises.**
+1. Each time a view's `vTree` is recomputed, `processVNode` meets every `@id` slot again.
+2. For each slot it builds a fresh `templateRecord` holding a new `parentTemplate` cell and the new vnode's `elementSignal`. That really is different layer content, not just a fresh wrapper, so the child's potentia changes and the child re-merges and turns over.
+3. The template record carries the child's `view: {$component: …}` (that's the unnamed contribution in route 2). So the child's view also turns over and runs `renderView` in full. For `checklist.tree.view` that was the 339 ms.
+4. That view's own `@id` slots repeat the process, all the way down the tree.
+
+The amplifier is the loop **re-render → re-push of a fresh template record → turnover → re-render**. The trigger is any recomputation of a view's `vTree`. Here it was the root view's, after the root turned over on the `revealed` upgrade.
+
+There is also a possible double turnover, which I haven't measured. Each slot's `allocateVNodeEffect` disposable pushes an *empty* template record when the old vnode is disposed. If disposal of the old vnode comes before allocation of the new one, each slot is pushed twice per re-render.
+
+**4. A straightforward way to stop it: make a slot's template record stable across re-renders.**
+- **Cache one record per (view shadow, `@id`)**, held on the view's shadow. Its layer would be constant, holding **stable cells** for `container` and `parentTemplate`. On re-render, the renderer `set`s the new element and template into those cells instead of building a new record.
+  - A changed element or an edited template still reaches the child through those cells, and only its view patches.
+  - An unchanged slot then pushes nothing new, so the child doesn't turn over.
+- **A guard in `fluid.pushPotentia`:** if every incoming record is identical to the existing record of the same type and name, and the layer names are unchanged, don't `set` the potentia at all. It's cheap and benefits every caller that reuses records, including this one once its record is cached.
+- **Withdraw only when a slot is really gone.** Push the empty template record only if a slot isn't reclaimed in the same render. A dispose immediately followed by a re-allocation then wouldn't re-push the slot twice.
+- **Give the template record a `mergeRecordName`,** e.g. that of the rendering view. Contributions are then attributable and comparable.
+
+Even with all of these, the root's own turnover on the `revealed` upgrade would remain, along with its view's `vTree` recomputation (about 10 ms). But neither would spread below the root, which should remove most of the 674 ms. I'd confirm by re-running the same trace and counting `computeInstance` and `renderView` runs after the reveal.
+
+Shall I implement the stable slot records and the `pushPotentia` guard in Infusion, with a unit test of a re-rendered parent whose `@id` children keep their instances?
+
+----------
+
+USER:
+Add this response to the end of live-layer-remerging.md
+
+----------
+
+ASSISTANT:
+I've added that response to the end of `infusion-6/a-scratch/reports/live-layer-remerging.md`. It's a new section, with your question quoted at the top, covering:
+- the identity check;
+- the two routes that re-push potentia;
+- the re-render → re-push → turnover loop;
+- the proposed fix of stable slot records plus a guard in `pushPotentia`.
+
+The closing offer to implement it is left out. The file is uncommitted.
+
+----------
+
+USER:
+Go ahead and implement the stable slot records and pushPotentia guard
+
+----------
+
+ASSISTANT:
+Before changing anything I'll read the code involved: `allocateVNodeEffect`, how `vnode.elementSignal` is created, `fluid.withdrawTemplateRecord`, and the empty-record disposal path.
+
+----------
+
+ASSISTANT:
+The first edit applied. The second anchor occurs twice in the file, so I'll put the helpers after `fluid.pushPotentia` instead.
+
+----------
+
+ASSISTANT:
+Now the stable `@id` slot records in `FluidView.js`.
+
+----------
+
+ASSISTANT:
+All 2313 unit tests still pass; the logged assertions are existing negative tests. Running the server tests and the browser suites, since this touches rendering.
+
+----------
+
+ASSISTANT:
+Everything passes, including the 375 browser QUnit tests and the 34 demo steps. Now a unit test for the behaviour itself. Looking for an existing `@id` template test to model it on.
+
+----------
+
+ASSISTANT:
+The test passes. To be sure it exercises the fix, I'll briefly disable the guard (`fluid.isSamePotentia` returning `false`), run the test, and restore it.
+
+----------
+
+ASSISTANT:
+The stable slot records and the `pushPotentia` guard are in `../infusion-6`, and they remove the cascade. On Saanich's story, the 0.9 s after the reveal now takes 43 ms instead of 639 ms, with nothing below the root rebuilt.
+
+**What changed**
+- **`fluid.pushPotentia` (`FluidIL.js`) no longer sets the potentia when it would be equal.** Equal means each resulting merge record matches the existing one at the same position, with the same type, name, priority and the identical layer. The layer names must also be the same, and any iteration variables shallowly equal. Comparing records by contents rather than by object covers callers that wrap unchanged layers in fresh records, as `pushSubcomponentPotentia` does. The new helpers are `fluid.isSamePotentia` and `fluid.shallowEquals`.
+- **Each `@id` slot now keeps the same template record across re-renders (`FluidView.js`).** The new `fluid.templateSlotRecord` holds one record per (scope component, `@id`) on the shadow, with a fixed layer and two cells:
+  - `container` relays the element of the slot's current vnode, and is re-pointed at each new one;
+  - `parentTemplate` holds the slot's markup, and is `set` only when that markup changes. The new `fluid.vTreeEquals` decides that.
+  
+  So a re-render that leaves a slot unchanged pushes the identical record, the guard drops it, and the child keeps its instance. A change to the element or the markup reaches the child through those cells, and only its view updates.
+- **No double push:** the empty-record disposal I suspected never runs (`vnode.renderEffects` is never disposed), so there was nothing to fix there.
+- **Not done:** I didn't add the `mergeRecordName` on template records I suggested earlier. It isn't needed for the fix and could affect how records are named in diagnostics.
+
+**Test:** a new FluidView test, "Children designated by @id do not turn over when their parent rerenders its template".
+- A parent with two `@id` children turns over on a first write to one of its members.
+- Both children and their views keep their instances, and their DOM nodes are untouched.
+- When the markup inside one slot changes, the new markup still renders, while the other child still doesn't turn over.
+- With the guard disabled the test fails, at "The inner child did not turn over", so it does exercise the fix.
+
+**Measured on Saanich's story**, served with the checkout Infusion and the current bagatelle client code, CPU slowed 4×. Same root, guard on against guard disabled, over the 0.9 s after the root's `revealed` upgrade:
+
+| | Guard disabled | With the fix |
+|---|---|---|
+| Self-time | 639 ms (5,417 updates) | **43 ms** (1,144 updates) |
+| Components rebuilt (`computeInstance`) | 45 | **1** (the root) |
+| `renderView` | 399 ms ×82 | **4 ms ×2** |
+| `checklist.tree.view` re-render | 345 ms | **none** |
+
+The reveal itself also came about 1.3 s earlier with the fix (8.4 s against 9.7 s). That's from a single run each, so treat it as indicative.
+
+**Test results:**
+- `npm test` passes 2324/2324.
+- `hydrate-test`, `hydrate-roundtrip-test`, `copyout-test` and `output-documents-test` all pass.
+- All 375 browser QUnit tests pass, and all 34 demo steps.
+- The changed files lint clean.
+- Nothing is committed.
+
+The `lostPlants.cards` and root `revealed` upgrades still re-merge their own component, but that cost is now small. Pre-creating live cells is no longer needed for performance, and the scope-tick gating and `equiv` work can be decided on their merits.
+
+----------
+
+USER:
+Add this response to the end of live-layer-remerging.md
+
+----------
+
+ASSISTANT:
+I've added the implementation write-up to the end of `infusion-6/a-scratch/reports/live-layer-remerging.md` as a new section, "Implementation: stable slot records and the `pushPotentia` guard". It covers:
+- what changed in `fluid.pushPotentia` and `fluid.templateSlotRecord`;
+- the new test, and the check that it fails without the guard;
+- the Saanich timings: 639 ms down to 43 ms;
+- the test results.
+
+I left out the remark that nothing was committed. The file is uncommitted.
+
+----------
+
+USER:
+Well, this is great - shall we proceed further with the "equiv" work and see if any further gains can be realised?
+
+----------
+
+ASSISTANT:
+Yes, but first I'll find out where an `equiv` would actually pay. I'll instrument a whole startup on the fixed Infusion, recording every cell update whose new value is a different object from the old one yet shallowly equal: the same keys holding the same values, or the same elements. Those are the updates an `equiv` would have cut off. Their downstream cost is what's at stake.
+
+----------
+
+ASSISTANT:
+Now a small `fluid.equiv` library of policies, placed beside `fluid.defaultEquality`.
+
+----------
+
+ASSISTANT:
+All unit tests pass. Measuring the effect of the scope gate on saanich, against the earlier run on the same root.
+
+----------
+
+ASSISTANT:
+My removal of the old `hortis.sameAsLast` body cut in the wrong place. Looking at the region to repair it.
+
+----------
+
+ASSISTANT:
+Both pass. To be sure the IL test exercises the `equiv`, I'll run it once with the `equiv` line removed from its definition.
+
+----------
+
+ASSISTANT:
+Without the `equiv` the test fails as it should. The file is restored. Running the full Infusion suites to finish.
+
+----------
+
+ASSISTANT:
+The `equiv` work is done, but the further gains are modest. The scope-tick gate saves about 60 ms of startup, and value `equiv`s save almost nothing on saanich. The main benefit is that `hortis.sameAsLast` is gone. The slot-record fix had already removed nearly all the re-render cost.
+
+**Where the remaining costs were** (whole startup, fixed Infusion):
+- Values that were recomputed as a fresh object but equal to the old one were rare: about 45 over the whole startup.
+  - Most were Infusion's internal argument arrays.
+  - The rest were one chain at 8.49 s: `activatedPanes` → `traces.events`, `lostPlants.plants`, `protectedAreas.taxonSets`. Each of those costs under 30 ms.
+- The big remaining item was the live IL selectors: about 300 ms in 240 runs, driven by scope ticks.
+
+**Infusion changes (`../infusion-6`)**
+- **A per-cell `equiv`:** `fluid.cell(v, {equiv})`.
+  - When it judges a new value equivalent, the cell **keeps the value it held** and notifies nothing.
+  - It applies to computed updates, to `set`, and to the early-cutoff case.
+  - It is only consulted when both values are available; otherwise `fluid.cell.equals` is used as before.
+  - The new helper is `fluid.cell.isEquivalent`.
+- **An `equiv` field on `$compute` records:** `$compute: {func, args, equiv}`, taking a function or a global name. An unresolvable name fails with a clear message.
+- **A small policy library:**
+  - `fluid.equiv.elementwise`: equal if all elements, or all key values, are identical.
+  - `fluid.equiv.byKey(keyOf)`: equal if a computed key is the same.
+- **The scope gate:** `scopeEffect` compares the contexts it applies, and where it applies them, with the previous run. It bumps its own tick, its parent's and the root's only when that set has changed or a context was withdrawn.
+- **Tests:**
+  - Signals test: a cell with `equiv` keeps an identical value and doesn't notify its readers.
+  - IL test: a `$compute` with a string `equiv`. It fails with the `equiv` removed, so it does exercise it.
+- **Results:**
+  - `npm test` passes 2337/2337.
+  - The four server tests pass.
+  - All 378 browser QUnit tests and all 34 demo steps pass.
+  - The changed files lint clean.
+
+**bagatelle changes**
+- `hortis.obsFilters.predicates` is now `{$compute: {func, args: ["{self}.filterComps"], equiv: "hortis.obsFilters.samePredicates"}}`, where the `equiv` compares `hortis.qdl.canonical` forms.
+- `hortis.sameAsLast` and `hortis.lastValues` are deleted, and the function no longer takes `that`.
+- I updated the comment in `hortis.selectObs` that referred to them.
+- Lint is clean and `npm run build` passes, including the BBEA round trip.
+
+**Measured on saanich** (single runs each, CPU slowed 4×):
+- **Live IL selectors:** 240 runs and about 301 ms before, 209 runs and about 243 ms after. That's roughly 60 ms. The remaining runs come from components genuinely appearing during startup; only making the selectors incremental would reduce those.
+- **`sameAsLast` replaced by `equiv`:** the filter pipeline's downstream run counts are the same in every case. For example `allOutput` 4, `filteredObs` 4, `taxaFromObs` 5 and the map grid 4. So the `equiv` does the same job.
+
+**Not done**
+- `$oldValue` is still not wired to anything.
+- `hortis.selectObs.memo` is unchanged. It is a query cache, not an equivalence.
+- The `activatedPanes` chain could take `fluid.equiv.elementwise` in saanich's `bioreportr-storyPage.vue`. That would save perhaps 50–100 ms of recomputation at 8.5 s.
+
+Nothing is committed.
+
+----------
+
+USER:
+Are we also just generating too many responses to LiveQueryILSelector? Could we cache the responses to these requests based on their arguments up in the shadow of the head component for the searches?
+
+----------
+
+ASSISTANT:
+Before answering I'll check how live IL selectors are created: how many distinct instances exist for the same selector and head, and how often each re-runs.
+
+----------
+
+ASSISTANT:
+They're already cached on the head component by their arguments, so caching more wouldn't cut the runs. What's expensive is that every run walks the whole tree beneath the head.
+
+**What the trace shows** (whole startup, fixed Infusion):
+
+| Head :: selector | Runs | Time | Components visited per run |
+|---|---|---|---|
+| `story` :: `hortis.obsFilter` | 75 | 124 ms | 403 |
+| `story` :: `hortis.checklist` | 46 | 65 ms | 520 |
+| `story` :: `hortis.filter` | 46 | 61 ms | 520 |
+| `story.solowTaxa` :: `hortis.taxaFilter` | 33 | 15 ms | 117 |
+| `story.map` :: `hortis.libreMap.clickHandler` | 4 | 1 ms | 7 |
+
+- **Only 5 query cells exist, one per (head, selector).** `fluid.liveQueryILSelector` already keeps them in the head's `shadow.queryILMap`, keyed by selector. It also already returns the previous array when the matched components are unchanged, so consumers are cut off.
+- **Each run re-traverses everything below the head,** 400–520 components for the root's queries. A run is triggered by a scope tick of *any* component in that subtree. The recorded causes are scope ticks of `solowTaxonPanel`, `obsTable`, `map`, `checklist.search` and others: components appearing during startup. Each appearance re-walks the whole tree.
+- **The three root queries walk the same tree separately,** usually on the same tick, since their causes match. That is about 250 ms of the ~266 ms total.
+
+**Two ways to cut it**
+1. **Share one traversal per head (simple).**
+   - The head caches a single "match index": the list of `(shadow, shadowStack, scopes)` for its subtree. It's rebuilt once per change to its subtree, and each selector query filters that list.
+   - The three root queries then cost one walk plus three cheap filters.
+   - This plausibly saves around 100 ms. I haven't measured how the cost splits between visiting and matching, so that's a rough figure.
+2. **Maintain matches incrementally (the proper fix).**
+   - Whether a component matches depends only on the contexts of the chain from the head down to it. So when a component's applied contexts change, which the new `scopeEffect` gate now detects exactly, only that component and its descendants can change their matches.
+   - Each head with live queries would keep its match sets. On such a change, it re-matches just the changed subtree against its selectors and adds or removes members, rather than re-walking 500 components.
+   - This would make the cost proportional to the components that actually changed, removing nearly all of the ~250 ms.
+   - It's more work. Each head needs a registry of its queries, and the order of results must stay as a traversal would produce it, because consumers such as the filter list may depend on that order.
+
+I'd do the incremental version, perhaps with the shared index as its first step: the per-head registry and match sets would grow out of it. Shall I go ahead?
+
+----------
+
+USER:
+Sketch out the full incremental version and make rough estimate of how many LoC it is and what data structures it requires and where
+
+----------
+
+ASSISTANT:
+To size this properly I need three details: how `fluid.matchILSelector` uses the chain of ancestors, the order in which `visitComponentChildren` visits, and how a component's availability enters the results.
+
+----------
+
+ASSISTANT:
+Here's a sketch of the incremental version. It's roughly **200 lines of code plus ~70 of JSDoc in `FluidIL.js`, and ~150 lines of tests**. It needs four structures: a per-head registry of live queries, one match set per query, a per-head count of unavailable components, and a version cell per query.
+
+## What a match depends on
+
+These facts, from the code, define what has to be tracked:
+
+- **`fluid.matchILSelector`** tests each selector element against the **own** scope of a component on the chain from the head down to the candidate: `scopes[thatpos]` is an `ownScope`, checked with `hasOwnProperty`. It ignores the head itself (`i = 1`) and everything above it. So a component's match depends only on the applied contexts of itself and its ancestors below the head.
+- **A query also reports unavailability.** If *any* component in the subtree is unavailable, the result is unavailable, whether or not that component would match. So availability is a second input.
+- **Results come in pre-order traversal order,** following each `childComponents` in insertion order. Consumers such as `filterComps` may depend on that order.
+- **The traversal skips some components:** those without `that`, inert ones (when the head isn't inert), and ones already visited by `$id`, which guards against cross-injection.
+
+## Data structures
+
+| Structure | Where | Contents |
+|---|---|---|
+| `shadow.liveQueries` | the head's shadow; it replaces the cached cells in `shadow.queryILMap` | `Map<key, LiveQueryRecord>`, with the key being selector plus flat flag, as now |
+| `LiveQueryRecord` | per query | `{parsed, flat, matches: Set<Shadow>, version: Cell<Number>, result: Cell}`. `result` is computed from `version`, sorts `matches` into traversal order, and has `equiv: fluid.equiv.elementwise` |
+| `shadow.unavailableBelow` | the head's shadow | `Set<Shadow>` of the unavailable components in its subtree, shared by its queries |
+| (no global registry) | — | a changed component finds its affected heads by walking up `parentShadow` and checking for `liveQueries`. That costs O(depth), at most about 6 here |
+
+## Operations, and where they hook
+
+1. **Creating a query** (`fluid.liveQueryILSelector`, `FluidIL.js:180`): fill `matches` with one full traversal, using the existing `fluid.queryILSelector` machinery, and fill `unavailableBelow` the same way. *About 40 lines.*
+2. **A component's contexts change** (`scopeEffect`, `FluidIL.js:368`, wherever the new gate finds `changed`): for each ancestor head with live queries, re-match the component, and also its descendants if any of that head's selectors has more than one element. Its stack and scopes are rebuilt by walking up to the head. Each matching query's `matches` gets the component added or removed, and its `version` is bumped. A newly appearing component arrives here through its first `scopeEffect` run, so attaching needs no hook of its own. *About 50 lines.*
+3. **A component is destroyed or detached** (the `delete …childComponents[…]` sites at `FluidIL.js:604` and `:2441`): remove it and its descendants from the `matches` and `unavailableBelow` of each ancestor head, and bump the versions. *About 20 lines.*
+4. **A component's availability changes** (the existing per-component `trackComponentAvailability` effect): add it to or remove it from `unavailableBelow` at each ancestor head, and bump that head's query versions when the set changes between empty and non-empty. *About 25 lines.*
+5. **Producing the result:** a computed cell on `version`. It returns the merged unavailable value if `unavailableBelow` is non-empty. Otherwise it sorts `matches` with a tree-order comparator: compare the ancestor chains, then the positions of siblings in `Object.keys(parent.childComponents)`. Matches are few (tens), so sorting on demand is cheap. *About 35 lines, comparator included.*
+6. **Skipped components:**
+   - An inert component is never added, mirroring the traversal.
+   - A subtree containing a cross-injected component makes its head's queries fall back to the present full traversal. That keeps the `visited` and `$id` semantics without modelling injection.
+   - *About 20 lines.*
+7. **Flat queries:** re-match only when the changed component is a direct child of the head. *A few lines inside 2.*
+
+So that adds about 200 lines of code, and the existing `liveQueryILSelector` computation and its scope-tick reads go away.
+
+## Correctness net
+
+- **A debug cross-check:** with a flag on, each `result` recomputation also runs the old full traversal and fails on any difference. Run the whole test suite and the demos with it on.
+- **Tests (~150 lines):**
+  - a component appears, then is destroyed;
+  - an ancestor's contexts change, so a descendant selector matches or stops matching;
+  - availability goes to unavailable and back;
+  - result order after children are inserted out of order;
+  - a flat query;
+  - the fallback for cross-injection;
+  - inert subtrees;
+  - a randomised test that mutates a tree and compares against `fluid.queryILSelector` after each step.
+
+## Expected gain
+
+During saanich's startup, each change is a single component appearing, with little or nothing beneath it yet. So maintenance per change becomes O(depth + queries at the affected heads), instead of a walk of 400–520 components for each of the three root queries.
+
+The current cost is about 266 ms over the 204 runs. I'd expect it to fall to the order of 10–20 ms. That's an estimate from the structure; I'd measure it with the same trace once it's built.
+
+## Risks
+
+- **Order:** sibling order is that of `childComponents` keys, which is insertion order. That changes if a member is deleted and re-added. The comparator follows whatever order the traversal would see, so the two stay consistent, and the cross-check would catch any disagreement.
+- **Timing:** a `scopeEffect` might run before the component is inserted into its parent's `childComponents`. The re-match then has to check that it is reachable, as the traversal's `that` check does. Otherwise it would add a component the traversal can't see yet.
+- **Cross-injection** is handled only by falling back to the full traversal, so pages that use it gain nothing.
+
+Shall I implement it?
+
+----------
+
+USER:
+Do similar analysis for the Share one traversal per head (simple) option
+
+----------
+
+ASSISTANT:
+## Shared traversal per head: sketch
+
+The idea: each head component keeps **one** traversal of its subtree, shared by all its live queries. Each query then only filters that traversal's entries with its own selector. Semantically nothing changes: it's the same traversal, the same matcher and the same dependencies, just done once per head rather than once per selector.
+
+**Size:** about **60 lines of code plus ~25 of JSDoc in `FluidIL.js`, and ~60 lines of tests.**
+
+### Data structures
+
+| Structure | Where | Contents |
+|---|---|---|
+| `shadow.queryIndexMap` | the head's shadow, beside the existing `queryILMap` | up to two index cells, keyed `""` for a deep traversal and `"!"` for a flat one |
+| index cell | per head and flat flag | computed by one `fluid.visitComponentsForMatching` walk, so it keeps today's dependencies on every visited component's `scopeTick` and `availableInstance`. Its value is `{entries: [{shadow, shadowStack, scopes}], unavailable}`: the visited components in traversal order with copies of their stacks, plus the merged unavailable value if any visited component is unavailable |
+| live query cell (existing, in `queryILMap`) | per head and selector, unchanged in identity | now computed from the index cell alone. It returns `unavailable` if set, and otherwise filters `entries` with `fluid.matchILSelector`. It keeps the existing `previous`/`arrayEqual` cut-off |
+
+The stacks must be copied: the walk reuses its `shadowStack` and `scopes` arrays, which are documented as not writeable. Each copy has one element per level of depth, about 6 here, so for ~520 components that's around 6,000 array slots per index rebuild. That's small.
+
+### Operations, and where they hook
+
+1. **`fluid.queryIndexFor(shadow, flat)`, new.** It finds or allocates the head's index cell. The traversal is the body of today's `fluid.queryILSelector`, minus the matching. *About 30 lines.*
+2. **`fluid.liveQueryILSelector` (`FluidIL.js:180`)** filters the index instead of calling `fluid.queryILSelector`. *About 15 lines changed.*
+3. **`fluid.queryILSelector`, the non-live one-off,** stays as it is, or reads an existing index when there is one. That's optional, about 5 lines.
+4. **Disposal:** index cells live and die with the head's shadow, as `queryILMap` already does, so nothing new is needed.
+
+Nothing else is touched: no hooks in `scopeEffect`, destruction or availability.
+
+### Risks
+
+Low. The results are identical by construction: the same walk in the same order, the same skips (inert components, no `that`, `visited` by `$id`), and the same matcher. The only new behaviour is that the walk happens once per head instead of once per selector.
+
+There's one subtlety. A query that runs while the index is being recomputed must not see a half-built index. That's handled because the index is an ordinary computed cell, read only when complete.
+
+### Expected gain
+
+Measured now, the three queries at the root cost 124 + 65 + 61 = **250 ms** over 75 + 46 + 46 runs. That's about 1.4–1.65 ms per run, for walks of 403–520 components.
+
+With a shared index:
+- **The index rebuilds once per subtree change.** That's about 75–80 times, the union of the moments the three queries ran, at roughly the cost of one query's run, ~1.3 ms. That gives **~100–110 ms**.
+- **Each query's filter** is a pass over ~520 entries with `matchILSelector`. That's a few `hasOwnProperty` checks per entry, without the cell reads the traversal makes, so I'd guess ~0.1–0.2 ms per query per rebuild. That gives **~25–45 ms** for three queries.
+
+So the total would be about **130–150 ms**, a saving of roughly **100–120 ms**. That's about 40–50% of the selector cost, compared with ~90% for the incremental version.
+
+The figure depends on how a run's time splits between visiting, which involves cell reads, and matching. I haven't measured that split. Profiling the time inside `matchILSelector` during a run would settle it in one trace.
+
+### Compared with the incremental version
+
+| | Shared traversal | Incremental |
+|---|---|---|
+| Code | ~60 lines (+25 JSDoc) | ~200 lines (+70 JSDoc) |
+| Tests | ~60 lines | ~150 lines, plus a debug cross-check |
+| Hooks outside the query code | none | `scopeEffect`, destruction, availability tracking |
+| Risk | low: identical by construction | moderate: order, timing of attachment, a fallback for cross-injection |
+| Estimated saving on saanich | ~100–120 ms | ~240–255 ms |
+| Scaling | still O(subtree) per change, but once per head | O(depth + changed subtree) per change |
+
+The shared index is only a partial step towards the incremental version. The per-head registry carries over, but the index itself would be replaced by maintained match sets rather than extended.
+
+If you want the cheap, safe win first, the shared traversal is a morning's work. If startup time across larger trees matters, the incremental version is the one that scales.
+
+----------
+
+USER:
+Write both analyses to a-scratch/reports/live-query-il-selector-strategies.md and proceed to implement the shared traversal option, together with adding a doc comment explaining that an incremental algorithm is possible and pointing to the doc
+
+----------
+
+ASSISTANT:
+I'll write the report first, then implement.
+
+----------
+
+ASSISTANT:
+`fluid.mergeUnavailables` returns `null` rather than `undefined` when there's nothing to merge, so I'll correct the typedef. Then I'll add a test modelled on the existing live-query tests.
+
+----------
+
+ASSISTANT:
+I'll add the measured outcome to the report.
+
+----------
+
+ASSISTANT:
+I've written both analyses up and implemented the shared traversal. On saanich it cuts the live selectors' startup cost from 245 ms to 156 ms. That's about 90 ms saved, a little under my 100–120 ms estimate.
+
+**The report** is in `infusion-6/a-scratch/reports/live-query-il-selector-strategies.md`. It holds:
+- the measured costs per query;
+- both designs, with their data structures, where they hook in, size, risks and expected gains;
+- a comparison table;
+- an "Outcome" section with the figures below.
+
+**Implementation (`FluidIL.js`)**
+- **The new `fluid.queryIndexFor(root, flat)`** keeps one index cell per head on `shadow.queryIndexMap`, keyed `""` for the whole tree and `"!"` for the head's children alone.
+  - It builds the index with a single `fluid.visitComponentsForMatching` walk, which keeps the same dependencies on each component's scope tick and availability as before.
+  - The index holds each available component with copies of its stack and scopes, plus the merged unavailable value if any component is unavailable.
+- **`fluid.liveQueryILSelector`** now parses its selector once and filters the shared index with `fluid.matchILSelector`. It keeps the existing cut-off that returns the identical list when the matches are unchanged.
+- **`fluid.queryILSelector`**, the one-off query, is unchanged.
+- **Documentation:** the JSDoc of `fluid.queryIndexFor` says an incremental algorithm is possible and points to the report, and `fluid.liveQueryILSelector`'s JSDoc refers to it. I also documented the new shadow member and the `QueryIndex` and `QueryIndexEntry` types.
+- **Test:** a new IL test, "Live queries of one tree share a single traversal of it". It checks that:
+  - each index is allocated once, with a separate one for the flat case;
+  - two queries at one head are recomputed from **one** traversal per change;
+  - results stay up to date and in tree order;
+  - a query whose matches are unchanged hands back the identical list.
+
+  The old implementation would count two traversals here, so the test would fail against it.
+
+**Measured on saanich** (whole startup, single runs, CPU slowed 4×)
+
+| | Before (scope-tick gate only) | Shared traversal |
+|---|---|---|
+| Root | three queries: 77 + 49 + 49 runs, 230 ms | one index: 76 runs, 133 ms; filtering 7 ms |
+| `story.solowTaxa` | 34 runs, 14 ms | 34 runs, 14 ms; filtering 1 ms |
+| **Total** | **245 ms** | **156 ms** |
+
+Matching turned out to be almost free, a few milliseconds across all queries. Nearly all the remaining ~150 ms is the walk itself, reading each component's scope tick and availability. Only the incremental algorithm would remove that.
+
+**Test results:**
+- `npm test` passes 2345/2345.
+- The four server tests pass.
+- All 379 browser QUnit tests and all 34 demo steps pass.
+- The changed files lint clean.
+
+Nothing is committed.
+
+----------
+
+USER:
+OK, that is a good result. Now before we close the door on this round of Infusion improvements, let's take an inventory of uses of file-global WeakSet or WeakMap in client code - that is, anything outside Infusion itself. Each of these represents a poor smell that needs to be eliminated. For each one, consider whether there's a reasonable route to a framework facility, based on the new "equiv" or some fixed up version of $oldValue that could allow them to be better expressed.
+
+----------
+
+ASSISTANT:
+I'll start by finding every `WeakMap` and `WeakSet` in the client code: bagatelle's client sources and saanich's story code. Howe Sound's copies of the shared bioReportR files mirror saanich's, so I'll only list saanich's.
+
+----------
+
+ASSISTANT:
+I'll start by finding every `WeakMap` and `WeakSet` in the client code: bagatelle's client sources and saanich's story code. Howe Sound's copies of the shared bioReportR files mirror saanich's, so I'll only list saanich's.
+
+----------
+
+ASSISTANT:
+That's 27 file-global sites; the hit at `libreMap.js:1291` is a member of a local object, not file-global. To classify each by what it remembers and why, I'll read every definition with its uses.
+
+----------
+
+ASSISTANT:
+That's 27 file-global sites; the hit at `libreMap.js:1291` is a member of a local object, not file-global. To classify each by what it remembers and why, I'll read every definition with its uses.
+
+----------
+
+ASSISTANT:
+Before classifying, I'll check one existing facility several of these could use: the `$bindable` record, which `fluid.withPlaceholder` uses for its registration.
+
+----------
+
+ASSISTANT:
+I've gone through all 27 file-global `WeakMap`/`WeakSet` uses: 6 in bagatelle and 21 in saanich's story code. Howe Sound's copies of the shared bioReportR files mirror saanich's. They fall into five groups.
+
+- **Groups A and B** (8 uses) are the ones `equiv` and a repaired `$oldValue` would express directly.
+- **Group C** (8 uses) is better served by the `$bindable` record Infusion already has.
+- **Group D** (8 uses) needs a different facility: per-component state the reactive graph doesn't observe.
+- **Group E** (3 uses) I'd leave alone: caches keyed by immutable data, not smells.
+
+## A. Remembering a previous value to detect a change: a repaired `$oldValue` (7 uses)
+
+Each of these keeps "what this input was last time" so an effect can act on a *transition*.
+
+| Site | What it remembers, per key | The transition acted on |
+|---|---|---|
+| `bioreportr.storyPage.lastPaneKey` (`story.js:848`) | the last pane, per story page | the pane changed, so clear the record and plant |
+| `bioreportr.protectedAreas.lastRegion` (`storyPageProtectedAreas.vue:56`) | the last region, per story page | the region changed within Protected, so clear the plant |
+| `bioreportr.storyMap.mapWasShown` (`story.js:360`) | whether the previous pane showed the map, per map | the map was hidden and is now shown |
+| `hortis.libreMap.wasFiltered` (`libreMap.js:989`) | whether the map was last fitted to filtered observations, per map | the filters were cleared, so return to the home camera |
+| `bioreportr.storyMap.placed` (`story.js:266`) | whether the camera has been placed yet, per map | the first placement jumps; later ones fly |
+| `saanich.topSpeciesSelected` (`saanich.js:116`) | whether the top species has been selected, per story page | do it once only |
+| `bioreportr.storyPage.activatedRecords` (`story.js:188`) | the panes shown so far, per story page | accumulate them, keeping the identical object until a new pane appears |
+
+**The route: make `$oldValue` work for `$compute`.**
+- Today `{$oldValue}` resolves to the `fluid.OldValue` marker. Only the legacy `fluid.processSignalArgs` substitutes the old value for it; the modern path, `fluid.cell.mapSignalArgs`, ignores it.
+- **The fix:** have `fluid.expandComputeRecord` substitute the cell's previous *available* value (`undefined` the first time) wherever `{$oldValue}` appears among the arguments. That's around 15 lines.
+- **What it gives:** a *reducer*, a computation that builds on its own previous result:
+  - `activatedPanes`: `(old, key) => old?.[key] ? old : {...old, [key]: true}`. It hands back `old` itself when nothing is new, so it cuts off without even needing an `equiv`.
+  - The transitions: `paneTransition: (old, key) => ({from: old?.to, to: key})`, and the effect then acts when `from !== to`. The same shape covers `lastRegion`, `mapWasShown` and `wasFiltered`.
+  - The once-only flags: `placed: (old, placedNow) => !!old || placedNow`, and likewise `topSpeciesSelected`.
+- **Where the state lives:** in the computed cell, which is owned by its component and disposed with it. It is recomputed when a reducer's inputs change and keeps its value across a turnover, since `mountSignalRecord` reuses it.
+- **A caveat:** a reducer's result depends on the order of its updates. That's fine for monotonic or "previous input" reducers like these, but it needs saying in the documentation.
+
+## B. Identity-preserving recomputation: `equiv` (covered within A)
+
+`activatedRecords` was really an emulation of `equiv`: it hands back the previous object when the new one would be equal. With `$oldValue` the reducer gets identity for free. Without it, an `equiv` such as `fluid.equiv.elementwise` on a plain recomputation would do the same. Either way, the `WeakMap` goes.
+
+## C. Binding once per external target: the existing `$bindable` (8 uses)
+
+These guard against attaching listeners, or building a widget, twice for the same map, document or story page.
+
+| Site | Target |
+|---|---|
+| `bioreportr.remembering.boundMaps` | map |
+| `bioreportr.protectedAreas.boundMaps` | map |
+| `bioreportr.solowMapLayer.hoverBound` (stores the listeners too) | map |
+| `bioreportr.protectedAreas.boundPages` | document |
+| `bioreportr.lostPlants.boundDocuments` | document |
+| `bioreportr.lostPlants.searchWidgets` (builds a widget once) | document |
+| `bioreportr.atlas.rowClickBound` | story page |
+| `bioreportr.inatSpecies.bound` | story page |
+
+**The route:** `$bindable: {bind, unbind, onceOnly?}` (`fluid.expandBindableRecord`) already does this.
+- It calls `bind` with the resolved target, keeps what `bind` returns, and calls `unbind` with `{boundValue}` when the target changes or the component is destroyed.
+- `onceOnly` gives exactly the "build once" behaviour of `searchWidgets`.
+- These guards also leak today: none ever unbinds, so a map or document re-bound to a new component keeps the old listeners. `$bindable` fixes that as well.
+- **No framework work is needed;** these sites would just be rewritten to use it.
+
+## D. Non-reactive per-component state: a new facility (8 uses)
+
+These are mutable state in the middle of an interaction or an asynchronous process. Their own comments say they are deliberately kept out of the graph ("no business of the reactive graph", "so that typing doesn't draw the gallery afresh").
+
+| Site | Key | State |
+|---|---|---|
+| `hortis.resizeBar.drags` | element | a drag in progress |
+| `hortis.mfShell.presses` | element | a grip press in progress |
+| `saanich.timePeriodFilter.timers` | component | a debounce timer |
+| `bioreportr.traces.states` | component | the playback state of the timeline |
+| `bioreportr.lostPlants.searches` | component | focus, caret and message of the search box |
+| `bioreportr.lostPlants.runs` | component | the latest card-loading run, which supersedes earlier ones |
+| `bioreportr.storyPage.keepRecord` | story page | a one-shot "keep this record across the pane change" |
+| `bioreportr.storyPage.keepTaxon` | story page | a one-shot "keep this taxon across the pane change" |
+
+Neither `equiv` nor `$oldValue` fits these: the values are written imperatively from event handlers, not computed.
+
+**The route: a declared member the graph doesn't observe, held on the shadow and disposed with the component.** For example `drag: {$transient: null}` or `scratch: {$transient: {}}`.
+- Reads and writes go straight to the shadow. They neither make a member live (no `pathToLive`, so no re-merge) nor notify anything.
+- The keys of the element-keyed ones (`drags`, `presses`) become the owning component instead.
+- This is a few dozen lines in `FluidIL.js`. The design question is whether a turnover keeps the state. I'd say yes, as the live layer does.
+- **Alternatives for some:**
+  - `timers` could become an `$effect` option such as `debounce: 400`.
+  - `keepRecord` and `keepTaxon` are really intent carried with an action. The cleaner fix may be to have the navigation that changes the pane carry options, rather than leaving a flag for another effect to find. That would make them app-level changes.
+
+## E. Caches keyed by immutable data: leave as they are (3 uses)
+
+| Site | Key | What it caches |
+|---|---|---|
+| `qdl.derivedCache` (`qdl.js:25`) | table | derived columns, by the canonical text of their expression |
+| `qdl.indexCache` (`qdl.js:27`) | package | indexes, e.g. of the taxonomy |
+| `hortis.selectObs.memo` (`imerss-core.js:808`) | package | selections, by query key |
+
+- These are memoisation over immutable data, in a library that deliberately doesn't depend on Infusion (`qdl.js`). They aren't component state, and a `WeakMap` keyed by the data is the right tool.
+- At most, they could be hung on the package object, or folded into `hortis.queryCache`. Either would be tidying, not a framework concern.
+
+## Summary
+
+| Group | Uses | Route | Framework work |
+|---|---|---|---|
+| A. Previous value and transitions | 7 | `$oldValue` in `$compute`, as a reducer | ~15 lines, plus docs and tests |
+| B. Identity-preserving recomputation | (in A) | `equiv`, or a reducer returning `old` | done |
+| C. Binding once per target | 8 | existing `$bindable` | none; rewrite the sites |
+| D. Non-reactive component state | 8 | a new `$transient` member (or `debounce`, or intent with navigation) | a few dozen lines, plus one design decision |
+| E. Data caches | 3 | leave, or tidy | none |
+
+I'd suggest this order:
+1. Repair `$oldValue` and port group A. That's the most direct use of what we've just built.
+2. Rewrite group C onto `$bindable`. It needs no framework change, and it fixes real listener leaks.
+3. Decide on `$transient` before touching group D.
+
+Shall I start with `$oldValue`?
+
+----------
+
+USER:
+$transient sounds like a good idea - sketch out what the configuration would look like, and consider what viable alternatives there are
+
+----------
+
+ASSISTANT:
+## A sketch of `$transient`
+
+`$transient` would be a declared member holding state that belongs to one component instance but takes no part in the reactive graph. Reading it creates no dependency, writing it notifies nothing, and it never upgrades a path to live, so a write never re-merges the component.
+
+### Configuration
+
+The simplest form gives an initial value, which is copied for each instance:
+
+```js
+fluid.def("hortis.resizeBar", {
+    $layers: "fluid.viewComponent",
+    // The drag in progress, if any - no business of the reactive graph
+    drag: {$transient: null},
+    ...
+});
+
+hortis.resizeBar.start = function (that, bar, event) {
+    that.drag = {...hortis.resizeBar.startSizes(that, bar), startPos: event.clientX};   // no remerge, no notification
+};
+hortis.resizeBar.move = function (that, event) {
+    const drag = that.drag;          // read untracked
+    if (drag) { ... }
+};
+```
+
+An optional `dispose` releases what the state holds, both when the component is destroyed and when the value is overwritten:
+
+```js
+fluid.def("saanich.timePeriodFilter", {
+    // The timer applying the span once the handles have rested
+    restTimer: {
+        $transient: null,
+        dispose: "window.clearTimeout"     // or a function; called with the outgoing value
+    }
+});
+```
+
+A structured scratch object can be mutated in place:
+
+```js
+fluid.def("bioreportr.lostPlants", {
+    // Focus, caret, message and plant sought - kept apart from the signals so that typing doesn't redraw the gallery
+    search: {$transient: {focused: false, caret: 0, message: null, sought: null}},
+    // The latest card-loading run, superseding earlier ones
+    run: {$transient: null}
+});
+// that.search.caret = 3 mutates the scratch object directly - it is handed out raw, never proxied
+```
+
+### Semantics
+
+| Aspect | Behaviour |
+|---|---|
+| Read (`that.x`, or `{self}.x` in a record) | the current value, raw and untracked. Inside a `$compute`, this is almost certainly a mistake, so log a warning once per site: the computation won't re-run when the value changes |
+| Write (`that.x = v`) | stored directly. It makes no live-layer upgrade, sends no notification and records nothing in the history. Any `dispose` is called on the outgoing value |
+| Mutating in place (`that.x.y = v`) | allowed: the value is handed out unproxied |
+| Turnover | **kept**. The holder belongs to the shadow, as the live layer does, so a re-merge doesn't lose an in-progress drag |
+| Destruction | `dispose` is called on the current value, then the holder is dropped |
+| Layer redefinition | the value is kept. The initial value is taken from the record only when the holder is first created |
+| History, undo, hydration | excluded: it isn't serialised, isn't restored and isn't rendered |
+| Merging | a stronger layer may replace `$transient` with a plain value, or the reverse. The strongest definition wins, as for `$reactiveRoot` |
+
+### How the existing sites would look
+
+| Current site | With `$transient` |
+|---|---|
+| `hortis.resizeBar.drags` (keyed by element) | `drag: {$transient: null}` on the bar component |
+| `hortis.mfShell.presses` (keyed by grip element) | `press: {$transient: null}` on the shell |
+| `saanich.timePeriodFilter.timers` | `restTimer: {$transient: null, dispose: "window.clearTimeout"}` |
+| `bioreportr.traces.states` | `playback: {$transient: null}`, set when the timeline is created |
+| `bioreportr.lostPlants.searches` | `search: {$transient: {...}}` |
+| `bioreportr.lostPlants.runs` | `run: {$transient: null}` |
+| `bioreportr.storyPage.keepRecord` | `keepRecord: {$transient: null}`, though see alternative 5 below |
+| `bioreportr.storyPage.keepTaxon` | `keepTaxon: {$transient: false}`, likewise |
+
+The two element-keyed maps become plain component members, keyed by the owning component rather than by an element.
+
+### Implementation sketch
+
+About 60–80 lines, plus documentation, in `FluidIL.js`:
+
+1. **A record type.** `$transient` becomes an element type that `fluid.expandElement` recognises. Its handler produces a **holder**, `{value, dispose}`, mounted through `fluid.mountSignalRecord`. That reuses the old product when the record is the same, so the holder survives turnover with no new mechanism.
+2. **The proxy's get handler.** If the member's `shadowMap` record marks it as a holder, return `holder.value` untracked, without going through `getForComponent` or `$sitedRef`. The same applies to reference resolution (`fetchContextReference`), which should also warn when the read happens inside a computation.
+3. **The proxy's set handler and `fluid.setForComponent`.** Check for a holder before `fluid.pathToLive`. If there is one, call `dispose` on the outgoing value and store the new one. Writes to deeper paths (`that.x.y = v`) never reach here, because the value is raw.
+4. **Disposal.** When the component is destroyed, call `dispose` on each holder's value. `fluid.disposeLayerEffects` or the destroy path in `computeInstance` would do this.
+5. **Merging.** Treat `{$transient: …}` like other element records in `mergeLayerRecords`: replaced whole, never merged member by member.
+6. **Tests:**
+   - a value survives turnover;
+   - a write doesn't notify or re-merge;
+   - `dispose` runs on overwrite and on destruction;
+   - a read inside `$compute` warns;
+   - a nested mutation works;
+   - layer redefinition keeps the value.
+
+## Alternatives
+
+**1. A per-component scratch context, `{$scratch}`.**
+- A context name resolving to one plain object per component, held on the shadow and passed as an argument: `"$method:hortis.resizeBar.start({self}, {$scratch}, {0})"`.
+- *For:* no new member type, and tiny to implement (about 20 lines in `fluid.resolveContext`).
+- *Against:* the state is undeclared, so editors and diagnostics can't see what a component holds. Every layer shares one namespace, so two mixins can collide. There's no `dispose`.
+
+**2. A framework-owned registry with no configuration, `fluid.transientState(that, key)`.**
+- It returns a per-component `Map`, dropped on destruction, with optional `fluid.onDestroy(that, fn)` for cleanup.
+- *For:* the smallest change to the sites. It's essentially today's `WeakMap`s moved into Infusion and tied to the component's lifecycle.
+- *Against:* still invisible in configuration. It removes the smell only nominally: the state is still kept off to the side.
+
+**3. State local to an effect.**
+- An `$effect` record option such as `state: {}` gives the effect function a persistent object, like a ref that survives the effect's re-runs.
+- *Good for* state used by a single effect: `traces.states` (the playback is driven by one effect) and the debounce timer.
+- *Not for* state shared between several DOM handlers, such as the resize drag's start, move and end, or the search box's focus and caret.
+
+**4. Purpose-built options instead of general state.**
+- `debounce: 400` on an `$effect` (or `$method`) covers `timePeriodFilter.timers` outright, and the timer disappears from user code.
+- A cancellable "latest run" helper for asynchronous loads would cover `lostPlants.runs`: each new run aborts or ignores earlier ones. It could be `fluid.latest(...)`, or an `AbortController` held by the framework.
+- *For:* each one says what is meant.
+- *Against:* it covers only those patterns, and the drag, press, search and playback state still need somewhere to live.
+
+**5. Intent carried with the action (`keepRecord`, `keepTaxon`).**
+- These are one-shot flags left by one action for another effect to find. The cleaner design passes the intent with the navigation itself, e.g. `storyPage.showPane(key, {keepRecord: id, keepTaxon: true})`. The clearing effect then reads it from the transition rather than from a side table.
+- *For:* no state at all, and the cause and its effect sit together.
+- *Against:* it's an application-level change to the navigation API.
+
+**6. Reactive state with care, i.e. a `$reactiveRoot` member written untracked.**
+- *Against:* every write still notifies readers and may upgrade a path to live and re-merge. That's exactly what these sites avoid ("so that typing doesn't draw the gallery afresh"). Not viable for high-frequency interaction state.
+
+## Recommendation
+
+**`$transient` as the general mechanism, plus two targeted pieces.**
+- **`$transient`** covers drags, presses, playback, search and runs. It's declared, visible to tooling, has a lifecycle and survives turnover.
+- **`debounce` on `$effect`** removes the timer pattern, which is common enough to name.
+- **Intent carried with navigation** for `keepRecord` and `keepTaxon`, done in bioReportR rather than in Infusion.
+
+`{$scratch}` is the cheapest option, but it reproduces today's lack of declaration. Effect-local state is a good companion to `$transient` rather than a substitute: I'd add it only if `$transient` turns out to be awkward for single-effect state.
+
+----------
+
+USER:
+Write this to a-scratch/reports/transient-state.md, and write the previous turns to a-scratch/reports/weak-state-inventory.md
+
+----------
+
+ASSISTANT:
+I've written both reports in `infusion-6/a-scratch/reports/`:
+
+- **`weak-state-inventory.md`** is the inventory of the 27 file-global `WeakMap` and `WeakSet` uses, in five groups, each with its route:
+  - A and B: the repaired `$oldValue` and `equiv`;
+  - C: the existing `$bindable`;
+  - D: `$transient`;
+  - E: caches to leave alone.
+  
+  It ends with a summary table and the suggested order of work.
+- **`transient-state.md`** is the `$transient` design:
+  - configuration examples and semantics;
+  - how each of the eight existing sites would be rewritten;
+  - an implementation sketch;
+  - the six alternatives;
+  - the recommendation.
+
+Each report links to the other. Both are uncommitted.
+
+----------
+
+USER:
+Implement $transient, debounce on effect, and rewrite all instances of those 5 categories of WeakMap to the appropriate improved pattern
+
+----------
+
+ASSISTANT:
+This is a large change. Before writing code I'll read the parts of `FluidIL.js` that `$transient` and `debounce` hook into:
+- the table of element handlers;
+- `fluid.expandEffectRecord`;
+- the disposal of records that aren't reused (`fluid.disposeLayerEffects`);
+- the proxy's set handler.
+
+Category A also needs `$oldValue` repaired, so I'll check how `{$oldValue}` reaches a `$compute`'s arguments.
+
+----------
+
+ASSISTANT:
+Writing the Infusion side:
+- **`fluid.TransientHolder`**, the record handler, and the read and write paths;
+- **`debounce`** on `$effect`;
+- **`{$oldValue}`** in `$compute`.
+
+----------
+
+ASSISTANT:
+Now `$transient` itself: the holder, its handler entry, and the read and write paths.
+
+----------
+
+ASSISTANT:
+Nothing regresses. Now tests for the three features, in `FluidILTests.js`.
+
+----------
+
+ASSISTANT:
+Everything passes except disposal on destruction: destroying a component doesn't run `fluid.disposeLayerEffects`. Finding how destruction disposes a component's products.
+
+----------
+
+ASSISTANT:
+Disposal still doesn't happen on destruction. I'll check in node whether `fluid.doDestroy` runs for this component at all, and what its `shadowMap` holds at that moment.
+
+----------
+
+ASSISTANT:
+Still failing, so the order of events in the test must matter. I'll reproduce the test's exact sequence in node (a turnover, two writes, then destroy) and see which holder each step touches.
+
+----------
+
+ASSISTANT:
+All 565 IL tests pass. Running the whole Infusion suite before moving on to the client code.
+
+----------
+
+ASSISTANT:
+I'm rewriting the client sites. bagatelle's resize bar and shell are done, using `$transient`; now `hortis.libreMap.wasFiltered`, which becomes an `{$oldValue}` reducer.
+
+----------
+
+ASSISTANT:
+The first anchor didn't match the file exactly, and nothing was written. I'll replace that block by its start and end markers instead, and re-run the rest unchanged.
+
+----------
+
+ASSISTANT:
+Now the remaining `story.js` edits and the wiring, as planned.
+
+----------
+
+ASSISTANT:
+The camera edits applied, but the `lastPaneKey` block differs from what I expected. Reading it exactly.
+
+----------
+
+ASSISTANT:
+The `story.js` group is done. Next, `bioreportr.protectedAreas.lastRegion`, after fixing the one remaining comment.
+
+----------
+
+ASSISTANT:
+`saanich.topSpeciesSelected` records something an effect has *done*, as `placed` does, so it also becomes `$transient`, on the story component.
+
+----------
+
+ASSISTANT:
+The time-period filter is done. Now group C, the bind-once guards. For each I'll look at the binding function and its wiring, to see what an `unbind` needs to release.
+
+----------
+
+ASSISTANT:
+Writing the helper into `story.js`, then converting the three bindings seen so far (`remembering.bindHover`, `protectedAreas.bindCards` and `bindSelects`) to `$bindable`.
+
+----------
+
+ASSISTANT:
+Next, the Lost Plants pane's document bindings and search widget.
+
+----------
+
+ASSISTANT:
+I'm on the last saanich site, the Traces timeline's playback state, which becomes `$transient` with a `dispose` that clears its timers. After that I'll lint and run both story pages in the browser.
+
+----------
+
+ASSISTANT:
+The project lint passes, but its 34 files don't appear to include the story's static code. So I'll also run eslint directly on just the files I changed.
+
+----------
+
+ASSISTANT:
+These are fresh loads of eight scenarios. That covers rendering and start-up errors, but not interaction, so I'll add an interaction check afterwards. Building the baseline root.
+
+----------
+
+ASSISTANT:
+All 24 smell sites are rewritten, with the three Infusion facilities they needed. The saanich story renders and behaves exactly as the committed version in every check I ran, with no errors. Nothing is committed.
+
+**What it changed in Infusion 6** (`FluidIL.js`)
+- **`$transient`:** e.g. `drag: {$transient: null}` or `timer: {$transient: null, dispose: "clearTimeout"}`.
+  - **How it's stored:** each member gets a holder that is mounted like other record products. So it survives turnover while its record is unchanged.
+  - **Reads:** through the component's proxy, it's read raw and untracked.
+  - **Writes:** stored in place, without notifying anything, upgrading to live or re-merging.
+  - **`dispose`:** runs on an overwritten value and on destruction. Each holder registers itself on its shadow, because by the time `fluid.doDestroy` runs (it's deferred) the shadow maps have already been reset.
+  - **Warning:** reading a `$transient` member from a `$compute`'s arguments logs a warning once.
+- **`debounce` on `$effect`:** `$effect: {func, args, debounce: 400}` runs once its arguments have rested, with their latest values. A pending run is cancelled on disposal.
+- **`{$oldValue}` in `$compute`:** the argument receives the computation's previous value, or `undefined` the first time, which gives you reducers.
+- **Tests:** three new IL tests, one per facility.
+  - `npm test` passes 2365/2365.
+  - The server tests, all 382 browser QUnit tests and all 34 demo steps pass.
+  - Lint is clean.
+
+**The rewrites**
+
+| Route | Sites |
+|---|---|
+| `{$oldValue}` reducer (+ effect reading it) | `activatedRecords` → `activatedPanes`; `lastPaneKey` → `paneTransition`; `lastRegion` → `regionTransition`; `mapWasShown` → `recentreState`; bagatelle's `libreMap.wasFiltered` → `fitState` |
+| `$bindable` with `bioreportr.unbind` | `remembering.boundMaps`, `protectedAreas.boundMaps`, `protectedAreas.boundPages`, `lostPlants.boundDocuments`, `atlas.rowClickBound`, `inatSpecies.bound`, `solowMapLayer.hoverBound` |
+| `$transient` | bagatelle's `resizeBar.drags` → `drag`, and `mfShell.presses` → `press`; `traces.states` → `playback` (its `dispose` clears the timers); `lostPlants.runs` → `run`, `.searches` → `search`, `.searchWidgets` → `searchWidget` (its `dispose` removes the element); `storyPage.keepRecord` and `keepTaxon`; `storyMap.placed` → `placedMap`; `saanich.topSpeciesSelected` |
+| debounced `$effect` | `timePeriodFilter.timers` → `applyRested` on `dragging`, debounced by 400 ms |
+
+**Where I departed from the inventory's plan:**
+- **Effect history as `$transient`:** `placed` and `topSpeciesSelected` record what an effect has *done* (a `jumpTo`, a selection), not a function of their inputs. A reducer would misfire on unrelated re-runs.
+- **`searchWidgets` as `$transient`:** it's made lazily after rendering and moved into each drawing. That makes it state, not a binding.
+- **`keepRecord` and `keepTaxon` as `$transient`:** the cleaner alternative, carrying the intent with the navigation, is a change to the navigation API, so I left it.
+- **Reducer inputs:** each reducer takes all of its effect's inputs, so it recomputes exactly when the effect used to run.
+
+**Bindings now unbind:** a new `bioreportr.binding()` helper in `story.js` records each DOM or MapLibre listener and added element, and `dispose()` removes them. That fixes the listener leaks the old guards had: rebinding to a new map or document used to leave the old listeners attached.
+
+**What I left alone:** group E (`qdl.derivedCache`, `qdl.indexCache` and `hortis.selectObs.memo`), as planned: they're caches keyed by immutable data. The local, non-global `WeakMap` at `libreMap.js:1312` is also unchanged.
+
+**How I checked it.** Saanich was served with the checkout Infusion and the new bagatelle client, against the committed version on its vendored Infusion:
+- **Page text:** identical in all eight scenarios (Status, region, time, taxon, Lost Plants, Traces, Protected, Solow).
+- **Interactions:** identical for each of these:
+  - moving to another pane clears the chosen taxon;
+  - changing region within Protected clears the taxon;
+  - dragging the time slider applies the span once it rests;
+  - all three resize bars drag and release correctly;
+  - the map resizes on returning from Lost Plants.
+- **Errors:** none on either side.
+
+bagatelle's `npm run build` passes, including the BBEA round trip, and lint is clean. In saanich, `npm run lint` passes. Running eslint directly on the changed plain-JS files shows one error, that `maplibregl` is undefined in `solow.js`, and that global was already used there before my change. I didn't lint the changed `.vue` files directly.
+
+**To bear in mind**
+- **Saanich now needs the new Infusion.** Its code now relies on `$transient`, `debounce` and `{$oldValue}`, and bagatelle's client on `fluid.resolveUrl`. It will only work once a release of Infusion with these is vendored into saanich.
+- **Howe Sound isn't updated.** Its copies of the shared bioReportR files haven't been touched; `copyFrameworkOut.sh` would carry the changes there.
+- **Coverage:** I didn't exercise the Lost Plants search widget, or hover and tap on the map's areas and populations. Both depend on live iNaturalist data or real pointer input. Their code paths load without errors in all the scenarios above.

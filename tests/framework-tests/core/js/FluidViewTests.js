@@ -2559,3 +2559,73 @@ QUnit.test("Attributes written by other agents survive re-rendering, whilst thos
     assert.equal(input.getAttribute("data-variant"), "b", "Attribute the template writes is updated");
     that.destroy();
 });
+
+// A component whose template designates a child with @id, and which turns over on its first write to a member - see
+// fluid.pathToLive and fluid.templateSlotRecord
+
+fluid.def("fluid.tests.stableSlotOuter", {
+    $layers: "fluid.component",
+    flag: false,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="outer"><div class="outerInner" @id="inner"></div><div class="slotted" @id="slotted"><span class="markup">Slot markup</span></div></div>`
+        }
+    },
+    inner: {
+        $component: {
+            $layers: "fluid.tests.nestedInner"
+        }
+    },
+    // A child with no template of its own, which renders the markup found at its slot
+    slotted: {
+        $component: {
+            $layers: "fluid.component"
+        }
+    }
+});
+
+QUnit.test("Children designated by @id do not turn over when their parent rerenders its template - FLUID-7032 follow-up", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.stableSlotOuter({container});
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    const innerShadow = shadow.childComponents.inner, slottedShadow = shadow.childComponents.slotted;
+    const before = {
+        outer: shadow.computer._value,
+        inner: innerShadow.computer._value,
+        innerView: innerShadow.childComponents.view.computer._value,
+        slottedView: slottedShadow.childComponents.view.computer._value,
+        innerNode: container.querySelector(".inner"),
+        markupNode: container.querySelector(".markup")
+    };
+    assert.equal(before.innerNode.textContent, "Text from inner", "Inner child rendered");
+    assert.equal(before.markupNode?.textContent, "Slot markup", "Slotted child renders the markup at its slot");
+
+    // The first write to a member which is not yet live remerges the parent, which turns over and rerenders its template
+    that.flag = true;
+    fluid.cell.stabilize();
+    assert.notEqual(shadow.computer._value, before.outer, "The parent turned over");
+    assert.equal(innerShadow.computer._value, before.inner, "The inner child did not turn over");
+    assert.equal(innerShadow.childComponents.view.computer._value, before.innerView, "Nor did its view");
+    assert.equal(slottedShadow.childComponents.view.computer._value, before.slottedView, "Nor did the slotted child's view");
+    assert.equal(container.querySelector(".inner"), before.innerNode, "The inner child's markup is undisturbed");
+    assert.equal(container.querySelector(".markup"), before.markupNode, "The slotted child's markup is undisturbed");
+
+    // A change to the markup at a slot still reaches the child which renders it, through its slot's cell
+    const restoreDef = fluid.tests.updateRestoreDef("fluid.tests.stableSlotOuter", {
+        ...fluid.def("fluid.tests.stableSlotOuter"),
+        view: {
+            $component: {
+                $layers: "fluid.templateViewComponent",
+                template: `<div class="outer"><div class="outerInner" @id="inner"></div><div class="slotted" @id="slotted"><span class="markup">New markup</span></div></div>`
+            }
+        }
+    });
+    fluid.cell.stabilize();
+    assert.equal(container.querySelector(".markup")?.textContent, "New markup", "Changed markup at the slot rendered by the slotted child");
+    assert.equal(innerShadow.computer._value, before.inner, "The inner child, whose slot is unchanged, still did not turn over");
+    assert.equal(container.querySelector(".inner"), before.innerNode, "Its markup is still undisturbed");
+    restoreDef();
+    that.destroy();
+});

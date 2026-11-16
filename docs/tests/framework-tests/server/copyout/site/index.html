@@ -11,8 +11,16 @@
         <!-- The module holding the page, and its map of the modules it depends upon, which copyOut.js writes -->
         <fluid-module id="fluid-tests-copyout-site" src="./" modules="fluid-modules.json"></fluid-module>
         <fluid-import src="%fluid-tests-rt/sfc/fluid-tests-rt-app.vue"></fluid-import>
+        <script>
+            "use strict";
+            // The project's application of the fixture, rendered from its own data, relative to this page
+            fluid.def("fluid.tests.copyout.page", {
+                $layers: "fluid.tests.rt.app",
+                recordsUrl: "data/records.json"
+            });
+        </script>
     </head>
     <body>
-        <div fluid-layers="fluid.tests.rt.app"></div>
+        <div fluid-layers="fluid.tests.copyout.page"></div>
     </body>
 </html>

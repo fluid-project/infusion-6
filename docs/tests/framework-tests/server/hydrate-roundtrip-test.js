@@ -6,9 +6,15 @@
 // roundtrip/index.html, whose root SFC imports others from a subdirectory, which import a further one in turn. They
 // share a script referred to by different relative paths, inject a stylesheet and a symbol, and load a script for the
 // browser alone which marks a container with a class of its own. Its data is fetched by a reader bearing
-// fluid.withPlaceholder, which names a placeholder fetched in its place when the page is rendered statically.
+// fluid.withPlaceholder from a URL which the root layer names, by default, as that of a placeholder it declares - see
+// FLUID-7032. The pages index.html and body-boot.html are runnable applications, which override the URL with that of
+// their real data, and so are hydrated from it, whilst placeholder.html is a test fixture using the layer as it is, and
+// so is hydrated, as it is rendered in the browser, from the placeholder.
 
-const path = require("path"),
+const childProcess = require("child_process"),
+    fs = require("fs"),
+    os = require("os"),
+    path = require("path"),
     linkedom = require("linkedom");
 
 const fluidHydrationRoundTrip = require("../../test-core/browser/js/hydration-roundtrip.js");
@@ -22,9 +28,17 @@ const expectAll = function (condition, message) {
     }
 };
 
-// The page is ready once its real records are rendered, and it no longer shows itself as loading
-const ready = `document.querySelectorAll(".rt-item").length === 5 && !!document.querySelector(".rt-app.rt-loaded")
-    && !!document.querySelector(".rt-widget-live")`;
+// The records of each page, the class by which its root shows what it is rendered from, and whether hydrate.js is to
+// report a placeholder
+const pageSpecs = {
+    "index.html": {items: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], sourceClass: "rt-real", placeholder: false},
+    "body-boot.html": {items: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], sourceClass: "rt-real", placeholder: false},
+    "placeholder.html": {items: ["Placeholder"], sourceClass: "rt-placeholder", placeholder: true}
+};
+
+// The page is ready once its records are rendered from what it is configured with
+const readyFor = spec => `document.querySelectorAll(".rt-item").length === ${spec.items.length}
+    && !!document.querySelector(".rt-app.${spec.sourceClass}") && !!document.querySelector(".rt-widget-live")`;
 
 const snapshot = `(() => ({
     components: [...document.querySelectorAll("[fluid-layers]")].map(fluidCanonicalMarkup),
@@ -35,35 +49,40 @@ const snapshot = `(() => ({
     countWeight: getComputedStyle(document.querySelector(".rt-count")).fontWeight
 }))()`;
 
-// Evaluated as soon as the page is parsed - the hydrated page shows its markup, rendered from the placeholder data,
-// before any component has booted
+// Evaluated as soon as the page is parsed - the hydrated page shows its markup, rendered from what it is configured
+// with, before any component has booted
 const initial = `(() => ({
     items: [...document.querySelectorAll(".rt-item")].map(item => item.textContent),
-    loading: !!document.querySelector(".rt-app.rt-loading")
+    sourceClass: document.querySelector(".rt-app")?.classList.contains("rt-placeholder") ? "rt-placeholder" :
+        document.querySelector(".rt-app")?.classList.contains("rt-real") ? "rt-real" : null
 }))()`;
 
-// The pages tested - index.html, whose bootstrap and imports are in its head, and body-boot.html, laid out as a page built
-// by a site generator such as Hugo, whose bootstrap and imports are in its body after markup of its own
-const pages = ["index.html", "body-boot.html"];
+// The pages tested - index.html, whose bootstrap and imports are in its head, body-boot.html, laid out as a page built
+// by a site generator such as Hugo, whose bootstrap and imports are in its body after markup of its own, and the test
+// fixture placeholder.html
+const pages = Object.keys(pageSpecs);
 
 const roundTrip = async function (pageName) {
     const expect = (condition, message) => expectAll(condition, pageName + ": " + message);
+    const spec = pageSpecs[pageName];
     const result = await fluidHydrationRoundTrip.run({
         root: repoRoot,
         page: "tests/framework-tests/server/roundtrip/" + pageName,
-        ready, snapshot, initial,
+        ready: readyFor(spec), snapshot, initial,
         timeout: 30000
     });
 
     // The hydrated page as written
     const {document} = linkedom.parseHTML(result.hydratedText);
     const items = [...document.querySelectorAll(".rt-item")].map(item => item.textContent);
-    expect(items.length === 1 && items[0] === "Placeholder", "Hydrated page rendered from the placeholder data - found " + JSON.stringify(items));
-    expect(!!document.querySelector(".rt-app.rt-loading"), "Hydrated page shows itself as rendered from placeholders");
+    expect(items.join() === spec.items.join(), `Hydrated page rendered from its ${spec.placeholder ? "placeholder" : "real data"} - found ` + JSON.stringify(items));
+    expect(!!document.querySelector(".rt-app." + spec.sourceClass), "Hydrated page shows what it is rendered from as " + spec.sourceClass);
     expect(!result.hydratedText.includes("file:"), "Hydrated page refers to no file: URL");
+    expect(!result.hydratedText.includes("blob:"), "Hydrated page refers to no Blob URL");
     expect(!!document.querySelector("fluid-import[src='sfc/fluid-tests-rt-app.vue']"), "Hydrated page keeps its import");
-    expect(/from placeholder .*data\/placeholder\/records\.json in place of .*data\/records\.json/.test(result.hydrateOutput || ""),
-        "Hydrater reports the placeholder it rendered from - found " + (result.hydrateOutput || "").slice(-400));
+    const reported = /Rendered .* from placeholder placeholder:\/\/fluid\.tests\.rt\.app\/records, fetched from blob:/.test(result.hydrateOutput || "");
+    expect(reported === spec.placeholder, (spec.placeholder ? "Hydrater reports the placeholder it rendered from" :
+        "Hydrater reports no placeholder") + " - found " + (result.hydrateOutput || "").slice(-400));
     const sharedScripts = document.querySelectorAll("script[fluid-src='lib/shared.js']").length;
     expect(sharedScripts === 1, "Script shared by two SFCs recorded once - found " + sharedScripts);
     const clientScript = document.querySelector("script[fluid-client][src='lib/client-widget.js']");
@@ -80,8 +99,8 @@ const roundTrip = async function (pageName) {
         misplaced.map(node => node.id).join(", "));
 
     // The hydrated page shows its static markup before booting
-    expect(result.hydrated.initial.items.join() === "Placeholder" && result.hydrated.initial.loading,
-        "Hydrated page shows its placeholder rendering as soon as it is parsed - found " + JSON.stringify(result.hydrated.initial));
+    expect(result.hydrated.initial.items.join() === spec.items.join() && result.hydrated.initial.sourceClass === spec.sourceClass,
+        "Hydrated page shows its rendering as soon as it is parsed - found " + JSON.stringify(result.hydrated.initial));
     expect(result.dehydrated.initial.items.length === 0, "Dehydrated page holds no markup of its own");
 
     // Both pages, once ready
@@ -99,10 +118,33 @@ const roundTrip = async function (pageName) {
         `hydrated ${result.hydrated.readyTime}ms`);
 };
 
+/**
+ * Test that hydrate.js, given --no-placeholders, refuses to write a page rendered from a placeholder, and writes one
+ * rendered from its real data
+ */
+const testNoPlaceholders = function () {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "fluid-no-placeholders-"));
+    try {
+        [["placeholder.html", false], ["index.html", true]].forEach(([pageName, writes]) => {
+            const output = path.join(tempDir, pageName);
+            const result = childProcess.spawnSync(process.execPath, [fluidHydrationRoundTrip.hydrateScript,
+                path.join(__dirname, "roundtrip", pageName), "-o", output, "--no-placeholders"], {encoding: "utf8", timeout: 60000});
+            const wrote = fs.existsSync(output);
+            expectAll(writes ? result.status === 0 && wrote : result.status !== 0 && !wrote &&
+                /Not writing hydrated document: 1 of its components rendered from placeholders/.test(result.stderr),
+            `${pageName}: hydrate.js --no-placeholders ${writes ? "writes a page rendered from its real data" :
+                "refuses a page rendered from a placeholder"} - status ${result.status}, ${(result.stderr || "").slice(-300)}`);
+        });
+    } finally {
+        fs.rmSync(tempDir, {recursive: true, force: true});
+    }
+};
+
 const main = async function () {
     for (const pageName of pages) {
         await roundTrip(pageName);
     }
+    testNoPlaceholders();
     if (failures.length === 0) {
         console.log("hydrate-roundtrip-test PASS");
     } else {

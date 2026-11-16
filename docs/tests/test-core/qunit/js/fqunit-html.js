@@ -62,7 +62,7 @@ fQUnit.eventClasses = fQUnit.makeEventClasses();
  * pollute the context's own `fluid`.
  */
 fQUnit.contextGlobals = ["console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask",
-    "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "performance"];
+    "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "performance", "Blob", "atob"];
 
 /**
  * Members of linkedom's exports which are copied into each inner context as DOM interface globals.

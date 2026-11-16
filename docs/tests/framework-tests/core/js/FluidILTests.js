@@ -4035,3 +4035,219 @@ QUnit.test("The layer supplying a member may be found", function (assert) {
     assert.equal(fluid.layerForMember(that, "nonesuch"), undefined, "A member no layer supplies has none");
     that.destroy();
 });
+
+fluid.def("fluid.tests.liveUpgrade", {
+    $layers: "fluid.component",
+    flag: false,
+    child: {
+        $component: {
+            $layers: "fluid.component",
+            seen: "{fluid.tests.liveUpgrade}.flag"
+        }
+    }
+});
+
+QUnit.test("The remerge caused by a first write to a member explains its cause - FLUID-7032 diagnostics", function (assert) {
+    const that = fluid.tests.liveUpgrade();
+    fluid.cell.stabilize();
+    assert.equal(that.child.seen, false, "Child reads the flag");
+    const shadow = that[fluid.metadataSymbol];
+    that.flag = true;
+    fluid.cell.stabilize();
+    assert.equal(that.child.seen, true, "Child sees the flag once written");
+    const explanation = fluid.cell.explain(shadow.flatMerged);
+    assert.ok(/^potentia for path .* \(set: first write to flag of component at path .*, upgrading it to live and remerging the component - see fluid.pathToLive\)$/.test(explanation[1]),
+        "The remerge is explained by the first write to the member - found " + JSON.stringify(explanation));
+    that.destroy();
+});
+
+fluid.def("fluid.tests.equivCompute", {
+    $layers: "fluid.component",
+    items: [1, 2],
+    copy: {
+        $compute: {
+            func: list => [...list],
+            args: ["{self}.items"],
+            equiv: "fluid.equiv.elementwise"
+        }
+    },
+    copyRuns: 0,
+    length: "$compute:fluid.tests.equivComputeLength({self}, {self}.copy)"
+});
+
+fluid.tests.equivComputeLength = function (that, copy) {
+    fluid.cell.untracked(() => that.copyRuns = fluid.unwrapProxy(that.copyRuns) + 1);
+    return copy.length;
+};
+
+QUnit.test("The equiv of a $compute record cuts off a recomputation which leaves its value morally unchanged", function (assert) {
+    const that = fluid.tests.equivCompute();
+    fluid.cell.stabilize();
+    assert.equal(that.length, 2, "Initial value computed");
+    const held = fluid.unwrapProxy(that.copy);
+    const runs = fluid.unwrapProxy(that.copyRuns);
+    that.items = [1, 2];
+    fluid.cell.stabilize();
+    assert.equal(fluid.unwrapProxy(that.copy), held, "Fresh but equal items leave the identical copy held");
+    assert.equal(that.length, 2, "Dependent value unchanged");
+    assert.equal(fluid.unwrapProxy(that.copyRuns), runs, "Dependent computation not rerun");
+    that.items = [1, 2, 3];
+    fluid.cell.stabilize();
+    assert.equal(that.length, 3, "A different value propagates");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.otherEditor", {
+    $layers: "fluid.tests.editor"
+});
+
+QUnit.test("Live queries of one tree share a single traversal of it", function (assert) {
+    const that = fluid.tests.editorHolder();
+    const editors = fluid.liveQueryILSelector(that, "fluid.tests.editor");
+    const others = fluid.liveQueryILSelector(that, "fluid.tests.otherEditor");
+    const index = fluid.queryIndexFor(that);
+    assert.equal(fluid.queryIndexFor(that), index, "The index of a tree is allocated once");
+    assert.notEqual(fluid.queryIndexFor(that, true), index, "The index of its children alone is distinct");
+    let traversals = 0;
+    const originalVisit = fluid.visitComponentsForMatching;
+    fluid.visitComponentsForMatching = function () {
+        ++traversals;
+        return originalVisit.apply(this, arguments);
+    };
+    try {
+        that.names.push("alpha");
+        that.names.push("beta");
+        assert.deepEqual(fluid.tests.queryEditorNames(editors), ["alpha", "beta"], "Editors matched");
+        assert.deepEqual(fluid.tests.queryEditorNames(others), [], "The other query matches none of them");
+        const before = traversals;
+        that.names.push("gamma");
+        fluid.tests.queryEditorNames(editors);
+        fluid.tests.queryEditorNames(others);
+        assert.equal(traversals - before, 1, "Both queries are recomputed from a single traversal of the tree");
+        assert.deepEqual(fluid.tests.queryEditorNames(editors), ["alpha", "beta", "gamma"], "The first query is up to date, in tree order");
+        const othersBefore = others.get();
+        that.names.push("delta");
+        assert.equal(fluid.tests.queryEditorNames(others).length, 0, "The other query still matches nothing");
+        assert.equal(others.get(), othersBefore, "and delivers the identical list, since its matches are unchanged");
+    } finally {
+        fluid.visitComponentsForMatching = originalVisit;
+    }
+    that.destroy();
+});
+
+// $transient, debounce and $oldValue - see a-scratch/reports/transient-state.md
+
+fluid.def("fluid.tests.transientHolder", {
+    $layers: "fluid.component",
+    drag: {$transient: null},
+    scratch: {$transient: {count: 0}},
+    timer: {
+        $transient: null,
+        dispose: "fluid.tests.transientDisposed"
+    },
+    flag: false,
+    readerRuns: 0,
+    // A computation reading the flag, which must not be rerun by writes to the transient members
+    reader: "$compute:fluid.tests.transientReader({self}, {self}.flag)"
+});
+
+fluid.tests.transientDisposals = [];
+fluid.tests.transientDisposed = value => fluid.tests.transientDisposals.push(value);
+fluid.tests.transientReader = function (that, flag) {
+    fluid.cell.untracked(() => that.readerRuns = fluid.unwrapProxy(that.readerRuns) + 1);
+    return flag;
+};
+
+QUnit.test("A $transient member holds state outside the reactive graph", function (assert) {
+    fluid.tests.transientDisposals.length = 0;
+    const that = fluid.tests.transientHolder();
+    fluid.cell.stabilize();
+    const shadow = that[fluid.metadataSymbol];
+    assert.equal(that.drag, null, "Initial value read");
+    assert.deepEqual(fluid.unwrapProxy(that.scratch), {count: 0}, "Initial object value read");
+    const instance = shadow.computer._value;
+    const runs = fluid.unwrapProxy(that.readerRuns);
+    that.drag = {startPos: 10};
+    that.scratch.count = 3;
+    fluid.cell.stabilize();
+    assert.deepEqual(that.drag, {startPos: 10}, "Written value read back");
+    assert.equal(that.scratch.count, 3, "Value mutated in place");
+    assert.equal(shadow.computer._value, instance, "A write to a $transient member does not remerge its component");
+    assert.notOk("drag" in shadow.liveLayer, "Nor raise it into the live layer");
+    assert.equal(fluid.unwrapProxy(that.readerRuns), runs, "Nor rerun any computation");
+    fluid.tests.transientHolder.other = fluid.tests.transientHolder();
+    const other = fluid.tests.transientHolder.other;
+    fluid.cell.stabilize();
+    assert.equal(other.scratch.count, 0, "Each instance has its own copy of the initial value");
+    other.destroy();
+
+    // A turnover of the component keeps the state
+    that.flag = true;
+    fluid.cell.stabilize();
+    assert.notEqual(shadow.computer._value, instance, "The component turned over");
+    assert.deepEqual(that.drag, {startPos: 10}, "The $transient value survives turnover");
+
+    that.timer = 1;
+    that.timer = 2;
+    assert.deepEqual(fluid.tests.transientDisposals, [1], "The value overwritten is disposed");
+    that.destroy();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.transientDisposals, [1, 2], "The value held is disposed with its component");
+});
+
+fluid.def("fluid.tests.debouncedEffect", {
+    $layers: "fluid.component",
+    value: 0,
+    runs: [],
+    apply: {
+        $effect: {
+            func: (that, value) => that.runs.push(value),
+            args: ["{self}", "{self}.value"],
+            debounce: 30
+        }
+    }
+});
+
+QUnit.test("A debounced effect runs once its arguments have rested, with their latest values", async function (assert) {
+    const that = fluid.tests.debouncedEffect({runs: []});
+    fluid.cell.stabilize();
+    const runs = fluid.unwrapProxy(that.runs);
+    that.value = 1;
+    fluid.cell.stabilize();
+    that.value = 2;
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [], "No run whilst the arguments are changing");
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.deepEqual(runs, [2], "A single run with the latest value once they have rested");
+    that.value = 3;
+    fluid.cell.stabilize();
+    that.destroy();
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.deepEqual(runs, [2], "A run pending as its component is destroyed is cancelled");
+});
+
+fluid.def("fluid.tests.oldValueReducer", {
+    $layers: "fluid.component",
+    key: "a",
+    shown: "$compute:fluid.tests.accumulateShown({$oldValue}, {self}.key)",
+    transition: "$compute:fluid.tests.transition({$oldValue}, {self}.key)"
+});
+
+fluid.tests.accumulateShown = (old, key) => old?.[key] ? old : {...old, [key]: true};
+fluid.tests.transition = (old, key) => ({from: old?.to, to: key});
+
+QUnit.test("A $compute may build on its own previous result through {$oldValue}", function (assert) {
+    const that = fluid.tests.oldValueReducer();
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.shown), {a: true}, "First result built from no previous value");
+    assert.deepEqual(fluid.unwrapProxy(that.transition), {from: undefined, to: "a"}, "First transition has no origin");
+    that.key = "b";
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.unwrapProxy(that.shown), {a: true, b: true}, "Accumulated from the previous result");
+    assert.deepEqual(fluid.unwrapProxy(that.transition), {from: "a", to: "b"}, "Transition from the previous value");
+    const shown = fluid.unwrapProxy(that.shown);
+    that.key = "a";
+    fluid.cell.stabilize();
+    assert.equal(fluid.unwrapProxy(that.shown), shown, "A reducer returning its previous result keeps its identity");
+    that.destroy();
+});

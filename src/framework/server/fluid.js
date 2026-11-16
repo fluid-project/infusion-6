@@ -57,6 +57,9 @@ const context = vm.createContext({
     process: process, // Enable straightforward ContextAwareness check
     require: require,
     URL: URL,
+    // Inline placeholder material is fetched through a Blob URL - see fluid.resolveUrl
+    Blob: Blob,
+    atob: atob,
     // As in a browser, a relative URL is resolved against the document - here the document most recently booted, see
     // fluid.loadAndBootDocument in server-support.js
     fetch: (url, options) => nodeFetch(context.fluid.resolveServerFetchUrl(url), options),

@@ -219,3 +219,46 @@ QUnit.test("SFC defining its template twice is rejected", function (assert) {
     assert.ok(fluid.isUnavailable(unavailable) && unavailable.message === fluid.sfcTemplateConflictMessage(layerName),
         "Layer defined as unavailable, with the conflict described");
 });
+
+QUnit.test("Placeholders declared by an SFC, or registered, are resolved - FLUID-7032", async function (assert) {
+    const layerName = "fluid.tests.sfc.placeholders";
+    // The bytes 0, 1, 254 and 255, encoded as base64 and wrapped over lines
+    const text = "<script>\nfluid.def(\"" + layerName + "\", {$layers: \"fluid.component\"});\n</script>\n"
+        + "<placeholder name=\"binary\" type=\"application/octet-stream\" encoding=\"base64\">\n    AAH+\n    /w==\n</placeholder>\n"
+        + "<placeholder name=\"inline\" type=\"application/json\">[{\"name\": \"Inline\"}]</placeholder>\n"
+        + "<placeholder name=\"file\" src=\"data/records.json\"></placeholder>\n";
+    fluid.registerSFCPlaceholders(fluid.parseHTMLToTree(text), layerName, text);
+    assert.notOk(fluid.placeholderStore[layerName + "/file"], "Placeholder referring to a file rather than held inline is rejected");
+    const bytes = new Uint8Array(await (await fetch(fluid.resolveUrl("placeholder://" + layerName + "/binary"))).arrayBuffer());
+    assert.equal([...bytes].join(), "0,1,254,255", "Binary placeholder decoded from base64");
+    const blobUrl = fluid.resolveUrl("placeholder://" + layerName + "/inline");
+    assert.ok(blobUrl.startsWith("blob:"), "Placeholder held inline resolved to a Blob URL");
+    assert.equal(fluid.resolveUrl("placeholder://" + layerName + "/inline"), blobUrl, "Blob URL allocated once");
+    fluid.def("fluid.tests.sfc.placeholderReader", {
+        $layers: ["fluid.jsonReader", "fluid.withPlaceholder"],
+        url: "placeholder://" + layerName + "/inline"
+    });
+    const that = fluid.tests.sfc.placeholderReader();
+    assert.ok(that.isPlaceholder, "Reader of a placeholder knows itself as such");
+    // Compared as JSON, since under node the data is parsed in another realm than the test's
+    assert.equal(JSON.stringify(await fluid.siteToPromise(that, "data")), "[{\"name\":\"Inline\"}]", "Inline placeholder fetched");
+    that.destroy();
+
+    fluid.registerPlaceholder(layerName, "inline", {text: "[{\"name\": \"Replaced\"}]"});
+    assert.notEqual(fluid.resolveUrl("placeholder://" + layerName + "/inline"), blobUrl, "Replaced material is allocated a fresh Blob URL");
+
+    assert.equal(fluid.resolveUrl("data/real.json"), "data/real.json", "URL of real data unchanged");
+    assert.notOk(fluid.isPlaceholderUrl("data/real.json"), "URL of real data is not a placeholder's");
+
+    // The SFC of a layer which is still loading may yet declare a placeholder - one parsed without declaring it may not
+    const pendingLayer = "fluid.tests.sfc.placeholdersPending";
+    const pending = fluid.resolveUrl("placeholder://" + pendingLayer + "/later");
+    assert.ok(pending instanceof Promise, "Placeholder of a layer whose SFC is not yet parsed is awaited");
+    fluid.registerPlaceholder(pendingLayer, "later", {text: "[]"});
+    assert.ok((await pending).startsWith("blob:"), "Awaited placeholder resolved once declared");
+    const rejected = fluid.resolveUrl("placeholder://" + pendingLayer + "/never");
+    fluid.rejectPlaceholderWaiters(pendingLayer);
+    await rejected.then(() => assert.ok(false, "Undeclared placeholder must not resolve"),
+        error => assert.ok(/No material has been declared for placeholder placeholder:\/\/fluid\.tests\.sfc\.placeholdersPending\/never/.test(error.message),
+            "Awaited placeholder which is never declared is rejected, with the declaration expected described"));
+});

@@ -274,6 +274,30 @@ QUnit.test("findCause with three nodes", assert => {
     assert.deepEqual(cCause, [C, B, A], "C's update cause is A -> B -> C");
 });
 
+QUnit.test("explain reports the chain of cause back past the writes which began it", assert => {
+    const trigger = fluid.cell(1, {name: "trigger"});
+    const written = fluid.cell(0, {name: "written"});
+    const downstream = fluid.cell(undefined, {name: "downstream"}).computed(value => value * 10, [written]);
+    // An effect which writes to another cell, with a cause recorded for diagnostics
+    const writer = fluid.cell.effect(value => fluid.cell.untracked(() => written.set(value, {cause: "copied from trigger"})),
+        [trigger], {name: "writer"});
+    fluid.cell.stabilize();
+    assert.equal(downstream.get(), 10, "Downstream computed from the write");
+    trigger.set(2);
+    fluid.cell.stabilize();
+    assert.equal(downstream.get(), 20, "Downstream recomputed from the next write");
+    assert.deepEqual(fluid.cell.explain(downstream), ["downstream", "written (set: copied from trigger)", "during writer", "trigger"],
+        "The chain reaches back through the write, the effect which made it, and what triggered the effect");
+    assert.equal(written._setDuring, writer, "The write is recorded as made during the effect, though made untracked");
+    trigger.set(3, {source: "user"});
+    fluid.cell.stabilize();
+    downstream.get();
+    assert.deepEqual(fluid.cell.explain(downstream).slice(0, 2), ["downstream", "written (set: copied from trigger, user)"],
+        "A source marker inherited by the write is reported with its cause");
+    assert.deepEqual(fluid.cell.explain(trigger), ["trigger (set: user)"], "A cell set from outside the graph ends the chain");
+    writer.dispose();
+});
+
 QUnit.test("Source tracking and source exclusion", assert => {
     const A = fluid.cell(1, {name: "A"});
     const B = fluid.cell(2, {name: "B"}).computed(a => a + 1, [A]);
@@ -645,4 +669,28 @@ QUnit.test("Edges identified by an explicit key", function (assert) {
     assert.equal(target._inEdges.length, 2, "Edge torn down by its explicit key");
     b.set(20);
     assert.equal(target.get(), 40, "Remaining edge keyed by its source drives the cell");
+});
+
+QUnit.test("A cell's own equiv keeps its value when an update leaves it morally unchanged", assert => {
+    const source = fluid.cell([1, 2], {name: "source"});
+    const copied = fluid.cell(undefined, {name: "copied", equiv: fluid.equiv.elementwise}).computed(list => [...list], [source]);
+    let runs = 0;
+    const downstream = fluid.cell(undefined, {name: "downstream"}).computed(list => {
+        ++runs;
+        return list.length;
+    }, [copied]);
+    assert.equal(downstream.get(), 2, "Initial value computed");
+    const held = copied.get();
+    source.set([1, 2]);
+    assert.equal(copied.get(), held, "A fresh but elementwise equal value leaves the identical value held");
+    assert.equal(downstream.get(), 2, "Downstream value unchanged");
+    assert.equal(runs, 1, "Downstream not recomputed, since it was not notified");
+    source.set([1, 2, 3]);
+    assert.deepEqual(copied.get(), [1, 2, 3], "A different value is taken");
+    assert.equal(downstream.get(), 3, "Downstream recomputed from it");
+    assert.equal(runs, 2, "Downstream recomputed once");
+    const byKey = fluid.cell({id: 1, label: "a"}, {equiv: fluid.equiv.byKey(value => value.id)});
+    const original = byKey.get();
+    byKey.set({id: 1, label: "b"});
+    assert.equal(byKey.get(), original, "A set judged equivalent by its key leaves the value held");
 });

@@ -786,25 +786,24 @@ fluid.serverFetchBase = null;
 
 /**
  * @typedef {Object} PlaceholderRecord
- * @property {String} url - The absolute URL of the genuine data of a component bearing `fluid.withPlaceholder`
- * @property {String|null} placeholderUrl - The absolute URL of the placeholder fetched in its place when rendering
- * statically, or `null` if it has none
- * @property {String} path - The path of the component
+ * @property {String} path - The path of a component bearing `fluid.withPlaceholder` whose `url` is a placeholder's
+ * @property {String} url - The URL of the placeholder, placeholder://{layerName}/{resourceName}
+ * @property {String} fetchUrl - The URL fetched in its place - that of a file, or a Blob URL for material held inline -
+ * see `fluid.resolveUrl`
  */
 
 /**
- * List the data which the components of a booted document bearing `fluid.withPlaceholder` fetch, and the placeholders
- * standing in for it when rendering statically - see that layer in FluidView.js. Their URLs are relative to the
- * document.
+ * List the components of a booted document bearing `fluid.withPlaceholder` which are rendered from placeholders - see
+ * FLUID-7032. A document which is a runnable application, rather than a test fixture or an authoring tool, has none.
  * @param {Document} dokkument - The booted document
  * @return {PlaceholderRecord[]} A record for each such component which is live
  */
 fluid.documentPlaceholders = function (dokkument) {
-    const resolve = url => url ? new URL(url, dokkument.location).href : null;
-    return [...fluid.withPlaceholder.instances].filter(that => !fluid.isDestroyed(that)).map(that => ({
-        url: resolve(that.url),
-        placeholderUrl: resolve(that.placeholderUrl),
-        path: that[fluid.metadataSymbol].path
+    const resolve = url => url.startsWith("blob:") ? url : new URL(url, dokkument.location).href;
+    return [...fluid.withPlaceholder.instances].filter(that => !fluid.isDestroyed(that) && that.isPlaceholder).map(that => ({
+        path: that[fluid.metadataSymbol].path,
+        url: that.url,
+        fetchUrl: resolve(that.fetchUrl)
     }));
 };
 
@@ -822,7 +821,6 @@ fluid.loadAndBootDocument = function (filename, options = {}) {
     const dokkument = fluid.serverDocumentParser(text);
     dokkument.location = new URL("file://" + filename);
     fluid.serverFetchBase = dokkument.location;
-    // Components bearing fluid.withPlaceholder fetch their placeholders in place of their genuine data
     fluid.renderingStatically = true;
     fluid.recordSourceDocument(dokkument);
     fluid.expandBootScript(dokkument);
