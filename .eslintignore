@@ -1,1 +1,5 @@
 **/lib/**
+# An edited copy of CodeMirror's JSHint lint addon - third-party code, as are the lib directories
+tests/test-core/qunit/js/function-lint.js
+# Pages for manual experiment and performance measurement, not run by any test
+tests/manual-tests/**

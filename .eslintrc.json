@@ -27,6 +27,9 @@
         "files": [
             "tests/manual-tests/framework/js/es6*.js",
             "demo/tldraw*/js/tldraw-driver.js",
+            "demo/tldraw/js/tldraw-ai.js",
+            "demo/tldraw/js/tldraw-arena.js",
+            "demo/tldraw/js/tldraw-clipboard.js",
             "demo/tldraw/js/tldraw-credentials*.js"
             ],
         "parserOptions": {

@@ -497,6 +497,18 @@ fluid.applyServerLinkInjection = function ({dokkument, injRec}, existing) {
 fluid.cssInjectionStyles.link.apply = fluid.applyServerLinkInjection;
 
 /**
+ * Server version of `fluid.styleSourceComment` from FluidView.js. A style injected into a document rendered on the
+ * server names its source relative to the document, as its scripts and stylesheet links do, so that a hydrated page
+ * neither reveals the file system of the machine which rendered it nor differs between machines - FLUID-7037
+ * @param {Document} dokkument - The document into which the style is injected
+ * @param {String} url - The absolute URL of the Single File Component holding the style
+ * @return {String} The comment, or an empty string if none is to be written
+ */
+fluid.styleSourceComment = function (dokkument, url) {
+    return fluid.isOutputDocument(dokkument) ? "" : `\n/*# sourceURL=${fluid.relativeUrl(dokkument.location, url)}*/`;
+};
+
+/**
  * Write text to a file, creating its directory if necessary
  * @param {String} filename - The path of the file
  * @param {String} data - The text to be written

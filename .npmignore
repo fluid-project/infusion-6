@@ -3,7 +3,6 @@
 .editorconfig
 .eslintignore
 .eslintrc.json
-.fluidlintallrc.json
 .git
 .github
 .gitignore

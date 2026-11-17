@@ -72,7 +72,7 @@ fluid.findSingleTextRef = function (tokens) {
             nonIgnorable = true;
         }
     });
-    return !nonIgnorable && contextRef && contextRef !== fluid.NoValue ? contextRef: null;
+    return !nonIgnorable && contextRef && contextRef !== fluid.NoValue ? contextRef : null;
 };
 
 fluid.isEditableRoot = Object.fromEntries("h1,h2,h3,h4,h5,h6,p,ul,ol,div".split(",").map(key => [key, true]));
@@ -139,7 +139,6 @@ fluid.filterForSelfEditing = function (vTree, component, editorRoot, layerColour
     const templateLayer = typeof(template) === "object" && template?.sfcLayer ? template.sfcLayer : viewShadow?.layerMap.template?.[$m]?.source;
     if (templateLayer && fluid.isUserLayer(templateLayer)) {
         const layerColour = layerColours[templateLayer];
-        const liveColour = layerColours.$live;
         const results = [];
         fluid.findEditableRoots(vTree, results);
         if (results.length > 0) {

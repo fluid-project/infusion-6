@@ -960,6 +960,32 @@ QUnit.module("Fluid Signals Auto-stabilization Tests", function () {
         logEffect.dispose();
     });
 
+    QUnit.test("A dynamically tracked effect downstream of an async computation sees it settle - FLUID-7036", async assert => {
+        //  head -> asyncCell (async) -> tip (sync) <- effect, discovered by reading
+        // The effect goes pending from Check as head changes, and is bypassed for early cutoff - it must keep
+        // observing tip, which it reads only when it runs
+        const head = fluid.cell(fluid.unavailable({message: "Not yet", variety: "I/O"}), {name: "head"});
+        const asyncCell = fluid.cell(undefined, {name: "asyncCell"}).computed(h => fluid.returnAsync(h), [head]);
+        const tip = fluid.cell(undefined, {name: "tip"}).computed(v => v + 1, [asyncCell]);
+        const log = [];
+        const effect = fluid.cell.effect(() => {
+            const value = tip.get();
+            log.push(fluid.isUnavailable(value) ? "unavailable" : value);
+        }, undefined, {name: "effect"});
+        fluid.cell.stabilize();
+        assert.deepEqual(log, ["unavailable"], "Effect runs initially, seeing the unavailable value");
+
+        head.set(1);
+        await fluid.cell.settle();
+        assert.deepEqual(log, ["unavailable", 2], "Effect sees the value once the async computation settles");
+        assert.ok(tip._observers?.has(effect), "Effect still observes the cell it reads");
+
+        head.set(2);
+        await fluid.cell.settle();
+        assert.deepEqual(log, ["unavailable", 2, 3], "Effect sees a further update");
+        effect.dispose();
+    });
+
     QUnit.test("settle() resolves exactly when outstanding work completes", async assert => {
         let release;
         const blocker = new Promise(resolve => {

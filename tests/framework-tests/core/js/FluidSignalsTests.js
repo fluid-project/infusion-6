@@ -405,6 +405,25 @@ QUnit.test("Writes made by an effect inherit the sources of the change which tri
     record.dispose();
 });
 
+QUnit.test("A dynamically tracked effect skipped through excludeSource keeps observing its sources - FLUID-7036", assert => {
+    const source = fluid.cell(0, {name: "source"});
+    const runs = [];
+    // No static sources - the effect discovers its source by reading it
+    const effect = fluid.cell.effect(() => runs.push(source.get()), undefined, {name: "effect", excludeSource: "quiet"});
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [0], "Effect runs initially");
+
+    source.set(1, "quiet");
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [0], "Change with the excluded source is skipped");
+    assert.ok(source._observers?.has(effect), "Skipped effect still observes the source it read when it last ran");
+
+    source.set(2);
+    fluid.cell.stabilize();
+    assert.deepEqual(runs, [0, 2], "Later change without the excluded source reaches the effect");
+    effect.dispose();
+});
+
 // kairo's "avoidable computation" test at https://github.com/milomg/js-reactivity-benchmark/blob/main/packages/core/src/benches/kairo/avoidable.ts
 // Which was ported to knockout (passes) and adapton (fails), probably fails in S as well.
 

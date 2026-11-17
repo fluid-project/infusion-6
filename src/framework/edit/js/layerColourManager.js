@@ -101,7 +101,7 @@ fluid.def("fluid.layerColourManager", {
 fluid.darkenColour = function (colour) {
     const hsl = colour.match(/hsl\(([\d\.]+),?\s*(\d+)%,?\s*(\d+)%\)/);
     if (hsl) {
-        const [_, h, s, l] = hsl;
+        const [, h, s, l] = hsl;
         return `hsl(${h}, ${s}%, ${Math.max(0, l - 20)}%)`;
     }
     return colour; // Fallback for unsupported formats

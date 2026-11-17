@@ -136,9 +136,17 @@ const isInFlight = function (record) {
  * @return {Object|null} The persistable record, or `null` if it cannot be persisted
  */
 const encodeArenaRecord = function (record) {
-    return isInFlight(record) ? null :
-        record.type === "group" ? fluid.history.transformGroupRecord(record, encodeArenaRecord) :
-        record.type === "live" ? fluid.ptf.encodeLiveRecord(record) : record;
+    let togo;
+    if (isInFlight(record)) {
+        togo = null;
+    } else if (record.type === "group") {
+        togo = fluid.history.transformGroupRecord(record, encodeArenaRecord);
+    } else if (record.type === "live") {
+        togo = fluid.ptf.encodeLiveRecord(record);
+    } else {
+        togo = record;
+    }
+    return togo;
 };
 
 /**

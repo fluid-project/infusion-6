@@ -760,9 +760,6 @@ fluid.vizReactive.updateD3Viz = function (element, renderData, currentPoint, cel
                 const perpX = -dy / len * midOffset;
                 const perpY = dx / len * midOffset;
 
-                // Determine which direction to curve based on edge direction
-                const direction = dx > 0 ? 1 : -1; // 1
-
                 const midX = (start.x + end.x) / 2 + perpX;
                 const midY = (start.y + end.y) / 2 + perpY;
 

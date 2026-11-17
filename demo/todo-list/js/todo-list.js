@@ -94,4 +94,4 @@ fluid.def("fluid.demos.todoList", {
 
 const qs = (sel, parent) => (parent || document).querySelector(sel);
 const container = qs("#main");
-const that = fluid.demos.todoList({container});
+fluid.demos.todoList({container});

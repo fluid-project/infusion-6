@@ -2415,6 +2415,111 @@ QUnit.test("$bindable binding a signal streams its updates to readers - FLUID-70
     assert.deepEqual(fluid.tests.bindableLog, ["bind", "unbind true"], "Bound signal itself is supplied to unbind on destruction");
 });
 
+// An unread $bindable whose arguments settle asynchronously - FLUID-7036
+
+fluid.tests.asyncBindable = {
+    container: fluid.cell(fluid.unavailable({message: "No container yet", variety: "I/O"}), {name: "fluid.tests.asyncBindable.container"}),
+    data: fluid.cell(1, {name: "fluid.tests.asyncBindable.data"}),
+    log: []
+};
+
+fluid.tests.asyncBindable.getContainer = () => fluid.tests.asyncBindable.container.get();
+fluid.tests.asyncBindable.getData = () => fluid.tests.asyncBindable.data.get();
+fluid.tests.asyncBindable.make = container => ({container});
+fluid.tests.asyncBindable.later = value => fluid.returnAsync(value);
+fluid.tests.asyncBindable.bind = (map, data) => {
+    fluid.tests.asyncBindable.log.push("bind " + data);
+    return {data};
+};
+fluid.tests.asyncBindable.unbind = bound => fluid.tests.asyncBindable.log.push("unbind " + bound.data);
+
+// Its map, like hortis.libreMap's, is ready only once a composite effect's asynchronous stages have run
+fluid.def("fluid.tests.asyncBindable.map", {
+    $layers: "fluid.component",
+    container: "$compute:fluid.tests.asyncBindable.getContainer()",
+    map: {
+        $bindable: {
+            bind: "fluid.tests.asyncBindable.make({self}.container)",
+            onceOnly: true
+        }
+    },
+    readyMap: {
+        $effect: [{
+            namespace: "load",
+            func: "fluid.tests.asyncBindable.later",
+            args: "{self}.map"
+        }, {
+            namespace: "applyStyle",
+            priority: "after:load",
+            func: "fluid.tests.asyncBindable.later",
+            args: ["{$payload}"]
+        }]
+    }
+});
+
+fluid.def("fluid.tests.asyncBindable.page", {
+    $layers: "fluid.component",
+    data: "$compute:fluid.tests.asyncBindable.getData()",
+    map: {
+        $component: {
+            $layers: "fluid.tests.asyncBindable.map"
+        }
+    },
+    // Read by nothing
+    hover: {
+        $bindable: {
+            bind: "fluid.tests.asyncBindable.bind({self}.map.readyMap, {self}.data)",
+            unbind: "fluid.tests.asyncBindable.unbind({boundValue})"
+        }
+    }
+});
+
+QUnit.test("Unread $bindable binds once its arguments settle asynchronously - FLUID-7036", async function (assert) {
+    const log = fluid.tests.asyncBindable.log;
+    log.length = 0;
+    const that = fluid.tests.asyncBindable.page();
+    await fluid.cell.settle();
+    assert.deepEqual(log, [], "Nothing is bound whilst the map has no container");
+
+    fluid.tests.asyncBindable.container.set({});
+    await fluid.cell.settle();
+    assert.deepEqual(log, ["bind 1"], "Bound once the map's composite effect settles");
+
+    fluid.tests.asyncBindable.data.set(2);
+    await fluid.cell.settle();
+    assert.deepEqual(log, ["bind 1", "unbind 1", "bind 2"], "Rebound when a further argument changes");
+
+    that.destroy();
+    await fluid.cell.settle();
+    assert.deepEqual(log, ["bind 1", "unbind 1", "bind 2", "unbind 2"], "Unbound on destruction");
+    fluid.tests.asyncBindable.container.set(fluid.unavailable({message: "No container yet", variety: "I/O"}));
+    fluid.tests.asyncBindable.data.set(1);
+});
+
+// A merged plain-object member spreads as the object it was written as - FLUID-7038
+
+fluid.def("fluid.tests.plainMember.base", {
+    $layers: "fluid.component",
+    query: {project_id: 303782}
+});
+
+fluid.def("fluid.tests.plainMember", {
+    $layers: "fluid.tests.plainMember.base",
+    query: {verifiable: "true"}
+});
+
+QUnit.test("Merged plain-object member carries no enumerable metadata - FLUID-7038", function (assert) {
+    const that = fluid.tests.plainMember();
+    fluid.cell.stabilize();
+    const query = fluid.unwrapProxy(that.query);
+    assert.ok(query[fluid.metadataSymbol], "Merged member still bears its metadata");
+    assert.deepEqual(Reflect.ownKeys({...query}), ["project_id", "verifiable"], "Spreading the member copies exactly its configured keys");
+    assert.deepEqual(Reflect.ownKeys(Object.assign({}, query)), ["project_id", "verifiable"], "Assigning from it copies exactly its configured keys");
+    assert.equal(String(new URLSearchParams({...query, per_page: "500"})), "project_id=303782&verifiable=true&per_page=500",
+        "Member may be spread into URLSearchParams");
+    that.destroy();
+});
+
 // Avatars - FLUID-7021
 
 fluid.def("fluid.tests.avatar.marker", {
