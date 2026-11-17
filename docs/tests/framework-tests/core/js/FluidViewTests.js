@@ -2505,6 +2505,73 @@ QUnit.test("Classes of claimed markup from an earlier rendering are rewritten, d
     host.remove();
 });
 
+// A child rendered onto the slot of its parent, whose template may be pending, as one loaded from elsewhere is until it
+// arrives - so that the parent renders the slot long before the child's root writes it
+fluid.def("fluid.tests.slotClaim", {
+    $layers: "fluid.component",
+    child: {
+        $component: {
+            $layers: "fluid.component",
+            template: fluid.unavailable({message: "Pending I/O", variety: "pending"}),
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    template: "{$parent}.template"
+                }
+            }
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="wrap"><div class="slot" title="slot" @id="child"></div></div>`
+        }
+    }
+});
+
+fluid.tests.slotClaim.childTemplates = {
+    a: `<div class="kid kid-a" role="separator" tabindex="0"></div>`,
+    b: `<div class="kid kid-b" role="separator"></div>`
+};
+
+QUnit.test("The slot of a child claimed from earlier markup keeps what the child rendered until the child renders afresh", function (assert) {
+    const container = qs(".container");
+    // As a static build renders the page, once the child's template has arrived
+    const builtHost = document.createElement("div");
+    container.appendChild(builtHost);
+    const built = fluid.tests.slotClaim({container: builtHost, child: {$component: {template: fluid.tests.slotClaim.childTemplates.a}}});
+    fluid.cell.stabilize();
+    const hostMarkup = builtHost.outerHTML;
+    built.destroy();
+    builtHost.remove();
+    assert.ok(hostMarkup.includes("class=\"slot kid kid-a\""), "Earlier rendering holds the classes of both templates on the slot");
+
+    // As the page boots over that markup, before the child's template has arrived
+    const holder = document.createElement("div");
+    holder.innerHTML = hostMarkup;
+    const host = holder.firstElementChild;
+    container.appendChild(host);
+    const staticSlot = qs(".slot", host);
+    const that = fluid.tests.slotClaim({container: host});
+    fluid.cell.stabilize();
+    assert.equal(qs(".slot", host), staticSlot, "Container of the child claimed from the markup");
+    assert.equal(staticSlot.getAttribute("class"), "slot kid kid-a", "Classes of the child's root kept whilst its template is pending");
+    assert.equal(staticSlot.getAttribute("role"), "separator", "Attribute of the child's root kept whilst its template is pending");
+    assert.equal(staticSlot.getAttribute("tabindex"), "0", "Every attribute of the child's root kept whilst its template is pending");
+    assert.equal(staticSlot.getAttribute("title"), "slot", "Attribute of the parent's template written");
+
+    // The child's template arrives, no longer writing some of what the earlier markup holds
+    that.child.template = fluid.tests.slotClaim.childTemplates.b;
+    fluid.cell.stabilize();
+    assert.equal(qs(".slot", host), staticSlot, "Container of the child kept as the child renders");
+    assert.equal(staticSlot.getAttribute("class"), "slot kid kid-b", "Classes the child's root no longer writes dropped once it renders");
+    assert.equal(staticSlot.getAttribute("role"), "separator", "Attribute the child's root writes kept");
+    assert.notOk(staticSlot.hasAttribute("tabindex"), "Attribute the child's root no longer writes removed once it renders");
+    assert.equal(staticSlot.getAttribute("title"), "slot", "Attribute of the parent's template kept");
+    that.destroy();
+    host.remove();
+});
+
 fluid.def("fluid.tests.pendingClass", {
     $layers: "fluid.component",
     extra: fluid.unavailable({message: "Pending I/O", variety: "pending"}),
