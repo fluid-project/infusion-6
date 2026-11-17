@@ -116,6 +116,29 @@ QUnit.test("SFC symbols are injected into the shared SVG host", async function (
     await fluid.cell.settle();
 });
 
+QUnit.test("Self-closing elements of injected symbols are closed, leaving those following them as their siblings", function (assert) {
+    // As an icon whose dot follows its stroke, e.g. an exclamation mark - a parser reading the markup as HTML rather
+    // than SVG leaves each self-closing element open, nesting what follows within it, where it doesn't render
+    const symbolText = text => `<symbol id="fluid-tests-sfc-mark" viewBox="0 0 24 24"><path d="${text}"/><circle cx="12" cy="19" r="1"/></symbol>`;
+    const nodeId = "fl-symbols-fluid.tests.sfcMark-0";
+    const apply = text => fluid.symbolsInjectionStyles.literal.apply({dokkument: document, injRec: {text: symbolText(text), nodeId}},
+        document.getElementById(nodeId));
+    const check = function (d, message) {
+        const symbol = document.getElementById("fluid-tests-sfc-mark");
+        assert.deepEqual([...symbol.children].map(child => child.localName), ["path", "circle"], message + ": each element a child of the symbol");
+        assert.equal(symbol.querySelector("path").children.length, 0, message + ": nothing nested within the self-closing path");
+        assert.equal(symbol.querySelector("path").getAttribute("d"), d, message + ": content preserved");
+        assert.ok([symbol, ...symbol.children].every(node => node.namespaceURI === fluid.svgNamespace), message + ": elements in the SVG namespace");
+    };
+    apply("M12 4v10");
+    check("M12 4v10", "Fresh injection");
+    const defs = document.getElementById(nodeId);
+    apply("M12 3v11");
+    assert.equal(document.getElementById(nodeId), defs, "Symbols node updated in place");
+    check("M12 3v11", "Injection updated in place");
+    defs.remove();
+});
+
 QUnit.test("SFC script is not re-executed on repeated parse or subscription", async function (assert) {
     const {rec, injDone} = await fluid.tests.sfc.load();
 

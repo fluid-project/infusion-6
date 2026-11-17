@@ -810,6 +810,21 @@ const fluidViewScope = function (fluid) {
         return host;
     };
 
+    /**
+     * Parse the markup of a `<symbols>` block into nodes in the SVG namespace. It is parsed within an `<svg>` element, as
+     * it would be in a document, rather than as the `innerHTML` of an SVG element, which not every DOM parses as SVG -
+     * linkedom, under which a page is rendered statically, parses it as HTML, so that a self-closing element such as
+     * `<path d="..."/>` is left open and swallows the elements following it, which then don't render
+     * @param {Document} dokkument - The document into which the symbols are injected
+     * @param {String} text - The markup
+     * @return {Node[]} The nodes parsed from it
+     */
+    fluid.parseSymbols = function (dokkument, text) {
+        const holder = dokkument.createElement("div");
+        holder.innerHTML = `<svg xmlns="${fluid.svgNamespace}">${text}</svg>`;
+        return [...holder.firstElementChild.childNodes];
+    };
+
     // The symbols of a Single File Component are injected as a <defs> element holding the markup of its <symbols> block,
     // within the shared host - see fluid.symbolsHost. Since symbols are inert, an existing <defs> is updated in place,
     // and any <use> referring to them updates live
@@ -817,11 +832,11 @@ const fluidViewScope = function (fluid) {
         literal: {
             apply: ({dokkument, injRec}, existing) => {
                 if (existing?.localName === "defs") {
-                    existing.innerHTML = injRec.text;
+                    existing.replaceChildren(...fluid.parseSymbols(dokkument, injRec.text));
                 } else {
                     const fresh = dokkument.createElementNS(fluid.svgNamespace, "defs");
                     fresh.setAttribute("id", injRec.nodeId);
-                    fresh.innerHTML = injRec.text;
+                    fresh.append(...fluid.parseSymbols(dokkument, injRec.text));
                     fresh.flInjected = true;
                     if (existing) {
                         existing.replaceWith(fresh);
