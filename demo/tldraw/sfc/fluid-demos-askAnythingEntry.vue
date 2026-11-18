@@ -91,6 +91,25 @@ fluid.demos.askAnythingEntry.formatSent = function (entry) {
 };
 
 /**
+ * Format a quantity to two significant figures, without the exponent of `toPrecision` for large or small ones
+ * @param {Number} value - The quantity
+ * @return {String} The formatted quantity
+ */
+fluid.demos.askAnythingEntry.twoFigures = value => Number(value.toPrecision(2)).toLocaleString("en-US", {maximumSignificantDigits: 2});
+
+/**
+ * Format the estimated energy and emissions of a reply, e.g. "about 0.36 Wh and 69 mg CO2e"
+ * @param {ImpactEstimate} impact - The estimate, as made by fluid.tldraw.ai.estimateImpact
+ * @return {String} The formatted estimate, saying whether it is fitted to measurements or an order of magnitude
+ */
+fluid.demos.askAnythingEntry.formatImpact = function (impact) {
+    const figures = fluid.demos.askAnythingEntry.twoFigures;
+    const emissions = impact.emissionsGrams < 1 ? figures(impact.emissionsGrams * 1000) + " mg" : figures(impact.emissionsGrams) + " g";
+    const basis = impact.provenance === "measured" ? "estimated from GreenPT's measurements" : "a rough upper estimate";
+    return `about ${figures(impact.energyWh)} Wh and ${emissions} CO2e (${basis})`;
+};
+
+/**
  * Summarise the metrics of a request to the AI
  * @param {MetricsEntry} entry - The metrics entry, as described in fluid-demos-askAnything.vue
  * @param {Number} now - The current time in milliseconds since the epoch
@@ -108,7 +127,8 @@ fluid.demos.askAnythingEntry.metricsSummary = function (entry, now) {
     } else {
         const reasoning = entry.reasoningTokens === null ? "" : `, of which ${format(entry.reasoningTokens)} reasoning`;
         togo = `Received ${entry.outcome === "text" ? "text" : "a PTF document"} in ${elapsed} - sent ${sent}, `
-            + `received ${format(entry.outputTokens)}${reasoning}` + (entry.estimated ? " (estimated)" : "");
+            + `received ${format(entry.outputTokens)}${reasoning}` + (entry.estimated ? " (estimated)" : "")
+            + (entry.impact ? ` - used ${fluid.demos.askAnythingEntry.formatImpact(entry.impact)}` : "");
     }
     return togo;
 };

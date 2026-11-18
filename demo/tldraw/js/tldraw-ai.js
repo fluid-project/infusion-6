@@ -126,7 +126,9 @@ export const makeAIBridge = function (editor) {
     /**
      * Apply changes planned from a PTF document sent by the AI to the workspace. The changes are preceded by a history
      * stopping point so that they can be undone together, as far as tldraw's history extends - redefinitions of layers
-     * and changes applied to a widget in place are not undone.
+     * and changes applied to a widget in place are not undone. The layers are registered, and those of fresh widgets
+     * awaited until they report their sizes, before the stopping point is marked and the canvas is changed, so that
+     * nothing the user does whilst they load is undone along with the AI's changes.
      * @param {ChangePlan} plan - The planned changes
      * @return {Promise<AppliedChanges>} A promise for the changes made, resolving once any fresh or replaced
      * widgets have been constructed or have timed out
@@ -139,7 +141,6 @@ export const makeAIBridge = function (editor) {
         const constructedIds = new Set();
         // Problems which predate the changes are not reported, since the AI is not responsible for them
         const existingProblems = new Set(diagnoseAll());
-        editor.markHistoryStoppingPoint("ai-change");
         plan.layers.forEach(part => {
             try {
                 fluid.ptf.registerLayerPart(part);
@@ -148,6 +149,13 @@ export const makeAIBridge = function (editor) {
                 problems.push(`The layer ${part.filename} could not be registered: ${fluid.tldraw.ai.describeError(error)}`);
             }
         });
+        // The nested layers of each fresh widget are registered first so that its preferred size can be read from its
+        // layer, once its SFC, e.g. one sent in these parts, has been injected - all are awaited together
+        const preferredSizes = await Promise.all(plan.creations.map(change => {
+            fluid.ptf.registerLayerParts(change.parts, true);
+            return fluid.tldraw.awaitShapeSize(change.layerName);
+        }));
+        editor.markHistoryStoppingPoint("ai-change");
         if (plan.deletions.length > 0) {
             snapshotForUndo(editor, plan.deletions.map(id => editor.getShape(id)));
             editor.deleteShapes(plan.deletions);
@@ -198,10 +206,8 @@ export const makeAIBridge = function (editor) {
             }
         }
         let previous = null;
-        for (const change of plan.creations) {
-            // Nested layers are registered first so that the fresh widget's preferred size can be read from its layer
-            fluid.ptf.registerLayerParts(change.parts, true);
-            const preferred = fluid.tldraw.shapeSizeFor(change.layerName);
+        for (const [i, change] of plan.creations.entries()) {
+            const preferred = preferredSizes[i];
             const size = {w: change.shape.w || preferred.w, h: change.shape.h || preferred.h};
             const chosen = typeof(change.shape.x) === "number" && typeof(change.shape.y) === "number" ? null : chooseSite(size, previous);
             const site = {x: change.shape.x ?? chosen.x, y: change.shape.y ?? chosen.y};

@@ -422,8 +422,10 @@ fluid.tldraw.isInteractiveTarget = function (target, host) {
  */
 fluid.tldraw.commandForKey = function (event, isApple) {
     const modified = isApple ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-    const key = event.key.toLowerCase();
-    return modified && !event.altKey ? fluid.tldraw.historyCommands.find(command => command.key === key && command.shift === event.shiftKey) : undefined;
+    // A keydown synthesised by the browser, e.g. by Chrome on autofilling a form such as the AI panel's password,
+    // may have no key
+    const key = typeof(event.key) === "string" ? event.key.toLowerCase() : null;
+    return key && modified && !event.altKey ? fluid.tldraw.historyCommands.find(command => command.key === key && command.shift === event.shiftKey) : undefined;
 };
 
 /**

@@ -81,8 +81,9 @@ fluid.def("fluid.demos.askAnything", {
     // Only the token for the IFM proxy may be forgotten, and only whilst it is held
     cannotLogOut: "$compute:fluid.demos.askAnything.cannotLogOut({self}.connection)",
     busy: "{self}.state.busy",
-    hasToken: "$compute:fluid.demos.askAnything.isPresent({self}.connection.token)",
-    needsPassword: "$compute:fluid.demos.askAnything.isAbsent({self}.connection.token)",
+    // A model of the Inference Co-op needs no token, so is always ready
+    hasToken: "$compute:fluid.demos.askAnything.isReady({self}.connection)",
+    needsPassword: "$compute:fluid.demos.askAnything.needsPassword({self}.connection)",
     cannotSend: "$compute:fluid.demos.askAnything.cannotSend({self}.state.direction, {self}.busy)",
     sendLabel: "$compute:fluid.demos.askAnything.sendLabel({self}.busy)",
     entryList: {
@@ -94,7 +95,8 @@ fluid.def("fluid.demos.askAnything", {
             }
         }
     },
-    // A dropdown of the models which may be conversed with - the IFM proxy's first, followed by those of any local service
+    // A dropdown of the models which may be conversed with - the IFM proxy's first, then the Inference Co-op's, followed
+    // by those of any local service
     modelSelect: {
         $component: {
             $layers: "fluid.component",
@@ -111,16 +113,6 @@ fluid.def("fluid.demos.askAnything", {
         $method: {
             func: "fluid.demos.askAnything.chooseModel",
             args: ["{self}.state", "{0}:event"]
-        }
-    },
-    passwordKeyDown: {
-        $method: {
-            func: (self, e) => {
-                if (e.key === "Enter") {
-                    self.login();
-                }
-            },
-            args: ["{self}", "{0}:event"]
         }
     },
     directionKeyDown: {
@@ -159,11 +151,11 @@ fluid.def("fluid.demos.askAnything", {
 // never rendered
 fluid.demos.askAnything.history = [];
 
-fluid.demos.askAnything.isPresent = value => !!value;
+fluid.demos.askAnything.cannotLogOut = connection => connection.local || connection.open || !connection.token;
 
-fluid.demos.askAnything.isAbsent = value => !value;
+fluid.demos.askAnything.isReady = connection => connection.open || !!connection.token;
 
-fluid.demos.askAnything.cannotLogOut = connection => connection.local || !connection.token;
+fluid.demos.askAnything.needsPassword = connection => !fluid.demos.askAnything.isReady(connection);
 
 fluid.demos.askAnything.cannotSend = (direction, busy) => busy || !direction.trim();
 
@@ -190,6 +182,7 @@ fluid.demos.askAnything.bindLocalService = function () {
  * @property {String} token - The token or key presented to the endpoint, or an empty string if none is held
  * @property {String} model - The model to be requested
  * @property {Boolean} local - `true` if the endpoint is that of a local service rather than the IFM proxy
+ * @property {Boolean} open - `true` if the endpoint needs no token - that of the Inference Co-op
  * @property {String} choice - The value of the dropdown's option for the model - see fluid.demos.askAnything.modelChoices
  */
 
@@ -199,6 +192,9 @@ fluid.demos.askAnything.localPrefix = "local:";
 // The value of the dropdown option choosing the IFM proxy's model
 fluid.demos.askAnything.ifmChoice = "ifm";
 
+// The prefix of the value of a dropdown option choosing a model of the Inference Co-op, followed by the model's id
+fluid.demos.askAnything.coopPrefix = "coop:";
+
 /**
  * @typedef {Object} ModelChoiceGroup
  * @property {String} label - The label of the group of options, naming the service offering them
@@ -207,22 +203,28 @@ fluid.demos.askAnything.ifmChoice = "ifm";
 
 /**
  * List the models which may be chosen in the dropdown, grouped by the service offering them - the IFM proxy's model
- * first, followed by those of the local service, if any
+ * first, then those of the Inference Co-op, which are always offered, followed by those of the local service, if any
  * @param {LocalService|null} local - The local service, if any
  * @return {ModelChoiceGroup[]} The groups of options
  */
 fluid.demos.askAnything.modelChoices = function (local) {
     const ifm = {label: "IFM proxy", options: [{value: fluid.demos.askAnything.ifmChoice, text: fluid.tldraw.ai.defaultModel}]};
+    const coop = fluid.tldraw.ai.coopService;
+    const coopGroup = {
+        label: coop.name,
+        options: coop.models.map(model => ({value: fluid.demos.askAnything.coopPrefix + model, text: model}))
+    };
     const localGroup = local ? [{
         label: local.name,
         options: local.models.map(model => ({value: fluid.demos.askAnything.localPrefix + model, text: model}))
     }] : [];
-    return [ifm, ...localGroup];
+    return [ifm, coopGroup, ...localGroup];
 };
 
 /**
- * Determine how the AI is to be reached - through the local service if one of its models is chosen and it offers it,
- * or else through the IFM proxy with the token derived from the user's password, which is chosen by default
+ * Determine how the AI is to be reached - through the Inference Co-op, needing no token, if one of its models is
+ * chosen, through the local service if one of its models is chosen and it offers it, or else through the IFM proxy
+ * with the token derived from the user's password, which is chosen by default
  * @param {LocalService|null} local - The local service, if any
  * @param {String} token - The token for the IFM proxy, or an empty string if none is held
  * @param {String} modelChoice - The value of the option chosen in the dropdown, or an empty string if none is chosen
@@ -231,13 +233,26 @@ fluid.demos.askAnything.modelChoices = function (local) {
 fluid.demos.askAnything.connection = function (local, token, modelChoice) {
     const prefix = fluid.demos.askAnything.localPrefix;
     const localModel = modelChoice.startsWith(prefix) ? modelChoice.slice(prefix.length) : null;
+    const coopPrefix = fluid.demos.askAnything.coopPrefix;
+    const coopModel = modelChoice.startsWith(coopPrefix) ? modelChoice.slice(coopPrefix.length) : null;
+    const coop = fluid.tldraw.ai.coopService;
     let togo;
-    if (local && local.models.includes(localModel)) {
+    if (coop.models.includes(coopModel)) {
+        togo = {
+            endpoint: coop.endpoint,
+            token: "",
+            model: coopModel,
+            local: false,
+            open: true,
+            choice: modelChoice
+        };
+    } else if (local && local.models.includes(localModel)) {
         togo = {
             endpoint: local.endpoint,
             token: local.key,
             model: localModel,
             local: true,
+            open: false,
             choice: modelChoice
         };
     } else {
@@ -246,6 +261,7 @@ fluid.demos.askAnything.connection = function (local, token, modelChoice) {
             token,
             model: fluid.tldraw.ai.defaultModel,
             local: false,
+            open: false,
             choice: fluid.demos.askAnything.ifmChoice
         };
     }
@@ -350,6 +366,8 @@ fluid.demos.askAnything.addEntry = function (state, entry) {
  * @property {Number|null} outputTokens - The number of tokens received, or `null` whilst the request is pending
  * @property {Number|null} reasoningTokens - The number of the tokens received which were spent on reasoning, if reported
  * @property {Boolean} estimated - `true` if the numbers of tokens are estimated, since the endpoint did not report them
+ * @property {ImpactEstimate|null} impact - The estimated energy and emissions of the reply, for a model of the Inference
+ * Co-op once it is received - see fluid.tldraw.ai.estimateImpact - or else `null`
  * @property {String} outcome - Whilst pending, an empty string - then "PTF document" or "text" for the kind of reply
  * received, or "failed"
  */
@@ -357,13 +375,15 @@ fluid.demos.askAnything.addEntry = function (state, entry) {
 /**
  * Make a request of the AI, tracking it with a metrics entry in the conversation which is added as the request is
  * sent and completed once the reply is received. The entry reports the request's elapsed time, which is shown ticking
- * whilst it is pending, and the numbers of tokens sent and received - as reported by the endpoint, or else estimated.
+ * whilst it is pending, and the numbers of tokens sent and received - as reported by the endpoint, or else estimated -
+ * with, for a model of the Inference Co-op, an estimate of the reply's energy and emissions.
  * @param {Object} state - The panel's reactive state
  * @param {ChatMessage[]} messages - The messages being sent
  * @param {Function} invoke - Makes the request, returning a {Promise<AIReply|String>}
+ * @param {String} model - The model being requested
  * @return {Promise<AIReply>} A promise for the reply
  */
-fluid.demos.askAnything.measureCall = async function (state, messages, invoke) {
+fluid.demos.askAnything.measureCall = async function (state, messages, invoke, model) {
     const index = state.entries.length;
     fluid.demos.askAnything.addEntry(state, {
         kind: "metrics",
@@ -375,6 +395,7 @@ fluid.demos.askAnything.measureCall = async function (state, messages, invoke) {
         outputTokens: null,
         reasoningTokens: null,
         estimated: true,
+        impact: null,
         outcome: ""
     });
     const complete = fields => {
@@ -386,10 +407,12 @@ fluid.demos.askAnything.measureCall = async function (state, messages, invoke) {
         // As for fluid.tldraw.ai.converse, a String is taken as the reply's content
         reply = typeof(received) === "string" ? {content: received} : received;
         const usage = reply.usage;
+        const outputTokens = usage ? usage.outputTokens : fluid.tldraw.ai.estimateTokens([reply.content, reply.reasoning]);
         complete({
             inputTokens: usage ? usage.inputTokens : state.entries[index].inputTokens,
             cachedTokens: usage?.cachedTokens ?? fluid.tldraw.ai.cachedTokens(messages, usage?.inputTokens),
-            outputTokens: usage ? usage.outputTokens : fluid.tldraw.ai.estimateTokens([reply.content, reply.reasoning]),
+            outputTokens,
+            impact: fluid.tldraw.ai.estimateImpact(model, outputTokens),
             reasoningTokens: usage?.reasoningTokens ?? null,
             estimated: !usage,
             outcome: fluid.tldraw.ai.parseResponse(reply.content).type === "text" ? "text" : "PTF document"
@@ -424,12 +447,12 @@ fluid.demos.askAnything.send = async function (state, connection) {
                 model,
                 bridge,
                 call: messages => fluid.demos.askAnything.measureCall(state, messages,
-                    () => fluid.tldraw.ai.callEndpoint({endpoint, token, model, messages})),
+                    () => fluid.tldraw.ai.callEndpoint({endpoint, token, model, messages}), model),
                 report: entry => fluid.demos.askAnything.addEntry(state, entry)
             });
         } catch (error) {
-            // The key of a local service cannot be entered afresh, so its rejection is only reported
-            if (error.unauthorised && !connection.local) {
+            // Only the IFM proxy's token is derived from a password - the rejection of another is only reported
+            if (error.unauthorised && !connection.local && !connection.open) {
                 fluid.demos.askAnything.logout(state);
                 state.loginError = "The password was not accepted - please enter it again.";
             }
@@ -558,15 +581,18 @@ fluid.demos.askAnything.receiveOffer = function (state, event) {
         <div class="ask-anything-header">Ask me anything</div>
         <div class="ask-anything-entries" @id="entryList"></div>
         <!-- Shown and hidden by class rather than $if, so that each retains its DOM state, e.g. a half-typed direction -->
-        <div class="ask-anything-login" @class="ask-anything-hidden:@{hasToken}">
+        <!-- A form, as browsers expect of a password field, submitted by Enter or the button, and never sent anywhere -->
+        <form class="ask-anything-login" @class="ask-anything-hidden:@{hasToken}" @onsubmit.prevent="{self}.login()">
             <div class="ask-anything-login-prompt">Enter the password for the AI service:</div>
             <div class="ask-anything-row">
+                <!-- Not shown - names the account for a password manager, which saves the password under it -->
+                <input type="text" name="username" value="ifm-proxy" autocomplete="username" hidden>
                 <input type="password" class="ask-anything-password" value="@{state.password}"
-                       disabled="@{busy}" @onkeydown="{self}.passwordKeyDown({0})">
-                <button class="ask-anything-button" disabled="@{busy}" @onclick="{self}.login()">Log In</button>
+                       autocomplete="current-password" disabled="@{busy}">
+                <button type="submit" class="ask-anything-button" disabled="@{busy}">Log In</button>
             </div>
             <div class="ask-anything-login-error">@{state.loginError}</div>
-        </div>
+        </form>
         <div class="ask-anything-composer">
             <textarea class="ask-anything-direction" placeholder="Ask anything ... (↑ recalls earlier requests)"
                       value="@{state.direction}" @onkeydown="{self}.directionKeyDown({0})"

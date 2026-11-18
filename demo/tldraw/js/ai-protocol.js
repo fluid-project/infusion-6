@@ -8,11 +8,26 @@
 
 fluid.registerNamespace("fluid.tldraw.ai");
 
-// A password-protected proxy which swaps a token derived from the password for the real key of the IFM endpoint
-fluid.tldraw.ai.endpoint = "https://live.ponder.org.uk/ifm/v1/chat/completions";
+// A password-protected proxy which swaps a token derived from the password for the real key of the IFM endpoint - a
+// Cloudflare Worker, see workers/ifm-proxy/proxy.mjs in the imerss-cloudflare repository
+fluid.tldraw.ai.endpoint = "https://ifm-proxy.imerss.workers.dev/v1/chat/completions";
 
 // The proxy only forwards POSTs, so the models it offers cannot be listed - the panel displays this model read-only
 fluid.tldraw.ai.defaultModel = "IFM/K2-Horizon-375B-A23B";
+
+// The Inference Cooperative's models, reached through a relay which adds the co-op's key, so that they are always
+// available, needing no password - a Cloudflare Worker, see workers/inference-proxy/proxy.mjs in the imerss-cloudflare
+// repository. The relay accepts only these models.
+fluid.tldraw.ai.coopService = {
+    name: "Inference Co-op",
+    endpoint: "https://inference-proxy.imerss.workers.dev/v1/chat/completions",
+    models: [
+        "greenpt/glm-5.3-flash",
+        "greenpt/deepseek-v4.1-flash",
+        "regolo/gemma4-31b",
+        "regolo/mistral-small-4-119b"
+    ]
+};
 
 // An OpenAI-compatible service which is used in place of the IFM proxy if a key for it is found beside the page, as
 // it is when the demo is served locally - the key's file is gitignored, so that it is never committed or deployed.
@@ -27,7 +42,50 @@ fluid.tldraw.ai.localService = {
     defaultModel: "natai/glm"
 };
 
-// Parameters for deriving the proxy token from the password, which must agree with those used to configure the proxy
+// Factors by which the energy and emissions of a reply of one of the Inference Co-op's models are estimated from the
+// number of tokens it produced, as the co-op estimates them for its dashboards - see
+// https://git.inference.coop/code/member-portal/src/branch/main/docs/energy-metrics.md (fitted 2026-10-28). The co-op's
+// gateway passes on no measurement of a request's energy, so these are estimates. Each is matched by the model's id
+// beginning with `prefix`, the first match winning. Input tokens are not counted, so they understate the compute used.
+fluid.tldraw.ai.coopImpactFactors = [
+    // Fitted to the energy which GreenPT reports for its own requests, at the intensity of its grid
+    {prefix: "greenpt/deepseek-v4.1-flash", whPerKiloToken: 0.3641, gramsPerKwh: 193.0, provenance: "measured"},
+    {prefix: "greenpt/glm-5.3-flash", whPerKiloToken: 1.0782, gramsPerKwh: 193.0, provenance: "measured"},
+    // An order of magnitude, at the EU grid's average intensity - an upper bound for Regolo, which uses renewable energy
+    {prefix: "", whPerKiloToken: 0.5, gramsPerKwh: 250.0, provenance: "rough"}
+];
+
+/**
+ * @typedef {Object} ImpactEstimate
+ * @property {Number} energyWh - The estimated energy used, in watt-hours
+ * @property {Number} emissionsGrams - The estimated emissions, in grams of CO2 equivalent
+ * @property {String} provenance - "measured" if the factors were fitted to the provider's measurements, or "rough" if
+ * they are an order of magnitude
+ */
+
+/**
+ * Estimate the energy and emissions of a reply from the number of tokens it produced, by the factors of
+ * `fluid.tldraw.ai.coopImpactFactors` - for a model of the Inference Co-op only, since no factors are known for others
+ * @param {String} model - The model which replied
+ * @param {Number} outputTokens - The number of tokens it produced, including reasoning
+ * @return {ImpactEstimate|null} The estimate, or `null` if the model is not one of the Inference Co-op's
+ */
+fluid.tldraw.ai.estimateImpact = function (model, outputTokens) {
+    let togo = null;
+    if (fluid.tldraw.ai.coopService.models.includes(model) && typeof(outputTokens) === "number") {
+        const factors = fluid.tldraw.ai.coopImpactFactors.find(factor => model.startsWith(factor.prefix));
+        const energyWh = outputTokens / 1000 * factors.whPerKiloToken;
+        togo = {
+            energyWh,
+            emissionsGrams: energyWh / 1000 * factors.gramsPerKwh,
+            provenance: factors.provenance
+        };
+    }
+    return togo;
+};
+
+// Parameters for deriving the proxy token from the password, which must agree with those used to configure the proxy.
+// The salt names the proxy's former home, kept so that the token is unchanged.
 fluid.tldraw.ai.tokenDerivation = {
     salt: "live.ponder.org.uk/ifm",
     iterations: 600000,
@@ -742,7 +800,8 @@ fluid.tldraw.ai.repairMessage = function (problems) {
  * Call the AI endpoint with a conversation
  * @param {Object} options - The call's options
  * @param {String} [options.endpoint] - The endpoint to be called, by default the IFM proxy at `fluid.tldraw.ai.endpoint`
- * @param {String} options.token - The token derived from the user's password, or the key of a local service
+ * @param {String} options.token - The token derived from the user's password, or the key of a local service, or an
+ * empty string for an endpoint needing none, such as the Inference Co-op's
  * @param {String} options.model - The model to be used
  * @param {ChatMessage[]} options.messages - The messages to be sent
  * @return {Promise<AIReply>} A promise for the AI's reply. On a rejected token, the promise rejects with an error whose
@@ -753,7 +812,7 @@ fluid.tldraw.ai.callEndpoint = async function ({endpoint = fluid.tldraw.ai.endpo
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + token
+            ...(token ? {"Authorization": "Bearer " + token} : {})
         },
         body: JSON.stringify({model, messages, stream: false, max_tokens: fluid.tldraw.ai.maxOutputTokens})
     });
@@ -836,7 +895,9 @@ fluid.tldraw.ai.parseResponse = function (raw) {
 };
 
 /**
- * Discard anything following the close delimiter of a PTF document
+ * Discard anything following the close delimiter of a PTF document. A document whose last line is a plain delimiter
+ * rather than the close delimiter - a slip models make, which would otherwise open an empty part at its end - is
+ * closed with the close delimiter in its place.
  * @param {String} text - Text beginning with a PTF document, with LF line endings
  * @return {String} The text of the document alone
  */
@@ -844,7 +905,17 @@ fluid.tldraw.ai.trimDocument = function (text) {
     const {headers} = fluid.ptf.splitHeaders(text);
     const boundary = fluid.ptf.parseHeaderValue(headers["content-type"]).params.boundary;
     const close = boundary ? text.indexOf("\n--" + boundary + "--") : -1;
-    return close === -1 ? text : text.substring(0, close + boundary.length + 5) + "\n";
+    const delimiter = "\n--" + boundary;
+    const trimmed = text.trimEnd();
+    let togo;
+    if (close !== -1) {
+        togo = text.substring(0, close + boundary.length + 5) + "\n";
+    } else if (boundary && trimmed.endsWith(delimiter)) {
+        togo = trimmed + "--\n";
+    } else {
+        togo = text;
+    }
+    return togo;
 };
 
 /**
@@ -864,6 +935,20 @@ fluid.tldraw.ai.trimDocument = function (text) {
  * @property {String[]} deletions - The ids of shapes to be deleted
  * @property {String[]} problems - Descriptions of any parts which were rejected
  */
+
+// The advice given when a part of a document has no headers - most often since the document ends with a plain
+// delimiter rather than the close delimiter, opening an empty part
+fluid.tldraw.ai.headerlessPartAdvice = "Each part must begin with its Content-Type, Content-Disposition and "
+    + "Content-Description headers. If you did not mean to send this part, check that the document ends with the close "
+    + "delimiter - two hyphens, the boundary, and two hyphens more, e.g. --my-boundary-- - rather than a plain "
+    + "delimiter, which opens a fresh part";
+
+/**
+ * Determine whether a part of a document has no headers naming it, as a part opened by a stray delimiter has not
+ * @param {PTFPart} part - The part
+ * @return {Boolean} `true` if the part has neither a filename nor a kind
+ */
+fluid.tldraw.ai.isHeaderlessPart = part => !part.filename && !part.kind;
 
 /**
  * Check that the body of a JSON part parses
@@ -971,6 +1056,8 @@ fluid.tldraw.ai.planChanges = function (parts, widgetIds, shapeIds) {
             }
         } else if (part.kind === "canvas") {
             problems.push("The canvas part cannot be sent - native tldraw shapes cannot be altered");
+        } else if (fluid.tldraw.ai.isHeaderlessPart(part)) {
+            problems.push("Your document holds a part with no headers. " + fluid.tldraw.ai.headerlessPartAdvice);
         } else {
             problems.push(`The part with filename ${name} has unrecognised kind ${JSON.stringify(part.kind)} in its `
                 + "Content-Description - expected layer, component or delete");
@@ -1091,6 +1178,8 @@ fluid.tldraw.ai.planShapeChange = function (part, widgetIds, shapeIds, problems)
                 }
             } else if (nestedPart.kind === "problems") {
                 // Problems are diagnosed afresh in the workspace, so any echoed back are ignored
+            } else if (fluid.tldraw.ai.isHeaderlessPart(nestedPart)) {
+                problems.push(`The document ${where} holds a part with no headers. ` + fluid.tldraw.ai.headerlessPartAdvice);
             } else {
                 problems.push(`The part with filename ${JSON.stringify(nestedPart.filename)} ${where} has unrecognised kind `
                     + `${JSON.stringify(nestedPart.kind)} - expected shape, layer, potentia or live`);

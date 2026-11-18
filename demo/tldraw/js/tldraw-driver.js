@@ -365,9 +365,53 @@ const defaultShapeHeight = 80;
  * @return {Object} The size as `{w, h}`
  */
 fluid.tldraw.shapeSizeFor = function (layerName) {
-    // An avatar which is unavailable as a whole, e.g. since its layer is still loading, yields no preference
-    const value = fluid.avatar(layerName).preferredSize;
+    // An avatar which is unavailable as a whole, e.g. since its layer's SFC is still being injected, yields no
+    // preference. Outside a computation, reading a member of an unavailable component throws - see
+    // fluid.readUnavailableComponent - rather than yielding an unavailable value, so the throw is caught
+    let value;
+    try {
+        value = fluid.avatar(layerName).preferredSize;
+    } catch (e) {
+        value = null;
+    }
     const preferredSize = fluid.isUnavailable(value) ? null : value;
+    return {
+        w: preferredSize?.w || defaultShapeWidth,
+        h: preferredSize?.h || defaultShapeHeight
+    };
+};
+
+// The longest time for which a fresh shape waits for its layer to become available, e.g. whilst its SFC is injected,
+// before it is created at the default size
+fluid.tldraw.shapeSizeTimeout = 10000;
+
+/**
+ * Determine the size at which a fresh shape hosting a widget should be created, as for `fluid.tldraw.shapeSizeFor`,
+ * but waiting for the layer's avatar to become available, e.g. until its SFC has been injected. If the avatar fails,
+ * or is not available within `fluid.tldraw.shapeSizeTimeout`, the default size is used.
+ * @param {String} layerName - The name of the widget's layer
+ * @return {Promise<Object>} A promise for the size, as `{w, h}`
+ */
+fluid.tldraw.awaitShapeSize = async function (layerName) {
+    // Read within a computation, an unavailable avatar yields an unavailable value rather than throwing, so that
+    // waitFor holds until it is available
+    const sizeCell = fluid.cell(undefined, {name: "tldraw preferred size of " + layerName})
+        .computed(() => fluid.avatar(layerName).preferredSize ?? null);
+    let timer;
+    const timeout = new Promise(resolve => {
+        timer = setTimeout(() => resolve(null), fluid.tldraw.shapeSizeTimeout);
+    });
+    let preferredSize;
+    try {
+        preferredSize = await Promise.race([fluid.cell.waitFor(sizeCell), timeout]);
+    } catch (e) {
+        preferredSize = null;
+    } finally {
+        clearTimeout(timer);
+    }
+    if (preferredSize === null) {
+        console.log(`The layer ${layerName} did not become available - creating its shape at the default size`);
+    }
     return {
         w: preferredSize?.w || defaultShapeWidth,
         h: preferredSize?.h || defaultShapeHeight
@@ -565,10 +609,12 @@ const NewShapePanel = function () {
     const layers = useCellValue(fluid.tldraw.widgetLayers);
     const [selected, setSelected] = React.useState("");
     const choice = layers.includes(selected) ? selected : layers[0] || "";
-    const create = () => {
-        const center = editor.getViewportPageBounds().center;
+    const create = async () => {
         const id = createShapeId();
-        const {w, h: hh} = fluid.tldraw.shapeSizeFor(choice);
+        // Waits for the layer, e.g. one just sent by the AI whose SFC is still being injected, to report its size
+        const {w, h: hh} = await fluid.tldraw.awaitShapeSize(choice);
+        // Read after waiting, since the user may have moved the viewport meanwhile
+        const center = editor.getViewportPageBounds().center;
         const site = fluid.tldraw.findFreeSite(editor, {x: center.x - w / 2, y: center.y - hh / 2});
         editor.createShape({
             id,

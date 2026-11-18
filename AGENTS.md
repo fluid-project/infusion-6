@@ -59,7 +59,9 @@ When something updates, re-renders or turns over unexpectedly, ask the graph why
    an explicit instruction to do so. An ambiguous request is not an instruction - ask first
 
 ## Commit messages
- - Mention issue closed in form FLUID-7003 (fluid-project/infusion-6#3) - this will be passed on as reminder. The FLUID ID is 7000 plus the GitHub issue number, and the parenthesised reference lets GitHub close the issue
+ - Name each issue resolved by its FLUID ID in the title, e.g. FLUID-7003, and close it with a closing keyword placed immediately before its GitHub reference, e.g. Resolves #3 or Resolves fluid-project/infusion-6#3. The FLUID ID is 7000 plus the GitHub issue number
+ - GitHub closes an issue only when a keyword - close, closes, closed, fix, fixes, fixed, resolve, resolves or resolved - directly precedes its reference. A bare reference, e.g. FLUID-7003 (fluid-project/infusion-6#3), only links the commit to the issue, as does one separated from its keyword, e.g. Resolves FLUID-7003 (fluid-project/infusion-6#3)
+ - Each issue needs a keyword of its own - write "Resolves #36, resolves #37", since "Resolves #36, #37" closes only #36. An issue is closed once the commit reaches the default branch
 
 ## Issue references
  - Issues are titled with a prefix FLUID-7xxx, where xxx is the GitHub issue number, e.g. FLUID-7026: Improve error feedback cycle to AI
