@@ -1,4 +1,4 @@
-/* global QUnit */
+/* global QUnit, fluidTestsNamedAccess */
 
 "use strict";
 
@@ -13,6 +13,21 @@ QUnit.config.reorder = false;
 QUnit.test("Layer name extraction test", function (assert) {
     const layerName = fluid.pathToLayerName("%todoApp/sfc/fluid-demos-todoApp.vue");
     assert.equal("fluid.demos.todoApp", layerName, "Layer name extracted");
+});
+
+QUnit.test("A namespace is not rooted at an element sharing its name", function (assert) {
+    // As when a page declares <fluid-module id="x"> for a module whose layers are named x.* - the browser's named
+    // access makes window.x the element until a global x is defined
+    const element = document.createElement("fluid-module");
+    element.id = "fluidTestsNamedAccess";
+    document.body.appendChild(element);
+    fluid.def("fluidTestsNamedAccess.widget", {$layers: "fluid.component"});
+    fluidTestsNamedAccess.widget.helper = () => 42;
+    fluid.def("fluidTestsNamedAccess.other", {$layers: "fluid.component"});
+    assert.notEqual(fluid.global.fluidTestsNamedAccess, element, "The namespace is a global of its own, not the element");
+    assert.equal(fluid.invokeGlobalFunction("fluidTestsNamedAccess.widget.helper", []), 42,
+        "A function of one layer's namespace survives the definition of another layer of the same root");
+    element.remove();
 });
 
 fluid.def("fluid.tests.basicRender", {
@@ -1630,6 +1645,59 @@ QUnit.test("Verbatim markup with component islands", function (assert) {
     that.destroy();
 });
 
+fluid.def("fluid.tests.siteUrls", {
+    $layers: "fluid.component",
+    stylesheet: "/css/main.css",
+    html: `<p><a class="content" href="/post/x/">x</a><img class="content" src="/img/a.png"></p>` +
+        `<a class="cdn" href="//cdn.example.org/lib.js">cdn</a><a class="absolute" href="https://example.org/y">y</a>` +
+        `<a class="relative" href="z/">z</a><a class="fragment" href="#top">top</a>` +
+        `<div fluid-layers="fluid.tests.island" data-src="/img/b.png" data-caption="B"></div>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div><link class="bound" rel="stylesheet" href="@{stylesheet}"><div @id="content"></div></div>`
+        }
+    },
+    content: {
+        $component: {
+            $layers: "fluid.component",
+            html: "{fluid.tests.siteUrls}.html",
+            view: {
+                $component: {
+                    $layers: "fluid.templateViewComponent",
+                    verbatim: true,
+                    template: "{$parent}.html"
+                }
+            }
+        }
+    }
+});
+
+QUnit.test("Site-absolute URLs resolved against the site's root as they are rendered", function (assert) {
+    const html = document.documentElement;
+    const container = qs(".container");
+    html.setAttribute(fluid.siteRootAttribute, "../../");
+    const that = fluid.tests.siteUrls({container});
+    fluid.cell.stabilize();
+    assert.equal(qs(".bound", container).getAttribute("href"), "../../css/main.css", "URL bound in a template resolved");
+    assert.deepEqual([...container.querySelectorAll(".content")].map(node => node.getAttribute(node.localName === "img" ? "src" : "href")),
+        ["../../post/x/", "../../img/a.png"], "URLs within verbatim markup resolved");
+    assert.equal(qs(".island img", container).getAttribute("src"), "../../img/b.png", "URL rendered by an island from its dataset resolved");
+    assert.equal(qs(".island", container).getAttribute("data-src"), "/img/b.png", "Other attributes left as written");
+    assert.deepEqual(["cdn", "absolute", "relative", "fragment"].map(name => qs("." + name, container).getAttribute("href")),
+        ["//cdn.example.org/lib.js", "https://example.org/y", "z/", "#top"], "Protocol-relative, absolute and relative URLs left as written");
+    that.stylesheet = "/css/other.css";
+    fluid.cell.stabilize();
+    assert.equal(qs(".bound", container).getAttribute("href"), "../../css/other.css", "URL resolved again as it is rerendered");
+    that.destroy();
+    html.removeAttribute(fluid.siteRootAttribute);
+
+    const unrooted = fluid.tests.siteUrls({container});
+    fluid.cell.stabilize();
+    assert.equal(qs(".bound", container).getAttribute("href"), "/css/main.css", "In a page recording no site root, URLs are left as written");
+    unrooted.destroy();
+});
+
 fluid.def("fluid.tests.ifElse", {
     $layers: "fluid.component",
     subtitle: null,
@@ -2572,6 +2640,204 @@ QUnit.test("The slot of a child claimed from earlier markup keeps what the child
     host.remove();
 });
 
+// An island within verbatim markup whose root binds attributes onto the island's element, as ponder's figure shortcode
+// writes its `style` from its parameters. Its template may be pending, as an SFC's is until it has loaded, so that the
+// verbatim markup renders the island's element long before the island's root writes it
+fluid.def("fluid.tests.styledIsland", {
+    $layers: "fluid.component",
+    alt: "$compute:fluid.tests.styledIsland.alt({self}.dataset)",
+    template: "{fluid.tests.styledIslandContent}.islandTemplate",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: "{$parent}.template"
+        }
+    }
+});
+
+fluid.tests.styledIsland.template = `<div class="box" style="@{fluid.tests.styledIsland.maxWidth({self}.dataset.width)}"><img class="inner" alt="@{alt}" src="@{dataset.src}"/></div>`;
+
+fluid.tests.styledIsland.alt = function (dataset) {
+    return dataset.caption;
+};
+
+fluid.tests.styledIsland.maxWidth = function (width) {
+    return width ? "max-width:" + width : null;
+};
+
+fluid.def("fluid.tests.styledIslandContent", {
+    $layers: "fluid.component",
+    islandTemplate: fluid.tests.styledIsland.template,
+    html: `<p>Before</p><div fluid-layers="fluid.tests.styledIsland" data-width="800px" data-caption="A caption" data-src="a.png"></div><p>After</p>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            verbatim: true,
+            template: "{$parent}.html"
+        }
+    }
+});
+
+QUnit.test("An island within verbatim markup claimed from earlier markup keeps what its root writes", function (assert) {
+    const container = qs(".container");
+    // As a static build renders the content
+    const builtHost = document.createElement("div");
+    container.appendChild(builtHost);
+    const built = fluid.tests.styledIslandContent({container: builtHost});
+    fluid.cell.stabilize();
+    const builtMarkup = builtHost.innerHTML;
+    built.destroy();
+    builtHost.remove();
+    assert.ok(builtMarkup.includes("style=\"max-width:800px\""), "Earlier rendering holds the attribute the island's root binds");
+
+    // As a client boots the content over that markup
+    const host = document.createElement("div");
+    host.innerHTML = builtMarkup;
+    container.appendChild(host);
+    const staticIsland = qs(".box", host);
+    const that = fluid.tests.styledIslandContent({container: host, islandTemplate: fluid.unavailable({message: "Pending I/O", variety: "pending"})});
+    fluid.cell.stabilize();
+    assert.equal(qs(".box", host), staticIsland, "Island's element claimed from the markup");
+    assert.equal(staticIsland.getAttribute("style"), "max-width:800px", "Attribute of the island's root kept whilst its template is pending");
+    that.islandTemplate = fluid.tests.styledIsland.template;
+    fluid.cell.stabilize();
+    assert.equal(staticIsland.getAttribute("style"), "max-width:800px", "Attribute bound by the island's root written once its template arrives");
+    assert.equal(qs(".inner", host).getAttribute("alt"), "A caption", "Attribute bound to a computed member of the island written");
+    assert.equal(staticIsland.getAttribute("data-width"), "800px", "Attribute of the verbatim markup kept");
+    assert.equal(host.innerHTML, builtMarkup, "Content renders as it was built");
+    that.destroy();
+    host.remove();
+});
+
+fluid.def("fluid.tests.lateIslandContent", {
+    $layers: "fluid.component",
+    html: `<p>Before</p><div fluid-layers="fluid.tests.lateIsland" data-caption="A caption" data-src="a.png"></div>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            verbatim: true,
+            template: "{$parent}.html"
+        }
+    }
+});
+
+QUnit.test("An island whose layer is defined after the markup holding it has rendered renders its bindings", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.lateIslandContent({container});
+    fluid.cell.stabilize();
+    // As an island's SFC arrives after the content holding it has rendered - its layer defined, and then the functions
+    // its layer uses, by the remainder of the SFC's script
+    fluid.def("fluid.tests.lateIsland", {
+        $layers: "fluid.component",
+        alt: "$compute:fluid.tests.lateIsland.alt({self}.dataset)",
+        view: {
+            $component: {
+                $layers: "fluid.templateViewComponent",
+                template: `<figure class="late"><img alt="@{alt}" src="@{dataset.src}"/><figcaption>@{dataset.caption}</figcaption></figure>`
+            }
+        }
+    });
+    fluid.tests.lateIsland.alt = dataset => dataset.caption;
+    fluid.cell.stabilize();
+    const img = qs(".late img", container);
+    assert.ok(img, "Island rendered once its layer is defined");
+    assert.equal(img?.getAttribute("src"), "a.png", "Attribute bound to the island's dataset written");
+    assert.equal(img?.getAttribute("alt"), "A caption", "Attribute bound to a computed member of the island written");
+    assert.equal(qs(".late figcaption", container)?.textContent, "A caption", "Text bound to the island's dataset written");
+    that.destroy();
+});
+
+fluid.def("fluid.tests.potentiaIsland", {
+    $layers: "fluid.component",
+    count: 0,
+    label: "unlabelled",
+    inner: {
+        $component: {
+            $layers: "fluid.component",
+            note: "default note"
+        }
+    },
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="counter"><span class="count">@{count}</span> <span class="label">@{label}</span> <span class="note">@{inner.note}</span> <span class="src">@{dataset.src}</span></div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.potentiaContent", {
+    $layers: "fluid.component",
+    html: `<p>Before</p><div fluid-layers="fluid.tests.potentiaIsland" fluid-id="counter" data-src="a.png" ` +
+        `fluid-potentia='{"$layers": "ignored", "count": 3, "label": "Three", "inner": {"$component": {"note": "nested"}}}'></div>`,
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            verbatim: true,
+            template: "{$parent}.html"
+        }
+    }
+});
+
+QUnit.test("An island configured by its potentia attribute", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.potentiaContent({container});
+    fluid.cell.stabilize();
+    const island = that[fluid.metadataSymbol].childComponents.counter;
+    assert.ok(island, "The island is the member its fluid-id names");
+    assert.equal(island.that.count, 3, "The island's member is configured by its potentia");
+    assert.equal(qs(".counter .count", container).textContent, "3", "The island renders the configured value");
+    assert.equal(qs(".counter .label", container).textContent, "Three", "A second member configured");
+    assert.equal(qs(".counter .note", container).textContent, "nested", "A nested component configured by a $component record");
+    assert.equal(qs(".counter .src", container).textContent, "a.png", "The island's dataset is given beside its potentia");
+    assert.ok(qs("[fluid-id=\"counter\"]", container).hasAttribute("fluid-potentia"), "The element keeps its potentia once rendered");
+    assert.ok(fluid.hasLayer(island.that, "fluid.tests.potentiaIsland") && !fluid.hasLayer(island.that, "ignored"),
+        "The island's layers are those its element names, not any in its potentia");
+
+    that.html = `<div fluid-layers="fluid.tests.potentiaIsland" fluid-id="counter" fluid-potentia='{"count": '></div>`;
+    fluid.cell.stabilize();
+    const broken = that[fluid.metadataSymbol].childComponents.counter;
+    assert.ok(fluid.isUnavailable(broken.that.potentiaError), "Potentia which is not JSON is reported as an unavailable value");
+    assert.ok(/not valid JSON/.test(JSON.stringify(broken.that.potentiaError)), "Saying what is wrong with it: " + JSON.stringify(broken.that.potentiaError));
+    assert.equal(qs(".counter .count", container).textContent, "0", "The island renders from its layers' defaults");
+    that.destroy();
+});
+
+QUnit.test("An element booting itself is configured by its dataset and potentia attribute, as an island is", async function (assert) {
+    const container = qs(".container");
+    container.innerHTML = `<div class="booted" fluid-layers="fluid.tests.potentiaIsland" data-src="b.png" ` +
+        `fluid-potentia='{"count": 7, "inner": {"$component": {"note": "booted"}}}'></div>`;
+    const element = qs(".booted", container);
+    // The document's self-boot effect observes the document for such elements, and reports asynchronously
+    const deadline = Date.now() + 2000;
+    while (!fluid.viewContainerRegistry.get(element) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    fluid.cell.stabilize();
+    const shadow = fluid.viewContainerRegistry.get(element);
+    assert.ok(shadow, "The element is booted");
+    assert.equal(shadow.that.count, 7, "Configured by its potentia");
+    assert.equal(shadow.that.dataset.src, "b.png", "Given its dataset");
+    assert.equal(qs(".count", element)?.textContent, "7", "Rendered from its potentia");
+    assert.equal(qs(".note", element)?.textContent, "booted", "A nested component configured");
+    shadow.that.destroy();
+    container.innerHTML = "";
+});
+
+QUnit.test("A page whose own component tree renders it boots none of its elements alone", async function (assert) {
+    const html = document.documentElement;
+    const container = qs(".container");
+    html.setAttribute(fluid.pageBootAttribute, "");
+    container.innerHTML = `<div class="unbooted" fluid-layers="fluid.tests.island" data-src="a.png"></div>`;
+    // The document's self-boot effect observes the document for such elements, and reports asynchronously
+    await new Promise(resolve => setTimeout(resolve, 50));
+    fluid.cell.stabilize();
+    const island = qs(".unbooted", container);
+    assert.notOk(fluid.viewContainerRegistry.get(island), "The element bearing fluid-layers is not booted as a free component");
+    assert.equal(island.children.length, 0, "Nothing is rendered into it");
+    html.removeAttribute(fluid.pageBootAttribute);
+    container.innerHTML = "";
+});
+
 fluid.def("fluid.tests.pendingClass", {
     $layers: "fluid.component",
     extra: fluid.unavailable({message: "Pending I/O", variety: "pending"}),
@@ -2694,5 +2960,36 @@ QUnit.test("Children designated by @id do not turn over when their parent rerend
     assert.equal(innerShadow.computer._value, before.inner, "The inner child, whose slot is unchanged, still did not turn over");
     assert.equal(container.querySelector(".inner"), before.innerNode, "Its markup is still undisturbed");
     restoreDef();
+    that.destroy();
+});
+
+QUnit.test("A container given to a component borrowing its subcomponent's view refines that view", function (assert) {
+    fluid.def("fluid.tests.view.borrowed", {
+        $layers: "fluid.component",
+        label: "Borrowed",
+        view: {
+            $component: {
+                $layers: "fluid.templateViewComponent",
+                template: "<div class=\"borrowed\">@{label}</div>"
+            }
+        }
+    });
+    fluid.def("fluid.tests.view.borrowingUmbrella", {
+        $layers: "fluid.component",
+        first: {
+            $component: {
+                $layers: "fluid.tests.view.borrowed"
+            }
+        },
+        view: "{first}.view"
+    });
+    const container = qs(".container");
+    // The creator function forwards its container to view.$component.container, which refines the borrowed view
+    const that = fluid.tests.view.borrowingUmbrella({container});
+    fluid.cell.stabilize();
+    assert.equal(that.view, that.first.view, "The view is still borrowed");
+    // The view's template elides its root onto the container
+    assert.ok(container.classList.contains("borrowed") && container.textContent === "Borrowed",
+        "The borrowed view renders into the container given");
     that.destroy();
 });

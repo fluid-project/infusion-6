@@ -114,10 +114,12 @@ fluid.resizeBar.captureSizes = function (controller) {
 
 /**
  * Write new sizes to the elements on either side of the bar, as percentages of the size of the content box of the
- * bar's parent, against which percentage sizes of its children resolve
+ * bar's parent, against which percentage sizes of its children resolve. The sizes are measured on screen, as
+ * `sizeOf` measures them, and so is the parent's - its content box is scaled by any transform applied to it or its
+ * ancestors, e.g. the zoom of a canvas on which it is drawn.
  * @param {ResizeBarController} controller - The controller for the bar
- * @param {Number} newBefore - The new size in pixels of the before element
- * @param {Number} newAfter - The new size in pixels of the after element
+ * @param {Number} newBefore - The new size in pixels on screen of the before element
+ * @param {Number} newAfter - The new size in pixels on screen of the after element
  */
 fluid.resizeBar.applySize = function (controller, newBefore, newAfter) {
     const parent = controller.bar.parentElement;
@@ -125,8 +127,10 @@ fluid.resizeBar.applySize = function (controller, newBefore, newAfter) {
     const isFlex = parentStyle.display.includes("flex");
     const dimension = controller.isHorizontal ? "width" : "height";
     const padding = controller.isHorizontal ? ["paddingLeft", "paddingRight"] : ["paddingTop", "paddingBottom"];
-    const parentSize = (controller.isHorizontal ? parent.clientWidth : parent.clientHeight) -
-        padding.reduce((sum, side) => sum + parseFloat(parentStyle[side]), 0);
+    const layoutSize = controller.isHorizontal ? parent.offsetWidth : parent.offsetHeight;
+    const scale = layoutSize > 0 ? fluid.resizeBar.sizeOf(controller, parent) / layoutSize : 1;
+    const parentSize = ((controller.isHorizontal ? parent.clientWidth : parent.clientHeight) -
+        padding.reduce((sum, side) => sum + parseFloat(parentStyle[side]), 0)) * scale;
     [[controller.before, newBefore], [controller.after, newAfter]].forEach(([element, size]) => {
         const percent = (size / parentSize * 100).toFixed(4) + "%";
         if (isFlex) {

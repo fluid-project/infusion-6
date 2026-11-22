@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>A layer defined by the markup, whose template is its SFC's</title>
+        <!-- The shape of a page written by a static build, e.g. bagatelle's hydrated atlases: the script of an imported SFC
+             is held in the page's markup, defining the SFC's layer as the page loads, so that the layer is never
+             demanded - but the SFC's template is parsed only from the SFC itself, which must be loaded once a component
+             awaits its template. See "A layer which the markup defines loads its SFC for its template" in
+             FluidViewSFCTests.js -->
+        <script src="../../../../../src/framework/core/js/FluidBoot.js"></script>
+        <fluid-import src="fluid-tests-hydratedTemplate.vue"></fluid-import>
+        <script>
+            "use strict";
+            // As the SFC's own script, held in the markup as a static build writes it - patched, as parsing the SFC
+            // patches it, so that its view's template is that of the SFC, held in the template store
+            fluid.def("fluid.tests.hydratedTemplate", {
+                $layers: ["fluid.sfcLayer", "fluid.component"],
+                caption: "Rendered from the SFC's template",
+                view: {
+                    $component: {
+                        $layers: ["fluid.sfcTemplateViewComponent"],
+                        template: {sfcLayer: "fluid.tests.hydratedTemplate"}
+                    }
+                }
+            });
+        </script>
+    </head>
+    <body>
+        <div fluid-layers="fluid.tests.hydratedTemplate"></div>
+    </body>
+</html>

@@ -53,9 +53,15 @@ QUnit.test("SFC parse produces injection records", async function (assert) {
     assert.ok(injRecs[symbolsId].text.startsWith("<symbol id=\"fluid-tests-sfc-chevron\""), "Symbols record holds the block's markup verbatim");
     assert.equal(injRecs[scriptId].variety, "script", "Script record has script variety");
     assert.equal(injRecs[styleId].variety, "style", "Style record has style variety");
-    assert.ok(injRecs[scriptId].text.includes("sfcLayer"), "Script text patched with reference to its template");
-    assert.ok(injRecs[scriptId].text.includes("fluid.sfcTemplateViewComponent"), "Script text patched with template layer");
+    assert.equal(injRecs[scriptId].sfcLayer, layerName, "Script record names the layer of its SFC");
+    assert.strictEqual(injRecs[scriptId].sfcTemplate, true, "Script record notes the SFC's <template> block");
     assert.ok(fluid.templateStore[layerName], "Parsed template written to template store");
+    const def = fluid.def(layerName);
+    assert.equal(def.$layers[0], "fluid.sfcLayer", "Definition augmented with the tag layer, first");
+    assert.deepEqual(def.view.$component.template, {sfcLayer: layerName}, "Definition augmented with reference to its template");
+    assert.ok(fluid.makeArray(def.view.$component.$layers).includes("fluid.sfcTemplateViewComponent"), "Definition augmented with template layer");
+    assert.equal(fluid.sfcScriptRecords[layerName].ownNodeId, scriptId, "Script defining the layer recorded");
+    assert.equal(fluid.defInterceptors, null, "No interceptor left armed once the script has run");
 });
 
 QUnit.test("SFC injections are applied to the document", async function (assert) {
@@ -226,21 +232,95 @@ QUnit.test("SFC imports another SFC by a path relative to itself", async functio
     that.destroy();
 });
 
-QUnit.test("SFC defining its template twice is rejected", function (assert) {
+/**
+ * Load the text of an SFC defining a layer, and await its injection into this document
+ * @param {String} layerName - The name of the layer
+ * @param {String} text - The text of the SFC
+ * @return {Promise<Object>} A promise for the layer's definition once injected, or an unavailable value if rejected
+ */
+fluid.tests.sfc.loadText = async function (layerName, text) {
+    fluid.loadSFCText(layerName, text);
+    await fluid.cell.waitFor(fluid.subscribeDocToInjections(layerName, document));
+    await fluid.cell.settle();
+    return fluid.layerRecToUnavailable(fluid.readLayer(layerName).get()) ?? fluid.def(layerName);
+};
+
+QUnit.test("SFC defining its template twice is rejected", async function (assert) {
     const layerName = "fluid.tests.sfc.twoTemplates";
     const script = "<script>\nfluid.def(\"" + layerName + "\", {\n    $layers: \"fluid.component\",\n    view: {\n        $component: {\n"
         + "            $layers: \"fluid.templateViewComponent\",\n            template: \"$compute:fluid.identity(<div>Computed</div>)\"\n"
         + "        }\n    }\n});\n</script>\n";
-    const conflicting = fluid.parseHTMLToTree(script + "<template><div class=\"placeholder\"></div></template>");
-    const sniFor = vTree => fluid.parseSFCScripts(fluid.querySelectorAll(vTree, "script"))[0];
-    assert.ok(fluid.hasSFCTemplateConflict(conflicting, sniFor(conflicting), layerName), "Conflict detected");
-    const withoutBlock = fluid.parseHTMLToTree(script);
-    assert.notOk(fluid.hasSFCTemplateConflict(withoutBlock, sniFor(withoutBlock), layerName), "No conflict without <template> block");
-    const injRecs = fluid.sfcToInjRecs(conflicting, layerName);
-    assert.deepEqual(injRecs, {}, "Nothing injected from conflicting SFC");
-    const unavailable = fluid.layerRecToUnavailable(fluid.readLayer(layerName).get());
+    const conflicting = script + "<template><div class=\"placeholder\"></div></template>";
+    const dryRun = text => fluid.sfcDryRunDefs(fluid.parseHTMLToTree(text), layerName)[layerName];
+    const dryConflict = dryRun(conflicting);
+    assert.ok(fluid.isUnavailable(dryConflict) && dryConflict.message === fluid.sfcTemplateConflictMessage(layerName),
+        "Conflict detected by a dry run");
+    assert.equal(dryRun(script).view.$component.template, "$compute:fluid.identity(<div>Computed</div>)",
+        "No conflict without <template> block");
+    assert.ok(fluid.isUnavailable(fluid.readLayer(layerName).get()), "A dry run registers nothing");
+    const unavailable = await fluid.tests.sfc.loadText(layerName, conflicting);
     assert.ok(fluid.isUnavailable(unavailable) && unavailable.message === fluid.sfcTemplateConflictMessage(layerName),
         "Layer defined as unavailable, with the conflict described");
+});
+
+QUnit.test("Definition of an SFC's layer augmented as its script defines it", function (assert) {
+    const augment = (def, hasTemplate) => fluid.sfcAugmentDef(def, "fluid.tests.sfc.augmented", hasTemplate);
+    // Keys are compared in order, since the definition is augmented as if the members were written into its text
+    const keyed = value => JSON.stringify(value);
+    const template = {sfcLayer: "fluid.tests.sfc.augmented"};
+    assert.equal(keyed(augment({value: 1}, true)), keyed({$layers: ["fluid.sfcLayer", "fluid.component"], value: 1,
+        view: {$component: {$layers: ["fluid.sfcTemplateViewComponent"], template}}}), "No layers or view, with a <template> block");
+    assert.equal(keyed(augment({value: 1}, false)), keyed({$layers: ["fluid.sfcLayer", "fluid.component"],
+        view: {$component: {$layers: ["fluid.templateViewComponent"]}}, value: 1}), "No layers or view, without a <template> block");
+    assert.equal(keyed(augment({$layers: "fluid.viewComponent", value: 2}, false)),
+        keyed({$layers: ["fluid.sfcLayer", "fluid.viewComponent"], value: 2}), "Layers of a component without a template kept in place");
+    assert.equal(keyed(augment({$layers: ["fluid.component"], view: {other: 1}, after: 3}, true)), keyed({
+        $layers: ["fluid.sfcLayer", "fluid.component"],
+        view: {other: 1, $component: {$layers: ["fluid.sfcTemplateViewComponent"], template}},
+        after: 3}), "View without $component - the template's members placed last within it");
+    const partial = {$layers: "fluid.component", view: {$component: {$layers: "fluid.partialViewComponent", template: "<b/>"}}};
+    assert.equal(keyed(augment(partial, true)), keyed({...partial, $layers: ["fluid.sfcLayer", "fluid.component"]}),
+        "Partial view left with its own template");
+    const tagged = {$layers: ["fluid.sfcLayer", "fluid.component"], view: {$component: {$layers: "fluid.templateViewComponent", template: "<i/>"}}};
+    assert.equal(keyed(augment(tagged, false)), keyed(tagged), "Definition already tagged is unchanged");
+    const method = () => "}";
+    assert.equal(augment({$layers: "fluid.component", method}, false).method, method, "Functions held by the definition are kept");
+});
+
+QUnit.test("SFC scripts are evaluated as written, defining their layer however it is written", async function (assert) {
+    const layerName = "fluid.tests.sfc.asWritten";
+    const text = "<template><div class=\"as-written\"></div></template>\n"
+        + "<script>const helper = () => \"}\"; // a brace }\nfluid.tests.sfc.helperRuns = (fluid.tests.sfc.helperRuns ?? 0) + 1;</script>\n"
+        + "<script>\"use strict\";\nconst value = 3;\nfluid.def(\"" + layerName + "\", {$layers: \"fluid.component\", value, re: /}/, "
+        + "other: `${\"}\"}`});\nfluid.def(\"" + layerName + ".other\", {$layers: \"fluid.component\"});</script>";
+    const def = await fluid.tests.sfc.loadText(layerName, text);
+    assert.equal(def.value, 3, "Shorthand property read");
+    assert.equal(def.other, "}", "Template literal read");
+    assert.equal(def.$layers[0], "fluid.sfcLayer", "Definition augmented");
+    assert.deepEqual(def.view.$component.template, {sfcLayer: layerName}, "Template referred to");
+    assert.ok(fluid.def(layerName + ".other"), "Another layer defined by the script registered as written");
+    assert.notOk(fluid.def(layerName + ".other").$layers.includes("fluid.sfcLayer"), "Another layer is not augmented");
+    const script = document.getElementById("fl-script-" + layerName + "-1");
+    assert.ok(script.text.startsWith("fluid.beginSFCScript(\"" + layerName + "\""), "Injected script arms the interceptor itself");
+    assert.equal(script.text.split("\n")[1], "const value = 3;", "Injected script keeps the SFC's line numbers");
+
+    // An edit to the template alone does not evaluate the scripts again, nor does removing it leave them as they were
+    const rec = fluid.readSFC(layerName);
+    rec.textSignal.set(text.replace("as-written\"", "as-written edited\""));
+    await fluid.cell.settle();
+    assert.equal(fluid.tests.sfc.helperRuns, 1, "Scripts not evaluated again by an edit to the template");
+    rec.textSignal.set(text.replace(/<template>.*<\/template>\n/, ""));
+    await fluid.cell.waitFor(fluid.subscribeDocToInjections(layerName, document));
+    await fluid.cell.settle();
+    assert.equal(fluid.def(layerName).view, undefined, "Layer without a <template> block once more as written, with no reference to a template");
+    assert.equal(fluid.tests.sfc.helperRuns, 2, "Scripts evaluated again on losing the <template> block");
+});
+
+QUnit.test("SFC whose scripts don't define its layer is rejected", async function (assert) {
+    const layerName = "fluid.tests.sfc.undefined";
+    const unavailable = await fluid.tests.sfc.loadText(layerName, "<script>fluid.def(\"" + layerName + ".wrong\", {});</script>");
+    assert.ok(fluid.isUnavailable(unavailable) && unavailable.message === fluid.sfcMissingDefMessage(layerName, [layerName + ".wrong"]),
+        "Layer defined as unavailable, naming the layer defined instead");
 });
 
 QUnit.test("Placeholders declared by an SFC, or registered, are resolved - FLUID-7032", async function (assert) {
@@ -284,4 +364,166 @@ QUnit.test("Placeholders declared by an SFC, or registered, are resolved - FLUID
     await rejected.then(() => assert.ok(false, "Undeclared placeholder must not resolve"),
         error => assert.ok(/No material has been declared for placeholder placeholder:\/\/fluid\.tests\.sfc\.placeholdersPending\/never/.test(error.message),
             "Awaited placeholder which is never declared is rejected, with the declaration expected described"));
+});
+
+/**
+ * Load Infusion's files, one after another, into a document which has already loaded, as an extension or a widget
+ * loader does - unlike a page booting through FluidBoot.js, which writes all of their scripts as it is parsed
+ * @param {Document} dokkument - The document
+ * @param {String} root - The URL of Infusion's root directory, ending in "/"
+ * @param {String[]} files - The files to load, relative to the root, in order
+ * @return {Promise} Resolves once all have run
+ */
+fluid.tests.loadScriptsLate = async function (dokkument, root, files) {
+    for (const file of files) {
+        await new Promise((resolve, reject) => {
+            const script = dokkument.createElement("script");
+            script.src = root + file;
+            script.onload = resolve;
+            script.onerror = () => reject(new Error("Failed to load " + file));
+            dokkument.head.appendChild(script);
+        });
+    }
+};
+
+QUnit.test("Infusion loaded into a document already loaded boots the SFCs it declared beforehand", async function (assert) {
+    // Only a real browser loads and runs scripts inserted into a frame
+    if (typeof(window.getComputedStyle) === "function") {
+        const root = new URL("../../../../", location.href).href;
+        // The files in the order FluidBoot.js loads them - read from its text, since running it in a document
+        // already loaded would write over the document
+        const bootText = await (await fetch(root + "src/framework/core/js/FluidBoot.js")).text();
+        const filesBlock = bootText.match(/files: \[([\s\S]*?)\]/)[1];
+        const files = [...filesBlock.matchAll(/"([^"]+)"/g)].map(match => match[1]);
+        assert.equal(files[files.length - 1], "src/framework/core/js/FluidView-browser.js",
+            "FluidBoot.js loads FluidView-browser.js last, since it boots the document as it runs");
+
+        const frame = document.createElement("iframe");
+        document.body.appendChild(frame);
+        await new Promise(resolve => {
+            frame.onload = resolve;
+            frame.srcdoc = "<!DOCTYPE html><html><head></head><body></body></html>";
+        });
+        const frameDocument = frame.contentDocument;
+        // Declared before Infusion has loaded, so that its boot acquires them as soon as it runs
+        frameDocument.body.innerHTML = `<fluid-module id="infusion-6" src="${root}"></fluid-module>` +
+            `<fluid-import src="${root}tests/framework-tests/core/testData/fluid-tests-sfc-component.vue"></fluid-import>` +
+            "<div class=\"late-host\" fluid-layers=\"fluid.tests.sfc.component\"></div>";
+        await fluid.tests.loadScriptsLate(frameDocument, root, files);
+        const frameFluid = frame.contentWindow.fluid;
+        frameFluid.setGlobalValue("fluid.tests.sfc.executions", 0);
+        await frameFluid.cell.settle();
+        const deadline = Date.now() + 5000;
+        while (!frameDocument.querySelector(".late-host .sfc-text") && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            await frameFluid.cell.settle();
+        }
+        assert.equal(frameDocument.querySelector(".late-host .sfc-text")?.textContent, "Initial SFC text",
+            "The SFC imported before Infusion loaded is parsed, and its component renders");
+        frame.remove();
+    } else {
+        assert.expect(0);
+    }
+});
+
+QUnit.test("A page's layer deriving from one it imports renders, though its element boots before the import is read", async function (assert) {
+    // Only a real browser loads and runs a frame's page. The page declares a module map, which is fetched before the
+    // page's <fluid-import>s are read, whilst its element is booted at once - demanding the imported layer before its
+    // import is declared. Its file must be loaded once the import is. A regression guard for bagatelle's
+    // indexBeasBCBA.html, which failed thus once imports were loaded only on demand
+    if (typeof(window.getComputedStyle) === "function") {
+        const frame = document.createElement("iframe");
+        const loaded = new Promise(resolve => frame.onload = resolve);
+        frame.src = new URL("../testData/early-demand/index.html", location.href).href;
+        document.body.appendChild(frame);
+        await loaded;
+        const deadline = Date.now() + 10000;
+        const rendered = () => frame.contentDocument.querySelector(".early-demand-rendered");
+        while (!rendered() && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        assert.equal(rendered()?.textContent, "Rendered from the page's own layer",
+            "The imported layer is loaded, and the page's layer deriving from it renders");
+        const frameFluid = frame.contentWindow.fluid;
+        assert.deepEqual(frameFluid.undefinedLayers().map(record => record.message), [], "No layer is left undefined");
+        frame.remove();
+    } else {
+        assert.expect(0);
+    }
+});
+
+QUnit.test("A layer which the markup defines loads its SFC for its template", async function (assert) {
+    // Only a real browser loads and runs a frame's page. The page's markup defines the layer, as a static build writes
+    // an SFC's script, so that the layer is never demanded - its SFC must be loaded once its template is awaited. A
+    // regression guard for bagatelle's hydrated atlases, whose map and network never rendered once imports were loaded
+    // only on demand
+    if (typeof(window.getComputedStyle) === "function") {
+        const frame = document.createElement("iframe");
+        const loaded = new Promise(resolve => frame.onload = resolve);
+        frame.src = new URL("../testData/hydrated-template/index.html", location.href).href;
+        document.body.appendChild(frame);
+        await loaded;
+        const deadline = Date.now() + 10000;
+        const rendered = () => frame.contentDocument.querySelector(".hydrated-template-rendered");
+        while (!rendered() && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        assert.equal(rendered()?.textContent, "Rendered from the SFC's template", "The SFC is loaded for its template, which renders");
+        frame.remove();
+    } else {
+        assert.expect(0);
+    }
+});
+
+QUnit.test("A script adopted from the markup is claimed against injection by another SFC", function (assert) {
+    // As in a page written by a static build, whose markup holds a library which several SFCs refer to, injected for
+    // the first of them - another SFC loaded later must not inject it again
+    // The test's own document, with a library of a URL no other test uses, since the claims of a document are kept
+    const dokkument = document;
+    const url = new URL("../testData/shared-library-adopted.js", document.location.href).href;
+    const script = dokkument.createElement("script");
+    script.id = "fl-script-fluid.tests.first-0";
+    script.setAttribute("fluid-src", url);
+    dokkument.head.appendChild(script);
+    const injRec = nodeId => ({nodeId, variety: "script", url});
+    const adopted = fluid.adoptMarkupInjections(dokkument, {[script.id]: injRec(script.id)}, "fluid.tests.first");
+    assert.deepEqual(Object.keys(adopted), [script.id], "The first SFC adopts the script from the markup");
+    const second = fluid.claimSharedScripts(dokkument, "fluid.tests.second", [{injRec: injRec("fl-script-fluid.tests.second-0")}]);
+    assert.deepEqual(second.docInjRecs, [], "Another SFC referring to the script does not inject it again");
+    assert.equal(second.awaited.length, 1, "But awaits the first's claim of it");
+    script.remove();
+});
+
+// A loader for files of a test-only extension, which records the files it is asked to load rather than fetching them
+fluid.tests.sfc.recordedLoads = [];
+fluid.tests.sfc.recordLoad = (layerName, url) => fluid.tests.sfc.recordedLoads.push(layerName + " " + url);
+
+QUnit.test("An imported SFC is loaded only once its layer is demanded", function (assert) {
+    const layerName = "fluid.tests.sfc.lazyImport";
+    fluid.layerLoaders.lazytest = "fluid.tests.sfc.recordLoad";
+    const url = new URL("../testData/lazy.lazytest", document.location.href).href;
+    fluid.loadImportMap({[layerName]: {path: url}});
+    assert.equal(fluid.importMap[layerName]?.url, url, "The import is declared");
+    assert.deepEqual(fluid.tests.sfc.recordedLoads, [], "Nothing is loaded for a layer which is not demanded");
+    assert.ok(fluid.loadImport(layerName), "Demanding the layer finds it imported");
+    assert.deepEqual(fluid.tests.sfc.recordedLoads, [layerName + " " + url], "Its file is loaded once its layer is demanded");
+    fluid.loadImport(layerName);
+    assert.equal(fluid.tests.sfc.recordedLoads.length, 1, "It is loaded once only, however often demanded");
+    assert.notOk(fluid.loadImport("fluid.tests.sfc.notImported"), "A layer not imported has nothing to load");
+    delete fluid.layerLoaders.lazytest;
+    delete fluid.importMap[layerName];
+});
+
+QUnit.test("A layer demanded before its import is declared is loaded once it is", function (assert) {
+    // As when an element is booted while Infusion loads, before the document's <fluid-import>s have been read
+    const layerName = "fluid.tests.sfc.demandedEarly";
+    fluid.layerLoaders.lazytest = "fluid.tests.sfc.recordLoad";
+    fluid.tests.sfc.recordedLoads = [];
+    fluid.readLayer(layerName, true);
+    assert.deepEqual(fluid.tests.sfc.recordedLoads, [], "Nothing is loaded while the layer is not imported");
+    const url = new URL("../testData/early.lazytest", document.location.href).href;
+    fluid.loadImportMap({[layerName]: {path: url}});
+    assert.deepEqual(fluid.tests.sfc.recordedLoads, [layerName + " " + url], "Its file is loaded as soon as its import is declared");
+    delete fluid.layerLoaders.lazytest;
+    delete fluid.importMap[layerName];
 });

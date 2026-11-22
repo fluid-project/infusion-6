@@ -1,11 +1,10 @@
 <!DOCTYPE html><html>
 <head>
     <meta charset="UTF-8">
-    <title>Infusion in tldraw (React lifecycle)</title>
+    <title>Infusion in tldraw</title>
 
     <fluid-module id="infusion-6" src="../../"></fluid-module>
 
-    <script src="../../src/lib/lezer/lezer-javascript-browser.js" fluid-hydrated="%infusion-6"></script>
 
     <script src="../../src/framework/core/js/FluidCore.js" fluid-hydrated="%infusion-6"></script>
     <script src="../../src/framework/core/js/FluidSignals.js" fluid-hydrated="%infusion-6"></script>
@@ -16,28 +15,37 @@
     <script src="../../src/framework/core/js/FluidPTF.js" fluid-hydrated="%infusion-6"></script>
     <script src="../../src/framework/core/js/FluidView-browser.js" fluid-hydrated="%infusion-6"></script>
     <script src="../../src/framework/core/js/template-parser.js" fluid-hydrated="%infusion-6"></script>
-    <script src="../../src/framework/core/js/sfc-parser.js" fluid-hydrated="%infusion-6"></script>
 
     <fluid-module id="tldrawDemo" src="./"></fluid-module>
 
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyTime.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-storySegment.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyImageGen.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerator.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-closestNoteFinder.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnything.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
-    <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnythingEntry.vue" fluid-hydrated="%tldrawDemo"></fluid-import>
+    <!-- The widgets offered by the layer picker - eager, since the picker lists the layers defined, and an import is
+         otherwise loaded only once its layer is demanded -->
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyTime.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-storySegment.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-storyImageGen.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerator.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-closestNoteFinder.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <fluid-import src="%tldrawDemo/sfc/fluid-demos-inspector.vue" fluid-hydrated="%tldrawDemo" eager=""></fluid-import>
+    <!-- The "Ask me anything" panel, Infusion's own, which brings what it needs - its entries, the rendering of markdown,
+         and the machinery of conversing with a model, fluid-ai.js -->
+    <fluid-import src="%infusion-6/src/components/askAnything/fluid-askAnything.vue" fluid-hydrated="%infusion-6"></fluid-import>
+    <!-- The bar dividing the canvas from the panel - see fluid.tldraw.bindResizeBar -->
+    <fluid-import src="%infusion-6/src/components/sfc/fluid-resizeBar.vue" fluid-hydrated="%infusion-6" eager=""></fluid-import>
 
     <!-- Stubs for the "#Agents" widget helpers used by the story time widget -->
     <script src="js/agents-stubs.js"></script>
-    <!-- Hosting machinery, and the protocol of the "Ask me anything" AI panel, which do not depend on tldraw -->
+    <!-- Hosting machinery, and what the "Ask me anything" panel converses about here - the workspace - neither of which
+         depends on tldraw -->
     <script src="js/tldraw-hosting.js"></script>
+    <!-- The colouring of layers shared with the substrate-oriented editor, used by the inspector widget -->
+    <script src="../../src/framework/edit/js/layerColourManager.js"></script>
+    <!-- Infusion's protocol of conversing with a model about an arena, used beyond the panel to diagnose widgets - the
+         panel's SFC declares them too, and they are run once -->
+    <script src="../../src/components/askAnything/fluid-ai.js"></script>
+    <script src="../../src/components/askAnything/fluid-ai-arena.js"></script>
     <script src="js/ai-protocol.js"></script>
-    <!-- Renders the AI's responses as markdown -->
-    <script src="../../src/lib/snarkdown/snarkdown.umd.js"></script>
-    <script src="js/markdown-block.js"></script>
     <!-- Image search for the image widget -->
     <script src="js/pixabay.js"></script>
 
@@ -66,8 +74,16 @@
             margin: 0;
             height: 100%;
         }
+        /* The canvas and the panel lie side by side, divided by a resize bar which shares the width between them */
         body {
             font-family: var(--font-body);
+            display: flex;
+            overflow: hidden;
+        }
+        #canvas-pane {
+            position: relative;
+            flex: 1 1 auto;
+            min-width: 0;
         }
         .top-panel {
             /* Above tldraw's style panel, a later sibling at z-index 300, which the open layer list would otherwise fall
@@ -171,8 +187,8 @@
             cursor: pointer;
         }
         #tldraw-root {
-            position: fixed;
-            inset: 0 var(--ai-panel-width) 0 0;
+            position: absolute;
+            inset: 0;
         }
         .infusion-host {
             position: relative;
@@ -236,20 +252,55 @@
             border-radius: 6px;
             cursor: pointer;
         }
-        #ai-root {
-            position: fixed;
-            top: 0;
+        #arena-attribution {
+            position: absolute;
+            bottom: 52px;
+            left: 0;
             right: 0;
-            bottom: 0;
-            width: var(--ai-panel-width);
+            width: max-content;
+            max-width: calc(100% - 32px);
+            margin: 0 auto;
+            z-index: 400;
+            padding: 4px 12px;
+            font-family: var(--font-body);
+            font-size: 11px;
+            color: #455A64;
+            background-color: rgba(255, 255, 255, 0.92);
+            border: 1px solid #E0E0E0;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+        #arena-attribution[hidden] {
+            display: none;
+        }
+        #arena-attribution a {
+            color: #1E88E5;
+        }
+        #ai-resize-bar {
+            --fl-resize-bar-ridge-width: 2px;
+        }
+        #ai-root {
+            position: relative;
+            flex: 0 0 var(--ai-panel-width);
+            min-width: 0;
+            height: 100%;
+            overflow: hidden;
         }
     </style>
 </head>
 <body>
-<!-- tldraw mounts here; its Infusion shapes construct and destroy their component explicitly from React lifecycle hooks -->
-<div id="tldraw-root"></div>
+<div id="canvas-pane">
+    <!-- tldraw mounts here; its Infusion shapes construct and destroy their component explicitly from React lifecycle
+         hooks -->
+    <div id="tldraw-root"></div>
+    <!-- The attribution of the service whose model is chosen in the panel, if it asks for one - see
+         fluid.tldraw.askAnything -->
+    <div id="arena-attribution" hidden></div>
+</div>
+<!-- The resize bar dividing the canvas from the panel, rendered by fluid.resizeBar - see fluid.tldraw.bindResizeBar -->
+<div id="ai-resize-bar"></div>
 <!-- The "Ask me anything" panel, through which an AI may reflect on and alter the workspace -->
-<div id="ai-root" fluid-layers="fluid.demos.askAnything"></div>
+<div id="ai-root" fluid-layers="fluid.tldraw.askAnything"></div>
 <script type="module" src="js/tldraw-driver.js"></script>
 </body>
 </html>

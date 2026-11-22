@@ -53,26 +53,29 @@ const fluidQUnitBrowserRunner = {};
  * run's totals, are relayed to the runner through the functions it exposes.
  */
 fluidQUnitBrowserRunner.pageAgent = function () {
-    document.addEventListener("DOMContentLoaded", () => {
-        const QUnit = window.QUnit;
-        if (QUnit) {
-            QUnit.on("testEnd", test => {
-                window.fluidQUnitTestEnd({
-                    fullName: test.fullName.join(" > "),
-                    status: test.status,
-                    errors: test.errors.map(error => ({
-                        message: error.message,
-                        expected: "expected" in error ? QUnit.dump.parse(error.expected) : undefined,
-                        actual: "actual" in error ? QUnit.dump.parse(error.actual) : undefined,
-                        stack: error.stack
-                    }))
+    // Installed in every document the page loads, including any frame a test makes, but only the page's own reports
+    if (window.top === window) {
+        document.addEventListener("DOMContentLoaded", () => {
+            const QUnit = window.QUnit;
+            if (QUnit) {
+                QUnit.on("testEnd", test => {
+                    window.fluidQUnitTestEnd({
+                        fullName: test.fullName.join(" > "),
+                        status: test.status,
+                        errors: test.errors.map(error => ({
+                            message: error.message,
+                            expected: "expected" in error ? QUnit.dump.parse(error.expected) : undefined,
+                            actual: "actual" in error ? QUnit.dump.parse(error.actual) : undefined,
+                            stack: error.stack
+                        }))
+                    });
                 });
-            });
-            QUnit.on("runEnd", run => window.fluidQUnitRunEnd({testCounts: run.testCounts, runtime: run.runtime}));
-        } else {
-            window.fluidQUnitRunEnd({error: "QUnit was not loaded by the page"});
-        }
-    });
+                QUnit.on("runEnd", run => window.fluidQUnitRunEnd({testCounts: run.testCounts, runtime: run.runtime}));
+            } else {
+                window.fluidQUnitRunEnd({error: "QUnit was not loaded by the page"});
+            }
+        });
+    }
 };
 
 /**

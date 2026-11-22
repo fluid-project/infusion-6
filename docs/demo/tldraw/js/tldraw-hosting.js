@@ -5,6 +5,57 @@
 
 fluid.registerNamespace("fluid.tldraw");
 
+// The widgets constructed on the canvas, by the id of the shape hosting each - written by the driver as it constructs
+// and destroys them. This is plain, so that no component is held within a cell, and is accompanied by a cell counting
+// its changes, which a reactive context reading it may track - see fluid.tldraw.widgetForShape
+fluid.tldraw.widgetsByShape = new Map();
+fluid.tldraw.widgetsVersion = fluid.cell(0, {name: "version of the widgets constructed on the canvas"});
+
+/**
+ * Note that the widget hosted by a shape has been constructed or destroyed
+ * @param {String} shapeId - The id of the shape
+ * @param {fluid.component|null} that - The widget, or `null` if it has been destroyed
+ */
+fluid.tldraw.noteWidget = function (shapeId, that) {
+    if (that) {
+        fluid.tldraw.widgetsByShape.set(shapeId, that);
+    } else {
+        fluid.tldraw.widgetsByShape.delete(shapeId);
+    }
+    fluid.tldraw.widgetsVersion.set(fluid.tldraw.widgetsVersion.get() + 1);
+};
+
+/**
+ * Bind to the version of the widgets constructed on the canvas - suitable as the binder of a $bindable, so that a
+ * computation taking it as an argument is reevaluated as widgets are constructed and destroyed
+ * @return {fluid.cell<Number>} The cell counting changes to the widgets
+ */
+fluid.tldraw.bindWidgetsVersion = function () {
+    return fluid.tldraw.widgetsVersion;
+};
+
+// The element drawn on tldraw's canvas in page space, beneath the camera's transform, onto which widgets may draw what
+// lies beyond their own shapes, e.g. the inspector's anchor line. Written by the driver as tldraw mounts and unmounts
+// it, and `null` whilst there is none - see fluid.tldraw.bindCanvasLayer
+fluid.tldraw.canvasLayer = fluid.cell(null, {name: "tldraw canvas layer"});
+
+/**
+ * Bind to the element drawn on tldraw's canvas in page space - suitable as the binder of a $bindable
+ * @return {fluid.cell<Element|null>} The cell holding the element, or `null` whilst tldraw has not mounted it
+ */
+fluid.tldraw.bindCanvasLayer = function () {
+    return fluid.tldraw.canvasLayer;
+};
+
+/**
+ * Find the widget hosted by a shape
+ * @param {String} shapeId - The id of the shape
+ * @return {fluid.component|undefined} The widget, if one has been constructed in it
+ */
+fluid.tldraw.widgetForShape = function (shapeId) {
+    return fluid.tldraw.widgetsByShape.get(shapeId);
+};
+
 /**
  * Compose the direction offered to the "Ask me anything" panel asking the AI to fix the problems diagnosed in a widget
  * @param {String} shapeId - The id of the shape hosting the widget
@@ -100,43 +151,19 @@ fluid.tldraw.reportWidgetError = function (report) {
     }
 };
 
-// Matches a reference by which a component's view is cross-injected from one of its subcomponents, e.g. "{first}.view"
-// or "{self}.first.view", capturing the subcomponent's member name
-fluid.tldraw.injectedViewREs = [/^\{([\w$]+)\}\.view$/, /^\{self\}\.([\w$]+)\.view$/];
-
 /**
  * Construct the potentia through which a host supplies a widget with its container, the id of its shape and the
- * configuration of its shape. These are ordinarily directed at the widget's own view. However, a widget whose view is
- * cross-injected from one of its subcomponents, e.g. by `view: "{first}.view"` as described in
- * FLUID-7020, has no view of its own, and potentia directed at its view would override the injection.
- * In this case, they are directed at the view of that subcomponent instead, following any further such injection made
- * by the subcomponent's own layer.
- * @param {String} layerName - The name of the widget's layer, which must already be registered
+ * configuration of its shape - directed at the widget's view, as at any view component. A widget whose view is borrowed
+ * from one of its subcomponents, e.g. by `view: "{first}.view"`, receives them just the same, since options naming no
+ * `$layers` at a member injecting a component refine that component - see "Refining an injected component" in
+ * ponder's docs/fluid-integration-language.md
  * @param {Element} container - The container into which the widget is to render
  * @param {String} shapeId - The id of the tldraw shape hosting the widget
  * @param {ShapeConfig} [shapeConfig] - The configuration of the shape, as determined by `fluid.tldraw.shapeToConfig`
  * @return {Object} The potentia to be supplied to the widget's creator function
  */
-fluid.tldraw.hostPotentiaFor = function (layerName, container, shapeId, shapeConfig) {
-    const merged = fluid.avatarMerged(layerName);
-    const viewRef = fluid.isUnavailable(merged) ? null : merged.view;
-    const match = typeof(viewRef) === "string" && fluid.tldraw.injectedViewREs.map(re => re.exec(viewRef)).find(oneMatch => oneMatch);
-    const memberName = match && match[1];
-    const contributions = memberName && merged[memberName]?.$component?.contributions;
-    const viewPotentia = {container, shapeId, ...(shapeConfig ? {shape: shapeConfig} : {})};
-    let togo;
-    if (contributions) {
-        const memberLayers = contributions.flatMap(contribution => fluid.makeArray(contribution.record.$layers));
-        const memberLayer = fluid.peek(memberLayers);
-        // A container is only forwarded to the view when supplied to a free component, so for a subcomponent it is
-        // supplied to its view directly
-        const memberPotentia = memberLayer && fluid.layerRecToUnavailable(fluid.readLayer(memberLayer).get()) === null ?
-            fluid.tldraw.hostPotentiaFor(memberLayer, container, shapeId, shapeConfig) : {view: {$component: viewPotentia}};
-        togo = {[memberName]: {$component: memberPotentia}};
-    } else {
-        togo = {view: {$component: viewPotentia}};
-    }
-    return togo;
+fluid.tldraw.hostPotentia = function (container, shapeId, shapeConfig) {
+    return {view: {$component: {container, shapeId, ...(shapeConfig ? {shape: shapeConfig} : {})}}};
 };
 
 /**
@@ -234,9 +261,10 @@ fluid.tldraw.configToShape = function (config, {id, layerName, parentId, index},
 };
 
 /**
- * Find the potentia supplied by a host to a widget's view, as constructed by `fluid.tldraw.hostPotentiaFor` - the
- * `$component` record of the view, either at the root of the widget's potentia or within the potentia of the
- * subcomponent from which its view is cross-injected. It is recognised by holding `shapeId` or `shape`.
+ * Find the potentia supplied by a host to a widget's view, as constructed by `fluid.tldraw.hostPotentia` - the
+ * `$component` record of the view at the root of the widget's potentia. An arena persisted before a borrowed view could
+ * be refined at the root held them within the potentia of the subcomponent lending the view, where they are found too,
+ * so that `fluid.tldraw.writeShapeConfig` moves them to the root. It is recognised by holding `shapeId` or `shape`.
  * @param {Object} potentia - The widget's potentia
  * @return {Object|null} The record of the view's potentia, or `null` if there is none
  */
@@ -255,23 +283,6 @@ fluid.tldraw.findViewPotentia = function (potentia) {
         }
     }
     return togo;
-};
-
-/**
- * Merge material into a potentia record, adding only what it does not already hold
- * @param {Object} target - The potentia record, which is modified
- * @param {Object} source - The material to be merged
- * @return {Object} The target
- */
-fluid.tldraw.mergeMissing = function (target, source) {
-    fluid.each(source, (value, key) => {
-        if (!(key in target)) {
-            target[key] = value;
-        } else if (fluid.isPlainObject(target[key], true) && fluid.isPlainObject(value, true)) {
-            fluid.tldraw.mergeMissing(target[key], value);
-        }
-    });
-    return target;
 };
 
 /**
@@ -302,17 +313,17 @@ fluid.tldraw.writeShapeConfig = function (parts, layerName, config) {
         let togo = part;
         if (fluid.ptf.isRootPotentiaPart(part)) {
             const potentia = JSON.parse(part.body);
-            if (config && fluid.tldraw.findViewPotentia(potentia) === null) {
-                fluid.tldraw.mergeMissing(potentia, fluid.tldraw.hostPotentiaFor(layerName, null, null));
+            // What the host supplied is removed, wherever it was written
+            const supplied = fluid.tldraw.findViewPotentia(potentia);
+            if (supplied) {
+                delete supplied.container;
+                delete supplied.shapeId;
+                delete supplied.shape;
             }
-            const view = fluid.tldraw.findViewPotentia(potentia);
-            if (view) {
-                delete view.container;
-                delete view.shapeId;
-                delete view.shape;
-                if (config && Object.keys(config).length > 0) {
-                    view.shape = config;
-                }
+            // The shape is written at the widget's view, at its root, whether its view is its own or borrowed
+            if (config && Object.keys(config).length > 0) {
+                const view = fluid.isPlainObject(potentia.view, true) ? potentia.view : {};
+                potentia.view = {...view, $component: {...view.$component, shape: config}};
             }
             const $layers = potentia.$layers;
             fluid.tldraw.pruneEmpty(potentia);
@@ -390,8 +401,9 @@ fluid.tldraw.isTextEditing = function (element) {
     return !!element && (["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) || element.isContentEditable === true);
 };
 
-// Elements which handle pointer gestures natively
-fluid.tldraw.interactiveSelector = "button, input, select, textarea, a";
+// Elements which handle pointer gestures natively, resize bars, and those whose widget handles them with listeners of
+// its own rather than through its template, which marks them with the class fl-tldraw-interactive
+fluid.tldraw.interactiveSelector = "button, input, select, textarea, a, .fl-resize-bar, .fl-tldraw-interactive";
 
 // The events whose handlers, bound by a template onto any element of a widget, make it receive the pointer gestures
 // over it rather than tldraw - a click is only delivered to the element which saw the pointer pressed and released
@@ -540,4 +552,32 @@ fluid.tldraw.deletionQuestion = function (layerName, widgetCount, dependents, is
         ...(dependents.length > 0 ? [`These layers are built on it, and will no longer work: ${dependents.join(", ")}`] : []),
         `The deletion of the layer can be undone with ${fluid.tldraw.shortcutLabel(undo, isApple)}.`
     ].join("\n\n");
+};
+
+// The least widths in pixels of the canvas and of the "Ask me anything" panel, as the bar dividing them is dragged
+fluid.tldraw.minCanvasWidth = 400;
+fluid.tldraw.minPanelWidth = 280;
+
+/**
+ * Construct the standard resize bar dividing the canvas from the "Ask me anything" panel, once its layer is loaded
+ * @param {Document} dokkument - The document holding `#canvas-pane`, `#ai-resize-bar` and `#ai-root`
+ * @return {Promise<fluid.resizeBar>} A promise for the bar
+ */
+fluid.tldraw.bindResizeBar = function (dokkument) {
+    return fluid.ai.arena.awaitLayer("fluid.resizeBar").then(() => {
+        const bar = fluid.resizeBar({
+            before: dokkument.getElementById("canvas-pane"),
+            after: dokkument.getElementById("ai-root"),
+            minBefore: fluid.tldraw.minCanvasWidth,
+            minAfter: fluid.tldraw.minPanelWidth,
+            view: {
+                $component: {
+                    container: dokkument.getElementById("ai-resize-bar"),
+                    elideParent: true
+                }
+            }
+        });
+        fluid.cell.stabilize();
+        return bar;
+    });
 };

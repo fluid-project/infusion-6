@@ -33,7 +33,7 @@ fluid.tests.tldrawAI.loadImports = function () {
  * @return {fluid.component} The counter
  */
 fluid.tests.tldrawAI.makeCounter = function (container, shapeId, clicks) {
-    const that = fluid.demos.counter(fluid.tldraw.hostPotentiaFor("fluid.demos.counter", container, shapeId));
+    const that = fluid.demos.counter(fluid.tldraw.hostPotentia(container, shapeId));
     fluid.cell.stabilize();
     for (let i = 0; i < clicks; ++i) {
         that.increment();
@@ -88,15 +88,22 @@ QUnit.test("Workspace encoded as PTF document", async function (assert) {
     assert.equal(fluid.tldraw.ai.describeSelection(fluid.tests.tldrawAI.makeWorkspace([])), "The user has no shapes selected.",
         "Empty selection described");
 
-    const prompt = fluid.tldraw.ai.systemPrompt(["DOC ONE", "DOC TWO"], workspace);
+    const prompt = fluid.tldraw.ai.systemPrompt.compose(["DOC ONE", "DOC TWO"], workspace);
     // All the invariant material precedes the workspace and selection, so that it may be cached as a common prefix
-    const order = ["You are an assistant", "DOC ONE", "DOC TWO", "## How to respond", "## Strategy hints", fluid.tldraw.ai.workspaceHeading,
+    const order = ["You are an assistant", "DOC ONE", "DOC TWO", "## How to respond", "## Strategy hints", fluid.ai.arena.workspaceHeading,
         "filename=\"shape:a\"", "filename=\"fluid.demos.helloWorld\"", "shape:b - an Infusion widget"].map(fragment => prompt.indexOf(fragment));
     assert.notOk(order.includes(-1), "System prompt holds all its sections");
     assert.deepEqual([...order].sort((a, b) => a - b), order, "System prompt sections in order");
+    // The canvas's stanzas are merged into Infusion's prompt, each in its place, and its introduction replaces Infusion's
+    const stanzaOrder = ["You are an assistant embedded in a shared canvas", "## How to respond", "## Placing widgets on the canvas",
+        "## Strategy hints", "{tldrawHost}.editor", fluid.ai.arena.workspaceHeading].map(fragment => prompt.indexOf(fragment));
+    assert.notOk(stanzaOrder.includes(-1), "The canvas's stanzas are all in the prompt");
+    assert.deepEqual([...stanzaOrder].sort((a, b) => a - b), stanzaOrder, "In their order amongst Infusion's");
+    assert.notOk(prompt.includes("embedded in a page whose content is made of widgets"), "Infusion's introduction is replaced");
     assert.ok(prompt.includes("filename=\"fluid.demos.helloWorld\""), "Library layer not in workspace is included");
 
-    const messages = fluid.tldraw.ai.buildMessages(prompt, [[{role: "user", content: "Earlier"}, {role: "assistant", content: "Reply"}]], "Do it");
+    const messages = fluid.ai.buildMessages(prompt, [[{role: "user", content: "Earlier"}, {role: "assistant", content: "Reply"}]], "Do it",
+        fluid.ai.arena.directionPreamble);
     assert.deepEqual(messages.map(message => message.role), ["system", "user", "assistant", "user"], "Messages assembled with history");
     assert.ok(messages[3].content.endsWith("\n\nDo it"), "Direction is the final message, following its announcement");
 
@@ -110,18 +117,18 @@ QUnit.test("Workspace encoded as PTF document", async function (assert) {
 });
 
 QUnit.test("Responses interpreted", function (assert) {
-    assert.deepEqual(fluid.tldraw.ai.parseResponse("<think>Hmm, ptf?</think>\n\nHello there"), {type: "text", text: "Hello there"},
+    assert.deepEqual(fluid.ai.arena.parseResponse("<think>Hmm, ptf?</think>\n\nHello there"), {type: "text", text: "Hello there"},
         "Text response with reasoning removed");
-    assert.equal(fluid.tldraw.ai.parseResponse("reasoning without opening tag</think>Answer").text, "Answer",
+    assert.equal(fluid.ai.arena.parseResponse("reasoning without opening tag</think>Answer").text, "Answer",
         "Reasoning without opening tag removed");
     const ptf = fluid.ptf.encode([{kind: "delete", contentType: "text/plain", filename: "shape:a", body: ""}]);
     const fenced = "Here is the change:\n```\n" + ptf + "```\nHope this helps!";
-    const parsed = fluid.tldraw.ai.parseResponse(fenced);
+    const parsed = fluid.ai.arena.parseResponse(fenced);
     assert.equal(parsed.type, "ptf", "PTF document found despite surrounding commentary and fences");
     assert.deepEqual(parsed.parts.map(part => [part.kind, part.filename]), [["delete", "shape:a"]], "Document decoded");
-    const invalid = fluid.tldraw.ai.parseResponse("MIME-Version: 1.0\nContent-Type: text/plain\n\nNot multipart");
+    const invalid = fluid.ai.arena.parseResponse("MIME-Version: 1.0\nContent-Type: text/plain\n\nNot multipart");
     assert.equal(invalid.type, "invalid", "MIME document which is not PTF is invalid");
-    const empty = fluid.tldraw.ai.parseResponse("MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"b\"\n\n--wrong\n");
+    const empty = fluid.ai.arena.parseResponse("MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"b\"\n\n--wrong\n");
     assert.equal(empty.type, "invalid", "PTF document without parts is invalid");
 });
 
@@ -198,7 +205,7 @@ QUnit.test("Provenance recorded in layers sent by the AI", async function (asser
     assert.deepEqual(plan.problems, [], "Document planned without problems");
     const provenance = {model: "test-model", prompt: "Make <widgets>", datestamp: "2026-10-23T12:00:00.000Z"};
     const defined = new Set(["fluid.tests.tldrawAI.old", "fluid.tests.tldrawAI.handWritten"]);
-    fluid.tldraw.ai.stampProvenance(plan, provenance, layerName => defined.has(layerName));
+    fluid.ai.arena.stampProvenance(plan, provenance, layerName => defined.has(layerName));
     const [fresh, old, handWritten, js] = plan.layers;
     assert.deepEqual(fluid.readSFCProvenance(fresh.body), provenance, "Fresh layer stamped, replacing the AI's own block");
     assert.equal(fresh.body.match(/<provenance>/g).length, 1, "Single provenance block in fresh layer");
@@ -278,24 +285,25 @@ QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function 
     assert.equal(sent.length, 2, "AI asked to correct its response");
     assert.ok(sent[1].includes("does not name fluid.topLevelWidget"), "Correction requested names the missing layer");
     assert.deepEqual(bridge.plans.map(oneplan => oneplan.creations.length), [0, 1], "Nothing applied from rejected response, and corrected one applied");
-    assert.ok(fluid.tldraw.ai.responseRules.includes("must apply `fluid.topLevelWidget` at its top level"), "AI instructed to apply fluid.topLevelWidget");
+    assert.ok(fluid.ai.arena.responseRules.includes("must apply `fluid.topLevelWidget` at its top level"), "AI instructed to apply fluid.topLevelWidget");
 });
 
 QUnit.test("Worked examples in the response rules are valid", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
-    const examples = fluid.tldraw.ai.responseRules.split("\nMIME-Version: 1.0\n").slice(1)
-        .map(text => fluid.tldraw.ai.trimDocument("MIME-Version: 1.0\n" + text));
+    const examples = fluid.ai.arena.responseRules.split("\nMIME-Version: 1.0\n").slice(1)
+        .map(text => fluid.ai.arena.trimDocument("MIME-Version: 1.0\n" + text));
     assert.equal(examples.length, 2, "Two worked examples found");
-    const updating = fluid.tldraw.ai.planChanges(fluid.ptf.decode(examples[0]), ["shape:abc"], ["shape:abc"]);
+    const updating = fluid.ai.arena.planChanges(fluid.ptf.decode(examples[0]), ["counter-1"]);
     assert.deepEqual(updating.problems, [], "Updating example planned without problems");
-    assert.deepEqual(updating.updates.map(change => [change.key, change.rebuild]), [["shape:abc", false]], "Widget updated in place");
+    assert.deepEqual(updating.updates.map(change => [change.key, change.rebuild]), [["counter-1", false]], "Widget updated in place");
     assert.deepEqual(updating.creations.map(change => change.layerName), ["fluid.demos.helloWorld"], "Fresh widget created");
 
+    // The examples are Infusion's, for any arena - a canvas's shape parts are described by its own stanza
     const creating = fluid.tldraw.ai.planChanges(fluid.ptf.decode(examples[1]), [], []);
     assert.deepEqual(creating.problems, [], "Creating example planned without problems");
     assert.deepEqual(creating.layers.map(part => part.filename), ["fluid.demos.ai.greeter"], "Fresh layer defined");
     assert.deepEqual(creating.creations.map(change => [change.key, change.layerName, change.shape]),
-        [["new-1", "fluid.demos.ai.greeter", {x: 500, y: 300}]], "Widget of the fresh layer created");
+        [["new-1", "fluid.demos.ai.greeter", {}]], "Widget of the fresh layer created, placed beside the selection");
 
     // The template syntax described in the rules behaves as described
     creating.layers.forEach(part => fluid.ptf.registerLayerPart(part));
@@ -303,7 +311,7 @@ QUnit.test("Worked examples in the response rules are valid", async function (as
     await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.demos.ai.greeter", document));
     const container = qs(".container");
     const host = fluid.tests.tldrawAI.host();
-    const that = fluid.demos.ai.greeter(fluid.tldraw.hostPotentiaFor("fluid.demos.ai.greeter", container, "shape:greeter"));
+    const that = fluid.demos.ai.greeter(fluid.tldraw.hostPotentia(container, "shape:greeter"));
     fluid.cell.stabilize();
     const text = qs(".ai-greeter-text", container);
     const [wave, blush] = qsa(".ai-greeter button", container);
@@ -394,7 +402,7 @@ QUnit.test("Exchanges with the AI, including repair of failed responses", async 
         report: entry => failingEntries.push(entry),
         getDocs
     });
-    assert.equal(failingBridge.plans.length, fluid.tldraw.ai.maxRepairs + 1, "Repairs limited");
+    assert.equal(failingBridge.plans.length, fluid.ai.maxRepairs + 1, "Repairs limited");
     assert.equal(fluid.peek(failingEntries).kind, "error", "Exchange ends with error");
     assert.equal(fluid.peek(failingEntries).text, "The AI's response could not be fully applied:\n\u2022 Still broken",
         "Final problems listed to user");
@@ -416,7 +424,7 @@ QUnit.test("Exchanges with the AI, including repair of failed responses", async 
         getDocs
     });
     assert.deepEqual(truncatedEntries.map(entry => entry.kind), ["problem", "assistant"], "Truncated reply reported as a problem");
-    assert.ok(fluid.peek(truncatedCalls[1]).content.includes(fluid.tldraw.ai.truncationProblem), "Truncation reported back to AI");
+    assert.ok(fluid.peek(truncatedCalls[1]).content.includes(fluid.ai.truncationProblem), "Truncation reported back to AI");
     assert.deepEqual(truncatedHistory[0][1], {role: "assistant", content: "I am still thinking about"},
         "Truncated reply retained in history without its usage or truncation");
     assert.ok(failingEntries.find(entry => entry.kind === "problem").text.endsWith(":\n\u2022 Still broken"), "Problems being repaired listed to user");
@@ -436,12 +444,12 @@ QUnit.test("Exchanges with the AI, including repair of failed responses", async 
     // Only whole exchanges are sent, as many of the most recent as fit
     const exchange = (name, length) => fluid.iota(length).map(i => ({role: i % 2 ? "assistant" : "user", content: name + i}));
     const exchanges = [exchange("a", 2), exchange("b", 6), exchange("c", 2), exchange("d", 2)];
-    assert.deepEqual(fluid.tldraw.ai.recentExchanges(exchanges, 8).map(message => message.content), ["c0", "c1", "d0", "d1"],
+    assert.deepEqual(fluid.ai.recentExchanges(exchanges, 8).map(message => message.content), ["c0", "c1", "d0", "d1"],
         "Exchange which would exceed the limit is not sent in part, nor any before it");
-    assert.deepEqual(fluid.tldraw.ai.recentExchanges(exchanges, 10).map(message => message.content), ["b0", "b1", "b2", "b3", "b4", "b5", "c0", "c1", "d0", "d1"],
+    assert.deepEqual(fluid.ai.recentExchanges(exchanges, 10).map(message => message.content), ["b0", "b1", "b2", "b3", "b4", "b5", "c0", "c1", "d0", "d1"],
         "Exchanges sent whole up to the limit");
-    assert.deepEqual(fluid.tldraw.ai.recentExchanges([exchange("e", 6)], 4), [], "Nothing sent if the latest exchange alone exceeds the limit");
-    assert.deepEqual(fluid.tldraw.ai.buildMessages("", exchanges, "Next").slice(1, -1), fluid.tldraw.ai.recentExchanges(exchanges),
+    assert.deepEqual(fluid.ai.recentExchanges([exchange("e", 6)], 4), [], "Nothing sent if the latest exchange alone exceeds the limit");
+    assert.deepEqual(fluid.ai.buildMessages("", exchanges, "Next").slice(1, -1), fluid.ai.recentExchanges(exchanges),
         "Messages assembled from recent exchanges");
 });
 
@@ -488,14 +496,15 @@ fluid.def("fluid.tests.tldrawAI.host", {
     }
 });
 
-QUnit.test("Host potentia routed to a cross-injected view", async function (assert) {
+QUnit.test("Host potentia reach a cross-injected view by refining it", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const container = qs(".container");
-    assert.deepEqual(fluid.tldraw.hostPotentiaFor("fluid.demos.counter", container, "shape:a"),
+    assert.deepEqual(fluid.tldraw.hostPotentia(container, "shape:a"),
         {view: {$component: {container, shapeId: "shape:a"}}}, "Host potentia directed at a widget's own view");
-    const potentia = fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.umbrella", container, "shape:abc");
-    assert.deepEqual(potentia, {counter: {$component: {view: {$component: {container, shapeId: "shape:abc"}}}}},
-        "Host potentia directed at the view of the subcomponent whose view is injected");
+    const potentia = fluid.tldraw.hostPotentia(container, "shape:abc");
+    // A widget whose view is borrowed is addressed just the same - the options refine the view injected there
+    assert.deepEqual(potentia, {view: {$component: {container, shapeId: "shape:abc"}}},
+        "Host potentia directed at the view of a widget whose view is borrowed from a subcomponent, as at any widget");
 
     const host = fluid.tests.tldrawAI.host();
     const that = fluid.tests.tldrawAI.umbrella(potentia);
@@ -506,7 +515,7 @@ QUnit.test("Host potentia routed to a cross-injected view", async function (asse
     assert.equal(qs(".counter span", container).textContent, "Clicked 1 times", "Shared view rerenders");
     assert.equal(that.doubler.doubled, 2, "Cross-injected doubler follows the counter");
     assert.deepEqual({...that.hostBounds}, {x: 9, y: 0, w: 1, h: 1}, "Umbrella receives the bounds reported for its shape");
-    assert.deepEqual(fluid.tldraw.ai.diagnose(that), [], "No problems diagnosed in a working widget");
+    assert.deepEqual(fluid.ai.arena.diagnose(that), [], "No problems diagnosed in a working widget");
     that.destroy();
     host.destroy();
 });
@@ -535,10 +544,15 @@ QUnit.test("Configuration of a widget's shape transmitted through the potentia o
         {kind: "potentia", filename: "/", body: JSON.stringify(potentia)}, {kind: "live", filename: "/", body: "{}"}];
     const container = qs(".container");
     const hosted = toParts({$layers: ["fluid.tests.tldrawAI.umbrella"],
-        ...fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.umbrella", container, "shape:abc", {x: 1})});
+        ...fluid.tldraw.hostPotentia(container, "shape:abc", {x: 1})});
     const written = fluid.tldraw.writeShapeConfig(hosted, "fluid.tests.tldrawAI.umbrella", {x: 5, y: 6});
-    assert.deepEqual(JSON.parse(written[1].body), {$layers: ["fluid.tests.tldrawAI.umbrella"], counter: {$component: {view: {$component: {shape: {x: 5, y: 6}}}}}},
-        "Configuration written in place of what the host supplied to a cross-injected view");
+    assert.deepEqual(JSON.parse(written[1].body), {$layers: ["fluid.tests.tldrawAI.umbrella"], view: {$component: {shape: {x: 5, y: 6}}}},
+        "Configuration written in place of what the host supplied, at the view of a widget whose view is borrowed");
+    // As persisted before a borrowed view could be refined, at the subcomponent lending it
+    const legacy = toParts({$layers: ["fluid.tests.tldrawAI.umbrella"], counter: {$component: {view: {$component: {shapeId: "shape:abc", shape: {x: 1}}}}}});
+    assert.deepEqual(JSON.parse(fluid.tldraw.writeShapeConfig(legacy, "fluid.tests.tldrawAI.umbrella", {x: 2})[1].body),
+        {$layers: ["fluid.tests.tldrawAI.umbrella"], view: {$component: {shape: {x: 2}}}},
+        "Configuration persisted at the subcomponent lending the view is moved to the widget's view");
     assert.deepEqual(written[2], hosted[2], "Other parts untouched");
     assert.deepEqual(fluid.tldraw.readShapeConfig(written), {x: 5, y: 6}, "Configuration read back");
     const stripped = fluid.tldraw.writeShapeConfig(written, "fluid.tests.tldrawAI.umbrella", null);
@@ -568,8 +582,8 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     });
     const that = fluid.tests.tldrawAI.broken({container: qs(".container")});
     fluid.cell.stabilize();
-    const errors = fluid.tldraw.ai.diagnose(that);
-    const withPending = fluid.tldraw.ai.diagnose(that, true);
+    const errors = fluid.ai.arena.diagnose(that);
+    const withPending = fluid.ai.arena.diagnose(that, true);
     assert.equal(errors.length, 2, "Two problems diagnosed");
     assert.ok(errors.some(error => error.includes("Component at path /child failed: Layer fluid.tests.tldrawAI.neverDefined is not defined")),
         "Undefined layer of subcomponent described, at its path relative to the widget");
@@ -594,11 +608,11 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     });
     const uncontained = fluid.tests.tldrawAI.uncontained();
     fluid.cell.stabilize();
-    const uncontainedProblems = fluid.tldraw.ai.diagnose(uncontained);
+    const uncontainedProblems = fluid.ai.arena.diagnose(uncontained);
     assert.equal(uncontainedProblems.length, 1, "Problem diagnosed in uncontained view");
     assert.ok(uncontainedProblems[0].includes("Container of view at path"), "Missing container described");
     uncontained.destroy();
-    assert.equal(fluid.tldraw.ai.describeError(fluid.unavailable("Gone wrong")), "Gone wrong", "Unavailable described");
+    assert.equal(fluid.ai.describeError(fluid.unavailable("Gone wrong")), "Gone wrong", "Unavailable described");
 
     // A layer whose definitions cannot be merged, as the AI wrote in trying to suppress a subcomponent of a parent layer
     await fluid.tests.tldrawAI.loadImports();
@@ -608,7 +622,7 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     });
     const unmergeable = fluid.tests.tldrawAI.unmergeable();
     fluid.cell.stabilize();
-    const mergeProblems = fluid.tldraw.ai.diagnose(unmergeable, true);
+    const mergeProblems = fluid.ai.arena.diagnose(unmergeable, true);
     assert.equal(mergeProblems.length, 1, "Failure to merge diagnosed rather than throwing");
     assert.ok(mergeProblems[0].includes("Cannot merge value false at path distanceLine"), "Merge failure described");
 
@@ -631,18 +645,19 @@ QUnit.test("Problems diagnosed in widgets", async function (assert) {
     });
     const selfReferring = fluid.tests.tldrawAI.selfReferring();
     fluid.cell.stabilize();
-    const selfProblems = fluid.tldraw.ai.diagnose(selfReferring);
+    const selfProblems = fluid.ai.arena.diagnose(selfReferring);
     assert.equal(selfProblems.length, 1, "Self-reference diagnosed once");
     assert.ok(selfProblems[0].includes("Member hostBounds of component at path") && selfProblems[0].includes("refers to its own value"),
         "Self-reference described");
     selfReferring.destroy();
-    assert.equal(fluid.tldraw.ai.describeError(new Error("Thrown")), "Thrown", "Error described");
+    assert.equal(fluid.ai.describeError(new Error("Thrown")), "Thrown", "Error described");
     that.destroy();
 });
 
-QUnit.test("Markdown rendered safely - FLUID-7024", function (assert) {
+QUnit.test("Markdown rendered safely - FLUID-7024", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
     const element = document.createElement("div");
-    fluid.demos.markdownBlock.renderInto(element, "# Title\n\n* One <script>alert(1)</script>\n* [Two](https://example.com) [Three](javascript:alert)\n\n`a<b`", true);
+    fluid.markdownBlock.renderInto(element, "# Title\n\n* One <script>alert(1)</script>\n* [Two](https://example.com) [Three](javascript:alert)\n\n`a<b`", true);
     assert.equal(qs("h1", element).textContent, "Title", "Heading rendered");
     assert.deepEqual(qsa("li", element).map(li => li.textContent), ["One <script>alert(1)</script>", "Two Three"], "List rendered");
     assert.notOk(qs("script", element), "Markup in text escaped");
@@ -651,49 +666,52 @@ QUnit.test("Markdown rendered safely - FLUID-7024", function (assert) {
     assert.equal(links[0].getAttribute("target"), "_blank", "Link opens in a fresh tab");
     assert.notOk(links[1].hasAttribute("href"), "Link to javascript URL neutralised");
     assert.equal(qs("code", element).textContent, "a<b", "Inline code rendered");
-    fluid.demos.markdownBlock.renderInto(element, "Plain **text** <b>here</b>", false);
+    fluid.markdownBlock.renderInto(element, "Plain **text** <b>here</b>", false);
     assert.equal(element.textContent, "Plain **text** <b>here</b>", "Plain text rendered as it stands");
     assert.notOk(qs("b", element), "Plain text holds no markup");
 });
 
 QUnit.test("Tokens in common prompt prefix assumed cached", function (assert) {
     const workspace = fluid.tests.tldrawAI.makeWorkspace([]);
-    const system = fluid.tldraw.ai.systemPrompt(["DOCS"], workspace);
-    const prefixLength = system.indexOf(fluid.tldraw.ai.workspaceHeading);
+    const system = fluid.tldraw.ai.systemPrompt.compose(["DOCS"], workspace);
+    const prefixLength = system.indexOf(fluid.ai.arena.workspaceHeading);
     const prefix = system.substring(0, prefixLength);
     assert.ok(prefixLength > 0 && ["DOCS", "## How to respond", "## Strategy hints"].every(fragment => prefix.includes(fragment)),
         "Prefix holds the introduction, documentation, response rules and strategy hints");
-    assert.deepEqual(fluid.tldraw.ai.usageFromPayload({usage: {prompt_tokens: 100, completion_tokens: 20,
+    assert.deepEqual(fluid.ai.usageFromPayload({usage: {prompt_tokens: 100, completion_tokens: 20,
         prompt_tokens_details: {cached_tokens: 80}, completion_tokens_details: {reasoning_tokens: 5}}}),
     {inputTokens: 100, outputTokens: 20, reasoningTokens: 5, cachedTokens: 80}, "Cached tokens read where reported");
-    const messages = fluid.tldraw.ai.buildMessages(system, [], "Do something");
+    const messages = fluid.ai.buildMessages(system, [], "Do something");
     const totalLength = messages.reduce((total, message) => total + message.content.length, 0);
-    assert.equal(fluid.tldraw.ai.cachedTokens(messages), Math.floor(prefixLength / 4), "Cached tokens estimated from prefix");
-    assert.equal(fluid.tldraw.ai.cachedTokens(messages, 10000), Math.round(10000 * prefixLength / totalLength),
+    const marker = fluid.ai.arena.workspaceHeading;
+    assert.equal(fluid.ai.cachedTokens(messages, undefined, marker), Math.floor(prefixLength / 4), "Cached tokens estimated from prefix");
+    assert.equal(fluid.ai.cachedTokens(messages, 10000, marker), Math.round(10000 * prefixLength / totalLength),
         "Reported tokens apportioned by prefix's share of request");
-    assert.equal(fluid.tldraw.ai.cachedTokens([{role: "user", content: "Hello"}], 50), 0, "Nothing cached without system prompt");
+    assert.equal(fluid.ai.cachedTokens([{role: "user", content: "Hello"}], 50, marker), 0, "Nothing cached without system prompt");
+    assert.equal(fluid.ai.cachedTokens(messages, 10000), 0, "Nothing cached without a marker of the common prefix");
     const entry = {inputTokens: 10234, cachedTokens: 8000, estimated: false};
-    assert.equal(fluid.demos.askAnythingEntry.formatSent(entry), "2,234 tokens (8,000 cached)", "Uncached tokens are headline figure");
-    assert.equal(fluid.demos.askAnythingEntry.formatSent({...entry, estimated: true}), "~2,234 tokens (~8,000 cached)", "Estimates marked");
+    assert.equal(fluid.askAnythingEntry.formatSent(entry), "2,234 tokens (8,000 cached)", "Uncached tokens are headline figure");
+    assert.equal(fluid.askAnythingEntry.formatSent({...entry, estimated: true}), "~2,234 tokens (~8,000 cached)", "Estimates marked");
 });
 
 QUnit.test("Ask me anything panel converses through the bridge", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const container = qs(".container");
-    const originalCall = fluid.tldraw.ai.callEndpoint;
-    const originalFetch = fluid.tldraw.ai.fetchDocs;
-    const originalFind = fluid.tldraw.ai.findLocalService;
+    const originalCall = fluid.ai.callEndpoint;
+    const originalFetch = fluid.ai.arena.fetchDocs;
+    const originalFind = fluid.ai.findLocalService;
     const calls = [];
-    fluid.tldraw.ai.findLocalService = () => Promise.resolve(null);
-    fluid.tldraw.ai.callEndpoint = options => {
+    fluid.ai.findLocalService = () => Promise.resolve(null);
+    fluid.ai.callEndpoint = options => {
         // The messages are copied, since the conversation goes on to append the reply to them
         calls.push({...options, messages: [...options.messages]});
         return Promise.resolve({content: "<think>Easy</think>There is **nothing** here yet", usage: {inputTokens: 12345, outputTokens: 67, reasoningTokens: 5}});
     };
-    fluid.tldraw.ai.fetchDocs = () => Promise.resolve(["DOCS"]);
+    fluid.ai.arena.fetchDocs = () => Promise.resolve(["DOCS"]);
     fluid.tldraw.ai.bridge = fluid.tests.tldrawAI.makeFakeBridge(fluid.tests.tldrawAI.makeWorkspace([]), []);
+    fluid.tldraw.ai.assistant = fluid.tldraw.ai.makeAssistant(fluid.tldraw.ai.bridge);
     try {
-        const that = fluid.demos.askAnything({container});
+        const that = fluid.tldraw.askAnything({container});
         fluid.cell.stabilize();
         const isHidden = selector => qs(selector, container).classList.contains("ask-anything-hidden");
         assert.notOk(isHidden(".ask-anything-login"), "Password requested when no token is held");
@@ -714,13 +732,13 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
         fluid.cell.stabilize();
         assert.equal(calls.length, 1, "Endpoint called once");
         assert.equal(calls[0].token, "abc123", "Token presented to endpoint");
-        assert.equal(calls[0].endpoint, fluid.tldraw.ai.endpoint, "IFM proxy called");
-        assert.equal(calls[0].model, fluid.tldraw.ai.defaultModel, "Default model requested");
+        assert.equal(calls[0].endpoint, fluid.ai.endpoint, "IFM proxy called");
+        assert.equal(calls[0].model, fluid.ai.defaultModel, "Default model requested");
         assert.notOk("usage" in calls[0].messages[0], "Usage is not sent to the AI");
         const allRendered = qsa(".ask-anything-entry", container);
         const metrics = allRendered.filter(entry => entry.classList.contains("ask-anything-metrics-entry"));
         assert.equal(metrics.length, 1, "One metrics entry for the one request");
-        const cached = fluid.tldraw.ai.cachedTokens(calls[0].messages, 12345);
+        const cached = fluid.ai.cachedTokens(calls[0].messages, 12345, fluid.ai.arena.workspaceHeading);
         assert.ok(cached > 0 && cached < 12345, "Part of the request's tokens assumed cached");
         const metricsText = qs(".ask-anything-metrics", metrics[0]).textContent;
         assert.ok(/^Received text in \d+\.\d s - sent /.test(metricsText), "Metrics report elapsed time");
@@ -734,15 +752,19 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
         assert.equal(qs(".ask-anything-entry-text strong", rendered[1])?.textContent, "nothing", "Reply rendered as markdown");
         assert.notOk(qs(".ask-anything-entry-text em", rendered[0]), "User's direction rendered as plain text");
         const onlyOptions = qsa(".ask-anything-model select option", container);
-        assert.deepEqual(onlyOptions.map(option => [option.getAttribute("value"), option.textContent]), [["ifm", fluid.tldraw.ai.defaultModel]],
-            "Dropdown offers just the IFM proxy's model without local service");
+        // The Inference Co-op's models need no token, so are always offered - see fluid.ai.coopService
+        // Those served from renewable energy, GreenPT's and Regolo's, are marked with a leaf
+        const coopOptions = fluid.ai.coopService.models.map(model => [fluid.askAnything.coopPrefix + model,
+            fluid.ai.isRenewable(model) ? model + " " + fluid.askAnything.leaf : model]);
+        assert.deepEqual(onlyOptions.map(option => [option.getAttribute("value"), option.textContent]), [["ifm", fluid.ai.defaultModel], ...coopOptions],
+            "Dropdown offers the IFM proxy's model and the Inference Co-op's, without local service");
         assert.ok(onlyOptions[0].hasAttribute("selected"), "IFM proxy's model selected");
         assert.ok(qs(".ask-anything-entry-detail", rendered[1]).classList.contains("ask-anything-hidden"), "Empty detail hidden");
         assert.equal(that.state.direction, "", "Direction cleared once sent");
         assert.equal(that.state.busy, false, "Panel no longer busy");
 
         // A rejected token returns the panel to requesting the password
-        fluid.tldraw.ai.callEndpoint = () => {
+        fluid.ai.callEndpoint = () => {
             const error = new Error("Unauthorised");
             error.unauthorised = true;
             return Promise.reject(error);
@@ -761,8 +783,8 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
 
         // A pending request whose reply, holding a PTF document, reports no usage
         let resolveReply;
-        const pending = fluid.demos.askAnything.measureCall(that.state, [{role: "user", content: "x".repeat(400)}],
-            () => new Promise(resolve => resolveReply = resolve));
+        const pending = fluid.askAnything.measureCall(that.state, [{role: "user", content: "x".repeat(400)}],
+            () => new Promise(resolve => resolveReply = resolve), undefined, fluid.tldraw.ai.assistant);
         fluid.cell.stabilize();
         const lastMetrics = () => fluid.peek(qsa(".ask-anything-metrics", container)).textContent;
         assert.ok(/^Waiting for the AI: \d+\.\d s - sent ~100 tokens \(~0 cached\)$/.test(lastMetrics()), "Pending request reported with estimated input");
@@ -773,13 +795,13 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
             "PTF reply reported with estimated token counts");
 
         // Text and problems offered by the canvas on paste
-        assert.ok(fluid.demos.askAnything.offer({text: "Pasted text"}), "Panel found to receive offer");
+        assert.ok(fluid.askAnything.offer({text: "Pasted text"}), "Panel found to receive offer");
         fluid.cell.stabilize();
         assert.equal(that.state.direction, "Pasted text", "Offered text placed in direction");
-        fluid.demos.askAnything.offer({text: "More text"});
+        fluid.askAnything.offer({text: "More text"});
         fluid.cell.stabilize();
         assert.equal(that.state.direction, "Pasted text\nMore text", "Further offered text appended to direction");
-        fluid.demos.askAnything.offer({problem: "The paste failed", detail: "Junk"});
+        fluid.askAnything.offer({problem: "The paste failed", detail: "Junk"});
         fluid.cell.stabilize();
         const problem = fluid.peek(qsa(".ask-anything-entry", container));
         assert.ok(problem.classList.contains("ask-anything-error"), "Offered problem reported as error");
@@ -787,28 +809,29 @@ QUnit.test("Ask me anything panel converses through the bridge", async function 
         assert.equal(qs(".ask-anything-entry-detail pre", problem).textContent, "Junk", "Offered problem detail held");
         that.destroy();
     } finally {
-        fluid.tldraw.ai.callEndpoint = originalCall;
-        fluid.tldraw.ai.fetchDocs = originalFetch;
-        fluid.tldraw.ai.findLocalService = originalFind;
+        fluid.ai.callEndpoint = originalCall;
+        fluid.ai.arena.fetchDocs = originalFetch;
+        fluid.ai.findLocalService = originalFind;
         fluid.tldraw.ai.bridge = undefined;
-        fluid.demos.askAnything.history = [];
+        fluid.tldraw.ai.assistant = null;
+        fluid.askAnything.history = [];
     }
 });
 
 QUnit.test("Models which can converse are listed", function (assert) {
     const listed = [{id: "a/chat", mode: "chat"}, {id: "a/unmoded"}, {id: "a/speech", mode: "audio_speech"},
         {id: "a/nomic-embed-text", mode: "chat"}, {id: "a/whisper", mode: "audio_transcription"}];
-    assert.deepEqual(listed.filter(fluid.tldraw.ai.isChatModel).map(model => model.id), ["a/chat", "a/unmoded"],
+    assert.deepEqual(listed.filter(fluid.ai.isChatModel).map(model => model.id), ["a/chat", "a/unmoded"],
         "Speech, transcription and embedding models excluded");
 });
 
 QUnit.test("Ask me anything panel converses through local service when its key is found", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
     const container = qs(".container");
-    const originalCall = fluid.tldraw.ai.callEndpoint;
-    const originalFetch = fluid.tldraw.ai.fetchDocs;
-    const originalFind = fluid.tldraw.ai.findLocalService;
-    const originalStored = fluid.demos.askAnything.readStored("modelChoice");
+    const originalCall = fluid.ai.callEndpoint;
+    const originalFetch = fluid.ai.arena.fetchDocs;
+    const originalFind = fluid.ai.findLocalService;
+    const originalStored = fluid.askAnything.readStored("modelChoice");
     const calls = [];
     const service = {
         name: "Local",
@@ -818,16 +841,17 @@ QUnit.test("Ask me anything panel converses through local service when its key i
         defaultModel: "local/small"
     };
     let resolveService;
-    fluid.tldraw.ai.findLocalService = () => new Promise(resolve => resolveService = resolve);
-    fluid.tldraw.ai.callEndpoint = options => {
+    fluid.ai.findLocalService = () => new Promise(resolve => resolveService = resolve);
+    fluid.ai.callEndpoint = options => {
         calls.push(options);
         return Promise.resolve({content: "Hello"});
     };
-    fluid.tldraw.ai.fetchDocs = () => Promise.resolve(["DOCS"]);
+    fluid.ai.arena.fetchDocs = () => Promise.resolve(["DOCS"]);
     fluid.tldraw.ai.bridge = fluid.tests.tldrawAI.makeFakeBridge(fluid.tests.tldrawAI.makeWorkspace([]), []);
-    fluid.demos.askAnything.writeStored("modelChoice", "");
+    fluid.tldraw.ai.assistant = fluid.tldraw.ai.makeAssistant(fluid.tldraw.ai.bridge);
+    fluid.askAnything.writeStored("modelChoice", "");
     try {
-        const that = fluid.demos.askAnything({container});
+        const that = fluid.tldraw.askAnything({container});
         that.state.token = "";
         fluid.cell.stabilize();
         const isHidden = selector => qs(selector, container).classList.contains("ask-anything-hidden");
@@ -837,10 +861,11 @@ QUnit.test("Ask me anything panel converses through local service when its key i
         await Promise.resolve();
         fluid.cell.stabilize();
         const select = qs(".ask-anything-model select", container);
-        assert.deepEqual(qsa("optgroup", select).map(group => group.getAttribute("label")), ["IFM proxy", "Local"],
-            "Dropdown groups the IFM proxy's model first, followed by the service's");
-        assert.deepEqual(qsa("option", select).map(option => option.getAttribute("value")), ["ifm", "local:local/big", "local:local/small"],
-            "Dropdown lists the IFM proxy's model followed by the service's models");
+        assert.deepEqual(qsa("optgroup", select).map(group => group.getAttribute("label")), ["IFM proxy", fluid.ai.coopService.name, "Local"],
+            "Dropdown groups the IFM proxy's model first, then the Inference Co-op's, followed by the service's");
+        assert.deepEqual(qsa("option", select).map(option => option.getAttribute("value")),
+            ["ifm", ...fluid.ai.coopService.models.map(model => fluid.askAnything.coopPrefix + model), "local:local/big", "local:local/small"],
+            "Dropdown lists the IFM proxy's model, then the Inference Co-op's, followed by the service's models");
         assert.deepEqual(qsa("option[selected]", select).map(option => option.getAttribute("value")), ["ifm"], "IFM proxy's model selected by default");
         assert.notOk(isHidden(".ask-anything-login"), "Password still requested for the IFM proxy once local service is found");
         assert.notOk(isHidden(".ask-anything-model"), "Dropdown shown whilst password requested");
@@ -873,7 +898,7 @@ QUnit.test("Ask me anything panel converses through local service when its key i
             "Local service called with its key and chosen model");
 
         // A rejected key is reported without requesting the password for the IFM proxy
-        fluid.tldraw.ai.callEndpoint = () => {
+        fluid.ai.callEndpoint = () => {
             const error = new Error("Unauthorised");
             error.unauthorised = true;
             return Promise.reject(error);
@@ -886,12 +911,13 @@ QUnit.test("Ask me anything panel converses through local service when its key i
         assert.ok(fluid.peek(qsa(".ask-anything-entry", container)).classList.contains("ask-anything-error"), "Rejection reported");
         that.destroy();
     } finally {
-        fluid.tldraw.ai.callEndpoint = originalCall;
-        fluid.tldraw.ai.fetchDocs = originalFetch;
-        fluid.tldraw.ai.findLocalService = originalFind;
+        fluid.ai.callEndpoint = originalCall;
+        fluid.ai.arena.fetchDocs = originalFetch;
+        fluid.ai.findLocalService = originalFind;
         fluid.tldraw.ai.bridge = undefined;
-        fluid.demos.askAnything.history = [];
-        fluid.demos.askAnything.writeStored("modelChoice", originalStored);
+        fluid.tldraw.ai.assistant = null;
+        fluid.askAnything.history = [];
+        fluid.askAnything.writeStored("modelChoice", originalStored);
     }
 });
 
@@ -1014,7 +1040,7 @@ QUnit.test("Widgets held in the arena under names derived from their shapes", as
     try {
         const memberName = fluid.tldraw.widgetMemberName("shape:a_B-1");
         assert.equal(memberName, "shape-a_B-1", "Member name derived from shape id");
-        const potentia = fluid.tldraw.hostPotentiaFor("fluid.demos.counter", qs(".container"), "shape:a_B-1");
+        const potentia = fluid.tldraw.hostPotentia(qs(".container"), "shape:a_B-1");
         const first = fluid.initChildComponent(host, "fluid.demos.counter", potentia, memberName);
         fluid.cell.stabilize();
         const viewSite = fluid.renderSite({shadow: fluid.ptf.componentToShadow(first.view), segs: ["hostBounds"]});
@@ -1029,19 +1055,19 @@ QUnit.test("Widgets held in the arena under names derived from their shapes", as
 
 QUnit.test("Sent directions recalled with the arrow keys", async function (assert) {
     await fluid.tests.tldrawAI.loadImports();
-    const that = fluid.demos.askAnything({container: qs(".container")});
+    const that = fluid.askAnything({container: qs(".container")});
     fluid.cell.stabilize();
     const state = that.state;
     state.entries = ["First", "Second", "Second", "Third\nwith two lines"].map(text => ({kind: "user", text, detail: ""}))
         .concat([{kind: "assistant", text: "A reply", detail: ""}]);
-    assert.deepEqual(fluid.demos.askAnything.sentDirections(state.entries), ["First", "Second", "Third\nwith two lines"],
+    assert.deepEqual(fluid.askAnything.sentDirections(state.entries), ["First", "Second", "Third\nwith two lines"],
         "Sent directions listed, with repetitions once");
     // A stand-in for the textarea, whose value follows the direction and whose caret is placed as given
     const textarea = caret => ({value: state.direction, selectionStart: caret ?? state.direction.length, selectionEnd: caret ?? state.direction.length});
     const press = (key, caret) => {
         let prevented = false;
         const target = {...textarea(caret), setSelectionRange: () => {}};
-        fluid.demos.askAnything.directionKeyDown(that, {key, target, preventDefault: () => prevented = true});
+        fluid.askAnything.directionKeyDown(that, {key, target, preventDefault: () => prevented = true});
         fluid.cell.stabilize();
         return prevented;
     };
@@ -1069,7 +1095,7 @@ QUnit.test("Sent directions recalled with the arrow keys", async function (asser
     assert.ok(press("ArrowUp", 2), "Up from the first line recalls");
     assert.equal(state.direction, "Second", "Edited direction left for an earlier one");
     let prevented = false;
-    fluid.demos.askAnything.directionKeyDown(that, {key: "ArrowUp", shiftKey: true, target: {...textarea(0), setSelectionRange: () => {}},
+    fluid.askAnything.directionKeyDown(that, {key: "ArrowUp", shiftKey: true, target: {...textarea(0), setSelectionRange: () => {}},
         preventDefault: () => prevented = true});
     assert.notOk(prevented, "Shift+Up extends the selection as usual");
     that.destroy();
@@ -1082,7 +1108,7 @@ QUnit.test("Widget layers listed from the layer store, and deleted", async funct
         return fluid.tldraw.widgetLayers.get();
     };
     assert.ok(listed().includes("fluid.demos.counter"), "Widget layer loaded by the page listed");
-    assert.notOk(listed().includes("fluid.demos.askAnything"), "Layer which is not a widget not listed");
+    assert.notOk(listed().includes("fluid.askAnything"), "Layer which is not a widget not listed");
     assert.notOk(listed().includes("fluid.topLevelWidget"), "Framework layer not listed");
 
     // A JavaScript layer, as sent by the AI, and one built on it
@@ -1213,15 +1239,15 @@ QUnit.test("Further compositions chosen by the AI - FLUID-7025", async function 
     const container = qs(".container");
     const host = fluid.tests.tldrawAI.tldrawHost({notes: [{id: "shape:near", x: 120, y: 90, text: "A red fox"}]});
 
-    const umbrella = fluid.initChildComponent(host, "fluid.tests.tldrawAI.visibleUmbrella", fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.visibleUmbrella", container, "shape:visible"));
+    const umbrella = fluid.initChildComponent(host, "fluid.tests.tldrawAI.visibleUmbrella", fluid.tldraw.hostPotentia(container, "shape:visible"));
     fluid.cell.stabilize();
-    assert.deepEqual(fluid.tldraw.ai.diagnose(umbrella, true), [], "No problems diagnosed in umbrella with a template of its own");
+    assert.deepEqual(fluid.ai.arena.diagnose(umbrella, true), [], "No problems diagnosed in umbrella with a template of its own");
     assert.deepEqual({...umbrella.finder.hostBounds}, {x: 100, y: 100, w: 360, h: 460}, "Nested note finder takes the umbrella's bounds");
     assert.equal(qs(".notefinder-text", container).textContent, "A red fox", "Nested note finder shows the closest note");
     assert.equal(qs(".imagegen-input", container).value, "A red fox", "Nested image generator's prompt follows it");
     umbrella.destroy();
 
-    const retemplated = fluid.initChildComponent(host, "fluid.tests.tldrawAI.retemplatedFinder", fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.retemplatedFinder", container, "shape:retemplated"));
+    const retemplated = fluid.initChildComponent(host, "fluid.tests.tldrawAI.retemplatedFinder", fluid.tldraw.hostPotentia(container, "shape:retemplated"));
     fluid.cell.stabilize();
     assert.equal(container.textContent, "Nearest: A red fox", "Template of derived layer overrides that of its SFC parent layer");
     assert.equal(qsa(".notefinder", container).length, 0, "SFC parent layer's template not rendered");
@@ -1271,15 +1297,15 @@ fluid.def("my.textFinder", {
 fluid.tests.tldrawAI.findText = bounds => `Found at ${bounds.x}`;
 
 QUnit.test("Worked example of composition in the strategy hints is valid", function (assert) {
-    const match = /\n( +)(fluid\.def\("my\.ai\.showsFoundResult"[\s\S]*?\n\1\}\);)/.exec(fluid.tldraw.ai.strategyHints);
+    const match = /\n( +)(fluid\.def\("my\.ai\.showsFoundResult"[\s\S]*?\n\1\}\);)/.exec(fluid.ai.arena.strategyHints);
     assert.ok(match, "Example layer found in the hints");
     // eslint-disable-next-line no-new-func
     new Function(match[2])();
     const container = qs(".container");
     const host = fluid.tests.tldrawAI.tldrawHost();
-    const that = fluid.initChildComponent(host, "my.ai.showsFoundResult", fluid.tldraw.hostPotentiaFor("my.ai.showsFoundResult", container, "shape:example"));
+    const that = fluid.initChildComponent(host, "my.ai.showsFoundResult", fluid.tldraw.hostPotentia(container, "shape:example"));
     fluid.cell.stabilize();
-    assert.deepEqual(fluid.tldraw.ai.diagnose(that, true), [], "No problems diagnosed in the example");
+    assert.deepEqual(fluid.ai.arena.diagnose(that, true), [], "No problems diagnosed in the example");
     assert.equal(qs(".shower input", container).value, "Found at 100", "Dominant widget's input drawn from supplier's output, which follows the widget's bounds");
     assert.equal(qsa(".finder, .finder-detail", container).length, 0, "Neither the supplier nor its subcomponents render");
     that.destroy();
@@ -1295,10 +1321,10 @@ QUnit.test("Closest note composed with image generator - FLUID-7025", async func
         const host = fluid.tests.tldrawAI.tldrawHost({
             notes: [{id: "shape:far", x: 900, y: 900, text: "A lighthouse"}, {id: "shape:near", x: 120, y: 90, text: "A red fox"}]
         });
-        const potentia = fluid.tldraw.hostPotentiaFor("fluid.demos.ai.closestNoteImageGenerator", container, "shape:combined");
+        const potentia = fluid.tldraw.hostPotentia(container, "shape:combined");
         const that = fluid.initChildComponent(host, "fluid.demos.ai.closestNoteImageGenerator", potentia);
         fluid.cell.stabilize();
-        assert.deepEqual(fluid.tldraw.ai.diagnose(that, true), [], "No problems diagnosed in composed widget");
+        assert.deepEqual(fluid.ai.arena.diagnose(that, true), [], "No problems diagnosed in composed widget");
         assert.equal(that.noteFinder.view, that.view, "Note finder shares the image generator's view");
         assert.deepEqual({...that.noteFinder.hostBounds}, {x: 100, y: 100, w: 360, h: 460}, "Note finder receives the composed widget's bounds");
         assert.equal(that.noteFinder.noteText, "A red fox", "Closest note found");
@@ -1323,7 +1349,7 @@ QUnit.test("Closest note composed with image generator - FLUID-7025", async func
         const {that: copy, unresolved} = await fluid.ptf.instantiate(text, {potentia, parent: host});
         fluid.cell.stabilize();
         assert.deepEqual(unresolved, [], "Composed widget reconstructed from its PTF document");
-        assert.deepEqual(fluid.tldraw.ai.diagnose(copy, true), [], "No problems diagnosed in reconstructed widget");
+        assert.deepEqual(fluid.ai.arena.diagnose(copy, true), [], "No problems diagnosed in reconstructed widget");
         assert.equal(qs("img", container).getAttribute("src"), "https://pixabay.com/get/one.jpg", "Reconstructed widget shows its image");
         assert.equal(qs(".imagegen-input", container).value, "A grey wolf howling", "Reconstructed widget's typed prompt restored");
         host.notes = [{id: "shape:near", x: 120, y: 90, text: "A white owl"}];
@@ -1332,10 +1358,10 @@ QUnit.test("Closest note composed with image generator - FLUID-7025", async func
         copy.destroy();
 
         // The same composition as an umbrella holding both widgets, as the strategy hints describe
-        const umbrellaPotentia = fluid.tldraw.hostPotentiaFor("fluid.tests.tldrawAI.noteImageUmbrella", container, "shape:umbrella");
+        const umbrellaPotentia = fluid.tldraw.hostPotentia(container, "shape:umbrella");
         const umbrella = fluid.initChildComponent(host, "fluid.tests.tldrawAI.noteImageUmbrella", umbrellaPotentia);
         fluid.cell.stabilize();
-        assert.deepEqual(fluid.tldraw.ai.diagnose(umbrella, true), [], "No problems diagnosed in umbrella");
+        assert.deepEqual(fluid.ai.arena.diagnose(umbrella, true), [], "No problems diagnosed in umbrella");
         assert.equal(qs(".imagegen-input", container).value, "A white owl", "Umbrella's prompt follows the closest note");
         assert.equal(qsa(".notefinder", container).length, 0, "Note finder's template not rendered in umbrella");
         umbrella.destroy();
@@ -1398,7 +1424,7 @@ fluid.tests.tldrawAI.makeBoard = async function (layerName, text, container) {
     fluid.ptf.registerLayerPart({kind: "layer", contentType: "text/x-vue", filename: layerName, body: text});
     await fluid.cell.waitFor(fluid.readSFC(layerName).docInjectEffects.get(document).injDone);
     await fluid.cell.settle();
-    const that = fluid.getGlobalValue(layerName)(fluid.tldraw.hostPotentiaFor(layerName, container, "shape:board"));
+    const that = fluid.getGlobalValue(layerName)(fluid.tldraw.hostPotentia(container, "shape:board"));
     fluid.cell.stabilize();
     return that;
 };
@@ -1410,13 +1436,13 @@ QUnit.test("Board rendered from computed template diagnosed - Othello", async fu
     const started = Date.now();
     fluid.ptf.registerLayerPart({kind: "layer", contentType: "text/x-vue", filename: "fluid.tests.tldrawAI.board0",
         body: fluid.tests.tldrawAI.boardSFC("fluid.tests.tldrawAI.board0", "{board0}", true)});
-    const rejected = await fluid.tldraw.ai.awaitLayer("fluid.tests.tldrawAI.board0");
-    assert.ok(fluid.isUnavailable(rejected) && fluid.tldraw.ai.describeError(rejected).includes(
+    const rejected = await fluid.ai.arena.awaitLayer("fluid.tests.tldrawAI.board0");
+    assert.ok(fluid.isUnavailable(rejected) && fluid.ai.describeError(rejected).includes(
         fluid.sfcTemplateConflictMessage("fluid.tests.tldrawAI.board0")), "Rejected layer reported with its reason");
-    assert.ok(Date.now() - started < fluid.tldraw.ai.settleTimeout, "Rejected layer reported without waiting for timeout");
+    assert.ok(Date.now() - started < fluid.ai.arena.settleTimeout, "Rejected layer reported without waiting for timeout");
     fluid.ptf.registerLayerPart({kind: "layer", contentType: "text/x-vue", filename: "fluid.tests.tldrawAI.board4",
         body: fluid.tests.tldrawAI.boardSFC("fluid.tests.tldrawAI.board4", "{board4}", false)});
-    assert.strictEqual(await fluid.tldraw.ai.awaitLayer("fluid.tests.tldrawAI.board4"), null, "Sound layer awaited until defined");
+    assert.strictEqual(await fluid.ai.arena.awaitLayer("fluid.tests.tldrawAI.board4"), null, "Sound layer awaited until defined");
     assert.equal(typeof(fluid.getGlobalValue("fluid.tests.tldrawAI.board4")), "function", "Sound layer's creator defined");
     ["fluid.tests.tldrawAI.board0", "fluid.tests.tldrawAI.board4"].forEach(fluid.deleteLayer);
 
@@ -1426,7 +1452,7 @@ QUnit.test("Board rendered from computed template diagnosed - Othello", async fu
     assert.equal(plan.problems.length, 1, "Layer part defining its template twice reported at once");
     assert.ok(plan.problems[0].includes(fluid.sfcTemplateConflictMessage("fluid.tests.tldrawAI.board1")), "Conflict described");
     const board1 = await fluid.tests.tldrawAI.makeBoard("fluid.tests.tldrawAI.board1", conflicting, container);
-    const conflictProblems = fluid.tldraw.ai.diagnose(board1, true);
+    const conflictProblems = fluid.ai.arena.diagnose(board1, true);
     assert.ok(conflictProblems.some(problem => problem.includes(fluid.sfcTemplateConflictMessage("fluid.tests.tldrawAI.board1"))),
         "Conflict diagnosed in widget constructed from the layer");
     // A component whose layers failed has no destroy method of its own
@@ -1435,7 +1461,7 @@ QUnit.test("Board rendered from computed template diagnosed - Othello", async fu
     // The computed template refers to the board's state through {self}, which designates the view
     const board2 = await fluid.tests.tldrawAI.makeBoard("fluid.tests.tldrawAI.board2",
         fluid.tests.tldrawAI.boardSFC("fluid.tests.tldrawAI.board2", "{self}", false), container);
-    const selfProblems = fluid.tldraw.ai.diagnose(board2, true);
+    const selfProblems = fluid.ai.arena.diagnose(board2, true);
     assert.equal(selfProblems.length, 2, "One problem and one hint diagnosed");
     assert.ok(selfProblems[0].startsWith("Member template of component at path") && selfProblems[0].includes("/view has no member state, "
         + "although its parent component at path / does"), "Reference to state of the view reported at the view's template, noting its parent");
@@ -1446,12 +1472,12 @@ QUnit.test("Board rendered from computed template diagnosed - Othello", async fu
     const board3 = await fluid.tests.tldrawAI.makeBoard("fluid.tests.tldrawAI.board3",
         fluid.tests.tldrawAI.boardSFC("fluid.tests.tldrawAI.board3", "{board3}", false), container);
     assert.equal(qsa(".board-cell", container).length, 2, "Computed template rendered");
-    assert.deepEqual(fluid.tldraw.ai.diagnose(board3, true), [], "No problems diagnosed in corrected board");
+    assert.deepEqual(fluid.ai.arena.diagnose(board3, true), [], "No problems diagnosed in corrected board");
     qsa(".board-cell", container)[1].dispatchEvent(new Event("click"));
     fluid.cell.stabilize();
     assert.deepEqual(board3.state.cells, [0, 1, 1], "Handler written in computed template invoked with its argument");
     assert.deepEqual(qsa(".board-disc", container).map(disc => disc.textContent), ["1", "1"], "Computed template rerendered");
-    assert.deepEqual(fluid.tldraw.ai.diagnose(board3, true), [], "No problems diagnosed after play");
+    assert.deepEqual(fluid.ai.arena.diagnose(board3, true), [], "No problems diagnosed after play");
     board3.destroy();
     ["fluid.tests.tldrawAI.board1", "fluid.tests.tldrawAI.board2", "fluid.tests.tldrawAI.board3"].forEach(fluid.deleteLayer);
 });
@@ -1502,7 +1528,7 @@ QUnit.test("Problems in templates which render nonetheless are diagnosed", funct
     const container = qs(".container");
     const diagnosed = key => {
         const that = fluid.tests.tldrawAI.makeTemplated(key, container);
-        const problems = fluid.tldraw.ai.diagnose(that, true);
+        const problems = fluid.ai.arena.diagnose(that, true);
         that.destroy();
         return problems;
     };
@@ -1557,9 +1583,9 @@ QUnit.test("Diagnosis of a widget kept up to date, and reported on a badge", asy
     const container = qs(".container");
     const that = fluid.tests.tldrawAI.makeTemplated("toggled", container);
     const reports = [];
-    const diagnosis = fluid.tldraw.ai.bindDiagnosis(that, problems => reports.push(problems));
+    const diagnosis = fluid.ai.arena.bindDiagnosis(that, problems => reports.push(problems));
     // The diagnosis is reported once the graph has settled, which is awaited here too, together with a further task
-    const settled = () => fluid.tldraw.ai.awaitSettled().then(() => new Promise(resolve => setTimeout(resolve, 0)));
+    const settled = () => fluid.ai.arena.awaitSettled().then(() => new Promise(resolve => setTimeout(resolve, 0)));
     fluid.cell.stabilize();
     await settled();
     assert.deepEqual(reports, [[]], "Sound widget's first diagnosis reported");
@@ -1619,7 +1645,7 @@ QUnit.test("Problems diagnosed in widgets transmitted with the workspace", funct
     that.destroy();
     fluid.deleteLayer("fluid.tests.tldrawAI.templated");
     fluid.deleteLayer("fluid.tests.tldrawAI.templated.danglingText");
-    assert.ok(fluid.tldraw.ai.responseRules.includes("Never send a `problems` part yourself"), "AI told of problems parts");
+    assert.ok(fluid.ai.arena.responseRules.includes("Never send a `problems` part yourself"), "AI told of problems parts");
 });
 
 QUnit.test("Widgets hosted within an error boundary report their errors on their badge", async function (assert) {
@@ -1643,7 +1669,7 @@ QUnit.test("Widgets hosted within an error boundary report their errors on their
     const layerName = "fluid.tests.tldrawAI.board5";
     fluid.ptf.registerLayerPart({kind: "layer", contentType: "text/x-vue", filename: layerName,
         body: fluid.tests.tldrawAI.boardSFC(layerName, "{board5}", true)});
-    const layerUnavailable = await fluid.tldraw.ai.awaitLayer(layerName);
+    const layerUnavailable = await fluid.ai.arena.awaitLayer(layerName);
     assert.ok(fluid.isUnavailable(layerUnavailable), "Layer rejected");
     const {hostElement, container, holder} = makeHostElement();
     const reports = [];
@@ -1654,15 +1680,15 @@ QUnit.test("Widgets hosted within an error boundary report their errors on their
     assert.equal(reports.length, 1, "Failure of widget's layer reported to its host's reporter");
     assert.equal(container.childNodes.length, 0, "Failure not rendered in place within the widget");
     const diagnosed = [];
-    const diagnosis = fluid.tldraw.ai.bindDiagnosis(widget, problems => diagnosed.push(problems));
-    await fluid.tldraw.ai.awaitSettled();
+    const diagnosis = fluid.ai.arena.bindDiagnosis(widget, problems => diagnosed.push(problems));
+    await fluid.ai.arena.awaitSettled();
     await new Promise(resolve => setTimeout(resolve, 0));
     fluid.tldraw.renderProblemBadge(holder, diagnosed[0], {expand: container.textContent.trim() === "", onFix: () => {}});
     assert.ok(qs(".infusion-problem", holder).textContent.startsWith("Component at path / failed: Error in SFC for " + layerName),
         "Failure listed on badge at once, at the widget's path relative to itself");
     assert.ok(qs(".infusion-problem-fix", holder), "Widget offered for fixing");
     diagnosis.refresh();
-    await fluid.tldraw.ai.awaitSettled();
+    await fluid.ai.arena.awaitSettled();
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(diagnosed.length, 2, "Diagnosis reported once more on refreshing it, although it has not changed");
     diagnosis.dispose();
@@ -1682,10 +1708,43 @@ QUnit.test("Widgets hosted within an error boundary report their errors on their
 });
 
 QUnit.test("Paths within a widget are described relative to it", function (assert) {
-    const relativise = text => fluid.tldraw.ai.relativisePaths(text, "tldrawHost-3.othello-12");
+    const relativise = text => fluid.ai.arena.relativisePaths(text, "tldrawHost-3.othello-12");
     assert.equal(relativise("Component at path tldrawHost-3.othello-12 failed"), "Component at path / failed", "Widget's own path");
     assert.equal(relativise("Component at path tldrawHost-3.othello-12.view.cell has no member state (at {tldrawHost-3.othello-12.view}.state.board)."),
         "Component at path /view/cell has no member state (at {/view}.state.board).", "Paths of subcomponents and sites");
     assert.equal(relativise("Component at path tldrawHost-3.othello-123 failed"), "Component at path tldrawHost-3.othello-123 failed",
         "Path of another widget sharing a prefix left alone");
+});
+
+QUnit.test("The co-op is attributed in a banner at the bottom of the arena whilst its model is chosen", async function (assert) {
+    await fluid.tests.tldrawAI.loadImports();
+    const banner = document.createElement("div");
+    banner.id = "arena-attribution";
+    banner.hidden = true;
+    qs(".container").appendChild(banner);
+    const container = document.createElement("div");
+    qs(".container").appendChild(container);
+    const originalFind = fluid.ai.findLocalService;
+    fluid.ai.findLocalService = () => Promise.resolve(null);
+    const that = fluid.tldraw.askAnything({container});
+    try {
+        fluid.cell.stabilize();
+        assert.ok(banner.hidden, "No banner whilst the IFM proxy's model is chosen");
+        that.state.modelChoice = fluid.askAnything.coopPrefix + "greenpt/glm-5.3-flash";
+        fluid.cell.stabilize();
+        assert.notOk(banner.hidden, "The banner is shown whilst a model of the co-op is chosen");
+        assert.ok(banner.textContent.startsWith(fluid.ai.coopService.attribution.text), "It attributes the co-op");
+        assert.equal(qs("a", banner).getAttribute("href"), "https://git.inference.coop/co-op/docs/src/branch/main/governance/terms-of-service.md#4-acceptable-use", "Linking to its Terms of Service");
+        assert.ok(qs(".ask-anything-attribution", container).classList.contains("ask-anything-hidden"),
+            "The attribution is not also shown in the panel");
+        that.state.modelChoice = fluid.askAnything.ifmChoice;
+        fluid.cell.stabilize();
+        assert.ok(banner.hidden, "The banner is withdrawn with the co-op's model");
+    } finally {
+        that.destroy();
+        fluid.ai.findLocalService = originalFind;
+        fluid.askAnything.writeStored("modelChoice", "");
+        banner.remove();
+        container.remove();
+    }
 });

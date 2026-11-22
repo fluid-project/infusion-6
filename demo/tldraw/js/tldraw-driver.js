@@ -1,7 +1,11 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
-import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react} from "tldraw";
+import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react, useValue, DefaultContextMenu,
+    TldrawUiMenuGroup, TldrawUiMenuSubmenu, TldrawUiMenuActionItem, ToggleTransparentBgMenuItem, EditMenuSubmenu,
+    ArrangeMenuSubmenu, ReorderMenuSubmenu, MoveToPageMenu, ClipboardMenuGroup, SelectAllMenuItem, CursorChatItem,
+    useActions, useShowCollaborationUi, ShapeIndicatorOverlayUtil, atom} from "tldraw";
 import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions, guardClipboardEvents,
+    copySelectionAsPTF, exportSelectionAsPTF,
     isWidgetAvailable} from "./tldraw-clipboard.js";
 import {makeAIBridge} from "./tldraw-ai.js";
 import {restoreArena, persistArena, bindHistoryKeys, bindWidgetHistory, recordWidgetCreation} from "./tldraw-arena.js";
@@ -147,6 +151,33 @@ fluid.tldraw.bindNotes = function (editor) {
 };
 
 /**
+ * @typedef {Object} WidgetShapeRec
+ * @property {String} id - The id of the shape hosting the widget
+ * @property {String} layerName - The layer from which the widget is constructed
+ * @property {Number} x - The x coordinate of the shape's top left corner in page space
+ * @property {Number} y - The y coordinate of the shape's top left corner in page space
+ * @property {Number} w - The shape's width
+ * @property {Number} h - The shape's height
+ */
+
+/**
+ * Bind a cell to the shapes hosting widgets on the current page, as for `fluid.tldraw.bindNotes`, so that it is updated
+ * only when such a shape is created, deleted, moved or resized
+ * @param {Editor} editor - The tldraw editor
+ * @return {fluid.cell<WidgetShapeRec[]>} A cell holding a record of each shape hosting a widget on the current page
+ */
+fluid.tldraw.bindWidgetShapes = function (editor) {
+    const widgetIds = editor.store.query.ids("shape", () => ({type: {eq: "infusion"}}));
+    return fluid.tldraw.reactiveCell("tldraw widget shapes on current page", () => {
+        const pageId = editor.getCurrentPageId();
+        return [...widgetIds.get()].filter(id => editor.getAncestorPageId(id) === pageId).map(id => {
+            const bounds = editor.getShapePageBounds(id);
+            return {id, layerName: editor.getShape(id).props.layerName, x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h};
+        });
+    });
+};
+
+/**
  * The component holding the tldraw editor, of which every widget on the canvas is constructed as a child by
  * InfusionHost. Within it, the editor may be reached as `{tldrawHost}.editor` - the Infusion counterpart of React's
  * `useEditor()`. It broadcasts tldraw's machinery onto the view of every top-level widget, and bridges any tldraw state
@@ -169,6 +200,25 @@ fluid.def("fluid.demos.tldrawHost", {
         $bindable: {
             bind: "fluid.tldraw.bindNotes({self}.editor)",
             unbind: "fluid.tldraw.stopReactiveCell({boundValue})"
+        }
+    },
+    // The shapes hosting widgets, e.g. for the inspector to find the widget nearest it
+    widgetShapes: {
+        $bindable: {
+            bind: "fluid.tldraw.bindWidgetShapes({self}.editor)",
+            unbind: "fluid.tldraw.stopReactiveCell({boundValue})"
+        }
+    },
+    // Counts the construction and destruction of widgets, which are found by fluid.tldraw.widgetForShape
+    widgetsVersion: {
+        $bindable: {
+            bind: "fluid.tldraw.bindWidgetsVersion()"
+        }
+    },
+    // An element on the canvas in page space, onto which a widget may draw beyond its own shape - see CanvasLayer
+    canvasLayer: {
+        $bindable: {
+            bind: "fluid.tldraw.bindCanvasLayer()"
         }
     }
 });
@@ -250,13 +300,13 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
         let diagnosis = null;
         const hostElement = hostRef.current;
         const container = containerRef.current;
-        const onFix = problems => fluid.demos.askAnything.offer({text: fluid.tldraw.fixDirection(shapeId, layerName, problems)});
+        const onFix = problems => fluid.askAnything.offer({text: fluid.tldraw.fixDirection(shapeId, layerName, problems)});
         const showProblems = function (problems) {
             fluid.tldraw.renderProblemBadge(badgeRef.current, problems, {
                 // A widget which shows nothing else has its problems listed straight away
                 expand: container.textContent.trim() === "",
                 // The panel's SFC may not have loaded
-                onFix: fluid.demos?.askAnything?.offer ? onFix : null
+                onFix: fluid.askAnything?.offer ? onFix : null
             });
         };
         // An error reported by the tldrawHost may arise whilst the widget is being constructed, before it is diagnosed,
@@ -265,23 +315,21 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
         const adopt = function (constructed, how) {
             that = constructed;
             infusionInstances.set(shapeId, that);
+            fluid.tldraw.noteWidget(shapeId, that);
             console.log(`${how} Infusion component ${layerName} with id ${that.$id}`);
-            diagnosis = fluid.tldraw.ai.bindDiagnosis(that, showProblems);
+            diagnosis = fluid.ai.arena.bindDiagnosis(that, showProblems);
         };
         const parts = lookupPendingParts(ptfToken);
         /**
          * Construct the widget within the tldrawHost, reconstructing it from its PTF parts if it has any. A widget
          * whose layer has failed is constructed nonetheless, so that its failure is reported as for any other.
          * @param {fluid.component} host - The tldrawHost component
-         * @param {Unavailable|null} layerUnavailable - Why the widget's layer is not available, or `null` if it is
          */
-        const construct = function (host, layerUnavailable) {
+        const construct = function (host) {
             const shapeConfig = fluid.tldraw.shapeToConfig(shape, true);
             // Named for the shape, so that the widget keeps its path within the arena as it is reconstructed
             const memberName = fluid.tldraw.widgetMemberName(shapeId);
-            // The host potentia can only be determined once the widget's own layer is available
-            const potentia = layerUnavailable === null ? fluid.tldraw.hostPotentiaFor(layerName, container, shapeId, shapeConfig) :
-                {view: {$component: {container, shapeId, shape: shapeConfig}}};
+            const potentia = fluid.tldraw.hostPotentia(container, shapeId, shapeConfig);
             try {
                 if (parts) {
                     // The component is adopted as soon as it is constructed, before it is available, so that it can be
@@ -297,7 +345,7 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
                         console.error(`Failed to apply PTF parts for shape ${shapeId}: `, error);
                         notifyInstantiation(ptfToken, {that: constructed, error});
                     });
-                    fluid.tldraw.ai.awaitSettled().then(() => {
+                    fluid.ai.arena.awaitSettled().then(() => {
                         // A widget which is not available once the graph has settled will never be, and its parts will
                         // never be applied, so this is reported without waiting further
                         if (!isWidgetAvailable(shapeId)) {
@@ -309,7 +357,7 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
                 }
             } catch (error) {
                 console.error(`Failed to construct Infusion component for shape ${shapeId}: `, error);
-                showProblems([`This widget could not be constructed: ${fluid.tldraw.ai.describeError(error)}`]);
+                showProblems([`This widget could not be constructed: ${fluid.ai.describeError(error)}`]);
                 if (parts) {
                     notifyInstantiation(ptfToken, {error});
                 }
@@ -320,9 +368,9 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
             fluid.ptf.registerLayerParts(parts);
         }
         // A layer which is not available once the graph has settled never will be, e.g. since its SFC was rejected
-        Promise.all([hostReady, fluid.tldraw.ai.awaitLayer(layerName)]).then(([host, layerUnavailable]) => {
+        Promise.all([hostReady, fluid.ai.arena.awaitLayer(layerName)]).then(([host]) => {
             if (!unmounted) {
-                construct(host, layerUnavailable);
+                construct(host);
             }
         });
         return () => {
@@ -333,6 +381,7 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
                 console.log(`Destroying Infusion component ${layerName} with id ${that.$id}`);
                 if (infusionInstances.get(shapeId) === that) {
                     infusionInstances.delete(shapeId);
+                    fluid.tldraw.noteWidget(shapeId, null);
                 }
                 // A component whose layers failed has no destroy method of its own
                 fluid.destroyComponent(that);
@@ -689,8 +738,187 @@ const TopPanel = function () {
     );
 };
 
+// A single function, so that React calls it only as the element is mounted and unmounted, not on every render
+const setCanvasLayer = element => fluid.tldraw.canvasLayer.set(element);
+
+/**
+ * An element drawn by tldraw on its canvas beneath the camera's transform, so that what is placed within it at page
+ * coordinates pans and zooms with the shapes. It stands above every shape, and lets every pointer event through to
+ * them. It is published as fluid.tldraw.canvasLayer
+ * @return {ReactElement} The element
+ */
+const CanvasLayer = function () {
+    return h("div", {
+        className: "fl-tldraw-canvas-layer",
+        ref: setCanvasLayer,
+        style: {position: "absolute", left: 0, top: 0, width: 0, height: 0, overflow: "visible", zIndex: 100000, pointerEvents: "none"}
+    });
+};
+
+/**
+ * Determine whether any shapes are selected, so that they can be copied or exported
+ * @return {Boolean} `true` if any are
+ */
+const useHasSelection = function () {
+    const editor = useEditor();
+    return useValue("has selection", () => editor.getSelectedShapeIds().length > 0, [editor]);
+};
+
+/**
+ * A submenu of the formats in which the selection may be copied or exported - tldraw's own, followed by PTF - with
+ * tldraw's toggle of a transparent background
+ * @param {Object} props - The React props
+ * @param {String} props.id - The id of the submenu, as tldraw's - "copy-as" or "export-as"
+ * @param {String[]} props.actionIds - The actions of the formats
+ * @return {ReactElement|null} The submenu, or `null` if none of its actions is available
+ */
+const FormatSubmenu = function ({id, actionIds}) {
+    const actions = useActions();
+    const hasSelection = useHasSelection();
+    const available = actionIds.filter(actionId => actions[actionId]);
+    return available.length === 0 ? null : h(TldrawUiMenuSubmenu, {id, label: "context-menu." + id, size: "small", disabled: !hasSelection},
+        h(TldrawUiMenuGroup, {id: id + "-group"}, available.map(actionId => h(TldrawUiMenuActionItem, {key: actionId, actionId}))),
+        h(TldrawUiMenuGroup, {id: id + "-bg"}, h(ToggleTransparentBgMenuItem))
+    );
+};
+
+/**
+ * The context menu's group of conversions of the selection - tldraw's ConversionsMenuGroup, with PTF offered in its
+ * "Copy as" and "Export as" submenus, and its offer to download the original of an image or video
+ * @return {ReactElement|null} The group, or `null` if nothing is selected
+ */
+const ConversionsWithPTF = function () {
+    const editor = useEditor();
+    const hasSelection = useHasSelection();
+    const isDebugMode = useValue("is debug mode", () => editor.getInstanceState().isDebugMode, [editor]);
+    const hasMedia = useValue("has media", () => editor.getSelectedShapes().some(shape => (shape.type === "image" || shape.type === "video")
+        && shape.props.assetId), [editor]);
+    const canWriteImages = !!editor.getContainerWindow().navigator.clipboard?.write;
+    return hasSelection ? h(TldrawUiMenuGroup, {id: "conversions"},
+        h(FormatSubmenu, {id: "copy-as", actionIds: ["copy-as-svg", ...canWriteImages ? ["copy-as-png"] : [],
+            ...isDebugMode ? ["copy-as-json"] : [], "copy-as-ptf"]}),
+        h(FormatSubmenu, {id: "export-as", actionIds: ["export-as-svg", "export-as-png", "export-as-ptf"]}),
+        hasMedia ? h(TldrawUiMenuActionItem, {actionId: "download-original"}) : null
+    ) : null;
+};
+
+/**
+ * tldraw's context menu, as made by its DefaultContextMenuContent, save that its conversions are ConversionsWithPTF
+ * @param {Object} props - The React props, passed on to DefaultContextMenu
+ * @return {ReactElement} The context menu
+ */
+const ContextMenuWithPTF = function (props) {
+    const editor = useEditor();
+    const showCollaborationUi = useShowCollaborationUi();
+    const isSinglePageMode = useValue("is single page mode", () => editor.options.maxPages <= 1, [editor]);
+    return h(DefaultContextMenu, props,
+        showCollaborationUi ? h(TldrawUiMenuGroup, {id: "cursor-chat"}, h(CursorChatItem)) : null,
+        h(TldrawUiMenuGroup, {id: "modify"}, h(EditMenuSubmenu), h(ArrangeMenuSubmenu), h(ReorderMenuSubmenu),
+            isSinglePageMode ? null : h(MoveToPageMenu)),
+        h(ClipboardMenuGroup),
+        h(ConversionsWithPTF),
+        h(TldrawUiMenuGroup, {id: "select-all"}, h(SelectAllMenuItem))
+    );
+};
+
+/**
+ * The shapes marked as the targets of a tool such as the inspector, each against the tokens of those marking it, so
+ * that they may be indicated as a hovered shape is - see InspectedShapeIndicatorOverlayUtil
+ * @type {Atom<Map<String, Set<Object>>>}
+ */
+const markedShapes = atom("shapes marked as targets", new Map());
+
+/**
+ * Mark a shape as the target of a tool, e.g. of an inspector, so that it is indicated as a hovered shape is until it is
+ * unmarked - suitable as the binder of a $bindable
+ * @param {String|null} shapeId - The id of the shape, or `null` if there is none
+ * @return {Object} A token, to be supplied to `fluid.tldraw.unmarkShape`
+ */
+fluid.tldraw.markShape = function (shapeId) {
+    const token = {shapeId};
+    if (shapeId) {
+        markedShapes.update(marked => new Map(marked).set(shapeId, new Set([...marked.get(shapeId) || [], token])));
+    }
+    return token;
+};
+
+/**
+ * Unmark a shape marked by `fluid.tldraw.markShape` - it remains indicated whilst any other tool marks it
+ * @param {Object} token - The token returned on marking it
+ */
+fluid.tldraw.unmarkShape = function (token) {
+    if (token.shapeId) {
+        markedShapes.update(marked => {
+            const tokens = new Set(marked.get(token.shapeId));
+            tokens.delete(token);
+            const togo = new Map(marked);
+            if (tokens.size > 0) {
+                togo.set(token.shapeId, tokens);
+            } else {
+                togo.delete(token.shapeId);
+            }
+            return togo;
+        });
+    }
+};
+
+/**
+ * tldraw's indicator of the selected and hovered shapes, which also indicates the shapes marked by
+ * `fluid.tldraw.markShape`, drawn as a hovered shape is, and when it would be - whilst the select tool is idle
+ */
+class InspectedShapeIndicatorOverlayUtil extends ShapeIndicatorOverlayUtil {
+    getOverlays() {
+        const overlays = super.getOverlays();
+        const editor = this.editor;
+        const idle = editor.isInAny("select.idle", "select.editing_shape") && !editor.getInstanceState().isChangingStyle;
+        const rendering = new Set(editor.getRenderingShapes().map(shape => shape.id));
+        const marked = idle ? [...markedShapes.get().keys()].filter(id => rendering.has(id)) : [];
+        let togo = overlays;
+        if (marked.length > 0) {
+            const existing = overlays[0]?.props ?? {idsToDisplay: [], hintingShapeIds: []};
+            togo = [{id: "shape_indicator", type: "shape_indicator", props: {
+                idsToDisplay: [...new Set([...existing.idsToDisplay, ...marked])],
+                hintingShapeIds: existing.hintingShapeIds
+            }}];
+        }
+        return togo;
+    }
+}
+
+// Replaces tldraw's own indicator, of the same type
+const overlayUtils = [InspectedShapeIndicatorOverlayUtil];
+
 const components = {
-    SharePanel: TopPanel
+    SharePanel: TopPanel,
+    OnTheCanvas: CanvasLayer,
+    ContextMenu: ContextMenuWithPTF
+};
+
+// The actions copying and exporting the selection as PTF, offered by ConversionsWithPTF
+const overrides = {
+    actions(editor, actions) {
+        return {
+            ...actions,
+            "copy-as-ptf": {
+                id: "copy-as-ptf",
+                label: "action.copy-as-ptf",
+                readonlyOk: true,
+                onSelect: () => copySelectionAsPTF(editor).catch(error => console.error("Failed to copy as PTF: ", error))
+            },
+            "export-as-ptf": {
+                id: "export-as-ptf",
+                label: "action.export-as-ptf",
+                readonlyOk: true,
+                onSelect: () => exportSelectionAsPTF(editor).catch(error => console.error("Failed to export as PTF: ", error))
+            }
+        };
+    },
+    translations: {
+        en: {
+            "action.copy-as-ptf": "PTF",
+            "action.export-as-ptf": "PTF"
+        }
+    }
 };
 
 // Copying or cutting Infusion shapes writes a PTF document to the clipboard, and pasting one reconstructs them
@@ -712,6 +940,8 @@ const onMount = function (editor) {
     resolveHost(tldrawHost);
     // Lets the "Ask me anything" panel reflect on and alter the canvas
     fluid.tldraw.ai.bridge = makeAIBridge(editor);
+    // The assistant of the "Ask me anything" panel, which names it - see fluid.tldraw.askAnything in ai-protocol.js
+    fluid.tldraw.ai.assistant = fluid.tldraw.ai.makeAssistant(fluid.tldraw.ai.bridge);
     // Lets the user copy text from the panel, rather than the canvas's selection
     const unguard = guardClipboardEvents(document.getElementById("ai-root"));
     const unbindKeys = bindHistoryKeys();
@@ -746,6 +976,8 @@ const onMount = function (editor) {
     };
 };
 
+fluid.tldraw.bindResizeBar(document).catch(error => console.error("Failed to construct the resize bar: ", error));
+
 createRoot(document.getElementById("tldraw-root")).render(
-    h(Tldraw, {shapeUtils, components, options, onMount, licenseKey})
+    h(Tldraw, {shapeUtils, overlayUtils, components, overrides, options, onMount, licenseKey})
 );

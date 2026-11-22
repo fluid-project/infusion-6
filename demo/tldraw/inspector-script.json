@@ -1,0 +1,200 @@
+{
+    "title": "The inspector of Infusion widgets in tldraw",
+    "page": "demo/tldraw/index.html",
+    "viewport": {"width": 1600, "height": 1000},
+    "ready": [
+        {"target": {"selector": ".tl-canvas"}, "count": {"equals": 1}},
+        {"target": {"selector": "[data-shape-type='infusion']", "exactText": "Hello Infusion World"}, "count": {"equals": 1}}
+    ],
+    "steps": [{
+        "description": "Open the layer picker beside the \"New shape\" button",
+        "action": {"type": "click", "target": {"selector": "button.layer-picker-button"}},
+        "expect": [{
+            "target": {"selector": ".layer-picker-option", "text": "fluid.demos.inspector"},
+            "count": {"equals": 1},
+            "visible": true
+        }]
+    }, {
+        "description": "Choose fluid.demos.inspector from the layer picker",
+        "action": {"type": "click", "target": {"selector": ".layer-picker-name", "exactText": "fluid.demos.inspector"}},
+        "expect": [{
+            "target": {"selector": ".layer-picker-choice"},
+            "text": {"equals": "fluid.demos.inspector"}
+        }]
+    }, {
+        "description": "Press \"New shape\" to add an inspector beside the hello world widget",
+        "action": {"type": "click", "target": {"selector": "button", "exactText": "New shape"}},
+        "expect": [{
+            "description": "The inspector should show the hello world widget's root and its view",
+            "target": {"selector": ".fl-inspector-containment .fl-inspector-node"},
+            "count": {"equals": 2}
+        }, {
+            "description": "with its root labelled by the nickname of its layer",
+            "target": {"selector": ".fl-inspector-containment .fl-inspector-label", "exactText": "helloWorld"},
+            "count": {"equals": 1}
+        }, {
+            "description": "and its view ringed",
+            "target": {"selector": ".fl-inspector-containment .fl-inspector-view-ring"},
+            "count": {"equals": 1}
+        }, {
+            "description": "and a tab and editor for its layer",
+            "target": {"selector": ".fl-inspector-tab.active", "exactText": "fluid.demos.helloWorld"},
+            "count": {"equals": 1}
+        }, {
+            "target": {"selector": ".fl-inspector-editor.active .cm-editor"},
+            "text": {"contains": "fluid.def(\"fluid.demos.helloWorld\""}
+        }]
+    }, {
+        "description": "Drag the inspector by its title to the right, clear of the hello world widget",
+        "action": {"type": "drag", "target": {"selector": ".fl-inspector-title"}, "by": {"x": 320, "y": 0}},
+        "expect": [{
+            "description": "The anchor line should end on the edge of the hello world widget",
+            "target": {"selector": ".fl-inspector-anchor-end", "index": 1},
+            "centreOnEdgeOf": {"selector": "[data-shape-type='infusion']", "exactText": "Hello Infusion World"}
+        }, {
+            "description": "and begin on the edge of the inspector",
+            "target": {"selector": ".fl-inspector-anchor-end", "index": 0},
+            "centreOnEdgeOf": {"selector": "[data-shape-type='infusion']:has(.fl-inspector)"}
+        }]
+    }, {
+        "description": "Click the view of the hello world widget in the containment pane",
+        "action": {"type": "click", "target": {"selector": ".fl-inspector-disc", "within": {"selector": ".fl-inspector-containment .fl-inspector-node", "text": "view"}}},
+        "expect": [{
+            "description": "The view should be selected",
+            "target": {"selector": ".fl-inspector-containment .fl-inspector-selected"},
+            "text": {"contains": "view"}
+        }, {
+            "description": "and, having no user layers, be reported as declared in the widget's layer",
+            "target": {"selector": ".fl-inspector-hierarchy .fl-inspector-message"},
+            "text": {"contains": "in fluid.demos.helloWorld"}
+        }, {
+            "description": "whose editor should select its declaration, the layer's template",
+            "target": {"selector": ".fl-inspector-editor.active .cm-selectionBackground"},
+            "count": {"atLeast": 1}
+        }]
+    }, {
+        "description": "Click the root of the hello world widget in the containment pane",
+        "action": {"type": "click", "target": {"selector": ".fl-inspector-disc", "within": {"selector": ".fl-inspector-containment .fl-inspector-node", "text": "helloWorld"}}},
+        "expect": [{
+            "description": "The hierarchy pane should show the widget's layer",
+            "target": {"selector": ".fl-inspector-hierarchy .fl-inspector-label", "exactText": "fluid.demos.helloWorld"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Click the widget's layer in the hierarchy pane",
+        "action": {"type": "click", "target": {"selector": ".fl-inspector-hierarchy .fl-inspector-disc"}},
+        "expect": [{
+            "description": "The layer should be selected",
+            "target": {"selector": ".fl-inspector-hierarchy .fl-inspector-selected"},
+            "text": {"contains": "fluid.demos.helloWorld"}
+        }, {
+            "description": "and its tab shown",
+            "target": {"selector": ".fl-inspector-tab.active", "exactText": "fluid.demos.helloWorld"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Break the widget's layer by naming a parent layer which is not defined",
+        "action": {"type": "editText", "target": {"selector": ".fl-inspector-editor.active .cm-editor"},
+            "find": "\"fluid.topLevelWidget\"", "replace": "\"fluid.topLevelWidgetZ\""},
+        "expect": [{
+            "description": "The inspector should report that the widget is not available",
+            "target": {"selector": ".fl-inspector-title"},
+            "text": {"contains": "is not available"}
+        }, {
+            "description": "but keep the editor of its layer, holding the broken text",
+            "target": {"selector": ".fl-inspector-editor.active .cm-editor"},
+            "text": {"contains": "fluid.topLevelWidgetZ"}
+        }, {
+            "description": "with the widget's problem marked in the gutter, at the undefined layer's name",
+            "target": {"selector": ".fl-inspector-editor.active .cm-lintRange-error"},
+            "text": {"equals": "fluid.topLevelWidgetZ"}
+        }, {
+            "target": {"selector": ".fl-inspector-editor.active .cm-lint-marker-error"},
+            "count": {"equals": 1}
+        }, {
+            "target": {"selector": ".fl-inspector-tab.active", "exactText": "fluid.demos.helloWorld"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Repair the widget's layer in its editor",
+        "action": {"type": "editText", "target": {"selector": ".fl-inspector-editor.active .cm-editor"},
+            "find": "\"fluid.topLevelWidgetZ\"", "replace": "\"fluid.topLevelWidget\""},
+        "expect": [{
+            "description": "The widget should render again",
+            "target": {"selector": "[data-shape-type='infusion']", "exactText": "Hello Infusion World"},
+            "count": {"equals": 1}
+        }, {
+            "description": "and the inspector show its components once more",
+            "target": {"selector": ".fl-inspector-containment .fl-inspector-node"},
+            "count": {"equals": 2}
+        }, {
+            "target": {"selector": ".fl-inspector-title"},
+            "text": {"notContains": "not available"}
+        }, {
+            "description": "and its problem be cleared from the gutter",
+            "target": {"selector": ".fl-inspector-editor.active .cm-lint-marker-error"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Right-click the hello world widget to open tldraw's context menu",
+        "action": {"type": "contextmenu", "target": {"selector": ".hello-infusion"}},
+        "expect": [{
+            "target": {"selector": "[data-testid='context-menu-sub.copy-as-button']"},
+            "count": {"equals": 1},
+            "visible": true
+        }, {
+            "target": {"selector": "[data-testid='context-menu-sub.export-as-button']"},
+            "count": {"equals": 1},
+            "visible": true
+        }]
+    }, {
+        "description": "Open the \"Copy as\" submenu",
+        "action": {"type": "click", "target": {"selector": "[data-testid='context-menu-sub.copy-as-button']"}},
+        "expect": [{
+            "description": "PTF should be offered after tldraw's own formats",
+            "target": {"selector": "[data-testid='context-menu.copy-as-ptf']"},
+            "text": {"equals": "PTF"},
+            "visible": true
+        }, {
+            "target": {"selector": "[data-testid='context-menu.copy-as-svg']"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Choose \"Copy as\" PTF",
+        "action": {"type": "click", "target": {"selector": "[data-testid='context-menu.copy-as-ptf']"}},
+        "expect": [{
+            "description": "A PTF document holding the widget and its layer should be written to the clipboard",
+            "target": {"selector": "body"},
+            "clipboard": {"contains": ["MIME-Version: 1.0", "Potentia Transmission Format", "fluid.def(\"fluid.demos.helloWorld\""]}
+        }, {
+            "description": "and the menu closed",
+            "target": {"selector": "[data-testid='context-menu.copy-as-ptf']"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Right-click the hello world widget again",
+        "action": {"type": "contextmenu", "target": {"selector": ".hello-infusion"}},
+        "expect": [{
+            "target": {"selector": "[data-testid='context-menu-sub.export-as-button']"},
+            "count": {"equals": 1},
+            "visible": true
+        }]
+    }, {
+        "description": "Open the \"Export as\" submenu",
+        "action": {"type": "click", "target": {"selector": "[data-testid='context-menu-sub.export-as-button']"}},
+        "expect": [{
+            "target": {"selector": "[data-testid='context-menu.export-as-ptf']"},
+            "text": {"equals": "PTF"},
+            "visible": true
+        }]
+    }, {
+        "description": "Choose \"Export as\" PTF",
+        "action": {"type": "click", "target": {"selector": "[data-testid='context-menu.export-as-ptf']"}},
+        "expect": [{
+            "description": "A PTF document should be offered as a file named for the widget's layer",
+            "target": {"selector": "body"},
+            "download": {"filename": "fluid.demos.helloWorld.ptf",
+                "contains": ["MIME-Version: 1.0", "Potentia Transmission Format", "fluid.def(\"fluid.demos.helloWorld\""]}
+        }]
+    }]
+}

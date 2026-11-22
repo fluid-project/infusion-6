@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>A layer demanded before its import is read</title>
+        <!-- The shape of a page which once failed - bagatelle's indexBeasBCBA.html. The page declares the module holding
+             it with a module map, which Infusion fetches before it reads the page's imports, so that they may refer to
+             the modules it locates - see fluid.bootDocument. Meanwhile the page's element is booted, demanding the
+             layer its own layer derives from before the import defining that layer has been read. See "A page's layer
+             deriving from one it imports renders" in FluidViewSFCTests.js -->
+        <script src="../../../../../src/framework/core/js/FluidBoot.js"></script>
+        <fluid-module id="fluid-tests-early-demand" src="./" modules="fluid-modules.json"></fluid-module>
+        <fluid-import src="fluid-tests-earlyDemand.vue"></fluid-import>
+        <script>
+            "use strict";
+            fluid.def("fluid.tests.earlyDemandPage", {
+                $layers: "fluid.tests.earlyDemand",
+                caption: "Rendered from the page's own layer"
+            });
+        </script>
+    </head>
+    <body>
+        <div fluid-layers="fluid.tests.earlyDemandPage"></div>
+    </body>
+</html>

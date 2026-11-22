@@ -217,7 +217,7 @@ fluid.def("fluid.tests.ptf.derived", {
     assert.equal(derived.extra, 3, "Own member of derived SFC layer");
     derived.destroy();
 
-    // An empty definition with a template requires $layers, and its view's $layers and template, to be patched in
+    // An empty definition with a template requires $layers, and its view's $layers and template, to be added to it
     const emptySFC = `<script>
 fluid.def("fluid.tests.ptf.empty", {});
 </script>
@@ -232,9 +232,9 @@ fluid.def("fluid.tests.ptf.empty", {});
                 template: {sfcLayer: "fluid.tests.ptf.empty"}
             }
         }
-    }, "Empty definition patched with $layers and its view's $layers and template");
+    }, "Empty definition augmented with $layers and its view's $layers and template");
 
-    // A definition which already configures its view has its template patched in alongside its own members
+    // A definition which already configures its view has its template added alongside its own members
     const viewSFC = `<script>
 fluid.def("fluid.tests.ptf.ownView", {
     view: {
@@ -251,7 +251,7 @@ fluid.def("fluid.tests.ptf.ownView", {
         $layers: ["fluid.sfcTemplateViewComponent"],
         elideParent: false,
         template: {sfcLayer: "fluid.tests.ptf.ownView"}
-    }, "Existing view configuration patched with its $layers and template");
+    }, "Existing view configuration augmented with its $layers and template");
 
     const counterLoaded = await fluid.tests.ptf.loadSFCText("fluid.tests.ptf.counter", fluid.tests.ptf.counterSFC);
     assert.ok(counterLoaded, "Counter SFC loaded");
@@ -500,6 +500,54 @@ QUnit.test("Component injecting its grandparent transmitted and reconstructed - 
     assert.notOk(fluid.isUnavailable(fluid.readLayer("fluid.tests.ptf.loader").get()), "Transmitted definition registered");
     assert.ok(copy.panel.filter.filterRoot === copy, "Grandparent injected into reconstructed component");
     assert.equal(copy.panel.filter.loaderValue, "loader", "Injected grandparent resolves by its injected name");
+    copy.destroy();
+});
+
+QUnit.test("Options refining a borrowed view transmitted and reconstructed", async function (assert) {
+    // An umbrella borrowing its subcomponent's view, constructed with options refining that view - see "Options targeted
+    // at an injected site refine the component injected there" in FluidILTests.js
+    fluid.def("fluid.tests.ptf.refineFirst", {
+        $layers: "fluid.component",
+        view: {
+            $component: {
+                $layers: "fluid.component",
+                colour: "red",
+                size: 1
+            }
+        }
+    });
+    fluid.def("fluid.tests.ptf.refineUmbrella", {
+        $layers: "fluid.component",
+        first: {
+            $component: {
+                $layers: "fluid.tests.ptf.refineFirst"
+            }
+        },
+        view: "{first}.view"
+    });
+    const that = fluid.tests.ptf.refineUmbrella({view: {$component: {colour: "blue"}}});
+    fluid.cell.stabilize();
+    fluid.setForComponent(that.view, "size", 4);
+    fluid.cell.stabilize();
+    assert.equal(that.first.view.colour, "blue", "Source's borrowed view refined");
+    assert.equal(that.first.view.size, 4, "And written live through the injected site");
+
+    const parts = fluid.ptf.componentToParts(that);
+    const potentia = JSON.parse(parts.find(fluid.ptf.isRootPotentiaPart).body);
+    assert.deepEqual(potentia.view, {$component: {colour: "blue"}}, "The refinement is transmitted where it was written, at the umbrella's view");
+    assert.equal(parts.filter(part => part.kind === "potentia" && part.filename !== "/").length, 0,
+        "Nothing of the refinement is written into the parts of the view it refines");
+
+    const text = fluid.ptf.componentToPTF(that);
+    that.destroy();
+    fluid.deleteLayer("fluid.tests.ptf.refineUmbrella");
+    fluid.deleteLayer("fluid.tests.ptf.refineFirst");
+
+    const {that: copy, unresolved} = await fluid.ptf.instantiate(text);
+    assert.deepEqual(unresolved, [], "All parts applied");
+    assert.equal(copy.view, copy.first.view, "The reconstructed umbrella borrows its subcomponent's view");
+    assert.equal(copy.first.view.colour, "blue", "Which is refined again by the transmitted options");
+    assert.equal(copy.first.view.size, 4, "And holds the live state written through the injected site");
     copy.destroy();
 });
 
@@ -868,4 +916,114 @@ QUnit.test("Persistence adapters", function (assert) {
     assert.equal(broken.load(), null, "Unavailable storage loads nothing");
     broken.save("Lost");
     assert.ok(true, "Failure to save does not throw");
+});
+
+fluid.def("fluid.tests.islandCounter", {
+    $layers: "fluid.component",
+    state: {$reactiveRoot: {count: 0}},
+    count: "{self}.state.count",
+    label: "unlabelled",
+    inner: {$component: {$layers: "fluid.component", note: "default note"}},
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="counter"><span class="count">@{count}</span><span class="label">@{label}</span><span class="note">@{inner.note}</span></div>`
+        }
+    }
+});
+
+fluid.def("fluid.tests.islandHost", {
+    $layers: "fluid.component",
+    html: "",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            verbatim: true,
+            template: "{$parent}.html"
+        }
+    }
+});
+
+/**
+ * Find the component of an island of a host, by its member name
+ * @param {fluid.component} that - The host
+ * @param {String} memberName - The island's member name
+ * @return {fluid.component} The island's component
+ */
+fluid.tests.islandOf = (that, memberName) => {
+    const shadow = that[fluid.metadataSymbol].childComponents[memberName];
+    return fluid.proxyMat(shadow.computer, shadow, []);
+};
+
+/**
+ * Render markup holding an island in a fresh host, and return the host and its container
+ * @param {String} html - The markup
+ * @return {Object} `{that, container}`
+ */
+fluid.tests.hostIsland = function (html) {
+    const container = document.body.appendChild(document.createElement("div"));
+    const that = fluid.tests.islandHost({container, html});
+    fluid.cell.stabilize();
+    return {that, container};
+};
+
+QUnit.test("An island's state is written back into its markup, and restored from it", async function (assert) {
+    const markup = fluid.ptf.islandMarkup({layers: ["fluid.tests.islandCounter"], id: "counter", potentia: {label: "Given"}});
+    assert.equal(markup, `<div fluid-layers="fluid.tests.islandCounter" fluid-id="counter" fluid-potentia='{"label":"Given"}'></div>`,
+        "An island is written as one element, its potentia in an attribute");
+    const first = fluid.tests.hostIsland(markup);
+    const island = fluid.tests.islandOf(first.that, "counter");
+    assert.equal(island.label, "Given", "Configured by its potentia");
+    island.state.count = 4;
+    island.inner.note = "edited note";
+    fluid.cell.stabilize();
+    const element = first.container.querySelector("[fluid-id=\"counter\"]");
+    const potentia = fluid.ptf.islandPotentia(island, fluid.elementAttrs(element));
+    assert.deepEqual(potentia, {label: "Given", $live: {"/": {state: {count: 4}}, "/inner": {note: "edited note"}}},
+        "Its potentia now holds what was written into it since, by path");
+    const saved = fluid.ptf.islandMarkup({layers: ["fluid.tests.islandCounter"], id: "counter", potentia});
+    first.that.destroy();
+    first.container.remove();
+
+    const second = fluid.tests.hostIsland(saved);
+    const restored = fluid.tests.islandOf(second.that, "counter");
+    await fluid.ptf.awaitAvailable(fluid.ptf.componentToShadow(restored));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    fluid.cell.stabilize();
+    assert.equal(restored.count, 4, "Its live state is restored from its markup");
+    assert.equal(second.container.querySelector(".count").textContent, "4", "And rendered");
+    assert.equal(second.container.querySelector(".note").textContent, "edited note", "A nested component's live state restored");
+    assert.equal(second.container.querySelector(".label").textContent, "Given", "Its potentia kept");
+    restored.state.count = 5;
+    second.that.html = saved + "<p>Another block</p>";
+    fluid.cell.stabilize();
+    assert.equal(fluid.tests.islandOf(second.that, "counter").count, 5,
+        "An island outliving its markup's re-rendering keeps what was written into it since");
+
+    // 2. Copied as PTF, and pasted back as an island
+    const parts = fluid.ptf.decode(fluid.ptf.encode(fluid.ptf.islandToParts(restored, fluid.elementAttrs(second.container.querySelector("[fluid-id=\"counter\"]")))));
+    assert.ok(parts.some(part => part.kind === "layer" && part.filename === "fluid.tests.islandCounter"), "Copied with its layer");
+    const pasted = fluid.ptf.islandFromParts(parts);
+    assert.deepEqual(pasted.layers, ["fluid.tests.islandCounter"], "Pasted with its layers");
+    assert.deepEqual(pasted.potentia, {label: "Given", $live: {"/": {state: {count: 5}}, "/inner": {note: "edited note"}}},
+        "Pasted with its potentia and live state");
+    const {that: reconstructed} = await fluid.ptf.instantiateParts(parts);
+    assert.equal(reconstructed.count, 5, "The copied PTF reconstructs it elsewhere too");
+    reconstructed.destroy();
+    second.that.destroy();
+    second.container.remove();
+});
+
+QUnit.test("The potentia of a PTF document's nested components fold into an island's", function (assert) {
+    const parts = [
+        {kind: "potentia", contentType: "application/json", filename: "/", body: JSON.stringify({$layers: ["a.b", "c.d"], x: 1})},
+        {kind: "potentia", contentType: "application/json", filename: "/inner/deeper", body: JSON.stringify({y: 2})},
+        {kind: "potentia", contentType: "application/json", filename: "/inner", body: JSON.stringify({z: 3})}
+    ];
+    const island = fluid.ptf.islandFromParts(parts);
+    assert.deepEqual(island.layers, ["a.b", "c.d"], "Layers taken from the root");
+    assert.deepEqual(island.potentia, {x: 1, inner: {$component: {z: 3, deeper: {$component: {y: 2}}}}},
+        "Each nested component's potentia held at its member as a $component record");
+    assert.equal(fluid.ptf.islandMarkup({layers: island.layers, potentia: {quote: "it's <b>"}}),
+        `<div fluid-layers="a.b c.d" fluid-potentia='{"quote":"it&#39;s &lt;b>"}'></div>`, "Quotes in potentia escaped");
 });

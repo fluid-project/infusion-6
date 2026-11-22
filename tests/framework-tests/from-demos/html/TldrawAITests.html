@@ -8,7 +8,6 @@
 
         <fluid-module id="infusion-6" src="../../../../"></fluid-module>
 
-        <script src="../../../../src/lib/lezer/lezer-javascript-browser.js"></script>
 
         <script src="../../../../src/framework/core/js/FluidCore.js"></script>
         <script src="../../../../src/framework/core/js/FluidSignals.js"></script>
@@ -19,7 +18,6 @@
         <script src="../../../../src/framework/core/js/FluidPTF.js"></script>
         <script src="../../../../src/framework/core/js/FluidView-browser.js"></script>
         <script src="../../../../src/framework/core/js/template-parser.js"></script>
-        <script src="../../../../src/framework/core/js/sfc-parser.js"></script>
         <script src="../../../../src/lib/snarkdown/snarkdown.umd.js"></script>
 
         <!-- The actual SFC files and scripts of the demo at demo/tldraw which do not depend on tldraw -->
@@ -27,14 +25,16 @@
 
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-counter.vue"></fluid-import>
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-helloWorld.vue"></fluid-import>
-        <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnything.vue"></fluid-import>
-        <fluid-import src="%tldrawDemo/sfc/fluid-demos-askAnythingEntry.vue"></fluid-import>
+        <fluid-import src="%infusion-6/src/components/askAnything/fluid-askAnything.vue"></fluid-import>
+        <fluid-import src="%infusion-6/src/components/askAnything/fluid-askAnythingEntry.vue"></fluid-import>
+        <fluid-import src="%infusion-6/src/components/askAnything/fluid-markdownBlock.vue"></fluid-import>
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-imageGenerator.vue"></fluid-import>
         <fluid-import src="%tldrawDemo/sfc/fluid-demos-closestNoteFinder.vue"></fluid-import>
 
         <script src="../../../../demo/tldraw/js/tldraw-hosting.js"></script>
+        <script src="../../../../src/components/askAnything/fluid-ai.js"></script>
+        <script src="../../../../src/components/askAnything/fluid-ai-arena.js"></script>
         <script src="../../../../demo/tldraw/js/ai-protocol.js"></script>
-        <script src="../../../../demo/tldraw/js/markdown-block.js"></script>
         <script src="../../../../demo/tldraw/js/pixabay.js"></script>
 
         <script src="../../../lib/qunit/js/qunit.js"></script>

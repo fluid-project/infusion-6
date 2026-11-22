@@ -4356,3 +4356,121 @@ QUnit.test("A $compute may build on its own previous result through {$oldValue}"
     assert.equal(fluid.unwrapProxy(that.shown), shown, "A reducer returning its previous result keeps its identity");
     that.destroy();
 });
+
+/*** Options targeted at an injected site refine its target - see a-scratch/reports/injected-site-refinement.md ***/
+
+fluid.def("fluid.tests.refine.first", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.component",
+            colour: "red",
+            size: 1
+        }
+    }
+});
+
+fluid.def("fluid.tests.refine.umbrella", {
+    $layers: "fluid.component",
+    first: {
+        $component: {
+            $layers: "fluid.tests.refine.first"
+        }
+    },
+    // The umbrella borrows the view of its subcomponent
+    view: "{first}.view",
+    note: "from the umbrella"
+});
+
+QUnit.test("Options targeted at an injected site refine the component injected there", function (assert) {
+    const that = fluid.tests.refine.umbrella({view: {$component: {colour: "blue"}}});
+    fluid.cell.stabilize();
+    assert.equal(that.view, that.first.view, "The view is still borrowed - the options did not displace the reference");
+    assert.equal(that.first.view.colour, "blue", "The options are merged into the component injected");
+    assert.equal(that.first.view.size, 1, "Alongside its own");
+    assert.equal(that.view.colour, "blue", "And read so through the injected site");
+    const source = fluid.get(that.first.view[fluid.metadataSymbol].layerMap, ["colour", fluid.metadataSymbol, "source"]);
+    assert.ok(/^distribution from .*\.view/.test(source), "The layer map says where the refinement came from: " + source);
+    that.destroy();
+});
+
+QUnit.test("Options naming $layers at an injected site construct a fresh component there", function (assert) {
+    const that = fluid.tests.refine.umbrella({view: {$component: {$layers: "fluid.component", colour: "green"}}});
+    fluid.cell.stabilize();
+    assert.notEqual(that.view, that.first.view, "A fresh component displaces the reference");
+    assert.equal(that.view.colour, "green", "Constructed from the options");
+    assert.equal(that.first.view.colour, "red", "The subcomponent's view is untouched");
+    that.destroy();
+});
+
+QUnit.test("A refinement is retracted with its injecting site, and resolves references where it was written", function (assert) {
+    // A target outside the injecting component, reached by a global reference
+    const target = fluid.tests.refine.first();
+    fluid.cell.stabilize();
+    const targetPath = target[fluid.metadataSymbol].path;
+    const injecting = fluid.tests.refine.umbrella({
+        first: null,
+        view: "{/" + targetPath + "}.view"
+    });
+    fluid.cell.stabilize();
+    assert.equal(target.view.colour, "red", "No refinement is written by a bare injection");
+    injecting.destroy();
+
+    const refining = fluid.tests.refine.umbrella({
+        first: null,
+        view: {$component: {colour: "{umbrella}.note"}}
+    });
+    fluid.cell.stabilize();
+    assert.ok(fluid.isUnavailable(refining.view) || refining.view === undefined || !refining.view.colour,
+        "With no reference to inject, a refinement has no target - nothing is constructed from options naming no layers");
+    refining.destroy();
+
+    fluid.def("fluid.tests.refine.reaching", {
+        $layers: "fluid.component",
+        note: "from the reaching component",
+        view: "{/" + targetPath + "}.view"
+    });
+    const reaching = fluid.tests.refine.reaching({view: {$component: {colour: "{reaching}.note"}}});
+    fluid.cell.stabilize();
+    assert.equal(target.view.colour, "from the reaching component", "A refinement reaches a target anywhere, its references "
+        + "resolved where they were written");
+    reaching.destroy();
+    fluid.cell.stabilize();
+    assert.equal(target.view.colour, "red", "Destroying the injecting site retracts its refinement, and the target remerges");
+    target.destroy();
+});
+
+QUnit.test("Refinements from several sites are ordered by path, and stand against the target's own options", function (assert) {
+    const target = fluid.tests.refine.first({view: {$component: {size: 5}}});
+    fluid.cell.stabilize();
+    const targetPath = target[fluid.metadataSymbol].path;
+    fluid.def("fluid.tests.refine.site", {
+        $layers: "fluid.component",
+        view: "{/" + targetPath + "}.view"
+    });
+    const a = fluid.tests.refine.site({view: {$component: {colour: "amber", size: 7}}});
+    const b = fluid.tests.refine.site({view: {$component: {colour: "blue"}}});
+    fluid.cell.stabilize();
+    const [first, second] = [a, b].sort((x, y) => x[fluid.metadataSymbol].path < y[fluid.metadataSymbol].path ? -1 : 1);
+    assert.equal(target.view.colour, second === b ? "blue" : "amber", "The refinement from the later path is the stronger");
+    assert.equal(target.view.size, 7, "A refinement is stronger than the options the target was constructed with");
+    target.view.size = 9;
+    fluid.cell.stabilize();
+    assert.equal(target.view.size, 9, "But weaker than a live write");
+    first.destroy();
+    second.destroy();
+    target.destroy();
+});
+
+QUnit.test("A refinement of a value which is not a component is unavailable", function (assert) {
+    fluid.def("fluid.tests.refine.notComponent", {
+        $layers: "fluid.component",
+        plain: "a value",
+        view: "{self}.plain"
+    });
+    const that = fluid.tests.refine.notComponent({view: {$component: {colour: "blue"}}});
+    fluid.cell.stabilize();
+    const view = fluid.unwrapProxy ? fluid.unwrapProxy(that).view : that.view;
+    assert.ok(fluid.isUnavailable(fluid.deSignal(view)) || fluid.isUnavailable(view), "The member is unavailable");
+    that.destroy();
+});

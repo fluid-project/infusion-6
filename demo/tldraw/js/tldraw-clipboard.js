@@ -120,12 +120,12 @@ export const diagnoseWidget = function (shapeId, layerName, what) {
     const that = infusionInstances.get(shapeId);
     let togo;
     if (that) {
-        const diagnosis = fluid.tldraw.ai.diagnose(that, true);
+        const diagnosis = fluid.ai.arena.diagnose(that, true);
         togo = diagnosis.length > 0 ? diagnosis.map(problem => `${what}: ${problem}`) :
             [`${what} did not become available, although no problem with it could be diagnosed`];
     } else {
         const unavailable = fluid.layerRecToUnavailable(fluid.readLayer(layerName).get());
-        const why = unavailable ? ` (${fluid.tldraw.ai.describeError(unavailable)})` : "";
+        const why = unavailable ? ` (${fluid.ai.describeError(unavailable)})` : "";
         togo = [`${what} was never constructed, since its layer ${layerName} never became available${why} - `
             + "check that the layer is defined, either already or by a layer part"];
     }
@@ -145,7 +145,7 @@ export const describeInstantiation = function (report, shapeId, layerName, what)
     if (report === null || report.unavailable) {
         togo = diagnoseWidget(shapeId, layerName, what);
     } else if (report.error) {
-        togo = [`${what} could not be constructed: ${fluid.tldraw.ai.describeError(report.error)}`];
+        togo = [`${what} could not be constructed: ${fluid.ai.describeError(report.error)}`];
     } else {
         togo = report.unresolved.map(filename => `${what} has no subcomponent at path ${filename} to which its parts could be applied`);
     }
@@ -161,8 +161,8 @@ export const describeInstantiation = function (report, shapeId, layerName, what)
 export const reportPasteProblem = function (problem, detail) {
     console.warn(problem);
     // The panel's SFC may not have loaded
-    if (fluid.demos?.askAnything?.offer) {
-        fluid.demos.askAnything.offer({problem, detail});
+    if (fluid.askAnything?.offer) {
+        fluid.askAnything.offer({problem, detail});
     }
 };
 
@@ -369,7 +369,7 @@ const checkPastedWidgets = async function (editor, pasted, text) {
     });
     if (problems.length > 0) {
         reportPasteProblem("A PTF document was pasted, but its widgets could not all be reconstructed:\n"
-            + fluid.tldraw.ai.listProblems(problems), text);
+            + fluid.ai.listProblems(problems), text);
     }
 };
 
@@ -406,7 +406,7 @@ export const pastePTF = function (editor, text, point) {
         }
     } catch (error) {
         reportPasteProblem("A PTF document was pasted, but it is malformed, so nothing was pasted from it: "
-            + fluid.tldraw.ai.describeError(error), text);
+            + fluid.ai.describeError(error), text);
     }
     return checkPastedWidgets(editor, pasted, text);
 };
@@ -420,7 +420,7 @@ export const pastePTF = function (editor, text, point) {
  */
 export const pasteText = function (editor, text, point) {
     // The panel's SFC may not have loaded
-    const offered = !!fluid.demos?.askAnything?.offer && fluid.demos.askAnything.offer({text});
+    const offered = !!fluid.askAnything?.offer && fluid.askAnything.offer({text});
     if (!offered) {
         editor.markHistoryStoppingPoint("paste");
         editor.putExternalContent({type: "text", text, point});
@@ -442,6 +442,60 @@ export const guardClipboardEvents = function (element) {
         element.removeEventListener("copy", stop);
         element.removeEventListener("cut", stop);
     };
+};
+
+/**
+ * Encode the selected shapes as a PTF document, as they would be copied
+ * @param {Editor} editor - The tldraw editor
+ * @return {Promise<String|null>} A promise for the text of the document, or `null` if nothing is selected
+ */
+export const selectionToPTF = async function (editor) {
+    const content = editor.getContentFromCurrentPage(editor.getSelectedShapeIds());
+    let togo = null;
+    if (content) {
+        // Assets held only locally, e.g. images, are written into the document, as tldraw does for its own copy
+        const resolved = await editor.resolveAssetsInContent(content);
+        togo = contentToPTF(resolved);
+    }
+    return togo;
+};
+
+// The extension and MIME type of a PTF document exported as a file - it is a MIME multipart document
+export const ptfFileExtension = ".ptf";
+export const ptfMimeType = "multipart/mixed";
+
+/**
+ * Copy the selected shapes to the clipboard as a PTF document, whether or not any of them are Infusion shapes
+ * @param {Editor} editor - The tldraw editor
+ * @return {Promise} A promise which resolves once the document has been written
+ */
+export const copySelectionAsPTF = async function (editor) {
+    const text = await selectionToPTF(editor);
+    if (text !== null) {
+        await editor.getContainerWindow().navigator.clipboard.writeText(text);
+    }
+};
+
+/**
+ * Export the selected shapes as a PTF document, offered to the user as a file to save - named for the layer of the
+ * single Infusion shape selected, if there is one
+ * @param {Editor} editor - The tldraw editor
+ * @return {Promise} A promise which resolves once the file has been offered
+ */
+export const exportSelectionAsPTF = async function (editor) {
+    const text = await selectionToPTF(editor);
+    if (text !== null) {
+        const only = editor.getOnlySelectedShape();
+        const name = only && only.type === "infusion" ? only.props.layerName : "shapes";
+        const doc = editor.getContainerDocument();
+        const link = doc.createElement("a");
+        link.href = URL.createObjectURL(new Blob([text], {type: ptfMimeType}));
+        link.download = name + ptfFileExtension;
+        doc.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 0);
+    }
 };
 
 /**

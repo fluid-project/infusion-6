@@ -713,3 +713,52 @@ QUnit.test("A cell's own equiv keeps its value when an update leaves it morally 
     byKey.set({id: 1, label: "b"});
     assert.equal(byKey.get(), original, "A set judged equivalent by its key leaves the value held");
 });
+
+// Traces of a build - fluid.cell.recordUpdates and fluid.cell.upstream - after the monadic spreadsheet of Mokhov et
+// al.'s "Build Systems a la Carte" section 3.5, B1 = IF(C1=1, A1, A2), whose dependencies are found only by running it
+
+QUnit.test("The inputs a cell's value was computed from follow the dependencies it actually read", assert => {
+    const a1 = fluid.cell(10, {name: "A1"});
+    const a2 = fluid.cell(20, {name: "A2"});
+    const c1 = fluid.cell(1, {name: "C1"});
+    const b1 = fluid.cell(undefined, {name: "B1"}).computed(() => c1.get() === 1 ? a1.get() : a2.get());
+    const seen = [];
+    const recorder = fluid.cell.recordUpdates();
+    const effect = fluid.cell.effect(value => seen.push(value), [b1], {name: "E"});
+    fluid.cell.stabilize();
+    assert.deepEqual(seen, [10], "The effect ran with the value of the branch chosen");
+    assert.ok(recorder.cells.has(b1) && recorder.cells.has(effect), "The recorder saw both the computation and the effect evaluated");
+    const names = record => record.leaves.map(cell => cell.name).sort();
+    assert.deepEqual(names(fluid.cell.upstream([effect])), ["A1", "C1"], "The effect's inputs are those of the branch read");
+    assert.ok(fluid.cell.upstream([effect]).cells.has(b1), "The walk passed through the computation");
+
+    c1.set(2);
+    fluid.cell.stabilize();
+    assert.deepEqual(seen, [10, 20], "The effect ran again once the condition changed");
+    assert.deepEqual(names(fluid.cell.upstream([effect])), ["A2", "C1"], "The inputs follow the branch now read, and not the one formerly read");
+    assert.deepEqual(names(fluid.cell.upstream([effect], cell => cell === b1)), ["B1"], "The walk ends where stop says, though the cell is computed");
+
+    recorder.stop();
+    recorder.cells.clear();
+    a2.set(21);
+    fluid.cell.stabilize();
+    assert.deepEqual(seen, [10, 20, 21], "The effect ran on a change to an input it read");
+    assert.equal(recorder.cells.size, 0, "A stopped recorder records nothing further");
+    assert.deepEqual(fluid.cell.sourcesOf(a1), [], "An input has no sources");
+    effect.dispose();
+});
+
+QUnit.test("Recorders active together each record every update", assert => {
+    const input = fluid.cell(1, {name: "input"});
+    const doubled = fluid.cell(undefined, {name: "doubled"}).computed(x => x * 2, [input]);
+    const outer = fluid.cell.recordUpdates();
+    const inner = fluid.cell.recordUpdates();
+    assert.equal(doubled.get(), 2, "The computation is evaluated on demand");
+    inner.stop();
+    input.set(2);
+    assert.equal(doubled.get(), 4, "And again once its input changes");
+    outer.stop();
+    assert.ok(inner.cells.has(doubled), "The inner recorder saw the first evaluation");
+    assert.ok(outer.cells.has(doubled), "The outer recorder saw both");
+    assert.equal(fluid.cell.recorders.size, 0, "No recorder remains active once both are stopped");
+});

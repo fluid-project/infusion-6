@@ -183,8 +183,6 @@ const main = async function () {
         [
             "vendor/infusion/src/framework/core/js/FluidBoot.js",
             "vendor/infusion/src/framework/core/js/Fluid.js",
-            "vendor/infusion/src/framework/core/js/sfc-parser.js",
-            "vendor/infusion/src/lib/lezer/lezer-javascript-browser.js",
             "vendor/fluid-tests-rt/sfc/fluid-tests-rt-app.vue",
             "vendor/fluid-tests-rt/sfc/parts/fluid-tests-rt-list.vue",
             "vendor/fluid-tests-rt/sfc/parts/fluid-tests-rt-item.vue",

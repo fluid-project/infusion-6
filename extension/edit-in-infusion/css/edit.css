@@ -1,0 +1,333 @@
+/* "Edit in Infusion" - the states of claims shown on a page's blocks, and the editing panel. See
+   a-scratch/reports/0-live-static-editing.md in Infusion 6, section 3.2. Every selector is keyed off a fluid-edit class
+   or a data-fluid-claim-state attribute which only the extension writes, so that nothing here touches a page which is
+   not being edited. */
+
+:root {
+    --fluid-edit-uncommitted: #c77800;
+    --fluid-edit-committed: #2b6cb0;
+    --fluid-edit-conflict: #c53030;
+    --fluid-edit-published: #2f855a;
+}
+
+[data-fluid-claim-state] {
+    outline-offset: 6px;
+    transition: outline-color 0.3s;
+}
+
+[data-fluid-claim-state="uncommitted"] {
+    outline: 3px dashed var(--fluid-edit-uncommitted);
+}
+
+[data-fluid-claim-state="committed"] {
+    outline: 3px solid var(--fluid-edit-committed);
+    animation: fluid-edit-pulse 2s ease-in-out infinite;
+}
+
+[data-fluid-claim-state="conflict"] {
+    outline: 3px solid var(--fluid-edit-conflict);
+}
+
+[data-fluid-claim-state="published"] {
+    outline: 3px solid var(--fluid-edit-published);
+}
+
+@keyframes fluid-edit-pulse {
+    50% { outline-color: color-mix(in srgb, var(--fluid-edit-committed) 35%, transparent); }
+}
+
+.fluid-edit-label {
+    display: inline-block;
+    margin-bottom: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font: 600 12px/1.6 system-ui, sans-serif;
+    color: #fff;
+}
+
+.fluid-edit-label-uncommitted { background: var(--fluid-edit-uncommitted); }
+.fluid-edit-label-committed { background: var(--fluid-edit-committed); }
+.fluid-edit-label-conflict { background: var(--fluid-edit-conflict); }
+.fluid-edit-label-published { background: var(--fluid-edit-published); }
+
+/* The panel is docked beside the page's <body>, outside it - as Infusion's full-page editor docks its own, see
+   src/framework/edit/css/FluidEdit.css - so that the page's layout is disturbed as little as possible, and its
+   scrollbar is drawn beside its own content. Whilst the panel is shown, the root element lays out the body, the resize
+   bar setting off the panel (Infusion's fluid.resizeBar, bound once the page is live - see bridge.js) and the panel side
+   by side; the body scrolls within its share. A fixed element of the page is laid out within the body, which contains
+   its paint */
+html[fl-docking-area-mode~="edge"] {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+html[fl-docking-area-mode~="edge"] > body {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100vh;
+    box-sizing: border-box;
+    overflow-y: auto;
+    contain: paint;
+}
+
+html[fl-docking-area-mode~="minimized"] > .fluid-edit-panel,
+html[fl-docking-area-mode~="minimized"] > .fluid-edit-resize-bar,
+html:not([fl-docking-area-mode]) > .fluid-edit-panel,
+html:not([fl-docking-area-mode]) > .fluid-edit-resize-bar,
+html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
+    display: none;
+}
+
+/* Until it is bound as a fluid.resizeBar, a ridge setting the panel off */
+.fluid-edit-resize-bar {
+    flex: 0 0 4px;
+    background: rgba(128, 128, 128, 0.35);
+}
+
+.fluid-edit-panel {
+    flex: 0 0 min(40vw, 640px);
+    min-width: 0;
+    height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-sizing: border-box;
+    padding: 12px;
+    background: #fbfbfa;
+    color: #1a1a1a;
+    border-left: 4px solid #888;
+    font: 14px/1.4 system-ui, sans-serif;
+}
+
+.fluid-edit-panel[hidden] {
+    display: none;
+}
+
+/* Shown once, settled - see edit.activate */
+.fluid-edit-panel:not([hidden]) {
+    animation: fluid-edit-panel-in 0.15s ease-out;
+}
+
+@keyframes fluid-edit-panel-in {
+    from { opacity: 0; }
+}
+
+/* The page's own styles, e.g. Bootstrap's, would otherwise reach the panel's controls */
+.fluid-edit-panel label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin: 0;
+    font-weight: normal;
+}
+
+.fluid-edit-panel [hidden] {
+    display: none !important;
+}
+
+.fluid-edit-framing-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.fluid-edit-new input {
+    flex: 1;
+    font: inherit;
+    padding: 4px 6px;
+}
+
+.fluid-edit-panel[data-fluid-claim-state="uncommitted"] { border-left-color: var(--fluid-edit-uncommitted); }
+.fluid-edit-panel[data-fluid-claim-state="committed"] { border-left-color: var(--fluid-edit-committed); }
+.fluid-edit-panel[data-fluid-claim-state="conflict"] { border-left-color: var(--fluid-edit-conflict); }
+
+.fluid-edit-panel header {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.fluid-edit-path {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+}
+
+.fluid-edit-panel textarea {
+    flex: 1;
+    width: 100%;
+    box-sizing: border-box;
+    resize: none;
+    font: 13px/1.5 ui-monospace, monospace;
+    padding: 8px;
+}
+
+.fluid-edit-panel button {
+    font: inherit;
+    padding: 4px 12px;
+}
+
+.fluid-edit-state {
+    font-weight: 600;
+}
+
+.fluid-edit-status {
+    min-height: 1.4em;
+    font-size: 12px;
+    color: #555;
+    overflow-wrap: anywhere;
+}
+
+/* The framing of a page - e.g. its footer, rendered by an SFC shared by every page - marked by attributes alone, since
+   the page's live tree renders it, and a label inserted amongst its nodes would be removed as it renders afresh */
+[data-fluid-framing] {
+    position: relative;
+}
+
+[data-fluid-framing]::before {
+    content: attr(data-fluid-claim-label);
+    position: absolute;
+    top: -22px;
+    left: 0;
+    z-index: 1;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font: 600 12px/1.6 system-ui, sans-serif;
+    color: #fff;
+    background: var(--fluid-edit-uncommitted);
+}
+
+[data-fluid-framing][data-fluid-claim-state="committed"]::before { background: var(--fluid-edit-committed); }
+[data-fluid-framing][data-fluid-claim-state="conflict"]::before { background: var(--fluid-edit-conflict); }
+[data-fluid-framing][data-fluid-claim-state="published"]::before { background: var(--fluid-edit-published); }
+[data-fluid-framing][data-fluid-claim-state="editable"] { outline: 2px dotted #888; }
+[data-fluid-framing][data-fluid-claim-state="editable"]::before { background: #666; }
+[data-fluid-framing][data-fluid-claim-state="editable"] { cursor: pointer; }
+[data-fluid-framing][data-fluid-claim-state="editing"] { outline: 2px solid var(--fluid-edit-committed); }
+[data-fluid-framing][data-fluid-claim-state="editing"]::before { background: var(--fluid-edit-committed); }
+
+/* The head of a list of posts - "+" to write a new one, and the new posts not yet published */
+.fluid-edit-list-head {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+    font: 14px/1.4 system-ui, sans-serif;
+}
+
+.fluid-edit-list-head:empty {
+    display: none;
+}
+
+.fluid-edit-new-post {
+    align-self: flex-start;
+    width: 36px;
+    height: 36px;
+    border: 2px dashed #888;
+    border-radius: 50%;
+    background: transparent;
+    font: 600 22px/1 system-ui, sans-serif;
+    color: #555;
+    cursor: pointer;
+}
+
+.fluid-edit-new-post:hover {
+    border-color: var(--fluid-edit-committed);
+    color: var(--fluid-edit-committed);
+}
+
+.fluid-edit-pending {
+    padding: 4px 8px;
+    outline-offset: 2px;
+}
+
+/* The markdown source, folded away while the page's blocks are edited in place - the panel is then a narrow card, leaving
+   the page to be edited; unfolded, it fills the panel beside the page */
+.fluid-edit-source[open] {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+}
+
+.fluid-edit-source[hidden] {
+    display: none;
+}
+
+/* The fold control, as in the filter panels of imerss-bioinfo - a chevron, turned down while unfolded */
+.fluid-edit-source summary {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    cursor: pointer;
+    color: #444;
+    list-style: none;
+    user-select: none;
+}
+
+.fluid-edit-source summary::-webkit-details-marker {
+    display: none;
+}
+
+.fluid-edit-chev {
+    flex: none;
+    color: #777;
+    transition: transform 0.16s ease;
+}
+
+.fluid-edit-source[open] > summary > .fluid-edit-chev {
+    transform: rotate(90deg);
+}
+
+.fluid-edit-source textarea {
+    min-height: 200px;
+}
+
+/* Whilst the source is folded away, as whilst the page's blocks are edited in place, the panel is a narrow column */
+.fluid-edit-panel:has(.fluid-edit-source:not([open])) {
+    flex-basis: 320px;
+}
+
+.fluid-edit-mode label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+/* The source view - CodeMirror 6, see js/sourceView.js - filling the unfolded source */
+/* Its height is given, since a <details> lays out its content apart from the panel's flexbox */
+.fluid-edit-source-view {
+    height: calc(100vh - 280px);
+    min-height: 200px;
+    display: flex;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.fluid-edit-source-view .cm-editor {
+    flex: 1;
+    height: 100%;
+    font-size: 13px;
+}
+
+.fluid-edit-source-view .cm-scroller {
+    font-family: ui-monospace, monospace;
+}
+
+.fluid-edit-source-view .cm-editor.cm-focused {
+    outline: 2px solid #2b6cb0;
+}
+
+.fluid-edit-source-view .fluid-source-block-line {
+    background-color: rgba(43, 108, 176, 0.09);
+}
+

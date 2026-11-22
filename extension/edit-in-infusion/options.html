@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Edit in Infusion - options</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 40em; margin: 2em auto; padding: 0 16px; }
+        input { width: 100%; font-family: monospace; }
+        .status { min-height: 1.5em; color: #2b6cb0; }
+        #sites li { display: flex; gap: 1em; align-items: center; justify-content: space-between; padding: 4px 0; }
+        #sites code { overflow-wrap: anywhere; }
+    </style>
+</head>
+<body>
+    <h1><img src="icons/icon-32.png" alt="" width="32" height="32" style="vertical-align: middle"> Edit in Infusion</h1>
+    <p>Edits are committed to the repository named by each page's linkage record, through the GitHub API. Until signing
+       in through GitHub is supported, give a fine-grained personal access token with <em>Contents: read and write</em>
+       on the repositories you edit. It is kept in this browser's extension storage and is never visible to the pages
+       you edit.</p>
+    <label for="token">GitHub token</label>
+    <input id="token" type="password" autocomplete="off">
+    <p><button id="save">Save</button> <button id="clear">Forget token</button></p>
+    <p class="status" id="status"></p>
+
+    <h2>Sites</h2>
+    <p>The extension does nothing on a site until you click its button there. Once you allow it access to a site, every
+       page of the site shows the edits you have made but not yet seen published. Forgetting a site withdraws that
+       access; the edits you hold for it are kept.</p>
+    <ul id="sites"></ul>
+    <p id="no-sites" hidden>No sites yet.</p>
+    <script src="js/options.js"></script>
+</body>
+</html>

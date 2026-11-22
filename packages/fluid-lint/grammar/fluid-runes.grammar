@@ -1,0 +1,90 @@
+// The runes of Infusion 6's configuration - the interior of a String written in a layer record, as Infusion reads it.
+// This grammar is nested by src/fluidLint.js within @lezer/javascript, over the interior of each String, and each
+// template literal, which configures a layer - see docs/fluid-integration-language.md, "References" and "Signal
+// directives". It parses the text as written in source, so that the positions of its nodes are those of the source -
+// a backslash written `\\` in JavaScript is two characters here.
+//
+// A configuration String, `Value`, is interpreted by its first character only:
+//  - `{context}.path` - a Reference, e.g. "{self}.name", "{self my.widget}.title", "{0}:event";
+//  - `$type:body` - a CompactRecord, e.g. "$compute:my.multiply({self}.width, 3)", "$method:my.describe";
+//  - a backslash - an Escaped literal, e.g. "\\$5.00", whose remainder is taken literally;
+//  - anything else - a Literal.
+// A template, `Template`, is text holding interpolated expressions `@{...}` - a reference, a call in the compact syntax
+// of $compute, or a bare path resolved against {self} - in which "@@{" stands for a literal "@{".
+
+@top Value { Reference | CompactRecord | Escaped | Literal | "" }
+
+@top Template { (templateText | atEscape | Interpolation)* }
+
+// The body of a call written without its rune, e.g. the `forward` of a $lens, "my.toRange({0}, {self}.min)"
+@top CallBody { CompactBody }
+
+Reference { "{" Context Selector? "}" Path? Label? }
+
+Context { contextName }
+
+Selector { selectorSpace (SelectorStep selectorSpace?)* }
+
+SelectorStep { childCombinator | contextName | "&" contextName | "#" contextName }
+
+Path { ("." Segment)+ }
+
+Segment { segmentName }
+
+Label { ":" labelText }
+
+CompactRecord { "$" RuneName ":" CompactBody }
+
+RuneName { runeName }
+
+CompactBody { Call | FunctionName }
+
+Call { (FunctionName | Reference) "(" ArgList? ")" }
+
+FunctionName { functionPath }
+
+ArgList { argSpace? Arg argSpace? ("," argSpace? Arg argSpace?)* }
+
+Arg { Reference | Number | Boolean | BareArg }
+
+Number { number }
+
+Boolean { @specialize<bareArg, "true"> | @specialize<bareArg, "false"> }
+
+BareArg { bareArg }
+
+Escaped { escape escapedText? }
+
+Literal { literalText }
+
+Interpolation { "@{" interpolationSpace? AtExpression interpolationSpace? "}" }
+
+AtExpression { Reference | Call | BarePath }
+
+BarePath { functionPath }
+
+@tokens {
+    contextName { ($[a-zA-Z0-9_$/-] | ".")+ }
+    segmentName { $[a-zA-Z0-9_$-]+ }
+    selectorSpace { " "+ }
+    childCombinator { ">" }
+    labelText { ![,()]+ }
+    runeName { $[a-zA-Z]+ }
+    functionPath { $[a-zA-Z_$] $[a-zA-Z0-9_$.]* }
+    number { "-"? $[0-9]+ ("." $[0-9]+)? }
+    bareArg { ![,(){} \t\n] ![,()]* }
+    argSpace { $[ \t\n]+ }
+    interpolationSpace { $[ \t\n]+ }
+    escape { "\\\\" }
+    escapedText { ![]+ }
+    literalText { ![{$\\] ![]* }
+    templateText { (![@] | "@" ![@{])+ }
+    atEscape { "@@{" }
+    "{" "}" "(" ")" "." ":" "," "$" "&" "#" "@{"
+    @precedence { atEscape, "@{", templateText }
+    @precedence { number, bareArg }
+}
+
+@detectDelim
+
+@external propSource fluidRunesHighlighting from "./fluid-runes.highlight.js"

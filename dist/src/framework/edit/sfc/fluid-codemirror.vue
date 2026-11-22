@@ -187,6 +187,9 @@ fluid.codemirror.destroy = function (instance) {
 <script src="%infusion-6/src/lib/codemirror/js/json-lint.js" data-fl-scope="global"></script>
 <script src="%infusion-6/src/lib/codemirror/js/css-lint.js" data-fl-scope="global"></script>
 
+<!-- The source positions of the definitions written by SFC scripts, read by the linter and by fluid.editor's goToRef -->
+<script src="%infusion-6/src/lib/lezer/lezer-javascript-browser.js" data-fl-scope="global"></script>
+<script src="%fluid-edit/js/defMaps.js"></script>
 <script src="%fluid-edit/js/sfcLinter.js"></script>
 
 <style src="%infusion-6/src/lib/codemirror/css/codemirror.css"></style>

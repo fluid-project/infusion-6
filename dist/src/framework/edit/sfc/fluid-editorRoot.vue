@@ -94,9 +94,9 @@ fluid.def("fluid.editorRoot", {
                 // it is a multiplexed SFC - do we really want to support that?
                 const holder = await(self.editorHolderForLayer(layerRef.context));
                 holder.goToRef(layerRef);
-            }
-        },
-        args: ["{self}", "{0}:layerRef"]
+            },
+            args: ["{self}", "{0}:layerRef"]
+        }
     },
     focusLayerEditor: {
         $method: {

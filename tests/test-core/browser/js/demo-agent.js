@@ -41,6 +41,14 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
  * @property {Number} [tolerance] - The tolerance in pixels for `covers` - defaults to 2
  * @property {Object} [matchesStyle] - Holding a CSS `property` and a `target` locator - the computed value of the
  * property for the first matching element should equal its value for the element matched by `target`
+ * @property {Locator} [centredOn] - Locator for an element whose centre the centre of the first matching element
+ * should coincide with, within `tolerance`
+ * @property {Locator} [centreOnEdgeOf] - Locator for an element on whose edge the centre of the first matching element
+ * should lie, within `tolerance`
+ * @property {Object} [clipboard] - Holding `contains`, a String or String[] - the text last written to the clipboard
+ * should contain each - see `fluidDemoAgent.captureClipboard`
+ * @property {Object} [download] - Holding `filename`, a String, and/or `contains`, a String or String[] - the file
+ * last offered for download should have this name and contain each - see `fluidDemoAgent.captureDownloads`
  */
 
 const fluidDemoAgent = {};
@@ -82,14 +90,29 @@ fluidDemoAgent.codeMirrorFor = function (element) {
 };
 
 /**
- * Read the text of an element with runs of whitespace collapsed. The text of a CodeMirror is read from its document,
- * since only the lines within its viewport are rendered.
+ * Find the CodeMirror 6 view associated with an element, if any - either the element lies within the view's DOM, or
+ * contains it. CodeMirror 6 does not expose its views globally, and they are found through the `EditorView` of the
+ * fluid-lint bundle, which the page must have loaded.
+ * @param {Element} element - The element to search from
+ * @return {EditorView|null} The view, or `null` if there is none
+ */
+fluidDemoAgent.codeMirror6For = function (element) {
+    const cmElement = element.closest(".cm-editor") || element.querySelector(".cm-editor");
+    const EditorView = window.fluidLint && window.fluidLint.EditorView;
+    return cmElement && EditorView ? EditorView.findFromDOM(cmElement) : null;
+};
+
+/**
+ * Read the text of an element with runs of whitespace collapsed. The text of a CodeMirror, or of an element holding a
+ * CodeMirror 6, is read from its document, since only the lines within its viewport are rendered.
  * @param {Element} element - The element whose text is to be read
  * @return {String} The element's text
  */
 fluidDemoAgent.textOf = function (element) {
     const cm = fluidDemoAgent.codeMirrorFor(element);
-    const text = cm ? cm.getValue() : element.textContent;
+    // An element within a CodeMirror 6, e.g. the range of a diagnostic, is read for its own text
+    const cm6 = cm || !(element.matches(".cm-editor") || element.querySelector(".cm-editor")) ? null : fluidDemoAgent.codeMirror6For(element);
+    const text = cm ? cm.getValue() : cm6 ? cm6.state.doc.toString() : element.textContent;
     return text.replace(/\s+/g, " ").trim();
 };
 
@@ -200,6 +223,7 @@ fluidDemoAgent.minimalEdit = function (find, replace) {
 fluidDemoAgent.pointFor = function (locator, find) {
     const element = fluidDemoAgent.locate(locator);
     const cm = fluidDemoAgent.codeMirrorFor(element);
+    const cm6 = cm ? null : fluidDemoAgent.codeMirror6For(element);
     let rect;
     if (find === undefined) {
         element.scrollIntoView({block: "nearest", inline: "nearest"});
@@ -212,6 +236,17 @@ fluidDemoAgent.pointFor = function (locator, find) {
         const from = cm.posFromIndex(index), to = cm.posFromIndex(index + find.length);
         cm.scrollIntoView({from, to}, 50);
         const start = cm.charCoords(from, "window"), end = cm.charCoords(to, "window");
+        rect = {left: start.left, top: start.top, width: end.left - start.left, height: start.bottom - start.top};
+    } else if (cm6) {
+        const index = cm6.state.doc.toString().indexOf(find);
+        if (index === -1) {
+            throw new Error(`Could not find text "${find}" within CodeMirror`);
+        }
+        cm6.dispatch({effects: window.fluidLint.EditorView.scrollIntoView(index, {y: "center"})});
+        const start = cm6.coordsAtPos(index), end = cm6.coordsAtPos(index + find.length);
+        if (!start || !end) {
+            throw new Error(`Text "${find}" is not rendered within CodeMirror`);
+        }
         rect = {left: start.left, top: start.top, width: end.left - start.left, height: start.bottom - start.top};
     } else {
         const {node, offset} = fluidDemoAgent.findTextNode(element, find);
@@ -243,11 +278,16 @@ fluidDemoAgent.pointFor = function (locator, find) {
 fluidDemoAgent.selectForEdit = function (locator, find, replace) {
     const element = fluidDemoAgent.locate(locator);
     const cm = fluidDemoAgent.codeMirrorFor(element);
+    const cm6 = cm ? null : fluidDemoAgent.codeMirror6For(element);
     const edit = fluidDemoAgent.minimalEdit(find, replace);
     if (cm) {
         const index = cm.getValue().indexOf(find) + edit.prefix;
         cm.focus();
         cm.setSelection(cm.posFromIndex(index), cm.posFromIndex(index + edit.remove.length));
+    } else if (cm6) {
+        const index = cm6.state.doc.toString().indexOf(find) + edit.prefix;
+        cm6.focus();
+        cm6.dispatch({selection: {anchor: index, head: index + edit.remove.length}});
     } else {
         const {node, offset} = fluidDemoAgent.findTextNode(element, find);
         const range = document.createRange();
@@ -258,6 +298,15 @@ fluidDemoAgent.selectForEdit = function (locator, find, replace) {
         selection.addRange(range);
     }
     return edit;
+};
+
+/**
+ * Find the centre of a rectangle
+ * @param {DOMRect} rect - The rectangle
+ * @return {Object} Its centre, holding `x` and `y`
+ */
+fluidDemoAgent.centreOf = function (rect) {
+    return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
 };
 
 /**
@@ -344,6 +393,45 @@ fluidDemoAgent.checkOne = function (expectation, baseline) {
             failures.push("expected an element whose style could be checked, found none");
         }
     }
+    if (expectation.centredOn || expectation.centreOnEdgeOf) {
+        if (first) {
+            const centre = fluidDemoAgent.centreOf(first.getBoundingClientRect());
+            const tolerance = expectation.tolerance ?? 2;
+            const render = point => `(${Math.round(point.x)}, ${Math.round(point.y)})`;
+            if (expectation.centredOn) {
+                const other = fluidDemoAgent.centreOf(fluidDemoAgent.locate(expectation.centredOn).getBoundingClientRect());
+                if (Math.hypot(centre.x - other.x, centre.y - other.y) > tolerance) {
+                    failures.push(`expected centre to coincide with that of [${fluidDemoAgent.describe(expectation.centredOn)}] at ${render(other)}, was ${render(centre)}`);
+                }
+            }
+            if (expectation.centreOnEdgeOf) {
+                const rect = fluidDemoAgent.locate(expectation.centreOnEdgeOf).getBoundingClientRect();
+                const within = (value, min, max) => value >= min - tolerance && value <= max + tolerance;
+                const near = (value, edge) => Math.abs(value - edge) <= tolerance;
+                const onVertical = (near(centre.x, rect.left) || near(centre.x, rect.right)) && within(centre.y, rect.top, rect.bottom);
+                const onHorizontal = (near(centre.y, rect.top) || near(centre.y, rect.bottom)) && within(centre.x, rect.left, rect.right);
+                if (!onVertical && !onHorizontal) {
+                    failures.push(`expected centre to lie on the edge of [${fluidDemoAgent.describe(expectation.centreOnEdgeOf)}], whose bounds are (${[rect.left, rect.top, rect.right, rect.bottom].map(Math.round).join(", ")}), was ${render(centre)}`);
+                }
+            }
+        } else {
+            failures.push("expected an element whose centre could be checked, found none");
+        }
+    }
+    if (expectation.clipboard) {
+        failures.push(...fluidDemoAgent.checkContains(fluidDemoAgent.clipboardText, expectation.clipboard.contains, "the clipboard"));
+    }
+    if (expectation.download) {
+        const downloaded = fluidDemoAgent.downloaded;
+        if (!downloaded) {
+            failures.push("expected a file to have been offered for download, found none");
+        } else {
+            if (expectation.download.filename !== undefined && downloaded.filename !== expectation.download.filename) {
+                failures.push(`expected the download to be named "${expectation.download.filename}", was "${downloaded.filename}"`);
+            }
+            failures.push(...fluidDemoAgent.checkContains(downloaded.text, expectation.download.contains, "the download"));
+        }
+    }
     if (expectation.distinctStyle) {
         const values = elements.map(element => getComputedStyle(element)[expectation.distinctStyle]);
         const distinct = new Set(values).size;
@@ -380,5 +468,69 @@ fluidDemoAgent.check = function (expectations, baselines) {
         results
     };
 };
+
+/**
+ * The text last written to the clipboard through `navigator.clipboard.writeText`, or `null` if none has been
+ * @type {String|null}
+ */
+fluidDemoAgent.clipboardText = null;
+
+/**
+ * Record each text written to the clipboard through `navigator.clipboard.writeText`, for the `clipboard` expectation.
+ * The write is still attempted, but its failure is ignored, since a headless browser may refuse clipboard writes
+ * whatever permissions it is granted.
+ */
+fluidDemoAgent.captureClipboard = function () {
+    const clipboard = navigator.clipboard;
+    if (clipboard && clipboard.writeText) {
+        const writeText = clipboard.writeText.bind(clipboard);
+        clipboard.writeText = function (text) {
+            fluidDemoAgent.clipboardText = text;
+            return writeText(text).catch(() => undefined);
+        };
+    }
+};
+
+/**
+ * The file last offered for download by the click of a link bearing a `download` attribute, as `{filename, text}`,
+ * or `null` if none has been. Its text is filled in once it has been read.
+ * @type {Object|null}
+ */
+fluidDemoAgent.downloaded = null;
+
+/**
+ * Record each file offered for download by the click of a link bearing a `download` attribute - e.g. one made by a
+ * page to save a Blob - for the `download` expectation. Its content is read from the link's URL as it is clicked,
+ * before the page can revoke it.
+ */
+fluidDemoAgent.captureDownloads = function () {
+    document.addEventListener("click", event => {
+        const link = event.target.closest ? event.target.closest("a[download]") : null;
+        if (link) {
+            const record = {filename: link.getAttribute("download"), text: null};
+            fluidDemoAgent.downloaded = record;
+            fetch(link.href).then(response => response.text()).then(text => {
+                record.text = text;
+            }, error => {
+                record.text = `Could not read download: ${error.message}`;
+            });
+        }
+    }, true);
+};
+
+/**
+ * Check that a text contains each of a set of strings
+ * @param {String|null} text - The text, or `null` if there is none
+ * @param {String|String[]} contains - The strings
+ * @param {String} what - A description of the text, for messages
+ * @return {String[]} Messages describing each string not found
+ */
+fluidDemoAgent.checkContains = function (text, contains, what) {
+    return [].concat(contains ?? []).filter(sought => text === null || !text.includes(sought))
+        .map(sought => `expected ${what} to contain "${sought}", was ${text === null ? "nothing" : `"${text.slice(0, 200)}"`}`);
+};
+
+fluidDemoAgent.captureClipboard();
+fluidDemoAgent.captureDownloads();
 
 window.fluidDemoAgent = fluidDemoAgent;

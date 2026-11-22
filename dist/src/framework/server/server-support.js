@@ -426,12 +426,12 @@ fluid.applyServerEvaluatedScriptInjection = function (dokkument, injRec, materia
     // The document records the script's source relative to itself, so that it may be written as a file and served anywhere
     const relativeSource = fluid.relativeUrl(dokkument.location, material.sourceUrl);
     const fresh = dokkument.createElement("script");
-    fresh.text = fluid.wrapScriptSource(material.text, relativeSource, injRec.scope);
+    fresh.text = fluid.wrapScriptSource(material.text, relativeSource, injRec.scope, injRec);
     fresh.id = injRec.nodeId;
     if (injRec.url) {
         fresh.setAttribute("fluid-src", relativeSource);
     }
-    const wrapped = fluid.wrapScriptSource(material.text, material.sourceUrl, injRec.scope);
+    const wrapped = fluid.wrapScriptSource(material.text, material.sourceUrl, injRec.scope, injRec);
     fluid.swapInjectedNode(dokkument, existing, fresh);
     try {
         // Evaluation is synchronous, and any failure is thrown
@@ -443,6 +443,11 @@ fluid.applyServerEvaluatedScriptInjection = function (dokkument, injRec, materia
             message: `Failure evaluating script at ${material.sourceUrl}`,
             cause: error
         });
+    } finally {
+        // A script which failed before reaching its end leaves the interceptor of its SFC armed
+        if (injRec.sfcLayer) {
+            fluid.endSFCScript();
+        }
     }
     return togo;
 };
@@ -677,6 +682,263 @@ fluid.writeOutputDocumentsWhenSettled = async function (filenameFor = record => 
     await fluid.cell.settle();
     const records = fluid.outputDocuments.get().map(record => ({...record, filename: filenameFor(record)}));
     return fluid.writeDocumentsWhenSettled(records, prepare);
+};
+
+/**
+ * @typedef {Object} TraceInput
+ * @property {String} kind - "model" for a value read from a reactive root, "argument" for the value received by a
+ * computation through an argument which read the model, "computed" for the value of a computation
+ * shared by documents rather than within the document's own components, "layer" for the definition of a layer, or
+ * "template" for the template of an SFC's layer
+ * @property {String} [component] - For "model" and "computed", the path of the component holding the root, or the
+ * computation
+ * @property {String[]} [segs] - For "model", the path within that component of the value read, e.g.
+ * ["pages", "3", "title"], or of the root itself if the whole of it was read
+ * @property {any} [value] - For "model", the value read
+ * @property {String} [layerName] - For "layer" and "template", the layer
+ * @property {Object} [argumentOf] - For "argument", what it is an argument of - `name`, that of the computation, and
+ * `index`, the argument's position
+ * @property {String} key - A key for the input which is the same from one build to the next - its kind, and the path of
+ * what it reads, with the instance number of the free component at its root removed, e.g. "model site.pages.3.title"
+ */
+
+/**
+ * @typedef {Object} DocumentTrace
+ * @property {String} location - The location of the output document, as `fluid.outputDocuments` records it
+ * @property {Document} dokkument - The output document
+ * @property {TraceInput[]} inputs - The inputs from which the document was rendered, each once
+ * @property {Number} effects - The number of the effects which rendered into it
+ */
+
+/**
+ * Determine whether a cell is a read of the model held by a reactive root - the root itself, or a `$sitedRef` reading
+ * a path within it - at which a walk upstream for a trace ends, since what lies beyond is the root as a whole
+ * @param {Cell} cell - The cell
+ * @return {Boolean} `true` if the cell reads a reactive root
+ */
+fluid.isTraceModelRead = function (cell) {
+    const readsRoot = () => fluid.cell.sourcesOf(cell).some(source => source.$variety === "$reactiveRoot");
+    return cell.$variety === "$reactiveRoot" || !!fluid.traceShapeSite(cell) || !!fluid.traceAliasedRead(cell) ||
+        (cell.$variety === "$sitedRef" || !!cell.$argumentOf) && readsRoot();
+};
+
+/**
+ * Resolve a read through a member referring to a read of a model - e.g. `{self}.item.name` of a member of a `$for`
+ * whose `item` designates `{site}.pages.1` - to the read of the model it amounts to, e.g. `pages.1.name` of the site.
+ * A trace then records just the value read, rather than the whole of what the member designates, which the member's
+ * own reference reads in order to deliver it
+ * @param {Cell} cell - The cell
+ * @return {Object|null} The site within the model which the cell reads, as `{shadow, segs}`, or `null` if it reads
+ * through no such member
+ */
+fluid.traceAliasedRead = function (cell) {
+    let togo = null;
+    if (cell.$variety === "$sitedRef" && cell.site) {
+        const {shadow, segs} = cell.site;
+        fluid.cell.sourcesOf(cell).forEach(source => {
+            const memberSite = source.$variety === "$memberRef" ? source.$memberSite : null;
+            if (!togo && memberSite && memberSite.shadow === shadow && memberSite.segs.length < segs.length &&
+                memberSite.segs.every((seg, i) => seg === segs[i])) {
+                const target = fluid.deSignalToSite(source.$referenceSignal);
+                const targetSite = fluid.isSignal(target) && target.$variety === "$sitedRef" ? target.site : null;
+                if (targetSite && fluid.isTraceModelRead(target)) {
+                    togo = {shadow: targetSite.shadow, segs: [...targetSite.segs, ...segs.slice(memberSite.segs.length)]};
+                }
+            }
+        });
+    }
+    return togo;
+};
+
+/**
+ * Find the site within a model whose shape alone a cell depends on - that of the source of a `$for`, whose list of
+ * members depends only on the keys of its source when each member reads its own entry through a site of its own
+ * @param {Cell} cell - The cell
+ * @return {Site|null} The site of the `$for`'s source, if the cell is such a list and its source is sited, otherwise `null`
+ */
+fluid.traceShapeSite = function (cell) {
+    const sourceSignal = cell.$traceShapeOf;
+    const sourceRef = sourceSignal ? fluid.deSignalToSite(sourceSignal) : null;
+    return fluid.isSignal(sourceRef) && sourceRef.$variety === "$sitedRef" && sourceRef.site ? sourceRef.site : null;
+};
+
+/**
+ * Determine whether a cell is a computation shared by documents - a `$compute` of a component outside the document's
+ * own, e.g. a member of the site summarising its pages, or a read of a member of such a component. A trace may record such a computation's value as an input of
+ * the document, rather than what it was computed from, since every build computes it again, cheaply, whilst it is the
+ * rendering of documents which a build may skip - so that a document reading a summary of every page depends only on
+ * the summary, and not on each page whole
+ * @param {Cell} cell - The cell
+ * @param {String} documentPath - The path of the component rendering the document
+ * @return {Boolean} `true` if the cell is such a computation
+ */
+fluid.isSharedComputation = function (cell, documentPath) {
+    const site = cell.$variety === "$compute" ? cell.$computeSite : cell.$variety === "$sitedRef" ? cell.site : null;
+    return !!site && !!documentPath && site.shadow.path !== documentPath && !site.shadow.path.startsWith(documentPath + ".");
+};
+
+/**
+ * Express a component's path as it will be from one build to the next - without the instance number which names the
+ * free component at its root, e.g. "site" for "site-4"
+ * @param {String} path - The component's path
+ * @return {String} The stable path
+ */
+fluid.stableComponentPath = function (path) {
+    return path.replace(/^([^.]+)-\d+(?=\.|$)/, "$1");
+};
+
+/**
+ * Compute the key of a trace input, as `TraceInput.key` describes it
+ * @param {TraceInput} input - The input, lacking its key
+ * @param {String} [documentPath] - The path of the component rendering the document whose input it is
+ * @return {String} The key
+ */
+fluid.traceInputKey = function (input, documentPath) {
+    let togo;
+    if (input.layerName !== undefined) {
+        togo = input.kind + " " + input.layerName;
+    } else if (input.argumentOf !== undefined) {
+        // An argument is keyed by what it is an argument of, at its place within the document
+        togo = input.kind + " " + input.argumentOf.index + " of " + (documentPath ? input.argumentOf.name.split(documentPath).join("document") :
+            input.argumentOf.name);
+    } else {
+        togo = input.kind + " " + [fluid.stableComponentPath(input.component), ...input.segs].join(".") + (input.shape ? " (keys)" : "");
+    }
+    return togo;
+};
+
+/**
+ * Describe the input of a build for which a cell stands, if it stands for one
+ * @param {Cell} cell - A cell at which a walk upstream ended
+ * @return {TraceInput|null} The input, or `null` if the cell stands for none, e.g. one of the framework's own
+ */
+fluid.traceInputOf = function (cell) {
+    let togo = null;
+    const shapeSite = fluid.traceShapeSite(cell);
+    if (cell.$traceInput) {
+        togo = {...cell.$traceInput};
+    } else if (shapeSite) {
+        // The keys of the source, which are all the list depends on
+        const source = fluid.deSignal(cell.$traceShapeOf);
+        togo = {kind: "model", component: shapeSite.shadow.path, segs: shapeSite.segs, shape: true,
+            value: source && typeof(source) === "object" ? Object.keys(source) : source};
+    } else if (cell.$variety === "$compute" && cell.$computeSite) {
+        togo = {kind: "computed", component: cell.$computeSite.shadow.path, segs: cell.$computeSite.segs, value: cell._value};
+    } else if (cell.$variety === "$sitedRef" && cell.site && !fluid.isTraceModelRead(cell)) {
+        // A read of a member of a component shared by documents - see fluid.isSharedComputation
+        togo = {kind: "computed", component: cell.site.shadow.path, segs: cell.site.segs, value: cell._value};
+    } else if (fluid.traceAliasedRead(cell)) {
+        const aliased = fluid.traceAliasedRead(cell);
+        togo = {kind: "model", component: aliased.shadow.path, segs: aliased.segs, value: cell._value};
+    } else if (cell.$argumentOf) {
+        // An argument of a computation, flattened, which read the model's root. If it is material of a site within the
+        // model, e.g. a page record reached through a list of them, it is a read of the model there - otherwise it is
+        // recorded by the value received
+        const sited = fluid.unProxy(cell._value);
+        togo = fluid.isSignal(sited) && sited.$variety === "$sitedRef" && sited.site && fluid.isTraceModelRead(sited) ?
+            {kind: "model", component: sited.site.shadow.path, segs: sited.site.segs, value: cell._value} :
+            {kind: "argument", argumentOf: cell.$argumentOf, value: cell._value};
+    } else if (cell.$variety === "$reactiveRoot" && cell.$rootSite) {
+        togo = {kind: "model", component: cell.$rootSite.shadow.path, segs: cell.$rootSite.segs, value: cell._value};
+    } else if (cell.$variety === "$sitedRef" && cell.site) {
+        togo = {kind: "model", component: cell.site.shadow.path, segs: cell.site.segs, value: cell._value};
+    }
+    return togo;
+};
+
+/**
+ * Find the document into which an effect renders, if it renders into one - that of a DOM node amongst its sources,
+ * e.g. the element a binding writes to, or the container a view renders into
+ * @param {Cell} effect - The effect
+ * @return {Document|null} The document, or `null` if the effect has no DOM node amongst its sources
+ */
+fluid.documentOfEffect = function (effect) {
+    const node = fluid.cell.sourcesOf(effect).map(source => source._value)
+        .find(value => value && typeof(value) === "object" && value.nodeType !== undefined && value.ownerDocument);
+    return node ? node.ownerDocument : null;
+};
+
+/**
+ * Render a value recorded in a trace as plain data, so that it may be compared with, or hashed as, that of another
+ * build: each proxy onto a component's material is resolved to what it designates, each cell to its value, and arrays
+ * and plain objects copied, recursively. A DOM node, a component, or a cycle is rendered as a marker of what it is,
+ * since none is an input of a build - a value holding one is an input only through what else it holds
+ * @param {any} value - The value
+ * @param {Set} [seen] - The objects being rendered, enclosing this one - private to the recursion
+ * @return {any} The value, as plain data
+ */
+fluid.plainTraceValue = function (value, seen = new Set()) {
+    let resolved = fluid.unProxy(value);
+    while (fluid.isSignal(resolved)) {
+        resolved = fluid.unProxy(resolved.get());
+    }
+    let togo = resolved;
+    if (resolved && typeof(resolved) === "object") {
+        if (seen.has(resolved)) {
+            togo = "(cycle)";
+        } else if (resolved.nodeType !== undefined) {
+            togo = "(node)";
+        } else if (resolved[fluid.metadataSymbol] || resolved.shadow?.path !== undefined && resolved.shadow?.that !== undefined) {
+            togo = "(component)";
+        } else if (fluid.isUnavailable(resolved)) {
+            togo = {unavailable: resolved.message || true};
+        } else {
+            seen.add(resolved);
+            togo = Array.isArray(resolved) ? resolved.map(member => fluid.plainTraceValue(member, seen)) :
+                Object.fromEntries(Object.keys(resolved).map(key => [key, fluid.plainTraceValue(resolved[key], seen)]));
+            seen.delete(resolved);
+        }
+    } else if (typeof(resolved) === "function") {
+        togo = "(function)";
+    }
+    return togo;
+};
+
+/**
+ * Form the traces of the output documents rendered whilst a recorder was active - for each document, the inputs from
+ * which it was rendered: the values read from the model, by the path of each within its reactive root, the values of
+ * any computations shared with other documents which it read, and the layers and templates used - a verifying trace in the sense of Mokhov et al.'s "Build Systems a la Carte"
+ * (section 4.2.2), from which a later build can tell whether the document needs rendering again. The effects which
+ * rendered into each document are found amongst those the recorder saw, and the graph is walked upstream from them,
+ * along the dependencies they actually read, ending at each read of a reactive root
+ * @param {UpdateRecorder} recorder - A recorder, as returned by `fluid.cell.recordUpdates`, active whilst the documents
+ * were rendered
+ * @param {OutputDocumentRecord[]} records - The records of the documents, e.g. `fluid.outputDocuments.get()`
+ * @return {DocumentTrace[]} The trace of each document, in the order of `records`
+ */
+fluid.traceOutputDocuments = function (recorder, records) {
+    const effectsByDocument = new Map(records.map(record => [record.dokkument, []]));
+    recorder.cells.forEach(cell => {
+        if (cell._isEffect) {
+            const effects = effectsByDocument.get(fluid.documentOfEffect(cell));
+            if (effects) {
+                effects.push(cell);
+            }
+        }
+    });
+    return records.map(record => {
+        const effects = effectsByDocument.get(record.dokkument);
+        // The component rendering the document, whose view's container is the document's root element
+        const documentPath = fluid.viewContainerRegistry.get(record.dokkument.documentElement)?.path;
+        const stop = cell => fluid.isTraceModelRead(cell) || fluid.isSharedComputation(cell, documentPath);
+        const {leaves} = fluid.cell.upstream(effects, stop);
+        // An argument which read the model's root may have done so through a computation shared with other documents,
+        // whose value holds material of the model - e.g. an index of every page - and the shared computation is an
+        // input of the document too, so that a client booting the document alone may be given its value
+        const sharedSources = leaves.filter(leaf => leaf.$argumentOf).flatMap(leaf => fluid.cell.sourcesOf(leaf)
+            .filter(source => fluid.isSharedComputation(source, documentPath)));
+        const seen = new Set();
+        // Values are recorded as plain data - a value may itself hold cells, e.g. that of a member which is a reference,
+        // or proxies onto a component's material, e.g. an argument of a computation - see fluid.plainTraceValue
+        const plain = input => "value" in input ? {...input, value: fluid.cell.untracked(() => fluid.plainTraceValue(input.value))} : input;
+        const inputs = [...leaves, ...sharedSources].map(fluid.traceInputOf).filter(input => input).map(plain).map(input => ({...input, key: fluid.traceInputKey(input, documentPath)}))
+            .filter(input => {
+                const fresh = !seen.has(input.key);
+                seen.add(input.key);
+                return fresh;
+            });
+        return {location: record.location, dokkument: record.dokkument, inputs, effects: effects.length};
+    });
 };
 
 fluid.activateDocument = function (dokkument) {

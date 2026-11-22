@@ -134,8 +134,9 @@ fluidDemoRunner.pointFor = async function (page, target, find) {
 /**
  * Perform a step's action in the page by delivering native input.
  * @param {Page} page - The puppeteer page
- * @param {Object} action - The action, holding a `type` of "click", "dblclick", "hover" or "editText" and a `target`
- * locator.
+ * @param {Object} action - The action, holding a `type` of "click", "contextmenu" - a click of the right button,
+ * "dblclick", "hover", "drag" or "editText" and a `target` locator. A "drag" action also holds `by`, the displacement as `{x, y}` in pixels by which the pointer is
+ * dragged from the target.
  * An "editText" action also holds `find` and `replace`, and is performed by clicking on the text and typing the
  * minimal edit transforming `find` into `replace`
  * @return {Promise} A promise which resolves once the input has been delivered
@@ -144,6 +145,9 @@ fluidDemoRunner.performAction = async function (page, action) {
     if (action.type === "click") {
         const point = await fluidDemoRunner.pointFor(page, action.target);
         await page.mouse.click(point.x, point.y);
+    } else if (action.type === "contextmenu") {
+        const point = await fluidDemoRunner.pointFor(page, action.target);
+        await page.mouse.click(point.x, point.y, {button: "right"});
     } else if (action.type === "dblclick") {
         const point = await fluidDemoRunner.pointFor(page, action.target);
         await page.mouse.click(point.x, point.y);
@@ -151,6 +155,12 @@ fluidDemoRunner.performAction = async function (page, action) {
     } else if (action.type === "hover") {
         const point = await fluidDemoRunner.pointFor(page, action.target);
         await page.mouse.move(point.x, point.y);
+    } else if (action.type === "drag") {
+        const point = await fluidDemoRunner.pointFor(page, action.target);
+        await page.mouse.move(point.x, point.y);
+        await page.mouse.down();
+        await page.mouse.move(point.x + action.by.x, point.y + action.by.y, {steps: 12});
+        await page.mouse.up();
     } else if (action.type === "editText") {
         const point = await fluidDemoRunner.pointFor(page, action.target, action.find);
         await page.mouse.click(point.x, point.y);

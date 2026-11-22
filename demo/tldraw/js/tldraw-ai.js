@@ -1,6 +1,9 @@
-// The part of the "Ask me anything" AI passthrough which acts on the canvas - gathering the state of the workspace for
-// the AI's prompt, and applying the changes planned from a PTF document it sends back. The protocol itself, which does
-// not touch tldraw, is in ai-protocol.js.
+// The bridge through which the "Ask me anything" panel acts on the canvas - gathering the state of the workspace for the
+// AI's prompt, and applying the changes planned from a PTF document it sends back. The steps common to every arena -
+// registering layers, applying changes to a widget in place, and diagnosing the widgets before and after - are
+// Infusion's (src/components/askAnything/fluid-ai-arena.js), whose arena the canvas's widgets form, as children of the
+// tldrawHost; what is the canvas's own is the geometry of the shapes hosting them, and their creation and deletion
+// through the editor. The canvas's contributions to the protocol itself are in ai-protocol.js.
 // See FLUID-7022
 
 import {createShapeId} from "tldraw";
@@ -10,23 +13,11 @@ import {infusionInstances, registerPendingParts, awaitInstantiation, snapshotFor
 // The gap left between the user's selection and a fresh widget placed beside it
 const placementGap = 40;
 
-/**
- * @typedef {Object} AppliedChanges
- * @property {String[]} summary - A description of each change which was made to the workspace
- * @property {String[]} problems - A description of each problem found in applying the changes, or in the widgets
- * afterwards, suitable for reporting back to the AI
- */
-
-/**
- * @typedef {Object} AIBridge
- * @property {Function} gatherWorkspace - Returns the current {Workspace}
- * @property {Function} applyPlan - Accepts a {ChangePlan} and returns a {Promise<AppliedChanges>}
- */
 
 /**
  * Construct the bridge through which the "Ask me anything" panel reflects on and alters the canvas
  * @param {Editor} editor - The tldraw editor
- * @return {AIBridge} The bridge
+ * @return {ArenaBridge} The bridge - see fluid-ai-arena.js
  */
 export const makeAIBridge = function (editor) {
     /**
@@ -36,6 +27,8 @@ export const makeAIBridge = function (editor) {
     const gatherWorkspace = function () {
         const shapes = editor.getCurrentPageShapes();
         const widgets = shapes.filter(shape => shape.type === "infusion").map(shape => ({
+            // Its id in the arena is the id of its shape
+            id: shape.id,
             shapeId: shape.id,
             layerName: shape.props.layerName,
             bounds: editor.getShapePageBounds(shape),
@@ -80,7 +73,7 @@ export const makeAIBridge = function (editor) {
      * could not be constructed or did not become available is removed, so that a corrected response can create it afresh.
      * @param {Promise<InstantiationReport>} instantiation - The promise from `awaitInstantiation` for the widget's token
      * @param {String} shapeId - The id of the shape hosting the widget
-     * @param {ShapeChange} change - The change which led to the widget's construction
+     * @param {WidgetChange} change - The change which led to the widget's construction
      * @return {Promise<String[]>} A promise for descriptions of any problems found
      */
     const checkInstantiation = async function (instantiation, shapeId, change) {
@@ -99,7 +92,7 @@ export const makeAIBridge = function (editor) {
      * Await the construction of a widget from parts registered under a token, and describe any problems with it
      * @param {Promise<InstantiationReport>} instantiation - The promise from `awaitInstantiation` for the widget's token
      * @param {String} shapeId - The id of the shape hosting the widget
-     * @param {ShapeChange} change - The change which led to the widget's construction
+     * @param {WidgetChange} change - The change which led to the widget's construction
      * @return {Promise<String[]>} A promise for descriptions of any problems found
      */
     const diagnoseInstantiation = async function (instantiation, shapeId, change) {
@@ -108,20 +101,6 @@ export const makeAIBridge = function (editor) {
         return describeInstantiation(report, shapeId, change.layerName, what);
     };
 
-    /**
-     * Diagnose every widget in the workspace, other than those listed
-     * @param {Set<String>} [exclude] - The shape ids of any widgets which are not to be diagnosed
-     * @return {String[]} Descriptions of any problems found
-     */
-    const diagnoseAll = function (exclude = new Set()) {
-        const problems = [];
-        infusionInstances.forEach((that, shapeId) => {
-            if (!exclude.has(shapeId)) {
-                fluid.tldraw.ai.diagnose(that).forEach(problem => problems.push(`The widget ${shapeId}: ${problem}`));
-            }
-        });
-        return problems;
-    };
 
     /**
      * Apply changes planned from a PTF document sent by the AI to the workspace. The changes are preceded by a history
@@ -140,15 +119,8 @@ export const makeAIBridge = function (editor) {
         const createdIds = [];
         const constructedIds = new Set();
         // Problems which predate the changes are not reported, since the AI is not responsible for them
-        const existingProblems = new Set(diagnoseAll());
-        plan.layers.forEach(part => {
-            try {
-                fluid.ptf.registerLayerPart(part);
-                summary.push(`Defined layer ${part.filename}`);
-            } catch (error) {
-                problems.push(`The layer ${part.filename} could not be registered: ${fluid.tldraw.ai.describeError(error)}`);
-            }
-        });
+        const existingProblems = new Set(fluid.ai.arena.diagnoseAll(infusionInstances));
+        fluid.ai.arena.registerLayers(plan, summary, problems);
         // The nested layers of each fresh widget are registered first so that its preferred size can be read from its
         // layer, once its SFC, e.g. one sent in these parts, has been injected - all are awaited together
         const preferredSizes = await Promise.all(plan.creations.map(change => {
@@ -184,21 +156,7 @@ export const makeAIBridge = function (editor) {
             } else {
                 const that = infusionInstances.get(shape.id);
                 if (that) {
-                    try {
-                        fluid.ptf.registerLayerParts(change.parts, true);
-                        const applying = fluid.ptf.applyParts(that, change.parts);
-                        // A widget which is not available once the graph has settled never will be
-                        const settled = fluid.tldraw.ai.awaitSettled().then(() => isWidgetAvailable(shape.id) ? applying : null);
-                        const unresolved = await Promise.race([applying, settled]);
-                        if (unresolved === null) {
-                            problems.push(`The widget ${shape.id} did not become available to apply your parts to: `
-                                + fluid.tldraw.ai.diagnose(that, true).join("; "));
-                        } else {
-                            unresolved.forEach(filename => problems.push(`The widget ${shape.id} has no subcomponent at path ${filename} to which your parts could be applied`));
-                        }
-                    } catch (error) {
-                        problems.push(`Your parts could not be applied to the widget ${shape.id}: ${fluid.tldraw.ai.describeError(error)}`);
-                    }
+                    await fluid.ai.arena.applyInPlace(that, shape.id, change, problems, () => isWidgetAvailable(shape.id));
                 } else {
                     problems.push(`The widget ${shape.id} has not yet been constructed, so your parts could not be applied to it`);
                 }
@@ -226,15 +184,7 @@ export const makeAIBridge = function (editor) {
         }
         (await Promise.all(instantiations)).forEach(found => problems.push(...found));
         // The widgets are diagnosed once the workspace has settled, when their state is final
-        await fluid.tldraw.ai.awaitSettled();
-        // Redefining a layer may have broken any widget using it, so all of them are checked
-        diagnoseAll(constructedIds).filter(problem => !existingProblems.has(problem)).forEach(problem => problems.push(problem));
-        // A fresh widget may become available whilst some of its members have failed, e.g. a reference to its own value
-        constructedIds.forEach(shapeId => {
-            if (isWidgetAvailable(shapeId)) {
-                fluid.tldraw.ai.diagnose(infusionInstances.get(shapeId)).forEach(problem => problems.push(`The widget ${shapeId}: ${problem}`));
-            }
-        });
+        problems.push(...await fluid.ai.arena.diagnoseSettled(infusionInstances, constructedIds, existingProblems, isWidgetAvailable));
         return {summary, problems: [...new Set(problems)]};
     };
 
