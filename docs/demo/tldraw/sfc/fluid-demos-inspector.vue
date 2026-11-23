@@ -147,14 +147,14 @@ fluid.demos.inspector.geometry = {
 
 /**
  * Load the bundle of fluid-lint and CodeMirror 6, once for the whole document
- * @return {Promise<Object>} Resolves to the global `fluidLint` once it is loaded
+ * @return {Promise<Object>} Resolves to `fluid.codemirror6` once it is loaded
  */
 fluid.demos.inspector.loadEditorBundle = function () {
     if (!fluid.demos.inspector.bundlePromise) {
-        fluid.demos.inspector.bundlePromise = window.fluidLint ? Promise.resolve(window.fluidLint) : new Promise((resolve, reject) => {
+        fluid.demos.inspector.bundlePromise = fluid.codemirror6 ? Promise.resolve(fluid.codemirror6) : new Promise((resolve, reject) => {
             const script = document.createElement("script");
             script.src = fluid.module.resolvePath(fluid.demos.inspector.editorBundle);
-            script.onload = () => resolve(window.fluidLint);
+            script.onload = () => resolve(fluid.codemirror6);
             script.onerror = () => reject(new Error("Couldn't load " + script.src));
             document.head.appendChild(script);
         });
@@ -489,25 +489,31 @@ fluid.demos.inspector.describe = function (shapeId, layerName, widgetsVersion, c
             const nodes = [];
             const rootShadow = fluid.ptf.componentToShadow(that);
             const visit = function (shadow, segs, parentPath) {
-                const layers = fluid.demos.inspector.userLayersOf(shadow.that);
-                const path = fluid.ptf.segsToFilename(segs);
-                nodes.push({
-                    path,
-                    segs,
-                    parentPath,
-                    // The root's member name, within the tldrawHost, is that of its shape, and tells nothing
-                    label: segs.length === 0 ? fluid.demos.inspector.rootLabel(layers) : fluid.peek(segs),
-                    isView: segs.length > 0 && fluid.demos.inspector.isView(shadow.that),
-                    layers,
-                    // A component made from framework layers alone, e.g. a list or a view, or configured inline, is grey
-                    colour: layers.length > 0 ? colourOf(fluid.peek(layers)) : "#c8c8c8"
-                });
-                fluid.each(shadow.childComponents, (childShadow, memberName) => {
-                    // Only components created in place - one injected from elsewhere is shown where it was created
-                    if (childShadow.path === fluid.composeSegment(shadow.path, memberName)) {
-                        visit(childShadow, [...segs, memberName], path);
-                    }
-                });
+                if (shadow.that) {
+                    const layers = fluid.demos.inspector.userLayersOf(shadow.that);
+                    const path = fluid.ptf.segsToFilename(segs);
+                    nodes.push({
+                        path,
+                        segs,
+                        parentPath,
+                        // The root's member name, within the tldrawHost, is that of its shape, and tells nothing
+                        label: segs.length === 0 ? fluid.demos.inspector.rootLabel(layers) : fluid.peek(segs),
+                        isView: segs.length > 0 && fluid.demos.inspector.isView(shadow.that),
+                        layers,
+                        // A component made from framework layers alone, e.g. a list or a view, or configured inline, is grey
+                        colour: layers.length > 0 ? colourOf(fluid.peek(layers)) : "#c8c8c8"
+                    });
+                    fluid.each(shadow.childComponents, (childShadow, memberName) => {
+                        // Only components created in place - one injected from elsewhere is shown where it was created
+                        if (childShadow.path === fluid.composeSegment(shadow.path, memberName)) {
+                            visit(childShadow, [...segs, memberName], path);
+                        }
+                    });
+                } else {
+                    // A component still being constructed, e.g. a view whilst its template loads, is shown once it is
+                    // available - read so that the description is renewed then
+                    shadow.availableInstance?.get();
+                }
             };
             visit(rootShadow, [], null);
             const layerNames = fluid.ptf.componentToParts(that).filter(part => part.kind === "layer").map(part => part.filename);
@@ -714,7 +720,7 @@ fluid.demos.inspector.reveal = function (holder, site) {
         const from = Math.min(site.from, length), to = Math.min(site.to, length);
         view.dispatch({
             selection: {anchor: from, head: to},
-            effects: window.fluidLint.EditorView.scrollIntoView(from, {y: "start", yMargin: 24})
+            effects: fluid.codemirror6.EditorView.scrollIntoView(from, {y: "start", yMargin: 24})
         });
         holder.pendingReveal = null;
     } else {
@@ -975,7 +981,7 @@ fluid.demos.inspector.showProblems = function (holder, problems, parts) {
     })));
     holder.problems = {list: problems, located, isFirst: parts.length > 0 && parts[0].layerName === holder.layerName};
     if (holder.view) {
-        window.fluidLint.relint(holder.view);
+        fluid.codemirror6.relint(holder.view);
     }
 };
 
@@ -1008,7 +1014,7 @@ fluid.demos.inspector.applyEdit = function (holder, text) {
 fluid.demos.inspector.bindEditor = function (container, layerName, kind) {
     const holder = {destroyed: false, view: null, timer: null, syncing: false, layerName, kind, status: null, pendingReveal: null,
         problems: {list: [], located: new Set(), isFirst: false}};
-    fluid.demos.inspector.loadEditorBundle().then(fluidLint => {
+    fluid.demos.inspector.loadEditorBundle().then(codemirror6 => {
         if (!holder.destroyed) {
             container.innerHTML = "";
             const host = document.createElement("div");
@@ -1019,7 +1025,7 @@ fluid.demos.inspector.bindEditor = function (container, layerName, kind) {
             host.addEventListener("wheel", event => fluid.demos.inspector.routeWheel(host, event), {passive: true});
             // Read afresh rather than from the part, so that the editor is not bound to the part's text
             const doc = fluid.cell.untracked(() => fluid.ptf.layerToPart(layerName).body);
-            holder.view = fluidLint.fluidEditor({parent: host, doc, kind,
+            holder.view = codemirror6.fluidEditor({parent: host, doc, kind,
                 extraDiagnostics: text => fluid.demos.inspector.problemDiagnostics(text, holder), onChange: text => {
                 if (!holder.syncing) {
                     clearTimeout(holder.timer);

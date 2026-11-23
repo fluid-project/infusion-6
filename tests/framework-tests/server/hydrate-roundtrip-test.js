@@ -33,7 +33,10 @@ const expectAll = function (condition, message) {
 const pageSpecs = {
     "index.html": {items: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], sourceClass: "rt-real", placeholder: false},
     "body-boot.html": {items: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], sourceClass: "rt-real", placeholder: false},
-    "placeholder.html": {items: ["Placeholder"], sourceClass: "rt-placeholder", placeholder: true}
+    "placeholder.html": {items: ["Placeholder"], sourceClass: "rt-placeholder", placeholder: true},
+    // Imports a Single File Component with no template of its own, which alone imports the root SFC
+    "derived.html": {items: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], sourceClass: "rt-real", placeholder: false,
+        importSrc: "sfc/fluid-tests-rt-derived.vue"}
 };
 
 // The page is ready once its records are rendered from what it is configured with
@@ -59,7 +62,7 @@ const initial = `(() => ({
 
 // The pages tested - index.html, whose bootstrap and imports are in its head, body-boot.html, laid out as a page built
 // by a site generator such as Hugo, whose bootstrap and imports are in its body after markup of its own, and the test
-// fixture placeholder.html
+// fixture placeholder.html, and derived.html, which imports a Single File Component with no template of its own
 const pages = Object.keys(pageSpecs);
 
 const roundTrip = async function (pageName) {
@@ -79,7 +82,8 @@ const roundTrip = async function (pageName) {
     expect(!!document.querySelector(".rt-app." + spec.sourceClass), "Hydrated page shows what it is rendered from as " + spec.sourceClass);
     expect(!result.hydratedText.includes("file:"), "Hydrated page refers to no file: URL");
     expect(!result.hydratedText.includes("blob:"), "Hydrated page refers to no Blob URL");
-    expect(!!document.querySelector("fluid-import[src='sfc/fluid-tests-rt-app.vue']"), "Hydrated page keeps its import");
+    const importSrc = spec.importSrc ?? "sfc/fluid-tests-rt-app.vue";
+    expect(!!document.querySelector(`fluid-import[src='${importSrc}']`), "Hydrated page keeps its import");
     const reported = /Rendered .* from placeholder placeholder:\/\/fluid\.tests\.rt\.app\/records, fetched from blob:/.test(result.hydrateOutput || "");
     expect(reported === spec.placeholder, (spec.placeholder ? "Hydrater reports the placeholder it rendered from" :
         "Hydrater reports no placeholder") + " - found " + (result.hydrateOutput || "").slice(-400));

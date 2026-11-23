@@ -320,7 +320,7 @@ const fluidPTFScope = function (fluid) {
      * i) the definitions of all user layers resolved in the `$layers` of the component and any of its subcomponents,
      * sorted by `fluid.ptf.sortLayerNames` so that the layer of the component itself comes first,
      * ii) the user potentia of the component and any subcomponents having one and iii) the contents of the live layers
-     * of the component and its subcomponents.
+     * of the component and its subcomponents. A subcomponent still being constructed is transmitted from its potentia.
      * @param {fluid.component} component - The component to be transmitted
      * @return {PTFPart[]} The parts required to reconstruct the component
      */
@@ -333,8 +333,11 @@ const fluidPTFScope = function (fluid) {
         const liveParts = [];
         const visit = function (shadow, segs) {
             const isRoot = segs.length === 0;
-            fluid.deSignal(shadow.that.$layers).forEach(layerName => {
-                if (fluid.isUserLayer(layerName)) {
+            // A component still being constructed, e.g. a view whilst its template loads, has no instance yet - its
+            // layers are read from its potentia, as are those of the root above
+            const ownLayers = shadow.that ? fluid.deSignal(shadow.that.$layers) : shadow.potentia.get().layerNames;
+            ownLayers.forEach(layerName => {
+                if (typeof(layerName) === "string" && !fluid.isReferenceOrExpander(layerName) && fluid.isUserLayer(layerName)) {
                     layerNames.add(layerName);
                 }
             });

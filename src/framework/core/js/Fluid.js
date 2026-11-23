@@ -3786,7 +3786,14 @@ const $fluidScope = function (fluid) {
                 const templateSig = fluid.templateStore?.[layerName];
                 const demanded = !!layerSig?.demanded && fluid.isUnavailable(layerSig._value) ||
                     !!templateSig && fluid.isUnavailable(templateSig._value);
-                if (existing?.loading || demanded) {
+                // A layer in use which is already defined, though its file was never declared, let alone loaded - in a
+                // hydrated document, by the scripts its file injected into the markup, which run before its import is
+                // declared. Its file is loaded nonetheless, since it may import the files of other layers which only it
+                // declares - e.g. that holding the template of a layer it derives from, which would otherwise be
+                // awaited forever. The file's injections are adopted from the markup rather than run again - see
+                // fluid.adoptMarkupInjections. The demand of a defined layer is recorded on its value - see fluid.readLayer
+                const definedUnloaded = !existing && !!layerSig && !fluid.isUnavailable(layerSig._value) && !!layerSig._value.demanded;
+                if (existing?.loading || demanded || definedUnloaded) {
                     fluid.loadImport(layerName);
                 }
                 // Whoever demanded it found no import to bind into their document - it is bound into the one declaring it

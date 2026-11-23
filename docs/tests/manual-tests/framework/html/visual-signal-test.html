@@ -15,14 +15,9 @@
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dagre-d3@0.6.4/dist/dagre-d3.min.js"></script>
 
-    <script src="../../../../src/lib/codemirror/js/jshint.js"></script>
-    <script src="../../../../src/lib/codemirror/js/codemirror.js"></script>
-    <script src="../../../../src/lib/codemirror/js/javascript.js"></script>
-    <script src="../../../test-core/qunit/js/function-lint.js"></script>
-    <script src="../../../../src/lib/codemirror/js/javascript-lint.js"></script>
+    <!-- Infusion's one copy of CodeMirror 6, with fluid-lint, as fluid.codemirror6 - see packages/fluid-lint -->
+    <script src="../../../../src/lib/fluid-lint/fluid-lint.js"></script>
 
-    <link rel="stylesheet" media="screen" href="../../../../src/lib/codemirror/css/codemirror.css"></link>
-    <link rel="stylesheet" media="screen" href="../../../../src/lib/codemirror/css/lint.css"></link>
 
     <!-- Local code -->
 
@@ -38,9 +33,9 @@
     <link rel="stylesheet" media="screen" href="../../../test-core/qunit/css/qunit-visual-signals.css" />
 
     <!-- Test fixtures themselves -->
-    <script src="../js/visual-signals-test-gallery.js"></script>
+    <script src="../../../../src/framework/vizReactive/visual-signals-test-gallery.js"></script>
 
-    <script src="../../../framework-tests/core/annotations/FluidSignalsTests-annotations.js"></script>
+    <script src="../../../../src/framework/vizReactive/FluidSignalsTests-annotations.js"></script>
 
 </head>
 <body>

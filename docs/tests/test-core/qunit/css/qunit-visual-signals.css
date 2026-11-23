@@ -243,28 +243,24 @@
     display: none;
 }
 
-.CodeMirror {
+.codemirror-holder {
+    height: 100%;
+    max-height: 600px;
+    display: flex;
+}
+
+.codemirror-holder .cm-editor {
+    flex: 1;
     font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
     font-size: 12px;
-    height: 100%;
     max-height: 600px;
 }
 
-
-.CodeMirror-lint-tooltip {
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
-}
-
-.CodeMirror-lint-message {
-    padding-left: 22px;
-}
-
-.CodeMirror-lint-marker-multiple {
-    background: none;
+.codemirror-holder .cm-scroller {
+    font-family: inherit;
 }
 
 .vizreactive-testmarker {
-    margin-left: 45px;
     font-weight: bold;
     position: relative;
 }
@@ -280,7 +276,7 @@
 }
 
 .vizreactive-assert-markers {
-    width: 0px;
+    width: 14px;
 }
 
 #vizreactive-tooltip {

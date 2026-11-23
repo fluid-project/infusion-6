@@ -20,12 +20,6 @@ const fluidEditScope = function (fluid) {
         relPath: "sfc/FluidEditor.vue"
     };
 
-    fluid.importMap["fluid.codemirror"] = {
-        loadStyle: "code",
-        urlBase: fluid.libUrlBase,
-        relPath: "codemirror/"
-    };
-
 
     fluid.def("fluid.fullPageEditor", {
         $layers: "fluid.viewComponent",
@@ -89,7 +83,6 @@ const fluidEditScope = function (fluid) {
     fluid.loadSFC("fluid.editor.menu", ("../../../src/framework/edit/sfc/EditorMenu.vue"));
     fluid.loadSFC("fluid.editor.editorsPane", ("../../../src/framework/edit/sfc/EditorsPane.vue"));
     fluid.loadSFC("fluid.editor.viewEditor", ("../../../src/framework/edit/sfc/ViewEditor.vue"));
-    fluid.loadSFC("fluid.codemirror", ("../../../src/framework/edit/sfc/Codemirror.vue"));
 
 
 };

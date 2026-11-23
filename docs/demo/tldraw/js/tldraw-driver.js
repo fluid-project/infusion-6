@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react, useValue, DefaultContextMenu,
     TldrawUiMenuGroup, TldrawUiMenuSubmenu, TldrawUiMenuActionItem, ToggleTransparentBgMenuItem, EditMenuSubmenu,
     ArrangeMenuSubmenu, ReorderMenuSubmenu, MoveToPageMenu, ClipboardMenuGroup, SelectAllMenuItem, CursorChatItem,
-    useActions, useShowCollaborationUi, ShapeIndicatorOverlayUtil, atom} from "tldraw";
+    useActions, useShowCollaborationUi, atom} from "tldraw";
 import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions, guardClipboardEvents,
     copySelectionAsPTF, exportSelectionAsPTF,
     isWidgetAvailable} from "./tldraw-clipboard.js";
@@ -404,6 +404,29 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
     }, h("div", {ref: containerRef}), h("div", {ref: badgeRef, className: "infusion-problem-holder"}));
 };
 
+/**
+ * The outline of a shape marked as the target of a tool, e.g. of an inspector, by `fluid.tldraw.markShape` - drawn as
+ * tldraw draws the indicator of a hovered shape, in its colour and width, and when it would - whilst the select tool is
+ * idle. It is drawn within the shape rather than on tldraw's overlay of indicators, which lies above every shape, so
+ * that it lies in the shape's own place in the stacking order, beneath any shape lying above it, e.g. the inspector.
+ * @param {Object} props - The React props
+ * @param {String} props.shapeId - The id of the shape
+ * @return {ReactElement|null} The outline, or `null` if the shape is not marked
+ */
+const MarkedOutline = function ({shapeId}) {
+    const editor = useEditor();
+    const shown = useValue("shape is marked", () => markedShapes.get().has(shapeId)
+        && editor.isInAny("select.idle", "select.editing_shape") && !editor.getInstanceState().isChangingStyle, [editor, shapeId]);
+    const zoom = useValue("zoom level", () => editor.getEfficientZoomLevel(), [editor]);
+    // As wide on screen as tldraw's indicator, whatever the zoom - see ShapeIndicatorOverlayUtil's lineWidth
+    const width = 1.5 / zoom;
+    return shown ? h("div", {
+        className: "fl-tldraw-marked-outline",
+        style: {position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2,
+            boxShadow: `inset 0 0 0 ${width}px var(--tl-color-selection-stroke)`}
+    }) : null;
+};
+
 const defaultShapeWidth = 260;
 const defaultShapeHeight = 80;
 
@@ -509,7 +532,7 @@ class InfusionShapeUtil extends BaseBoxShapeUtil {
             shapeId: shape.id,
             shape,
             ptfToken: shape.meta.ptfToken
-        }));
+        }), h(MarkedOutline, {shapeId: shape.id}));
     }
 
     /**
@@ -823,7 +846,7 @@ const ContextMenuWithPTF = function (props) {
 
 /**
  * The shapes marked as the targets of a tool such as the inspector, each against the tokens of those marking it, so
- * that they may be indicated as a hovered shape is - see InspectedShapeIndicatorOverlayUtil
+ * that they may be outlined as a hovered shape is - see MarkedOutline
  * @type {Atom<Map<String, Set<Object>>>}
  */
 const markedShapes = atom("shapes marked as targets", new Map());
@@ -861,32 +884,6 @@ fluid.tldraw.unmarkShape = function (token) {
         });
     }
 };
-
-/**
- * tldraw's indicator of the selected and hovered shapes, which also indicates the shapes marked by
- * `fluid.tldraw.markShape`, drawn as a hovered shape is, and when it would be - whilst the select tool is idle
- */
-class InspectedShapeIndicatorOverlayUtil extends ShapeIndicatorOverlayUtil {
-    getOverlays() {
-        const overlays = super.getOverlays();
-        const editor = this.editor;
-        const idle = editor.isInAny("select.idle", "select.editing_shape") && !editor.getInstanceState().isChangingStyle;
-        const rendering = new Set(editor.getRenderingShapes().map(shape => shape.id));
-        const marked = idle ? [...markedShapes.get().keys()].filter(id => rendering.has(id)) : [];
-        let togo = overlays;
-        if (marked.length > 0) {
-            const existing = overlays[0]?.props ?? {idsToDisplay: [], hintingShapeIds: []};
-            togo = [{id: "shape_indicator", type: "shape_indicator", props: {
-                idsToDisplay: [...new Set([...existing.idsToDisplay, ...marked])],
-                hintingShapeIds: existing.hintingShapeIds
-            }}];
-        }
-        return togo;
-    }
-}
-
-// Replaces tldraw's own indicator, of the same type
-const overlayUtils = [InspectedShapeIndicatorOverlayUtil];
 
 const components = {
     SharePanel: TopPanel,
@@ -979,5 +976,5 @@ const onMount = function (editor) {
 fluid.tldraw.bindResizeBar(document).catch(error => console.error("Failed to construct the resize bar: ", error));
 
 createRoot(document.getElementById("tldraw-root")).render(
-    h(Tldraw, {shapeUtils, overlayUtils, components, overrides, options, onMount, licenseKey})
+    h(Tldraw, {shapeUtils, components, overrides, options, onMount, licenseKey})
 );

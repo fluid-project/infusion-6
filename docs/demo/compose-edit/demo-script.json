@@ -108,18 +108,18 @@
             "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.substratePost"},
             "count": {"equals": 1}
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "count": {"equals": 1},
             "visible": true
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "text": {"contains": "Persistent code"}
         }]
     }, {
         "description": "Edit the text \"Persistent code\" to read \"Persistent cod\"",
         "action": {
             "type": "editText",
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "find": "Persistent code",
             "replace": "Persistent cod"
         },
@@ -139,7 +139,7 @@
         "description": "Edit the layer's name in its script from \"Substrate\" to \"Substrata\"",
         "action": {
             "type": "editText",
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "find": "name: \"Substrate\"",
             "replace": "name: \"Substrata\""
         },
@@ -156,6 +156,276 @@
             "text": {"contains": ["fluid.demos.substratePost", "updateLayer"]}
         }]
     }, {
+        "description": "Break the layer's script with a syntax error, leaving its name's expression incomplete: name: \"Substrata\" +",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "name: \"Substrata\"",
+            "replace": "name: \"Substrata\" +"
+        },
+        "expect": [{
+            "description": "A red marker should appear in the gutter for the syntax error",
+            "target": {"selector": ".fl-editor-holder .cm-lint-marker-error"},
+            "count": {"atLeast": 1}
+        }, {
+            "description": "The error should be underlined in red",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"atLeast": 1}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }, {
+            "description": "Text holding an error should not be written back - no fresh history record",
+            "target": {"selector": ".fl-history-rec"},
+            "count": {"increase": 0}
+        }, {
+            "description": "The heading of the left-hand post should be unchanged",
+            "target": {"selector": "h1", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "text": {"contains": "Substrata"}
+        }]
+    }, {
+        "description": "Repair the syntax error",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "name: \"Substrata\" +",
+            "replace": "name: \"Substrata\""
+        },
+        "expect": [{
+            "description": "The red marker should disappear",
+            "target": {"selector": ".fl-editor-holder .cm-lint-marker-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Write the layer's name in single quotes, a stylistic slip: name: 'Substrata'",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "name: \"Substrata\"",
+            "replace": "name: 'Substrata'"
+        },
+        "expect": [{
+            "description": "An orange marker should appear in the gutter for the stylistic warning",
+            "target": {"selector": ".fl-editor-holder .cm-lint-marker-warning"},
+            "count": {"atLeast": 1}
+        }, {
+            "description": "The single-quoted String should be underlined in orange",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "text": {"contains": "'Substrata'"}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "description": "A warning does not stop the text being written back - the heading still reads Substrata",
+            "target": {"selector": "h1", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "text": {"contains": "Substrata"}
+        }]
+    }, {
+        "description": "Restore the double quotes",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "name: 'Substrata'",
+            "replace": "name: \"Substrata\""
+        },
+        "expect": [{
+            "description": "The orange marker should disappear",
+            "target": {"selector": ".fl-editor-holder .cm-lint-marker-warning"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Break the template's markup, closing an item with the wrong tag: <li>Live programming</span>",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "<li>Live programming</li>",
+            "replace": "<li>Live programming</span>"
+        },
+        "expect": [{
+            "description": "A red marker should appear in the gutter for the broken markup",
+            "target": {"selector": ".fl-editor-holder .cm-lint-marker-error"},
+            "count": {"atLeast": 1}
+        }, {
+            "description": "The stray close tag should be underlined in red",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "text": {"contains": "</span>"}
+        }, {
+            "description": "Broken markup should not be written back - no fresh history record",
+            "target": {"selector": ".fl-history-rec"},
+            "count": {"increase": 0}
+        }]
+    }, {
+        "description": "Repair the markup",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "<li>Live programming</span>",
+            "replace": "<li>Live programming</li>"
+        },
+        "expect": [{
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Rename the emphasis's open tag to an obsolete element, <center>, leaving its close tag </em> unmatched",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "<em>possibilities</em>",
+            "replace": "<center>possibilities</em>"
+        },
+        "expect": [{
+            "description": "The unmatched close tag should be underlined in red, as should the open tag it leaves unclosed",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error", "text": "</em>"},
+            "count": {"equals": 1}
+        }, {
+            "description": "Broken markup should not be written back - the left-hand post shows no <center>",
+            "target": {"selector": "center", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Rename the close tag to match: <center>possibilities</center>",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "possibilities</em>",
+            "replace": "possibilities</center>"
+        },
+        "expect": [{
+            "description": "The obsolete element should be underlined in orange",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "text": {"contains": "<center>"}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "description": "The edit is written back - the left-hand post shows the element",
+            "target": {"selector": "center", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Restore the emphasis's open tag",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "<center>possibilities",
+            "replace": "<em>possibilities"
+        },
+        "expect": [{
+            "description": "The now unmatched close tag should be underlined in red",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error", "text": "</center>"},
+            "count": {"equals": 1}
+        }]
+    }, {
+        "description": "Restore the emphasis's close tag",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "possibilities</center>",
+            "replace": "possibilities</em>"
+        },
+        "expect": [{
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }, {
+            "description": "The left-hand post shows the emphasis again",
+            "target": {"selector": "center", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Add a stylesheet to the layer, holding an empty rule - its close tag is supplied as the open tag is typed",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "</template>",
+            "replace": "</template><style>.blog-post { }"
+        },
+        "expect": [{
+            "description": "The stylesheet's close tag should have been supplied",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "text": {"contains": "<style>.blog-post { }</style>"}
+        }, {
+            "description": "The empty rule should be underlined in orange",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "text": {"contains": "{ }"}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }]
+    }, {
+        "description": "Give the rule a malformed declaration: .blog-post { colr red }",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": ".blog-post { }",
+            "replace": ".blog-post { colr red }"
+        },
+        "expect": [{
+            "description": "A red marker should appear in the gutter for the malformed CSS",
+            "target": {"selector": ".fl-editor-holder .cm-lint-marker-error"},
+            "count": {"atLeast": 1}
+        }, {
+            "description": "The malformed CSS should be underlined in red",
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"atLeast": 1}
+        }, {
+            "description": "Malformed CSS should not be written back - no fresh history record",
+            "target": {"selector": ".fl-history-rec"},
+            "count": {"increase": 0}
+        }]
+    }, {
+        "description": "Correct the declaration: .blog-post { color: red; }",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": ".blog-post { colr red }",
+            "replace": ".blog-post { color: red; }"
+        },
+        "expect": [{
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }, {
+            "description": "The stylesheet is written back, and applies to the left-hand post",
+            "target": {"selector": ".blog-post", "within": {"selector": ".fl-fullpost", "index": 0}},
+            "matchesStyle": {"property": "color", "value": "rgb(255, 0, 0)"}
+        }]
+    }, {
+        "description": "Remove the stylesheet again",
+        "action": {
+            "type": "editText",
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
+            "find": "<style>.blog-post { color: red; }</style>",
+            "replace": ""
+        },
+        "expect": [{
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-error"},
+            "count": {"equals": 0}
+        }, {
+            "target": {"selector": ".fl-editor-holder .cm-lintRange-warning"},
+            "count": {"equals": 0}
+        }]
+    }, {
         "description": "Close the CodeMirror tab by hitting X on the fluid.demos.substratePost heading",
         "action": {
             "type": "click",
@@ -166,7 +436,7 @@
             "target": {"selector": ".fl-editor-layer-tab"},
             "count": {"equals": 0}
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "count": {"equals": 0}
         }]
     }, {
@@ -226,7 +496,7 @@
             "target": {"selector": ".fl-editor-layer-tab", "text": "fluid.demos.divergencePost"},
             "count": {"equals": 1}
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "text": {"contains": "2016 paper"}
         }, {
             "description": "the click should not reach the link, so that the page does not navigate away",
@@ -268,11 +538,11 @@
             "count": {"equals": 1}
         }, {
             "description": "together with its editor body",
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "count": {"equals": 1},
             "visible": true
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "text": {"contains": "2016 paper"}
         }]
     }, {
@@ -283,7 +553,7 @@
             "target": {"selector": ".fl-editor-layer-tab"},
             "count": {"equals": 0}
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "count": {"equals": 0}
         }]
     }, {
@@ -295,7 +565,7 @@
             "count": {"equals": 1}
         }, {
             "description": "together with its editor body",
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "count": {"equals": 1},
             "visible": true
         }]
@@ -307,7 +577,7 @@
             "target": {"selector": ".fl-editor-layer-tab"},
             "count": {"equals": 0}
         }, {
-            "target": {"selector": ".fl-editor-holder .CodeMirror"},
+            "target": {"selector": ".fl-editor-holder .cm-editor"},
             "count": {"equals": 0}
         }]
     }, {
