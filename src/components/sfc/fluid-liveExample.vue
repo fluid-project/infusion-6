@@ -42,14 +42,14 @@ fluid.liveExample.lintBundle = "%infusion-6/src/lib/fluid-lint/fluid-lint.js";
 /**
  * Load the bundle of fluid-lint, once for the whole document
  * @param {Document} dokkument - The document
- * @return {Promise<Object>} Resolves to the global `fluidLint` once it is loaded
+ * @return {Promise<Object>} Resolves to `fluid.codemirror6` once it is loaded
  */
 fluid.liveExample.loadLint = function (dokkument) {
     if (!fluid.liveExample.lintPromise) {
-        fluid.liveExample.lintPromise = window.fluidLint ? Promise.resolve(window.fluidLint) : new Promise((resolve, reject) => {
+        fluid.liveExample.lintPromise = fluid.codemirror6 ? Promise.resolve(fluid.codemirror6) : new Promise((resolve, reject) => {
             const script = dokkument.createElement("script");
             script.src = fluid.module.resolvePath(fluid.liveExample.lintBundle);
-            script.onload = () => resolve(window.fluidLint);
+            script.onload = () => resolve(fluid.codemirror6);
             script.onerror = () => reject(new Error("Couldn't load " + script.src));
             dokkument.head.appendChild(script);
         });
@@ -301,15 +301,15 @@ fluid.liveExample.bind = function (self, root) {
         state.consoleLines = root.querySelector(".fl-live-example-console-lines");
         state.console = fluid.liveExample.makeConsole(state.consoleLines);
         const sourcePane = root.querySelector(".fl-live-example-source");
-        fluid.liveExample.loadLint(root.ownerDocument).then(fluidLint => {
+        fluid.liveExample.loadLint(root.ownerDocument).then(codemirror6 => {
             if (!state.destroyed) {
                 // A fragment of a layer record, e.g. `view: {...}`, can only be shown, whatever its mode
-                const live = self.mode !== "syntax" && !(kind === "js" && fluidLint.isFragment(code));
+                const live = self.mode !== "syntax" && !(kind === "js" && codemirror6.isFragment(code));
                 root.classList.toggle("fl-live-example-syntax", !live);
                 sourcePane.innerHTML = "";
                 const runOnce = text => kind === "vue" ? fluid.liveExample.runSfc(state, text) : fluid.liveExample.run(state, text);
                 let last = null;
-                state.view = fluidLint.fluidEditor({
+                state.view = codemirror6.fluidEditor({
                     parent: sourcePane, doc: code, kind, readOnly: !live,
                     onDiagnostics: (diagnostics, text) => {
                         const clean = !diagnostics.some(diagnostic => diagnostic.severity === "error");

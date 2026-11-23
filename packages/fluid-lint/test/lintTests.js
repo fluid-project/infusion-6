@@ -4,7 +4,7 @@
 // naming what is wrong, and each correct style of writing is checked to lint clean. Texts holding several
 // malformations are checked to report each, rather than only the first or a cascade of errors following it.
 
-import {lint, isFragment} from "../src/fluidLint.js";
+import {lint, lintCss, isFragment} from "../src/fluidLint.js";
 
 let passed = 0;
 const failures = [];
@@ -211,6 +211,7 @@ clean(`fluid.def("my.a", {
 clean(`fluid.def("my.kind.404", {$layers: "{self}.chosenLayer"});`, "A layer named with a numeric segment, and $layers as a reference");
 flags(`fluid.def("my.a", {$layers: "fluid component"});`, "error", "\"fluid component\"", /dotted path/, "A malformed layer name in $layers");
 flags(`fluid.def("my.a", {$layers: 3});`, "error", "3", /\$layers holds a layer name/, "$layers holding a number");
+clean(`fluid.def("my.a", {$layers: layerName});`, "$layers computed in code, e.g. held in a variable, is not checked");
 flags(`fluid.def("my a", {});`, "error", "\"my a\"", /layer name is a dotted path/, "A malformed name of a layer");
 flags(`fluid.def("my.a", "{self}.b");`, "error", "\"{self}.b\"", /second argument is a layer record/, "A String given as a layer record");
 clean(`fluid.def("my.a", source.def);`, "A record computed elsewhere is not linted");
@@ -291,6 +292,7 @@ flags(`fluid.def("my.a", {kids: {$component: {$layers: "my.kid", $for: {valueAs:
 flags(`fluid.def("my.a", {kids: {$component: {$layers: "my.kid", $for: "{self}.items"}}});`, "error", "\"{self}.items\"",
     /\$for holds a record \{source, valueAs, keyAs, positionAs, layerAs\}/, "A $for holding a String");
 flags(`fluid.def("my.a", {kids: {$component: 3}});`, "error", "3", /\$component holds a layer record/, "A $component holding a number");
+clean(`fluid.def("my.a", {kids: {$component: null}});`, "A $component of null, removing the component");
 flags(`fluid.def("my.a", {kids: {$component: {$layers: "my.kid", width: "{self.w"}}});`, "error", "", /Unclosed reference/,
     "A $component's members are linted in turn");
 flags(`fluid.def("my.a", {kids: {$component: {$layers: "my.kid", $compute: "x"}}});`, "error", "$compute", /not a directive of a layer record/,
@@ -626,6 +628,79 @@ fluid.def("my.b", {
 });
 </script>
 `, "A fix within an SFC's script is positioned within the SFC", "vue");
+
+// Markup and CSS - their syntax is reported as errors, and, with the option `style`, their style as warnings, as is
+// that of JavaScript
+/**
+ * Assert that a text, linted with stylistic warnings, reports a diagnostic of a severity, covering a text, whose message
+ * matches a pattern
+ * @param {String} text - The text
+ * @param {String} kind - "js" or "vue"
+ * @param {String} severity - "error" or "warning"
+ * @param {String} covered - The text the diagnostic covers
+ * @param {RegExp} pattern - A pattern its message matches
+ * @param {String} message - What it asserts
+ */
+const styled = function (text, kind, severity, covered, pattern, message) {
+    const found = lint(text, kind, {style: true}).some(d => d.severity === severity && text.slice(d.from, d.to) === covered && pattern.test(d.message));
+    expect(found, message + ": " + JSON.stringify(lint(text, kind, {style: true}).map(d => [d.severity, text.slice(d.from, d.to), d.message])));
+};
+const sfcOf = (template, style) => `<script>
+fluid.def("my.c", {
+    $layers: "fluid.component"
+});
+</script>
+<template>
+    ${template}
+</template>
+<style>
+${style}
+</style>
+`;
+styled(sfcOf("<div><p>a</span></div>", ".a { color: red; }"), "vue", "error", "</span>", /closes no element/, "A stray close tag in a template is an error");
+styled(sfcOf("<div><section>a</div>", ".a { color: red; }"), "vue", "error", "<section>", /never closed/, "An element left open in a template is an error");
+expect(lint(sfcOf("<ul><li>a<li>b</ul><p>c", ".a { color: red; }"), "vue").length === 0, "Elements which HTML closes by itself are not errors");
+styled(sfcOf("<div></div>", ".a { colr red }"), "vue", "error", "colr red", /expected ":" after the property "colr"/, "A declaration without its colon is an error, so described");
+const cssError = (css, covered, pattern, message) => {
+    const found = lintCss(css).filter(d => d.severity === "error");
+    expect(found.length === 1 && css.slice(found[0].from, found[0].to) === covered && pattern.test(found[0].message),
+        message + ": " + JSON.stringify(found.map(d => [css.slice(d.from, d.to), d.message])));
+};
+cssError(".a { color: red background: blue; }", "color: red background: blue", /expected ";" between declarations/, "Two declarations without a semicolon between are described");
+cssError(".a { color: red; ", "{", /never closed/, "An unclosed rule is described");
+cssError(".a color: red; }", ".a color: red; }", /no "\{"/, "A rule without its opening brace is described");
+cssError(".a { color: red }}", "}", /closes no rule/, "A stray close brace is described");
+cssError(".a, { color: red; }", ",", /ends with a comma/, "A selector list ending in a comma is described");
+cssError(".a { color: #ggg; }", "#ggg", /hex digits/, "A malformed colour is described");
+cssError(".a { color: rgb(1, 2; }", ";", /"\(" of rgb\(\.\.\.\) is never closed/, "An unclosed call is described");
+cssError(".a { color: \"x; }", "\"", /String .* never closed/, "An unclosed String is described");
+cssError(".a { : red; }", ": red", /property: value/, "A declaration without its property is described");
+expect(lintCss(".a { color: red; .b { color: blue; } }").length === 0, "A nested rule is not mistaken for a malformed declaration");
+styled(sfcOf("<div><img src=\"a.png\"></div>", ".a { color: red; }"), "vue", "warning", "<img src=\"a.png\">", /alt attribute/, "An image without alt is a warning");
+styled(sfcOf("<div><center>a</center></div>", ".a { color: red; }"), "vue", "warning", "<center>", /obsolete/, "An obsolete element is a warning");
+styled(sfcOf("<div></div>", ".a { }"), "vue", "warning", "{ }", /empty rule/, "An empty CSS rule is a warning");
+styled(sfcOf("<div></div>", ".a { color: red; color: blue; }"), "vue", "warning", "color", /declared again/, "A property declared twice is a warning");
+styled(sfcOf("<div></div>", ".a { color: red !important; }"), "vue", "warning", "!important", /cascade/, "!important is a warning");
+styled("const a = 'x';", "js", "warning", "'x'", /double quotes/, "A single-quoted String is a warning");
+styled("const a = b == c;", "js", "warning", "==", /===/, "A loose comparison is a warning");
+styled("var a = 1;", "js", "warning", "var", /const or let/, "A declaration by var is a warning");
+styled("if (a) b();", "js", "warning", "b();", /braces/, "An if without braces is a warning");
+styled(sfcOf("<div></div>", ".a { color: red; }").replace("$layers: \"fluid.component\"", "$layers: 'fluid.component'"), "vue", "warning", "'fluid.component'",
+    /double quotes/, "The style of an SFC's script is reported");
+styled(sfcOf("<div @edward class=\"a\"></div>", ".a { color: red; }"), "vue", "error", "@edward", /Unknown directive @edward/, "An unknown directive attribute is an error");
+styled(sfcOf("<div @iff=\"{self}.a\"></div>", ".a { color: red; }"), "vue", "error", "@iff", /did you mean @if\?/, "A misspelt directive attribute is an error, suggesting the directive");
+styled(sfcOf("<h1>@{post}.name}</h1>", ".a { color: red; }"), "vue", "warning", "@{post}.name", /did you mean @\{\{post\}\.name\}/, "A path stranded after an interpolation of a bare path is a warning");
+styled(sfcOf("<h1>@{{post}}.name</h1>", ".a { color: red; }"), "vue", "warning", "@{{post}}.name", /did you mean @\{\{post\}\.name\}/, "A path stranded after an interpolated reference is a warning");
+styled("let b = 3\nfoo(b);", "js", "warning", "3", /semicolon/, "A statement without its semicolon is a warning");
+styled("foo(1, 2,);", "js", "warning", ",", /trailing comma/, "A trailing comma in arguments is a warning");
+styled("const o = {a: 1,};", "js", "warning", ",", /trailing comma/, "A trailing comma in an object is a warning");
+expect(lint("for (let i = 0; i < 2; i++) {\n    g(i);\n}\nexport function h() {\n    return 1;\n}", "js", {style: true}).length === 0,
+    "A for loop's head and a declared function need no semicolon");
+expect(lint(sfcOf("<p>@{title}. Next</p><div @id=\"a\" @if=\"{self}.b\" @onclick=\"{self}.f()\"></div>", ".a { color: red; }"), "vue", {style: true}).length === 0,
+    "Known directives, and a full stop after an interpolation, report nothing");
+expect(lint("const a = 'x'; var b = a == 1;", "js").length === 0, "Without the option, style is not reported");
+expect(lint(sfcOf("<div><img src=\"a.png\" alt=\"A\"></div>", ".a { color: red; }"), "vue", {style: true}).length === 0,
+    "A well-written SFC reports nothing, even of style");
 
 console.log(`# ${passed} passed, ${failures.length} failed`);
 process.exitCode = failures.length > 0 ? 1 : 0;

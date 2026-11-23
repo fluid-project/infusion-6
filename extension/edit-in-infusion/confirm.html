@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Confirm commit - Edit in Infusion</title>
+    <style>
+        :root { --accent: #2b6cb0; --muted: #555; --line: #dde3ea; }
+        body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 16px; color: #1a202c; background: #fff; }
+        h1 { font-size: 17px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+        p { margin: 0 0 10px; }
+        dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 12px; }
+        dt { color: var(--muted); }
+        dd { margin: 0; font-family: ui-monospace, monospace; word-break: break-all; }
+        ul { margin: 0 0 12px; padding-left: 20px; font-family: ui-monospace, monospace; }
+        .diff { font: 12.5px/1.4 ui-monospace, monospace; border: 1px solid var(--line); border-radius: 6px; max-height: 380px;
+            overflow: auto; margin: 0 0 12px; white-space: pre-wrap; }
+        .diff div { padding: 0 8px; }
+        .diff .add { background: #e6ffed; }
+        .diff .del { background: #ffeef0; text-decoration: line-through; color: #86181d; }
+        .diff .skip { color: var(--muted); font-style: italic; }
+        .buttons { display: flex; gap: 8px; }
+        button { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+        #approve { border: 0; background: var(--accent); color: #fff; }
+        #approve:disabled { background: #a0aec0; cursor: not-allowed; }
+        #decline { border: 1px solid var(--line); background: #fff; }
+        .note { color: var(--muted); font-size: 12.5px; }
+    </style>
+</head>
+<body>
+    <h1><img src="icons/icon-32.png" alt="" width="24" height="24"> Confirm commit</h1>
+    <p>A page you are editing asks to commit this, as you, to GitHub. Commit it only if it is the edit you made.</p>
+    <dl>
+        <dt>Repository</dt><dd id="repo"></dd>
+        <dt>Branch</dt><dd id="branch"></dd>
+        <dt>File</dt><dd id="path"></dd>
+        <dt>From page</dt><dd id="page"></dd>
+    </dl>
+    <div id="further" hidden>
+        <p>With these further files:</p>
+        <ul id="files"></ul>
+    </div>
+    <p class="note">The change to the file:</p>
+    <div class="diff" id="diff"></div>
+    <p class="status" id="status" role="status"></p>
+    <div class="buttons">
+        <button id="approve" disabled>Commit</button>
+        <button id="decline">Don't commit</button>
+    </div>
+    <script src="js/confirm.js"></script>
+</body>
+</html>

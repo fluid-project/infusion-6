@@ -130,9 +130,9 @@ harness.scenario("Inserting, using, pasting and committing widgets in a post", a
     expect(published.includes("Hello from the clipboard"), "The post is published rendering the pasted widget");
     expect(published.includes("data-fluid-boot-page"), "The post boots Infusion, since it holds widgets");
     expect(fs.existsSync(path.join(mock.pagesDir, "sfc/fluid-tests-greeter.vue")), "The widget's layer is published");
-    const linkage = JSON.parse(published.match(/<script[^>]*fluid-linkage\+json[^>]*>([^<]*)<\/script>/)[1]);
-    expect(linkage.widgets.layers.some(widget => widget.layer === greeterLayer), "The pasted widget is now offered by the site: " +
-        JSON.stringify(linkage.widgets));
+    const provenance = JSON.parse(published.match(/<script[^>]*fluid-provenance\+json[^>]*>([^<]*)<\/script>/)[1]);
+    expect(provenance.widgets.layers.some(widget => widget.layer === greeterLayer), "The pasted widget is now offered by the site: " +
+        JSON.stringify(provenance.widgets));
     await post.waitForFunction(() => !document.querySelector("[data-fluid-claim-state]"), {timeout: 30000});
     await post.waitForFunction(() => document.querySelector("[fluid-id=\"counter-1\"]")?.textContent.includes("Clicked 3 times"), {timeout: 30000});
     expect(true, "The page reloads to the published post, restoring the counter's count from its markup");

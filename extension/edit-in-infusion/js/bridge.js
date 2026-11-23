@@ -1,7 +1,7 @@
 "use strict";
 
 // Loaded by edit.js into the page's own world, so that a claim is rendered by the site's own pipeline - the code its
-// build renders with, published with the site and named by the page's linkage record - rather than by a copy held by
+// build renders with, published with the site and named by the page's provenance record - rather than by a copy held by
 // the extension. See item 12 of a-scratch/reports/0-live-static-editing.md in Infusion 6.
 //
 // The content script runs in an isolated world, sharing the DOM but not the page's globals. It can't load the site's
@@ -13,14 +13,14 @@
 //                              {id, op: "render", global, text} - render `text` with the pipeline at window[global]
 //                              {id, op: "headings", global, text} - list the headings of `text`, with the ids the
 //                                                               pipeline gives them, for completing links to them
-//                              {id, op: "migrate", migration, blocks, extensionScript, renderer}
+//                              {id, op: "migrate", migration, blocks, blockEditor, renderer}
 //                                                              - boot Infusion and the page's blocks as live components
 //                              {id, op: "setSource", text}    - show `text`, or with null the published block, in
 //                                                               each migrated block
 //                              {id, op: "setLayerSource", layer, text} - show `text` as the SFC defining `layer`, e.g.
 //                                                               the page's footer, in place of the published one
 //                              {id, op: "setBlockEditing", on} - edit the migrated blocks in place, or cease to - see
-//                                                               sfc/fluid-blockEditor.vue, which announces each edit
+//                                                               Infusion's fluid-blockEditor.vue, which announces each edit
 //                                                               as the event fluid-block-edit-source {text}
 //                              {id, op: "bindResizeBar", bar, panel} - bind the bar setting off the extension's panel
 //                                                               as fluid.resizeBar
@@ -35,8 +35,10 @@
 //                              {id, op: "widgetFromPTF", text, source} - read a widget pasted as PTF: register its
 //                                                               layers, and return its element, to be written into
 //                                                               `source`, and the files of its layers
-//                              {id, op: "widgetFromParts", parts, source} - the same, for a widget as PTF parts, e.g.
-//                                                               read from a ZIP file - see fluid-zip.js
+//                              {id, op: "widgetFromParts", parts, source} - the same, for a widget as PTF parts
+//                              {id, op: "widgetFromZip", content, source} - the same, for a widget dropped as a ZIP
+//                                                               file, its base64, read by Infusion's fluid-zip.js, and
+//                                                               the images it holds
 //                              {id, op: "fillSlot", slot, markdown} - fill the slot into which files were dropped
 //                                                               onto the blocks, announced by the block editor as the
 //                                                               event fluid-block-edit-drop {slot, files}
@@ -56,6 +58,94 @@
          * @param {String} src - Its absolute URL
          * @return {Promise} Resolves once it has run
          */
+        // The directory within Infusion of what the extension loads into a page from the site's copy of Infusion, which
+        // the site's build publishes for it - see wend's trace.editingFiles
+        bridge.editingDir = "src/components/staticEditing/";
+
+        /**
+         * Make the URL of a file of Infusion's static editing, in the site's copy of Infusion
+         * @param {String} file - Its path within bridge.editingDir, e.g. "js/fluid-zip.js"
+         * @return {String} Its URL
+         */
+        bridge.editingFile = file => bridge.frameworkRoot + bridge.editingDir + file;
+
+        /**
+         * Decode base64 into bytes
+         * @param {String} text - The base64
+         * @return {Uint8Array} The bytes
+         */
+        bridge.decodeBase64 = text => Uint8Array.from(atob(text), char => char.charCodeAt(0));
+
+        /**
+         * Encode bytes as base64
+         * @param {Uint8Array} bytes - The bytes
+         * @return {String} The base64
+         */
+        bridge.encodeBase64 = function (bytes) {
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+            }
+            return btoa(binary);
+        };
+
+        /**
+         * Make a widget of a ZIP file dropped onto a block, read by Infusion's fluid-zip.js, loaded once from the site's
+         * copy of Infusion
+         * @param {String} content - The ZIP file's bytes, as base64
+         * @param {String} source - The source the widget is to be inserted into
+         * @return {Promise<Object>} As for fluid.blockEditor.widgetFromParts, with `images`, `{name, content}` for each
+         * image the ZIP file holds, `content` its base64
+         */
+        bridge.widgetFromZip = async function (content, source) {
+            if (!fluid.zip) {
+                await bridge.loadScript(bridge.editingFile("js/fluid-zip.js"));
+            }
+            const widget = fluid.zip.toWidget(await fluid.zip.read(bridge.decodeBase64(content)));
+            let parts;
+            if (widget.ptf === undefined) {
+                parts = widget.parts;
+            } else {
+                parts = fluid.ptf.decode(widget.ptf);
+                if (fluid.isUnavailable(parts)) {
+                    throw new Error("The text holds no PTF document which can be read");
+                }
+            }
+            const made = await fluid.blockEditor.widgetFromParts(parts, source);
+            return {...made, images: widget.images.map(image => ({name: image.name, content: bridge.encodeBase64(image.bytes)}))};
+        };
+
+        /**
+         * Make the editing panel, Infusion's fluid.staticEditor, from the site's copy of Infusion, in a container of its
+         * own beside the page's <body> - with its source view, which uses Infusion's bundle of CodeMirror 6, and its
+         * controller, fluid-staticEditing.js. The page must be migrated first. Made once
+         * @param {Object} request - The request
+         * @param {Object} request.provenance - The page's provenance record
+         * @param {Object} request.config - The extension's configuration of the panel - `prefs` and `pollInterval`
+         * @return {Promise<Boolean>} Resolves `true` once the panel is made, and its controller started
+         */
+        bridge.bootEditor = function ({provenance, config}) {
+            if (!bridge.editorBooted) {
+                bridge.editorBooted = (async function () {
+                    await bridge.loadScript(bridge.frameworkRoot + "src/lib/fluid-lint/fluid-lint.js");
+                    await bridge.loadScript(bridge.editingFile("js/fluid-staticEditing.js"));
+                    fluid.loadImportMap({
+                        "fluid.sourceView": {path: bridge.editingFile("sfc/fluid-sourceView.vue")},
+                        "fluid.staticEditor": {path: bridge.editingFile("sfc/fluid-staticEditor.vue")}
+                    }, document);
+                    await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.sourceView", document));
+                    await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.staticEditor", document));
+                    const container = document.createElement("div");
+                    container.setAttribute("data-fluid-edit-ui", "");
+                    document.documentElement.appendChild(container);
+                    bridge.editor = fluid.initFreeComponent("fluid.staticEditor", {container, provenance, config});
+                    await fluid.cell.settle();
+                    return true;
+                })();
+            }
+            return bridge.editorBooted;
+        };
+
         bridge.loadScript = function (src) {
             if (!bridge.loaded[src]) {
                 bridge.loaded[src] = new Promise((resolve, reject) => {
@@ -132,6 +222,12 @@
                     throw new Error("The text holds no PTF document which can be read");
                 }
                 return fluid.blockEditor.widgetFromParts(parts, source);
+            },
+            bootEditor: async function (request) {
+                return bridge.bootEditor(request);
+            },
+            widgetFromZip: async function ({content, source}) {
+                return bridge.widgetFromZip(content, source);
             },
             widgetFromParts: async function ({parts, source}) {
                 return fluid.blockEditor.widgetFromParts(parts, source);
@@ -216,7 +312,7 @@
          */
         bridge.bindResizeBar = async function ({bar, panel}) {
             if (!bridge.resizeBar) {
-                fluid.loadImportMap({"fluid.resizeBar": {path: "%infusion-6/src/components/sfc/fluid-resizeBar.vue"}}, document);
+                fluid.loadImportMap({"fluid.resizeBar": {path: bridge.frameworkRoot + "src/components/sfc/fluid-resizeBar.vue"}}, document);
                 await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.resizeBar", document));
                 bridge.resizeBar = fluid.resizeBar({
                     before: document.body,
@@ -240,7 +336,7 @@
          */
         bridge.setPatch = async function ({text}) {
             const patch = JSON.parse(text);
-            const site = await window.ponderPageBoot.booted;
+            const site = await window.wendPageBoot.booted;
             const members = Object.keys(patch).filter(member => !Object.keys(patch[member] || {}).some(key => key.startsWith("$")));
             members.forEach(member => fluid.setForComponent(site, [member], patch[member]));
             await fluid.cell.settle();
@@ -307,20 +403,19 @@
          * replaced: the editing root broadcasts fluid.withEditing onto their layers, so that their islands, e.g. a
          * shortcode's widget, which are their children, are left as they are
          * @param {Object} request - The request
-         * @param {Object} request.migration - The linkage's `migration` record, its URLs made absolute
+         * @param {Object} request.migration - The provenance record's `migration` record, its URLs made absolute
          * @param {String} request.model - The absolute URL of the page's slice of the model
          * @param {Object[]} request.blocks - For each block, its `selector` and `layers`
-         * @param {String} request.extensionScript - The URL of fluid-withEditing.js
-         * @param {String} request.serializerScript - The URL of fluid-markdownSerializer.js
-         * @param {String|null} request.blockEditor - The URL of the block editor's SFC, or null for a page with no blocks
+         * @param {Boolean} request.blockEditor - Whether to load the block editor, for a page with blocks of its own
          * @param {String} request.renderer - The name of the global holding the site's markdown pipeline
-         * @param {Object} [request.widgets] - The `widgets` of the page's linkage - `{dir, layers}`
+         * @param {Object} [request.widgets] - The `widgets` of the page's provenance - `{dir, layers}`
          * @return {Promise<Number>} The number of blocks migrated
          */
-        bridge.migrate = async function ({migration, model, blocks, extensionScript, serializerScript, blockEditor, renderer, widgets}) {
+        bridge.migrate = async function ({migration, model, blocks, blockEditor, renderer, widgets}) {
             if (!bridge.migrated) {
+                bridge.frameworkRoot = migration.framework.root;
                 bridge.migrated = (async function () {
-                    if (!window.ponderPageBoot || !window.ponderPageBoot.booted) {
+                    if (!window.wendPageBoot || !window.wendPageBoot.booted) {
                         // A page holding an Infusion other than the one the site publishes can't host a second -
                         // Infusion's files may be evaluated only once in a page - and replacing it would break what the
                         // page does with it. Such a page is edited without migration - see edit.js
@@ -353,7 +448,7 @@
                         // Marked meanwhile, so that edit.js does not restore them itself - see edit.keepAttached
                         document.documentElement.setAttribute("data-fluid-edit-booting", "");
                         ui.forEach(({node}) => node.remove());
-                        await window.ponderPageBoot.boot({model, migration});
+                        await window.wendPageBoot.boot({model, migration});
                         document.documentElement.removeAttribute("data-fluid-edit-booting");
                         ui.forEach(({node, parent, next}) => parent.insertBefore(node, next && next.parentNode === parent ? next : null));
                     } else {
@@ -361,17 +456,16 @@
                         // extension has inserted meanwhile, as when the editor reopens as the page loads - whatever of
                         // the extension's it removes is put back
                         const ui = [...document.querySelectorAll("[data-fluid-edit-ui]")].map(node => ({node, parent: node.parentNode, next: node.nextSibling}));
-                        await window.ponderPageBoot.booted;
+                        await window.wendPageBoot.booted;
                         ui.filter(({node}) => !node.isConnected).forEach(({node, parent, next}) =>
                             parent.insertBefore(node, next && next.parentNode === parent ? next : null));
                     }
-                    await bridge.loadScript(extensionScript);
-                    // The block editor - an SFC of the extension's own, with the serialiser it uses - given to Infusion as
-                    // text, since the extension's files are no module of the page's
+                    await bridge.loadScript(bridge.editingFile("js/fluid-withEditing.js"));
+                    // The block editor, with the serialiser it uses, from the site's copy of Infusion
                     if (blockEditor) {
-                        await bridge.loadScript(serializerScript);
-                        const text = await (await fetch(blockEditor)).text();
-                        // The widgets which may be inserted, from the page's linkage, read by the block editor as it loads
+                        await bridge.loadScript(bridge.editingFile("js/fluid-markdownSerializer.js"));
+                        const text = await (await fetch(bridge.editingFile("sfc/fluid-blockEditor.vue"))).text();
+                        // The widgets which may be inserted, from the page's provenance, read by the block editor as it loads
                         bridge.widgets = widgets || null;
                         fluid.loadSFCText("fluid.blockEditor", text);
                         await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.blockEditor", document));

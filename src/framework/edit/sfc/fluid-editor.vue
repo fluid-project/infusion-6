@@ -18,12 +18,11 @@ fluid.def("fluid.editor", {
         $method: {
             func: (self, ref) => {
                 const segs = [ref.context, ...fluid.parsePath(ref.path), fluid.metadataSymbol];
-                const cm = self.editor.instance;
-                const range = fluid.get(cm.defMaps, segs);
+                const view = self.editor.instance;
+                const range = fluid.get(view.defMaps, segs);
                 if (range) {
-                    const doc = cm.getDoc();
-                    const pos = cm.posFromIndex(range.from);
-                    doc.setCursor(pos);
+                    view.dispatch({selection: {anchor: range.from}, scrollIntoView: true});
+                    view.focus();
                 }
             },
             args: ["{self}", "{0}:ref"]
@@ -47,18 +46,7 @@ fluid.def("fluid.editor.sfc", {
             },
             args: ["{0}:text", "{fluid.editor}.layerRec"]
         }
-    },
-
-    codemirrorOptions: {
-        lint: {
-            options: {
-                jshint: {
-                    esversion: 6
-                }
-            }
-        },
-        tooltips: true
-    },
+    }
 });
 
 
@@ -98,10 +86,6 @@ fluid.def("fluid.editor.json", {
         }
     },
     text: "{self}.readText",
-    codemirrorOptions: {
-        lint: true,
-        tooltips: true
-    },
     $variety: "frameworkAux"
 });
 
@@ -122,6 +106,7 @@ fluid.def("fluid.editor.json", {
 
 .fl-editor.active {
     display: flex;
+    flex: 1;
 }
 
 </style>

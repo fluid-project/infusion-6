@@ -13,6 +13,7 @@
 import {parseMixed} from "@lezer/common";
 import {parser as jsParser} from "@lezer/javascript";
 import {parser as htmlParser} from "@lezer/html";
+import {parser as cssParser} from "@lezer/css";
 import {parser as runesParser} from "./fluid-runes.parser.js";
 
 /**
@@ -538,6 +539,32 @@ const lintEventBindings = function (text, offset, diagnostics) {
 };
 
 /**
+ * Report a path written just after an interpolation rather than within it, e.g. "@{post}.name" or "@{{post}}.name",
+ * which renders the path as text - a warning, since the text may be meant, but more often a "}" has strayed
+ * @param {Tree} tree - The template's parse
+ * @param {String} text - The template
+ * @param {Number} offset - The position of the template within any larger document
+ * @param {Diagnostic[]} diagnostics - Receives the diagnostics
+ */
+const lintStrandedPaths = function (tree, text, offset, diagnostics) {
+    tree.topNode.getChildren("Interpolation").forEach(interpolation => {
+        const expression = interpolation.getChild("AtExpression");
+        const inner = expression && expression.firstChild;
+        const stranded = /^(\.[\w$-]+)+/.exec(text.slice(interpolation.to));
+        const pathless = inner && (inner.name === "BarePath" || inner.name === "Reference" && !inner.getChild("Path"));
+        if (stranded && pathless) {
+            const written = text.slice(interpolation.from, interpolation.to) + stranded[0];
+            const body = text.slice(inner.from, inner.to);
+            const meant = "@{" + (inner.name === "BarePath" ? "{" + body + "}" : body) + stranded[0] + "}";
+            diagnostics.push({from: offset + interpolation.from, to: offset + interpolation.to + stranded[0].length, severity: "warning",
+                message: "The path " + stranded[0] + " follows the interpolation rather than lying within it, and is rendered as text - " +
+                    "did you mean " + meant + "?",
+                fix: replacement(offset + interpolation.from, offset + interpolation.to + stranded[0].length, meant, "Change " + written + " to " + meant)});
+        }
+    });
+};
+
+/**
  * Lint the interior of a configuration String as Infusion reads it - a reference, a compact record, an escaped or
  * plain literal, or a template
  * @param {String} text - The interior, as written in source
@@ -551,6 +578,9 @@ export const lintRunes = function (text, offset, top, diagnostics) {
     }
     const parser = top === "Template" ? templateParser : top === "CallBody" ? callParser : valueParser;
     const tree = parser.parse(text);
+    if (top === "Template") {
+        lintStrandedPaths(tree, text, offset, diagnostics);
+    }
     const first = tree.topNode.firstChild;
     // A String of "$" not followed by a rune, e.g. "$5.00", is reported once, as a literal wanting its escape
     const firstRune = first && first.name === "CompactRecord" ? first.getChild("RuneName") : null;
@@ -673,6 +703,10 @@ const elementsOf = function (array) {
 
 const isStringNode = node => node && (node.name === "String" || node.name === "TemplateString");
 
+// The nodes of literals which are never a layer name nor a layer record - a value computed in code, e.g. a variable
+// or a call, cannot be checked, and is passed
+const nonLayerLiterals = new Set(["Number", "BooleanLiteral", "RegExp", "ObjectExpression", "ArrayExpression", "null"]);
+
 /**
  * Lint the `$layers` of a record - a layer name, a reference, or an Array of them
  * @param {SyntaxNode} value - The node of its value
@@ -687,7 +721,7 @@ const lintLayers = function (value, context) {
             } else if (!layerNamePattern.test(name)) {
                 report(node, "error", "A layer name is a dotted path of identifiers, e.g. \"fluid.viewComponent\"", context);
             }
-        } else {
+        } else if (nonLayerLiterals.has(node.name)) {
             report(node, "error", "$layers holds a layer name, a reference, or an Array of them", context);
         }
     };
@@ -741,7 +775,8 @@ const lintDirective = function (directive, value, context) {
         if (value.name === "ObjectExpression") {
             // eslint-disable-next-line no-use-before-define
             lintRecord(value, componentDirectives, context);
-        } else if (!isStringNode(value)) {
+        } else if (value.name !== "null" && nonLayerLiterals.has(value.name)) {
+            // null removes the component, e.g. one contributed by another layer
             report(value, "error", "A $component holds a layer record", context);
         }
     } else if (directive === "$linkage") {
@@ -1278,27 +1313,314 @@ export const lintJs = function (text, offset = 0, diagnostics = [], lineBase = 0
     return diagnostics;
 };
 
+// Elements whose close tag HTML implies, by what follows them, and void elements, which have none
+const impliedCloseTags = new Set(["p", "li", "dt", "dd", "option", "optgroup", "tr", "td", "th", "thead", "tbody", "tfoot",
+    "colgroup", "rp", "rt", "caption"]);
+const voidTags = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+
+// Elements of HTML which are obsolete, and are styled instead with CSS
+const obsoleteTags = new Set(["center", "font", "big", "strike", "tt", "marquee", "blink", "frame", "frameset"]);
+
 /**
- * Lint a Single File Component - the JavaScript of each <script> not loaded from elsewhere, and the interpolations of
- * its <template>
- * @param {String} text - The SFC
- * @param {Diagnostic[]} [diagnostics] - Receives the diagnostics
+ * Lint the markup of a template - its elements' structure, reported as errors: a close tag which closes no open
+ * element, and an element left open which HTML does not close by itself - and, if `style` is set, stylistic warnings:
+ * an image with no alternative text, and an obsolete element
+ * @param {SyntaxNode} node - The node of the template's element, whose descendants are linted
+ * @param {String} text - The whole text parsed
+ * @param {Diagnostic[]} diagnostics - Receives the diagnostics
+ * @param {Boolean} style - Whether to report stylistic warnings
+ */
+export const lintMarkup = function (node, text, diagnostics, style) {
+    const tagOf = element => {
+        const open = element.firstChild;
+        const name = open && open.getChild("TagName");
+        return name ? text.slice(name.from, name.to).toLowerCase() : null;
+    };
+    const visit = parent => {
+        for (let child = parent.firstChild; child; child = child.nextSibling) {
+            if (child.name === "MismatchedCloseTag") {
+                diagnostics.push({from: child.from, to: child.to, severity: "error",
+                    message: "Syntax error - this close tag closes no element open here"});
+            } else if (child.name === "Element") {
+                const tag = tagOf(child);
+                const open = child.firstChild;
+                const closed = child.lastChild && child.lastChild.name === "CloseTag";
+                if (open && open.name === "OpenTag" && !closed && tag && !impliedCloseTags.has(tag) && !voidTags.has(tag)) {
+                    diagnostics.push({from: open.from, to: open.to, severity: "error",
+                        message: "Syntax error - <" + tag + "> is never closed"});
+                }
+                lintDirectiveAttributes(open, text, diagnostics);
+                if (style && tag === "img" && !open.getChildren("Attribute").some(attr => {
+                    const name = attr.getChild("AttributeName");
+                    return name && text.slice(name.from, name.to) === "alt";
+                })) {
+                    diagnostics.push({from: open.from, to: open.to, severity: "warning",
+                        message: "An image should have an alt attribute, describing it to those who can't see it"});
+                }
+                if (style && obsoleteTags.has(tag)) {
+                    diagnostics.push({from: open.from, to: open.to, severity: "warning",
+                        message: "<" + tag + "> is obsolete - style the element with CSS instead"});
+                }
+                visit(child);
+            }
+        }
+    };
+    visit(node);
+};
+
+// The attributes of a template's markup which Infusion's renderer reads as directives - any other beginning with "@" is
+// dropped unread. Event bindings, "@on" followed by the event's name, are linted by lintEventBindings
+const directiveAttributes = new Set(["@id", "@if", "@else", "@class", "@relative"]);
+
+/**
+ * Report each attribute of an open tag which begins with "@" but which the renderer reads as no directive, e.g. "@edward"
+ * or "@iff" - an error, since the renderer drops it without a word
+ * @param {SyntaxNode} open - The OpenTag or SelfClosingTag
+ * @param {String} text - The whole text parsed
+ * @param {Diagnostic[]} diagnostics - Receives the diagnostics
+ */
+const lintDirectiveAttributes = function (open, text, diagnostics) {
+    open.getChildren("Attribute").forEach(attr => {
+        const nameNode = attr.getChild("AttributeName");
+        const name = nameNode ? text.slice(nameNode.from, nameNode.to) : "";
+        if (name.startsWith("@") && !directiveAttributes.has(name) && !/^@on[\w.-]+$/.test(name)) {
+            const meant = nearestWord(name, [...directiveAttributes, "@onclick", "@onchange", "@oninput", "@onkeydown"]);
+            const diagnostic = {from: nameNode.from, to: nameNode.to, severity: "error",
+                message: "Unknown directive " + name + (meant ? " - did you mean " + meant + "?" : " -") + " The renderer reads " +
+                    [...directiveAttributes].join(", ") + " and event bindings \"@on\" + the event's name, e.g. @onclick, " +
+                    "and drops any other attribute beginning with \"@\""};
+            if (meant) {
+                diagnostic.fix = replacement(nameNode.from, nameNode.to, meant, "Change to " + meant);
+            }
+            diagnostics.push(diagnostic);
+        }
+    });
+};
+
+/**
+ * The ancestor of a node, or the node itself, of a given name
+ * @param {SyntaxNode} node - The node
+ * @param {String} name - The name sought
+ * @return {SyntaxNode|null} The nearest such node, or `null` if there is none
+ */
+const enclosing = function (node, name) {
+    let togo = node;
+    while (togo && togo.name !== name) {
+        togo = togo.parent;
+    }
+    return togo;
+};
+
+/**
+ * Describe a syntax error of CSS from where @lezer/css found it. Its grammar admits nested rules, so that a declaration
+ * written wrongly within a rule, e.g. `colr red` or `color: red background: blue`, is read as a nested rule's selector
+ * which lacks its block - which is reported as the declaration it was meant to be
+ * @param {SyntaxNode} error - The error node
+ * @param {String} text - The CSS
+ * @return {Object} The diagnostic's `from`, `to`, `message` and any `fix`
+ */
+const describeCssError = function (error, text) {
+    const rule = enclosing(error, "RuleSet");
+    const nested = rule && !rule.getChild("Block") && rule.parent && rule.parent.name === "Block";
+    const unexpected = error.to > error.from ? "\"" + text.slice(error.from, error.to) + "\"" : "the end of the CSS";
+    let togo = {from: error.from, to: error.to, message: "Syntax error - unexpected " + unexpected};
+    if (nested) {
+        // A declaration read as a nested rule - its extent runs to the ";" which the selector swallowed, if any
+        const end = text.indexOf(";", rule.from);
+        const to = end === -1 || end > rule.to ? rule.to : end;
+        const written = text.slice(rule.from, to).trim();
+        const colons = (written.match(/:/g) || []).length;
+        const property = /^[\w-]+/.exec(written);
+        togo = {from: rule.from, to: rule.from + text.slice(rule.from, to).trimEnd().length};
+        if (colons === 0 && property) {
+            togo.message = "Syntax error - expected \":\" after the property \"" + property[0] + "\", e.g. \"" + property[0] + ": value;\"";
+            togo.fix = insertion(rule.from + property[0].length, ":");
+        } else if (colons === 0 || written.startsWith(":")) {
+            togo.message = "Syntax error - a declaration is written \"property: value;\"";
+        } else {
+            togo.message = "Syntax error - expected \";\" between declarations - \"" + written + "\" holds more than one";
+        }
+    } else if (rule && !rule.getChild("Block") && rule.parent && rule.parent.name === "StyleSheet" && /:/.test(text.slice(rule.from, rule.to))) {
+        togo = {from: rule.from, to: rule.to, message: "Syntax error - this rule has no \"{\" opening its declarations"};
+    } else if (error.parent.name === "StyleSheet" && text.slice(error.from, error.to) === "}") {
+        togo.message = "Syntax error - this \"}\" closes no rule";
+        togo.fix = replacement(error.from, error.to, "", "Remove the \"}\"");
+    } else if (error.parent.name === "Block" && error.to >= text.trimEnd().length) {
+        togo = {from: enclosing(error, "Block").from, to: enclosing(error, "Block").from + 1,
+            message: "Syntax error - this \"{\" is never closed", fix: insertion(text.trimEnd().length, "\n}")};
+    } else if (error.prevSibling && error.prevSibling.name === "," && error.nextSibling && error.nextSibling.name === "Block") {
+        togo = {from: error.prevSibling.from, to: error.prevSibling.to, message: "Syntax error - the list of selectors ends with a comma",
+            fix: replacement(error.prevSibling.from, error.prevSibling.to, "", "Remove the comma")};
+    } else if (error.parent.name === "ArgList") {
+        const call = error.parent.parent, callee = call && call.getChild("Callee");
+        togo.message = "Syntax error - the \"(\" of " + (callee ? text.slice(callee.from, callee.to) + "(...)" : "this call") + " is never closed";
+        togo.fix = insertion(error.from, ")");
+    } else if (enclosing(error, "Declaration")) {
+        const declaration = enclosing(error, "Declaration"), name = declaration.getChild("PropertyName");
+        const bad = text.slice(error.from, error.to);
+        const value = name ? "the value of \"" + text.slice(name.from, name.to) + "\"" : "this value";
+        togo.message = /^#/.test(bad) ? "Syntax error - \"" + bad + "\" in " + value + " is no colour - one is written with 3, 4, 6 or 8 hex digits, e.g. #c0ffee" :
+            /^["']/.test(bad) ? "Syntax error - a String in " + value + " is never closed" :
+                "Syntax error - unexpected " + unexpected + " in " + value;
+    }
+    return togo;
+};
+
+/**
+ * Report the syntax errors of CSS, each described as `describeCssError` describes it - a run of errors within one
+ * extent being reported once
+ * @param {Tree} tree - The CSS's parse by @lezer/css
+ * @param {String} text - The CSS
+ * @param {Diagnostic[]} diagnostics - Receives the diagnostics
+ */
+const reportCssErrors = function (tree, text, diagnostics) {
+    let last = null;
+    tree.iterate({
+        enter: ref => {
+            if (ref.type.isError) {
+                const described = describeCssError(ref.node, text);
+                const from = Math.min(described.from, text.length), to = Math.min(text.length, Math.max(described.to, from + 1));
+                if (last && from <= last.to + 1) {
+                    last.to = Math.max(last.to, to);
+                } else {
+                    last = {from: Math.min(from, Math.max(0, text.length - 1)), to, severity: "error", message: described.message};
+                    if (described.fix) {
+                        last.fix = described.fix;
+                    }
+                    diagnostics.push(last);
+                }
+            }
+        }
+    });
+};
+
+/**
+ * Lint CSS - syntax errors, and, if `style` is set, stylistic warnings: an empty rule, a property declared twice in one
+ * rule, and `!important`
+ * @param {String} text - The CSS
+ * @param {Number} offset - The position of the text within any larger document
+ * @param {Diagnostic[]} diagnostics - Receives the diagnostics
+ * @param {Boolean} style - Whether to report stylistic warnings
  * @return {Diagnostic[]} The diagnostics
  */
-export const lintSfc = function (text, diagnostics = []) {
+export const lintCss = function (text, offset = 0, diagnostics = [], style = false) {
+    const tree = cssParser.parse(text);
+    const own = [];
+    reportCssErrors(tree, text, own);
+    if (style) {
+        tree.iterate({
+            enter: ref => {
+                if (ref.name === "Block" && ref.node.parent && ref.node.parent.name === "RuleSet") {
+                    const declarations = ref.node.getChildren("Declaration");
+                    if (declarations.length === 0 && !ref.node.getChild("RuleSet")) {
+                        own.push({from: ref.from, to: ref.to, severity: "warning", message: "An empty rule"});
+                    }
+                    const seen = new Set();
+                    declarations.forEach(declaration => {
+                        const name = declaration.getChild("PropertyName");
+                        const property = name ? text.slice(name.from, name.to) : null;
+                        if (property && seen.has(property)) {
+                            own.push({from: name.from, to: name.to, severity: "warning",
+                                message: "\"" + property + "\" is declared again in this rule, overriding the first"});
+                        }
+                        seen.add(property);
+                    });
+                } else if (ref.name === "Important") {
+                    own.push({from: ref.from, to: ref.to, severity: "warning",
+                        message: "!important overrides the cascade - prefer a more specific selector"});
+                }
+            }
+        });
+    }
+    own.forEach(diagnostic => diagnostics.push({...diagnostic, from: diagnostic.from + offset, to: diagnostic.to + offset}));
+    return diagnostics;
+};
+
+/**
+ * Report the stylistic warnings of JavaScript, by Infusion's own style: a String in single quotes, a loose comparison,
+ * a declaration by `var`, the body of an `if` or `else` written without braces, a statement without its semicolon and a
+ * superfluous trailing comma
+ * @param {String} text - The JavaScript
+ * @param {Number} offset - The position of the text within any larger document
+ * @param {Diagnostic[]} diagnostics - Receives the diagnostics
+ * @return {Diagnostic[]} The diagnostics
+ */
+// The statements which end with a semicolon, and the nodes which hold statements - a statement elsewhere, e.g. the
+// declaration in the head of a for loop, is terminated by its holder
+const terminatedStatements = new Set(["ExpressionStatement", "VariableDeclaration", "ReturnStatement", "BreakStatement",
+    "ContinueStatement", "ThrowStatement", "DebuggerStatement", "ImportDeclaration", "ExportDeclaration", "DoStatement"]);
+const statementParents = new Set(["Script", "Block", "SwitchBody", "IfStatement", "LabeledStatement"]);
+
+export const lintJsStyle = function (text, offset = 0, diagnostics = []) {
+    const fragment = isFragment(text);
+    const source = fragment ? fragmentHead + text + fragmentTail : text;
+    const shift = fragment ? -fragmentHead.length : 0;
+    const own = [];
+    jsParser.parse(source).iterate({
+        enter: ref => {
+            const slice = source.slice(ref.from, ref.to);
+            if (ref.name === "String" && slice.startsWith("'")) {
+                own.push({from: ref.from, to: ref.to, severity: "warning", message: "Strings are written in double quotes"});
+            } else if (ref.name === "CompareOp" && (slice === "==" || slice === "!=")) {
+                own.push({from: ref.from, to: ref.to, severity: "warning", message: "Compare with " + slice + "= rather than " + slice});
+            } else if (ref.name === "var") {
+                own.push({from: ref.from, to: ref.to, severity: "warning", message: "Declare with const or let rather than var"});
+            } else if (terminatedStatements.has(ref.name) && statementParents.has(ref.node.parent && ref.node.parent.name) &&
+                !(ref.node.lastChild && ref.node.lastChild.name === ";") && !(ref.name === "ExportDeclaration" && /^export\s+(default\s+)?(async\s+)?(function|class)\b/.test(slice))) {
+                own.push({from: ref.to - 1, to: ref.to, severity: "warning", message: "A statement ends with a semicolon",
+                    fix: insertion(ref.to + shift + offset, ";")});
+            } else if (ref.name === "ArgList" || ref.name === "ArrayExpression" || ref.name === "ObjectExpression") {
+                const close = ref.node.lastChild, last = close && close.prevSibling;
+                if (last && last.name === "," && close.to - close.from === 1) {
+                    own.push({from: last.from, to: last.to, severity: "warning", message: "A superfluous trailing comma",
+                        fix: replacement(last.from + shift + offset, last.to + shift + offset, "", "Remove the comma")});
+                }
+            }
+            if (ref.name === "IfStatement") {
+                for (let child = ref.node.firstChild; child; child = child.nextSibling) {
+                    const body = child.name === "ParenthesizedExpression" || child.name === "else" ? child.nextSibling : null;
+                    if (body && body.name !== "Block" && body.name !== "IfStatement") {
+                        own.push({from: body.from, to: body.to, severity: "warning",
+                            message: "The body of an if or else is written as a block, within braces"});
+                    }
+                }
+            }
+        }
+    });
+    own.filter(diagnostic => diagnostic.from + shift >= 0 && diagnostic.from + shift <= text.length)
+        .forEach(diagnostic => diagnostics.push({...diagnostic, from: diagnostic.from + shift + offset, to: diagnostic.to + shift + offset}));
+    return diagnostics;
+};
+
+/**
+ * Lint a Single File Component - the JavaScript of each <script> not loaded from elsewhere, the interpolations and
+ * markup of its <template>, and the CSS of each <style>
+ * @param {String} text - The SFC
+ * @param {Diagnostic[]} [diagnostics] - Receives the diagnostics
+ * @param {LintOptions} [options] - Options - see `lint`
+ * @return {Diagnostic[]} The diagnostics
+ */
+export const lintSfc = function (text, diagnostics = [], options = {}) {
     const tree = sfcHtmlParser.parse(text);
     reportSyntaxErrors(tree, diagnostics, text.length);
     tree.iterate({
         enter: ref => {
             const element = ref.name === "ScriptText" ? ref.node.parent : null;
             // Only a <script> at the top level of the SFC is its JavaScript - one within its template is markup
+            const styleElement = ref.name === "StyleText" ? ref.node.parent : null;
             if (element && element.parent && element.parent.name === "Document") {
                 lintJs(text.slice(ref.from, ref.to), ref.from, diagnostics, text.slice(0, ref.from).split("\n").length - 1);
+                if (options.style) {
+                    lintJsStyle(text.slice(ref.from, ref.to), ref.from, diagnostics);
+                }
+            } else if (styleElement && styleElement.parent && styleElement.parent.name === "Document") {
+                lintCss(text.slice(ref.from, ref.to), ref.from, diagnostics, !!options.style);
             } else if (ref.name === "Element" && ref.node.parent && ref.node.parent.name === "Document") {
                 const open = ref.node.firstChild, close = ref.node.lastChild;
                 const tagName = open && open.getChild("TagName");
                 if (tagName && text.slice(tagName.from, tagName.to) === "template" && close && close.name === "CloseTag") {
                     lintRunes(text.slice(open.to, close.from), open.to, "Template", diagnostics);
+                    lintMarkup(ref.node, text, diagnostics, !!options.style);
                 }
             }
         }
@@ -1307,13 +1629,24 @@ export const lintSfc = function (text, diagnostics = []) {
 };
 
 /**
- * Lint a text of Infusion - JavaScript, or a Single File Component
+ * @typedef {Object} LintOptions
+ * @property {Boolean} [style] - Whether to report stylistic warnings beside errors - see `lintJsStyle`, `lintCss` and
+ * `lintMarkup`. Editors report them, shown apart from errors, and the ESLint plugin leaves them to ESLint's own rules
+ */
+
+/**
+ * Lint a text of Infusion - JavaScript, or a Single File Component. Errors are what would fail - syntax, and records
+ * Infusion can't read - and warnings what would work, but is better written otherwise
  * @param {String} text - The text
  * @param {String} [kind] - "js" or "vue" - by default, "vue" for a text beginning with "<", and otherwise "js"
+ * @param {LintOptions} [options] - Options
  * @return {Diagnostic[]} The diagnostics, in order of position
  */
-export const lint = function (text, kind) {
+export const lint = function (text, kind, options = {}) {
     const resolved = kind || (/^\s*</.test(text) ? "vue" : "js");
-    const diagnostics = resolved === "vue" ? lintSfc(text) : lintJs(text);
+    const diagnostics = resolved === "vue" ? lintSfc(text, [], options) : lintJs(text);
+    if (resolved !== "vue" && options.style) {
+        lintJsStyle(text, 0, diagnostics);
+    }
     return diagnostics.sort((a, b) => a.from - b.from || a.to - b.to);
 };

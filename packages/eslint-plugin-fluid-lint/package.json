@@ -1,0 +1,14 @@
+{
+    "name": "eslint-plugin-fluid-lint",
+    "version": "1.0.0",
+    "private": true,
+    "description": "An ESLint plugin reporting the diagnostics of fluid-lint - the runes of configuration and the layer records of Infusion 6, in JavaScript and Single File Components",
+    "license": "(BSD-3-Clause OR ECL-2.0)",
+    "main": "index.js",
+    "scripts": {
+        "test": "node test/pluginTests.js"
+    },
+    "peerDependencies": {
+        "eslint": ">=8"
+    }
+}

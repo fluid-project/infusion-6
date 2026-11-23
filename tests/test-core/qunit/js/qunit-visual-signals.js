@@ -1,4 +1,4 @@
-/* global QUnit, StubQUnit, d3, dagreD3, CodeMirror */
+/* global QUnit, StubQUnit, d3, dagreD3 */
 
 "use strict";
 
@@ -83,7 +83,7 @@ fluid.vizReactive.SequencePoint = function (props) {
  * @property {Array<Object>} cells - Array of cell objects involved in the test.
  * @property {Boolean} initialRun - True if this is the initial dry run to collect sequence points.
  * @property {Object<String, Number>} edgeInvocationIndices - Map from edgeKey to current invocation index.
- * @property {Object} [codeMirror] - CodeMirror editor instance for code display.
+ * @property {CodeView} [codeMirror] - The view of the test's code - see fluid.vizReactive.makeCodeView
  * @property {HTMLElement} [container] - DOM container for the timeline UI.
  * @property {Function} [cleanup] - Cleanup function to reset state after test.
  */
@@ -214,11 +214,133 @@ fluid.vizReactive.stepBackward = function (timeline) {
     }
 };
 
+/**
+ * @typedef {Object} CodeView
+ * @property {EditorView} view - The CodeMirror 6 view
+ * @property {Function} getValue - Returns the code's text
+ * @property {Function} setValue - Replaces the code's text, as given
+ * @property {Function} posFromIndex - Returns `{line}`, the line, counted from 0, holding a position of the text
+ * @property {Function} markText - Marks the text between two positions with a class, returning `{clear}`
+ * @property {Function} scrollIntoView - Scrolls a position of the text into view
+ * @property {Function} setGutterMarker - Shows an element beside a line, counted from 0, in the gutter of assertions,
+ * or with `null`, clears it
+ */
+
+/**
+ * Make the view of a test's code - a CodeMirror 6 editor of Infusion's one copy of CodeMirror 6, `fluid.codemirror6`,
+ * linted by fluid-lint, beside a gutter in which the assertions it makes are marked as they pass or fail
+ * @param {Element} parent - The element in which it is made
+ * @param {Function} onLint - Receives the diagnostics of each linting
+ * @return {CodeView} The view
+ */
+fluid.vizReactive.makeCodeView = function (parent, onLint) {
+    const CM = fluid.codemirror6;
+    const setMarks = CM.StateEffect.define();
+    const marksField = CM.StateField.define({
+        create: () => CM.Decoration.none,
+        update: (marks, transaction) => {
+            let togo = marks.map(transaction.changes);
+            transaction.effects.filter(effect => effect.is(setMarks)).forEach(effect => {
+                togo = effect.value;
+            });
+            return togo;
+        },
+        provide: field => CM.EditorView.decorations.from(field)
+    });
+    const setAsserts = CM.StateEffect.define();
+    const assertsField = CM.StateField.define({
+        create: () => CM.RangeSet.empty,
+        update: (asserts, transaction) => {
+            let togo = asserts.map(transaction.changes);
+            transaction.effects.filter(effect => effect.is(setAsserts)).forEach(effect => {
+                togo = effect.value;
+            });
+            return togo;
+        }
+    });
+    class AssertMarker extends CM.GutterMarker {
+        constructor(element) {
+            super();
+            this.element = element;
+        }
+        toDOM() {
+            return this.element;
+        }
+    }
+    // The marks shown, by the class which marks them, and the markers of assertions, by line
+    const marks = new Map(), asserts = new Map();
+    const view = new CM.EditorView({
+        parent,
+        state: CM.EditorState.create({
+            doc: "",
+            extensions: [
+                CM.lineNumbers(), CM.history(), CM.drawSelection(), CM.bracketMatching(), CM.EditorView.lineWrapping,
+                CM.syntaxHighlighting(CM.defaultHighlightStyle, {fallback: true}),
+                CM.keymap.of([...CM.defaultKeymap, ...CM.historyKeymap]),
+                CM.fluidJavaScript(),
+                marksField, assertsField,
+                CM.gutter({class: "vizreactive-assert-markers", markers: v => v.state.field(assertsField)}),
+                CM.lintGutter(),
+                CM.linter(v => {
+                    const text = v.state.doc.toString();
+                    // The code is a function's body, which is linted alone - the errors of its last line, which closes
+                    // the function, are not its own
+                    const lastLine = v.state.doc.line(v.state.doc.lines).from;
+                    const diagnostics = CM.lint(text, "js", {style: true}).filter(diagnostic => diagnostic.from < lastLine);
+                    onLint(diagnostics);
+                    return diagnostics.map(({from, to, severity, message}) => ({from, to, severity, message}));
+                }, {delay: 300})
+            ]
+        })
+    });
+    const showMarks = () => {
+        const ranges = [...marks.entries()].map(([clazz, {from, to}]) => CM.Decoration.mark({class: clazz}).range(from, to))
+            .sort((a, b) => a.from - b.from);
+        view.dispatch({effects: setMarks.of(CM.Decoration.set(ranges, true))});
+    };
+    const showAsserts = () => {
+        const builder = new CM.RangeSetBuilder();
+        [...asserts.entries()].filter(([line]) => line < view.state.doc.lines).sort((a, b) => a[0] - b[0])
+            .forEach(([line, element]) => builder.add(view.state.doc.line(line + 1).from, view.state.doc.line(line + 1).from, new AssertMarker(element)));
+        view.dispatch({effects: setAsserts.of(builder.finish())});
+    };
+    return {
+        view,
+        getValue: () => view.state.doc.toString(),
+        setValue: text => {
+            view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text}});
+            marks.clear();
+            asserts.clear();
+            showAsserts();
+        },
+        posFromIndex: index => ({line: view.state.doc.lineAt(Math.min(index, view.state.doc.length)).number - 1}),
+        markText: (from, to, clazz) => {
+            marks.set(clazz, {from, to});
+            showMarks();
+            return {
+                clear: () => {
+                    marks.delete(clazz);
+                    showMarks();
+                }
+            };
+        },
+        scrollIntoView: index => view.dispatch({effects: CM.EditorView.scrollIntoView(index, {y: "nearest", yMargin: 20})}),
+        setGutterMarker: (line, element) => {
+            if (element) {
+                asserts.set(line, element);
+            } else {
+                asserts.delete(line);
+            }
+            showAsserts();
+        }
+    };
+};
+
 fluid.vizReactive.trimAssertMarks = function (timeline) {
     const currentLine = timeline.currentStatementPosition?.line || 0;
     timeline.assertMarkers = timeline.assertMarkers.filter(markerLine => {
         if (markerLine >= currentLine - 1) {
-            timeline.codeMirror.setGutterMarker(markerLine, "vizreactive-assert-markers", null);
+            timeline.codeMirror.setGutterMarker(markerLine, null);
             return false;
         } else {
             return true;
@@ -326,7 +448,7 @@ fluid.vizReactive.createTimelineUI = function (targetContainer, timeline, allTes
         <div class="timeline-body">
             <div class="signal-viz"></div>
             <div class="signal-code-holder">
-                <input type="textarea" class="codemirror-holder" />
+                <div class="codemirror-holder"></div>
             </div>
         </div>
         <div class="timeline-controls">
@@ -365,19 +487,7 @@ fluid.vizReactive.createTimelineUI = function (targetContainer, timeline, allTes
         }
     };
 
-    const textarea = container.querySelector(".codemirror-holder");
-    timeline.codeMirror = CodeMirror.fromTextArea(textarea, {
-        mode: "javascript",
-        lineNumbers: true,
-        matchBrackets: true,
-        lineWrapping: true,
-        gutters: ["CodeMirror-lint-markers", "vizreactive-assert-markers"],
-        lint: {
-            esversion: 2021,
-            onUpdateLinting: annotations => pushAnnotations(annotations),
-            tooltips: true
-        }
-    });
+    timeline.codeMirror = fluid.vizReactive.makeCodeView(container.querySelector(".codemirror-holder"), pushAnnotations);
 
     // noinspection JSIgnoredPromiseFromCall
     fluid.vizReactive.updateTestText(timeline, selectedTest.testName, selectedTest.testText, false);
@@ -393,12 +503,11 @@ fluid.vizReactive.updateCodeHighlight = function (timeline, token, type) {
     }
     if (token) {
         const cm = timeline.codeMirror;
-        const startPos = cm.posFromIndex(token.from);
         if (type === "statement") {
-            timeline.currentStatementPosition = startPos;
+            timeline.currentStatementPosition = cm.posFromIndex(token.from);
         }
-        timeline[member] = cm.markText(startPos, cm.posFromIndex(token.to), {className: clazz});
-        cm.scrollIntoView(startPos, 20);
+        timeline[member] = cm.markText(token.from, token.to, clazz);
+        cm.scrollIntoView(token.from);
     } else {
         timeline[member] = null;
     }
@@ -827,7 +936,7 @@ fluid.vizReactive.stubAssert = StubQUnit.makeAssert((pass, actual, expected, mes
         const marker = document.createElement("div");
         marker.className = "vizreactive-testmarker vizreactive-basic-tooltip " + (pass ? "test-pass " : "test-fail ") + " line-" + line;
         marker.title = pass ? "Assertion passed" : ("Assertion failed: actual value " + JSON.stringify(actual));
-        timeline.codeMirror.setGutterMarker(line, "vizreactive-assert-markers", marker);
+        timeline.codeMirror.setGutterMarker(line, marker);
         timeline.assertMarkers.push(line);
     }
 });

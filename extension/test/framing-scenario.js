@@ -19,8 +19,8 @@ const harness = require("./harness.js");
 
 const postPath = "post/2025-03-20-ui-as-code/";
 const listPath = "post/";
-// The theme's footer, which the site forks on its first edit - see `framing` in ponder's infusion/linkage.json
-const footerPath = "infusion/override/beautifulWend/sfc/beautifulWend-footer.vue";
+// The theme's footer, which the site forks on its first edit - see `framing` in ponder's wend/editing.json
+const footerPath = "wend/override/beautifulWend/sfc/beautifulWend-footer.vue";
 const marker = "edited in place through its framing";
 
 harness.scenario("Editing the framing of a page shows on every page until published", async function ({mock, browser, worker, expect}) {
@@ -30,9 +30,11 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     const post = await harness.openPage(browser, mock, postPath);
     const registered = () => worker.evaluate(() => chrome.scripting.getRegisteredContentScripts().then(scripts => scripts.map(script => script.id)));
     expect((await registered()).length === 0, "Before any click, the extension is enlisted in no site");
-    await harness.activate(worker, post);
+    // Editing begins from the panel which the extension's button opens - Edit this page, enabled on a page of the site
+    await harness.activateByPanel(browser, worker, post);
+    expect(true, "The panel offers to edit a page of the site, and its Edit this page opens the editor");
     expect(JSON.stringify(await registered()) === JSON.stringify(["site:http://127.0.0.1/*"]),
-        "Clicking enlists the site: " + JSON.stringify(await registered()));
+        "Editing enlists the site: " + JSON.stringify(await registered()));
     await post.click(".fluid-edit-framing");
     await post.waitForSelector(`footer[data-fluid-claim-state="editable"]`, {timeout: 30000});
     expect(true, "Editing the framing marks the post's footer as editable");
@@ -61,10 +63,24 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     const publishedList = fs.readFileSync(path.join(mock.pagesDir, listPath, "index.html"), "utf8");
     expect(!publishedList.includes(marker), "The list page as published is unchanged");
 
-    // 4. Commit, from the post - the Action rebuilds, and the list page finds its edit published
+    // 4. Commit, from the post - confirmed by the user in the extension's own window - the Action rebuilds, and the
+    // list page finds its edit published
     await post.bringToFront();
+    // First, a script of the page itself asks for the commit, as any script of the page could - the user declines it
+    browser.confirmDecision = false;
+    await post.evaluate(() => document.dispatchEvent(new CustomEvent("fluid-edit-relay-request", {detail: JSON.stringify({requestId: "forged",
+        type: "claim-commit", id: JSON.parse(document.getElementById("fluid-provenance").textContent).repo + ":wend/override/beautifulWend/sfc/beautifulWend-footer.vue"})})));
+    for (let i = 0; i < 50 && browser.confirmations.length === 0; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    expect(browser.confirmations.length === 1 && browser.confirmations[0].path.startsWith(footerPath) && browser.confirmations[0].diff.includes(marker),
+        "A commit asked for by a script of the page is shown to the user to confirm, with its change: " + JSON.stringify(browser.confirmations));
+    expect(mock.commits.length === 0, "Declined, nothing is committed");
+    browser.confirmDecision = true;
     await post.click(".fluid-edit-commit");
     await post.waitForSelector(`footer[data-fluid-claim-state="committed"]`, {timeout: 15000});
+    expect(browser.confirmations.length === 2, "The panel's own commit is confirmed by the user too");
     expect(mock.commits.length === 1 && mock.commits[0].path === footerPath, "One commit, of the footer's SFC");
     expect(fs.existsSync(path.join(mock.repoDir, footerPath)) &&
         !fs.readFileSync(path.join(mock.repoDir, "packages/beautiful-wend/sfc/beautifulWend-footer.vue"), "utf8").includes(marker),
@@ -107,7 +123,7 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     await harness.activate(worker, post);
     await harness.editSource(post, text => text.replace(/\n\n/, "\n\nAn edit made in place.\n\n"));
     await harness.waitForState(post, "uncommitted");
-    const contentPath = JSON.parse(await post.$eval("#fluid-linkage", node => node.textContent)).source.path;
+    const contentPath = JSON.parse(await post.$eval("#fluid-provenance", node => node.textContent)).source.path;
     const file = path.join(mock.repoDir, contentPath);
     fs.writeFileSync(file, fs.readFileSync(file, "utf8") + "\nAn edit made by someone else.\n");
     await post.click(".fluid-edit-commit");

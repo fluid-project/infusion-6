@@ -462,6 +462,33 @@ QUnit.test("Layers transmitted with the most derived first", function (assert) {
     that.destroy();
 });
 
+QUnit.test("Subcomponent still being constructed is transmitted from its potentia", function (assert) {
+    fluid.def("fluid.tests.ptf.pendingChild", {
+        $layers: "fluid.component",
+        value: "child"
+    });
+    fluid.def("fluid.tests.ptf.withPending", {
+        $layers: "fluid.component",
+        pending: {
+            $component: {
+                $layers: "fluid.tests.ptf.pendingChild"
+            }
+        }
+    });
+    const that = fluid.tests.ptf.withPending();
+    // Before the graph is stabilised, the subcomponent has been declared but not yet constructed, as a view is whilst its
+    // template loads
+    const pendingShadow = fluid.ptf.componentToShadow(that).childComponents.pending;
+    assert.ok(pendingShadow && !pendingShadow.that, "Subcomponent has a shadow but no instance");
+    const layerNamesOf = parts => parts.filter(part => part.kind === "layer").map(part => part.filename);
+    const pendingLayers = layerNamesOf(fluid.ptf.componentToParts(that));
+    assert.deepEqual(pendingLayers, ["fluid.tests.ptf.withPending", "fluid.tests.ptf.pendingChild"],
+        "User layers of the root and of the subcomponent awaiting construction transmitted");
+    fluid.cell.stabilize();
+    assert.deepEqual(layerNamesOf(fluid.ptf.componentToParts(that)), pendingLayers, "The same layers transmitted once it is constructed");
+    that.destroy();
+});
+
 QUnit.test("Component injecting its grandparent transmitted and reconstructed - FLUID-7020", async function (assert) {
     fluid.def("fluid.tests.ptf.loader", {
         $layers: "fluid.component",

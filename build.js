@@ -37,60 +37,6 @@ const buildIndex = {
     ],
 
     copy: [{
-        src: "node_modules/codemirror/lib/codemirror.js",
-        dest: "src/lib/codemirror/js/codemirror.js"
-    }, {
-        src: "node_modules/codemirror/lib/codemirror.css",
-        dest: "src/lib/codemirror/css/codemirror.css"
-    }, {
-        src: "node_modules/codemirror/mode/css/css.js",
-        dest: "src/lib/codemirror/js/css.js"
-    }, {
-        src: "node_modules/codemirror/mode/javascript/javascript.js",
-        dest: "src/lib/codemirror/js/javascript.js"
-    }, {
-        src: "node_modules/codemirror/mode/xml/xml.js",
-        dest: "src/lib/codemirror/js/xml.js"
-    }, {
-        src: "node_modules/codemirror/mode/markdown/markdown.js",
-        dest: "src/lib/codemirror/js/markdown.js"
-    }, {
-        src: "node_modules/codemirror/addon/mode/overlay.js",
-        dest: "src/lib/codemirror/js/overlay.js"
-    }, {
-        src: "node_modules/codemirror/mode/vue/vue.js",
-        dest: "src/lib/codemirror/js/vue.js"
-    }, {
-        src: "node_modules/codemirror/mode/htmlmixed/htmlmixed.js",
-        dest: "src/lib/codemirror/js/htmlmixed.js"
-    }, {
-        src: "node_modules/codemirror/addon/lint/lint.js",
-        dest: "src/lib/codemirror/js/lint.js"
-    }, {
-        src: "node_modules/codemirror/addon/lint/lint.css",
-        dest: "src/lib/codemirror/css/lint.css"
-    }, {
-        src: "node_modules/codemirror/addon/lint/javascript-lint.js",
-        dest: "src/lib/codemirror/js/javascript-lint.js"
-    }, {
-        src: "node_modules/codemirror/addon/lint/json-lint.js",
-        dest: "src/lib/codemirror/js/json-lint.js"
-    }, {
-        src: "node_modules/codemirror/addon/lint/css-lint.js",
-        dest: "src/lib/codemirror/js/css-lint.js"
-    }, {
-        src: "node_modules/jshint/dist/jshint.js",
-        dest: "src/lib/codemirror/js/jshint.js"
-    }, {
-        src: "node_modules/jsonlint/web/jsonlint.js",
-        dest: "src/lib/codemirror/js/jsonlint.js"
-    }, {
-        src: "node_modules/csslint/dist/csslint.js",
-        dest: "src/lib/codemirror/js/csslint.js"
-    }, {
-        src: "node_modules/htmlhint/dist/htmlhint.js",
-        dest: "src/lib/codemirror/js/htmlhint.js"
-    }, {
         src: "node_modules/acorn-loose/dist/acorn-loose.js",
         dest: "src/lib/acorn-loose/acorn-loose.js"
     }, {

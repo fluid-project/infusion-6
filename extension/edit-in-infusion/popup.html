@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Edit in Infusion</title>
+    <style>
+        :root { --accent: #2b6cb0; --muted: #555; --line: #dde3ea; }
+        body { font: 14px/1.45 system-ui, sans-serif; width: 320px; margin: 0; padding: 16px; color: #1a202c; background: #fff; }
+        h1 { font-size: 17px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+        p { margin: 0 0 10px; }
+        ol { margin: 0 0 12px; padding-left: 20px; }
+        ol li { margin-bottom: 8px; }
+        button.primary { display: block; width: 100%; font: inherit; font-weight: 600; padding: 9px 12px; border: 0;
+            border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+        button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+        button.primary:disabled { background: #a0aec0; cursor: not-allowed; }
+        .holder { display: block; }
+        button.link { font: inherit; border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
+        a { color: var(--accent); }
+        .code { font: 600 24px/1.2 ui-monospace, monospace; letter-spacing: 0.12em; text-align: center; padding: 8px;
+            border: 1px dashed var(--line); border-radius: 6px; margin: 6px 0 10px; user-select: all; }
+        .note { color: var(--muted); font-size: 12.5px; }
+        .footer { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; display: flex; justify-content: space-between; }
+        .status { color: #b7410e; min-height: 0; }
+        .waiting::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%;
+            background: var(--accent); animation: pulse 1.2s infinite ease-in-out; }
+        @keyframes pulse { 50% { opacity: 0.25; } }
+    </style>
+</head>
+<body>
+    <h1><img src="icons/icon-32.png" alt="" width="24" height="24"> Edit in Infusion</h1>
+
+    <section id="welcome" hidden>
+        <p>Edit this website right here, in your browser. Your changes are saved to the place the site is kept on
+           GitHub, and appear on the site shortly after.</p>
+        <p>First, connect your GitHub account. You only need to do this once.</p>
+        <button id="connect" class="primary">Connect my GitHub account</button>
+        <p class="note" style="margin-top: 10px">No GitHub account yet? <a href="https://github.com/signup" target="_blank">Create one for free</a>,
+           then come back here.</p>
+    </section>
+
+    <section id="code" hidden>
+        <ol>
+            <li>Copy this code:
+                <div class="code" id="user-code"></div>
+            </li>
+            <li>On GitHub's page, paste the code, press <em>Continue</em>, then <em>Authorize</em>.</li>
+            <li>That's all - you'll be brought back to this page.</li>
+        </ol>
+        <button id="open-github" class="primary">Copy code and go to GitHub</button>
+        <p class="note waiting" style="margin-top: 10px">Waiting for you to authorize at GitHub</p>
+    </section>
+
+    <section id="ready" hidden>
+        <p><strong>Connected to GitHub<span id="login"></span>.</strong></p>
+        <span id="start-holder" class="holder"><button id="start" class="primary">Edit this page</button></span>
+    </section>
+
+    <p class="status" id="status" role="status"></p>
+
+    <div class="footer note">
+        <button id="cancel" class="link" hidden>Cancel</button>
+        <button id="signout" class="link" hidden>Sign out</button>
+        <button id="options" class="link">More options</button>
+    </div>
+    <script src="js/popup.js"></script>
+</body>
+</html>

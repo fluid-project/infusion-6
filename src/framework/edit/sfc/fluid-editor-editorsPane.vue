@@ -52,9 +52,10 @@ fluid.def("fluid.editor.editorsPane", {
 </template>
 
 <style>
+    /* As tall as its tabs, and no taller - and a scrollbar beneath them when they overflow */
     .fl-editor-layer-tabs {
         display: flex;
-        min-height: 48px;
+        flex: none;
         overflow-x: auto;
     }
 
@@ -94,9 +95,13 @@ fluid.def("fluid.editor.editorsPane", {
         display: flex;
         flex-direction: column;
         width: 75%;
+        flex: 1;
+        min-height: 0;
     }
 
+    /* Fills the pane beneath the tabs, the active editor scrolling within it */
     .fl-editor-holder {
+        flex: 1;
         min-height: 0;
         display: flex;
     }

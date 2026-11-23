@@ -39,8 +39,8 @@ https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
  * @property {String} [distinctStyle] - A CSS property whose computed value should differ amongst all matching elements
  * @property {Locator} [covers] - Locator for an element whose bounds the first matching element should coincide with
  * @property {Number} [tolerance] - The tolerance in pixels for `covers` - defaults to 2
- * @property {Object} [matchesStyle] - Holding a CSS `property` and a `target` locator - the computed value of the
- * property for the first matching element should equal its value for the element matched by `target`
+ * @property {Object} [matchesStyle] - Holding a CSS `property`, and a `target` locator or a `value` - the computed value
+ * of the property for the first matching element should equal its value for the element matched by `target`, or `value`
  * @property {Locator} [centredOn] - Locator for an element whose centre the centre of the first matching element
  * should coincide with, within `tolerance`
  * @property {Locator} [centreOnEdgeOf] - Locator for an element on whose edge the centre of the first matching element
@@ -79,17 +79,6 @@ fluidDemoAgent.describe = function (locator) {
 };
 
 /**
- * Find the CodeMirror 5 instance associated with an element, if any - either the element lies within a CodeMirror's
- * DOM, or contains one.
- * @param {Element} element - The element to search from
- * @return {Object|null} The CodeMirror instance, or `null` if there is none
- */
-fluidDemoAgent.codeMirrorFor = function (element) {
-    const cmElement = element.closest(".CodeMirror") || element.querySelector(".CodeMirror");
-    return cmElement ? cmElement.CodeMirror : null;
-};
-
-/**
  * Find the CodeMirror 6 view associated with an element, if any - either the element lies within the view's DOM, or
  * contains it. CodeMirror 6 does not expose its views globally, and they are found through the `EditorView` of the
  * fluid-lint bundle, which the page must have loaded.
@@ -98,21 +87,20 @@ fluidDemoAgent.codeMirrorFor = function (element) {
  */
 fluidDemoAgent.codeMirror6For = function (element) {
     const cmElement = element.closest(".cm-editor") || element.querySelector(".cm-editor");
-    const EditorView = window.fluidLint && window.fluidLint.EditorView;
+    const EditorView = window.fluid && window.fluid.codemirror6 && window.fluid.codemirror6.EditorView;
     return cmElement && EditorView ? EditorView.findFromDOM(cmElement) : null;
 };
 
 /**
- * Read the text of an element with runs of whitespace collapsed. The text of a CodeMirror, or of an element holding a
- * CodeMirror 6, is read from its document, since only the lines within its viewport are rendered.
+ * Read the text of an element with runs of whitespace collapsed. The text of a CodeMirror 6 view, or of an element
+ * holding one, is read from its document, since only the lines within its viewport are rendered.
  * @param {Element} element - The element whose text is to be read
  * @return {String} The element's text
  */
 fluidDemoAgent.textOf = function (element) {
-    const cm = fluidDemoAgent.codeMirrorFor(element);
     // An element within a CodeMirror 6, e.g. the range of a diagnostic, is read for its own text
-    const cm6 = cm || !(element.matches(".cm-editor") || element.querySelector(".cm-editor")) ? null : fluidDemoAgent.codeMirror6For(element);
-    const text = cm ? cm.getValue() : cm6 ? cm6.state.doc.toString() : element.textContent;
+    const cm6 = !(element.matches(".cm-editor") || element.querySelector(".cm-editor")) ? null : fluidDemoAgent.codeMirror6For(element);
+    const text = cm6 ? cm6.state.doc.toString() : element.textContent;
     return text.replace(/\s+/g, " ").trim();
 };
 
@@ -222,27 +210,17 @@ fluidDemoAgent.minimalEdit = function (find, replace) {
  */
 fluidDemoAgent.pointFor = function (locator, find) {
     const element = fluidDemoAgent.locate(locator);
-    const cm = fluidDemoAgent.codeMirrorFor(element);
-    const cm6 = cm ? null : fluidDemoAgent.codeMirror6For(element);
+    const cm6 = fluidDemoAgent.codeMirror6For(element);
     let rect;
     if (find === undefined) {
         element.scrollIntoView({block: "nearest", inline: "nearest"});
         rect = element.getBoundingClientRect();
-    } else if (cm) {
-        const index = cm.getValue().indexOf(find);
-        if (index === -1) {
-            throw new Error(`Could not find text "${find}" within CodeMirror`);
-        }
-        const from = cm.posFromIndex(index), to = cm.posFromIndex(index + find.length);
-        cm.scrollIntoView({from, to}, 50);
-        const start = cm.charCoords(from, "window"), end = cm.charCoords(to, "window");
-        rect = {left: start.left, top: start.top, width: end.left - start.left, height: start.bottom - start.top};
     } else if (cm6) {
         const index = cm6.state.doc.toString().indexOf(find);
         if (index === -1) {
             throw new Error(`Could not find text "${find}" within CodeMirror`);
         }
-        cm6.dispatch({effects: window.fluidLint.EditorView.scrollIntoView(index, {y: "center"})});
+        cm6.dispatch({effects: window.fluid.codemirror6.EditorView.scrollIntoView(index, {y: "center"})});
         const start = cm6.coordsAtPos(index), end = cm6.coordsAtPos(index + find.length);
         if (!start || !end) {
             throw new Error(`Text "${find}" is not rendered within CodeMirror`);
@@ -277,14 +255,9 @@ fluidDemoAgent.pointFor = function (locator, find) {
  */
 fluidDemoAgent.selectForEdit = function (locator, find, replace) {
     const element = fluidDemoAgent.locate(locator);
-    const cm = fluidDemoAgent.codeMirrorFor(element);
-    const cm6 = cm ? null : fluidDemoAgent.codeMirror6For(element);
+    const cm6 = fluidDemoAgent.codeMirror6For(element);
     const edit = fluidDemoAgent.minimalEdit(find, replace);
-    if (cm) {
-        const index = cm.getValue().indexOf(find) + edit.prefix;
-        cm.focus();
-        cm.setSelection(cm.posFromIndex(index), cm.posFromIndex(index + edit.remove.length));
-    } else if (cm6) {
+    if (cm6) {
         const index = cm6.state.doc.toString().indexOf(find) + edit.prefix;
         cm6.focus();
         cm6.dispatch({selection: {anchor: index, head: index + edit.remove.length}});
@@ -385,7 +358,8 @@ fluidDemoAgent.checkOne = function (expectation, baseline) {
         if (first) {
             const property = expectation.matchesStyle.property;
             const value = getComputedStyle(first)[property];
-            const expected = getComputedStyle(fluidDemoAgent.locate(expectation.matchesStyle.target))[property];
+            const expected = expectation.matchesStyle.target ? getComputedStyle(fluidDemoAgent.locate(expectation.matchesStyle.target))[property] :
+                expectation.matchesStyle.value;
             if (value !== expected) {
                 failures.push(`expected ${property} to be ${expected}, was ${value}`);
             }

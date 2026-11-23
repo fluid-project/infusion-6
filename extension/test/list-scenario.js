@@ -85,7 +85,7 @@ harness.scenario("Writing a new post from the list, and browsing with the editor
     await list.waitForSelector(".fluid-edit-panel[data-fluid-edit-ready]:not([hidden])", {timeout: 30000});
     const onPost = await list.evaluate(() => ({
         path: document.querySelector(".fluid-edit-path").textContent,
-        source: JSON.parse(document.querySelector("#fluid-linkage").textContent).source.path
+        source: JSON.parse(document.querySelector("#fluid-provenance").textContent).source.path
     }));
     expect(onPost.path === onPost.source, "Navigating to " + href + " keeps the editor open, on the post's source: " + JSON.stringify(onPost));
     await list.waitForSelector("[data-fluid-block=\"editable\"]", {timeout: 30000});
@@ -94,7 +94,12 @@ harness.scenario("Writing a new post from the list, and browsing with the editor
     // 6. Unfold the source - remembered by the panel on the next page
     await list.click(".fluid-edit-source summary");
     await list.waitForFunction(() => document.querySelector(".fluid-edit-source").open);
-    const prefs = await worker.evaluate(() => chrome.storage.local.get("fluidEditPrefs"));
+    // Saved through the panel's relay to the extension, so a little after the source unfolds
+    let prefs = {};
+    for (let tries = 0; tries < 50 && !(prefs.fluidEditPrefs && prefs.fluidEditPrefs.sourceOpen); tries++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        prefs = await worker.evaluate(() => chrome.storage.local.get("fluidEditPrefs"));
+    }
     expect(prefs.fluidEditPrefs && prefs.fluidEditPrefs.sourceOpen === true, "Unfolding is saved in the extension's storage: " + JSON.stringify(prefs));
     await list.reload({waitUntil: "load"});
     await list.waitForSelector(".fluid-edit-panel[data-fluid-edit-ready]:not([hidden])", {timeout: 30000});

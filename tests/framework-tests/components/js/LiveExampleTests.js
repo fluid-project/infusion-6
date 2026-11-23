@@ -70,7 +70,7 @@ fluid.tests.liveExample.make = async function (code, options) {
  * @param {String} to - Its replacement
  */
 fluid.tests.liveExample.edit = function (element, from, to) {
-    const view = window.fluidLint.EditorView.findFromDOM(element.querySelector(".cm-editor"));
+    const view = fluid.codemirror6.EditorView.findFromDOM(element.querySelector(".cm-editor"));
     const at = view.state.doc.toString().indexOf(from);
     view.dispatch({changes: {from: at, to: at + from.length, insert: to}});
 };

@@ -44,16 +44,108 @@ const commitClaim = async function (id) {
     return togo;
 };
 
+// The commits awaiting the user's confirmation, each in a window of the extension's own, confirm.html, which no script
+// of the page edited can reach - the panel which asks for a commit runs in the page's own world, as any of the page's
+// scripts do, so that any of them could ask for one. Keyed by the id of the request, in the window's URL
+const fluidConfirm = {pending: {}, requestCount: 0};
+
+/**
+ * Ask the user to confirm the commit of a claim, in a window showing what would be committed
+ * @param {Claim} claim - The claim
+ * @return {Promise<Boolean>} Resolves `true` if the user confirms it, `false` if they decline, or close the window
+ */
+fluidConfirm.ask = function (claim) {
+    const request = String(++fluidConfirm.requestCount) + "-" + Date.now();
+    return new Promise(resolve => {
+        fluidConfirm.pending[request] = {claim, resolve, windowId: null};
+        chrome.windows.create({url: chrome.runtime.getURL("confirm.html?request=" + request), type: "popup", width: 640, height: 720},
+            window => {
+                if (fluidConfirm.pending[request]) {
+                    fluidConfirm.pending[request].windowId = window ? window.id : null;
+                }
+            });
+    });
+};
+
+/**
+ * Settle a request for confirmation, closing its window
+ * @param {String} request - The request's id
+ * @param {Boolean} confirmed - Whether the user confirmed the commit
+ */
+fluidConfirm.settle = function (request, confirmed) {
+    const pending = fluidConfirm.pending[request];
+    if (pending) {
+        delete fluidConfirm.pending[request];
+        pending.resolve(confirmed);
+        if (pending.windowId !== null) {
+            chrome.windows.remove(pending.windowId, () => chrome.runtime.lastError);
+        }
+    }
+};
+
+// A window closed before the user decides declines the commit
+chrome.windows.onRemoved.addListener(windowId => {
+    Object.entries(fluidConfirm.pending).filter(([, pending]) => pending.windowId === windowId)
+        .forEach(([request]) => fluidConfirm.settle(request, false));
+});
+
+/**
+ * Determine whether a message was sent by one of the extension's own pages, e.g. confirm.html, rather than by a content
+ * script in a page of a site
+ * @param {Object} sender - The message's sender
+ * @return {Boolean} `true` if it was
+ */
+const fromExtensionPage = sender => sender.id === chrome.runtime.id && typeof(sender.url) === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
+
+/**
+ * Commit a claim on the request of a page being edited, once the user has confirmed it
+ * @param {String} id - The claim's key
+ * @return {Promise<Claim>} The claim as it now stands
+ */
+const confirmAndCommit = async function (id) {
+    const claim = await fluidClaims.get(id);
+    let togo = claim;
+    if (claim && claim.state === "uncommitted") {
+        if (await fluidConfirm.ask(claim)) {
+            togo = await commitClaim(id);
+        } else {
+            togo = await fluidClaims.put({...claim, message: "the commit was not confirmed"});
+        }
+    }
+    return togo;
+};
+
 // Each handler receives the message and the sender, and returns a promise for the reply
 const handlers = {
     "claim-get": message => fluidClaims.get(fluidClaims.idOf(message.repo, message.path)),
     "claim-put": message => fluidClaims.put({...message.claim, id: fluidClaims.idOf(message.claim.repo, message.claim.path)}),
     "claim-remove": message => fluidClaims.remove(message.id),
-    "claim-commit": message => commitClaim(message.id),
+    "claim-commit": (message, sender) => fromExtensionPage(sender) ? commitClaim(message.id) : confirmAndCommit(message.id),
+    // What a request for confirmation would commit, for confirm.html - the claim, and the text it replaces
+    "confirm-review": async function (message, sender) {
+        const pending = fromExtensionPage(sender) ? fluidConfirm.pending[message.request] : undefined;
+        let togo = null;
+        if (pending) {
+            const claim = pending.claim;
+            let baseText = claim.baseText;
+            if (baseText === undefined && claim.baseSha) {
+                baseText = (await fluidGitHub.read(claim.repo, claim.branch, claim.path)).text;
+            }
+            togo = {claim, baseText: baseText ?? ""};
+        }
+        return togo;
+    },
+    "confirm-decide": (message, sender) => {
+        if (fromExtensionPage(sender)) {
+            fluidConfirm.settle(message.request, !!message.confirmed);
+        }
+        return true;
+    },
     // The claims held on the sources of a repository beneath a path, e.g. the new posts of a section
     "claim-list": async message => (await fluidClaims.list()).filter(claim => claim.repo === message.repo && claim.path.startsWith(message.prefix)),
     "source-read": message => fluidGitHub.read(message.repo, message.branch, message.path),
-    "fluid-linkage-found": async function (message, sender) {
+    "signin-status": () => fluidGitHub.signInStatus(),
+    "fluid-provenance-found": async function (message, sender) {
         if (sender.tab) {
             chrome.action.setBadgeText({tabId: sender.tab.id, text: message.claimState ? "●" : "✎"});
             chrome.action.setBadgeBackgroundColor({tabId: sender.tab.id, color: message.claimState ? "#c77800" : "#2b6cb0"});
@@ -75,15 +167,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return async;
 });
 
-// The extension does nothing on a site until its action is clicked there. A click asks for access to the site, and,
-// given it, *enlists* the site: the content scripts are registered for its pages, so that every page of it then shows
-// the claims held on its sources without a click. Without access, e.g. if the user declines, the click's own
-// temporary access (activeTab) serves the page in hand alone. Enlisted sites are listed, and may be forgotten, in the
+// The extension does nothing on a site until the user asks to edit a page of it, by *Edit this page* in the panel its
+// action opens. That asks for access to the site, and, given it, *enlists* the site: the content scripts are
+// registered for its pages, so that every page of it then shows the claims held on its sources without a click.
+// Without access, e.g. if the user declines, the temporary access which opening the panel grants (activeTab) serves
+// the page in hand alone. Enlisted sites are listed, and may be forgotten, in the
 // options page.
 const fluidEditBackground = {
     // The content scripts, injected into a page in hand or registered for an enlisted site's pages
-    scripts: ["lib/codemirror6.js", "js/sourceView.js", "js/fluid-zip.js", "js/edit.js"],
-    styles: ["css/edit.css"]
+    scripts: ["js/edit.js"]
 };
 
 /**
@@ -113,7 +205,7 @@ fluidEditBackground.enlist = async function (pattern) {
     const existing = await chrome.scripting.getRegisteredContentScripts({ids: [id]});
     if (existing.length === 0) {
         await chrome.scripting.registerContentScripts([{
-            id, matches: [pattern], js: fluidEditBackground.scripts, css: fluidEditBackground.styles,
+            id, matches: [pattern], js: fluidEditBackground.scripts,
             runAt: "document_idle", persistAcrossSessions: true
         }]);
     }
@@ -146,7 +238,6 @@ fluidEditBackground.enlisted = async function () {
 fluidEditBackground.inject = async function (tabId) {
     const [probe] = await chrome.scripting.executeScript({target: {tabId}, func: () => !!window.fluidEditInjected});
     if (!probe.result) {
-        await chrome.scripting.insertCSS({target: {tabId}, files: fluidEditBackground.styles});
         await chrome.scripting.executeScript({target: {tabId}, files: fluidEditBackground.scripts});
     }
 };
@@ -155,31 +246,280 @@ fluidEditBackground.inject = async function (tabId) {
  * Activate the editor in a tab - enlisting its site if access is granted, injecting the content scripts, and opening
  * the editor. The request for access is made first, while the click which provoked it still counts as the user's
  * @param {Object} tab - The tab
- * @return {Promise} Resolves once activated
+ * @param {Boolean} [alreadyGranted] - Whether access was granted already, by a request made elsewhere, e.g. in the
+ * welcome panel - if absent, it is requested here
+ * @return {Promise<Boolean>} Resolves once activated - `true` if the page had anything to edit
  */
-fluidEditBackground.activateTab = async function (tab) {
+fluidEditBackground.activateTab = async function (tab, alreadyGranted) {
+    let activated = false;
     const pattern = fluidEditBackground.patternOf(tab.url);
     if (pattern) {
-        const asked = chrome.permissions.request({origins: [pattern]}).catch(() => false);
+        const asked = alreadyGranted === undefined ? chrome.permissions.request({origins: [pattern]}).catch(() => false) : alreadyGranted;
         const granted = await asked || await chrome.permissions.contains({origins: [pattern]});
         if (granted) {
             await fluidEditBackground.enlist(pattern);
         }
         await fluidEditBackground.inject(tab.id);
-        await chrome.tabs.sendMessage(tab.id, {type: "fluid-edit-activate"}).catch(() => {
-            // A page with no linkage record, whose content script listens for nothing
+        activated = await chrome.tabs.sendMessage(tab.id, {type: "fluid-edit-activate"}).then(() => true, () => {
+            // A page with no provenance record, whose content script listens for nothing
             chrome.action.setTitle({tabId: tab.id, title: "Edit in Infusion - this page has nothing to edit"});
+            return false;
         });
     } else {
         chrome.action.setTitle({tabId: tab.id, title: "Edit in Infusion - not available on this page"});
     }
+    return activated;
+};
+
+// Signing in, by GitHub's device flow - see fluidGitHub.startSignIn in github.js. The sign-in is begun from the welcome
+// panel (popup.html), or the options page, either of which shows the user their code. The service worker polls GitHub
+// itself, since the panel closes as soon as the user turns to GitHub's page. Each poll touches the extension's
+// storage, which keeps the service worker running between polls. Until the user is signed in, a click of the
+// extension's action opens the panel (popup.html), which talks them through connecting their account. Signed in, the
+// panel shows the account, offers to edit the page if it is editable, and to sign out. Every click opens the panel.
+const fluidSignIn = {
+    timer: null
+};
+
+/**
+ * Bring the menu of the extension's button up to date with whether the user is signed in
+ * @return {Promise} Resolves once brought up to date
+ */
+fluidSignIn.refreshPopup = async function () {
+    await fluidSignIn.refreshMenu(await fluidGitHub.signInStatus());
+};
+
+// The item of the menu of the extension's action - opened by right-clicking its button - which signs out
+fluidSignIn.menuId = "fluid-signout";
+
+/**
+ * Show the item signing out in the menu of the extension's action while the user is signed in, naming their account
+ * @param {Object} status - The status of signing in, as fluidGitHub.signInStatus gives it
+ * @return {Promise} Resolves once shown
+ */
+fluidSignIn.refreshMenu = async function (status) {
+    const title = "Sign out of GitHub" + (status.login ? " (" + status.login + ")" : "");
+    // In the callback's form, which every version of Chrome supports - the item may not exist yet, before onInstalled
+    await new Promise(resolve => chrome.contextMenus.update(fluidSignIn.menuId, {title, visible: status.signedIn}, () => {
+        resolve(chrome.runtime.lastError);
+    }));
+};
+
+/**
+ * Tell any open page of the extension, e.g. the welcome panel or the options, that a sign-in has ended
+ * @param {SignInPoll} result - How it ended
+ */
+fluidSignIn.broadcast = function (result) {
+    chrome.runtime.sendMessage({type: "signin-ended", result}).catch(() => {
+        // No page of the extension is open to hear it
+    });
+};
+
+/**
+ * Poll GitHub after an interval
+ * @param {Number} interval - The interval, in seconds
+ */
+fluidSignIn.schedule = function (interval) {
+    clearTimeout(fluidSignIn.timer);
+    fluidSignIn.timer = setTimeout(fluidSignIn.poll, interval * 1000);
+};
+
+/**
+ * Poll GitHub once for the outcome of the sign-in in progress, and again later while it is pending. Once signed in,
+ * return the user to the tab they began from, and open the welcome panel there, where the browser allows it
+ * @return {Promise} Resolves once polled
+ */
+fluidSignIn.poll = async function () {
+    fluidSignIn.timer = null;
+    let result;
+    try {
+        result = await fluidGitHub.pollSignIn();
+    } catch (error) {
+        await chrome.storage.session.remove("githubSignIn");
+        result = {state: "error", message: String(error && error.message || error)};
+    }
+    if (result.state === "pending") {
+        fluidSignIn.schedule(result.interval);
+    } else {
+        const {githubSignInView: view} = await chrome.storage.session.get("githubSignInView");
+        await chrome.storage.session.remove("githubSignInView");
+        await fluidSignIn.refreshPopup();
+        fluidSignIn.broadcast(result);
+        if (result.state === "signed-in" && view && view.tabId) {
+            await chrome.tabs.update(view.tabId, {active: true}).catch(() => null);
+            // Opening the panel unbidden is allowed from Chrome 127 - before then, the ticked icon invites a click. It is not
+            // awaited, since it may never settle, e.g. in a window without focus
+            await fluidSignIn.markTab(view.tabId, true).catch(() => null);
+            if (chrome.action.openPopup) {
+                chrome.action.openPopup().catch(() => null);
+            }
+        }
+    }
+};
+
+/**
+ * Draw the extension's icon at a size, marked with a tick, centred on a disc at its lower right, to show that the user
+ * is signed in. Drawn rather than given as a badge, whose glyph Chrome places itself
+ * @param {Number} size - The icon's size, in pixels
+ * @return {Promise<ImageData>} The icon
+ */
+fluidSignIn.drawTickedIcon = async function (size) {
+    // The logo keeps its full size, level with other extensions' icons - the disc, unlike Chrome's own badge, can't
+    // extend beyond the icon's square
+    const blob = await (await fetch(chrome.runtime.getURL("icons/icon-" + size + ".png"))).blob();
+    const canvas = new OffscreenCanvas(size, size);
+    const context = canvas.getContext("2d");
+    context.drawImage(await createImageBitmap(blob), 0, 0, size, size);
+    // A whole diameter, so that the disc lies on the pixel grid, and its tick is drawn crisply - 11 pixels across at 16
+    const radius = Math.round(size * 0.6875) / 2, cx = size - radius, cy = size - radius;
+    context.fillStyle = "#2b6cb0";
+    context.beginPath();
+    context.arc(cx, cy, radius, 0, 2 * Math.PI);
+    context.fill();
+    // The tick spans the disc's centre, its bounding box from -0.5 to 0.5 of the radius across, and -0.38 to 0.38 down
+    context.strokeStyle = "#fff";
+    context.lineWidth = Math.max(1.5, size / 10);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    context.moveTo(cx - radius * 0.5, cy + radius * 0.02);
+    context.lineTo(cx - radius * 0.14, cy + radius * 0.38);
+    context.lineTo(cx + radius * 0.5, cy - radius * 0.38);
+    context.stroke();
+    return context.getImageData(0, 0, size, size);
+};
+
+/**
+ * Mark, or unmark, the extension's icon in a tab with a tick, showing that the user is signed in there
+ * @param {Number} tabId - The tab
+ * @param {Boolean} ticked - Whether to mark it
+ * @return {Promise} Resolves once marked
+ */
+fluidSignIn.markTab = async function (tabId, ticked) {
+    if (ticked) {
+        const imageData = {16: await fluidSignIn.drawTickedIcon(16), 32: await fluidSignIn.drawTickedIcon(32)};
+        await chrome.action.setIcon({tabId, imageData});
+    } else {
+        await chrome.action.setIcon({tabId, path: {16: "icons/icon-16.png", 32: "icons/icon-32.png"}});
+    }
+};
+
+/**
+ * Begin signing in, and poll for its outcome
+ * @param {Object} message - The message asking, holding the `tabId` of the tab the user began from, if any
+ * @return {Promise<SignInStart>} What the user is to be shown
+ */
+fluidSignIn.start = async function (message) {
+    const started = await fluidGitHub.startSignIn();
+    await chrome.storage.session.set({githubSignInView: {...started, tabId: message.tabId}});
+    fluidSignIn.schedule(started.interval);
+    return started;
+};
+
+/**
+ * Give up a sign-in in progress
+ * @return {Promise} Resolves once given up
+ */
+fluidSignIn.cancel = async function () {
+    clearTimeout(fluidSignIn.timer);
+    fluidSignIn.timer = null;
+    await chrome.storage.session.remove(["githubSignIn", "githubSignInView"]);
+};
+
+handlers["signin-start"] = message => fluidSignIn.start(message);
+// The sign-in in progress, as shown to the user, so that the panel shows its code again when reopened
+handlers["signin-view"] = async () => (await chrome.storage.session.get("githubSignInView")).githubSignInView || null;
+handlers["signin-cancel"] = () => fluidSignIn.cancel();
+handlers["signin-refresh"] = () => fluidSignIn.refreshPopup();
+handlers.signout = async function () {
+    await fluidSignIn.cancel();
+    await fluidGitHub.signOut();
+    await fluidSignIn.refreshPopup();
+};
+// The user starts editing from the panel. The panel first declares its intent, then asks for access to the site, then
+// asks for the editor - but Chrome may close the panel while it asks for access, so that the editor is also opened
+// when access is granted to the site of the tab intended. Whichever comes first opens it, once
+fluidEditBackground.pendingEdit = null;
+
+/**
+ * Open the editor in the tab the panel intended, if it is still intended
+ * @param {Number} tabId - The tab
+ * @param {Boolean} granted - Whether access to its site was granted
+ * @return {Promise<Boolean>} `true` if the page had anything to edit, or was opened already
+ */
+fluidEditBackground.editIntended = async function (tabId, granted) {
+    let togo = true;
+    if (fluidEditBackground.pendingEdit && fluidEditBackground.pendingEdit.tabId === tabId) {
+        fluidEditBackground.pendingEdit = null;
+        await fluidSignIn.markTab(tabId, false).catch(() => null);
+        togo = await fluidEditBackground.activateTab(await chrome.tabs.get(tabId), granted);
+    }
+    return togo;
+};
+
+handlers["panel-edit-intent"] = async function (message) {
+    fluidEditBackground.pendingEdit = {tabId: message.tabId, pattern: message.pattern};
+};
+handlers["panel-edit"] = message => fluidEditBackground.editIntended(message.tabId, message.granted);
+
+chrome.permissions.onAdded.addListener(permissions => {
+    const pending = fluidEditBackground.pendingEdit;
+    if (pending && (permissions.origins || []).includes(pending.pattern)) {
+        fluidEditBackground.editIntended(pending.tabId, true).catch(() => null);
+    }
+});
+
+/**
+ * Determine whether the page in a tab can be edited - whether it bears a Fluid provenance record. Read through the
+ * access which opening the panel grants to the tab in hand (activeTab)
+ * @param {Object} message - The message asking, holding the `tabId` of the tab
+ * @return {Promise<Object>} `{editable, reason}` - `reason` saying why not, if it is not
+ */
+handlers["tab-editable"] = async function (message) {
+    const tab = await chrome.tabs.get(message.tabId);
+    const pattern = fluidEditBackground.patternOf(tab.url);
+    let togo;
+    if (pattern) {
+        const [probe] = await chrome.scripting.executeScript({target: {tabId: tab.id},
+            func: () => !!document.querySelector("script[type=\"application/fluid-provenance+json\"]")}).catch(() => [{result: false}]);
+        togo = probe.result ? {editable: true} : {editable: false, reason: "This page isn't editable - it wasn't built by a site which can be edited in place"};
+    } else {
+        togo = {editable: false, reason: "This page isn't editable - open a page of a site which can be edited in place"};
+    }
+    return togo;
 };
 
 handlers["sites-list"] = () => fluidEditBackground.enlisted();
 handlers["site-forget"] = message => fluidEditBackground.forget(message.pattern);
 
-chrome.action.onClicked.addListener(tab => {
-    fluidEditBackground.activateTab(tab).catch(error => {
-        chrome.action.setTitle({tabId: tab.id, title: "Edit in Infusion - " + String(error && error.message || error)});
-    });
+// The menu item is created once, when the extension is installed or updated, and persists thereafter
+chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.create({id: fluidSignIn.menuId, title: "Sign out of GitHub", contexts: ["action"], visible: false},
+        () => fluidSignIn.refreshPopup().catch(() => null));
+    // The registrations of sites enlisted by an earlier version are brought into line with this one's content scripts -
+    // e.g. since the panel's styles became those of Infusion's fluid.staticEditor, there is no stylesheet to inject
+    chrome.scripting.getRegisteredContentScripts().then(scripts => scripts.length > 0 ? chrome.scripting.updateContentScripts(
+        scripts.map(script => ({id: script.id, js: fluidEditBackground.scripts, css: []}))) : null).catch(() => null);
 });
+
+chrome.contextMenus.onClicked.addListener(info => {
+    if (info.menuItemId === fluidSignIn.menuId) {
+        handlers.signout().catch(() => null);
+    }
+});
+
+// Whenever the service worker starts: bring the menu up to date, and resume polling a sign-in in progress
+fluidSignIn.refreshPopup().catch(() => null);
+// A token saved or forgotten by any means, e.g. given in the options, changes the menu
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.githubToken) {
+        fluidSignIn.refreshPopup().catch(() => null);
+    }
+});
+chrome.storage.session.get("githubSignIn").then(stored => {
+    if (stored.githubSignIn) {
+        fluidSignIn.schedule(1);
+    }
+});
+
+

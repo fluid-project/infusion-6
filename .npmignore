@@ -26,4 +26,20 @@ tests/*.*
 !tests/package.json
 tests/*-tests
 a-scratch/
-31-fixes.md
+docs/
+
+# npm reads this file in place of .gitignore, whose exclusions must therefore be repeated here
+# Dependencies of nested packages, e.g. packages/fluid-lint, which hold hard links (esbuild's
+# binary) that the npm registry refuses
+node_modules/
+# Secrets - see .gitignore
+pixabay-api-key.txt
+ifm-password.txt
+cavi-key.txt
+demo/tldraw/cavi-key.json
+docs/demo/tldraw/cavi-key.json
+# Local settings of Claude Code
+.claude/settings.local.json
+# The sources of fluid-lint and its ESLint plugin, used in development alone - the browser bundle of fluid-lint ships
+# in src/lib/fluid-lint
+packages/

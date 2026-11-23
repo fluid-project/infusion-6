@@ -41,10 +41,16 @@ Linting of Infusion 6 JavaScript and Single File Components, for CodeMirror 6 an
 
 - **In node:** `lint(text, kind)` in [`src/fluidLint.js`](src/fluidLint.js) returns diagnostics
   `{from, to, severity, message}`. `kind` is `"js"` or `"vue"`, and by default is guessed from the text.
+- **Through ESLint:** [`eslint-plugin-fluid-lint`](../eslint-plugin-fluid-lint/README.md) reports its diagnostics as
+  ESLint rules. Infusion's own `npm run lint` applies it.
+- **A summary of ESLint's run:** [`eslint-summary-formatter.cjs`](eslint-summary-formatter.cjs) is a formatter for
+  ESLint 8 or later, an optional peer dependency. It prints ESLint's own "stylish" report, followed by a count of the
+  files free of errors and warnings, e.g. `138/138 files lint free`. Use it as
+  `eslint --format ./node_modules/fluid-lint/eslint-summary-formatter.cjs ...`. Infusion's `npm run lint` uses it.
 - **For CodeMirror 6:** [`src/codemirror.js`](src/codemirror.js) provides the languages (`fluidJavaScript`,
   `fluidSfc`), the linter (`fluidLinter`), and `fluidEditor`, which makes an editor of either.
 - **The bundle:** `npm run build` regenerates the parser from the grammar, and bundles `src/codemirror.js` with
-  CodeMirror as the browser global `fluidLint`, into Infusion's `src/lib/fluid-lint/fluid-lint.js`.
+  CodeMirror as the browser global `fluid.codemirror6`, into Infusion's `src/lib/fluid-lint/fluid-lint.js`.
   [`fluid.liveExample`](../../src/components/sfc/fluid-liveExample.vue) loads that bundle; it is the live example of
   Infusion's documentation.
 - **Tests:** `npm test` runs [`test/lintTests.js`](test/lintTests.js). The live example's own tests are in

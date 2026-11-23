@@ -8,7 +8,17 @@
 const fluidGitHub = {
     // The base of GitHub's REST API - replaced, in a build for testing alone, by `githubApi` in the extension's
     // storage, pointing the extension at a mock GitHub
-    api: "https://api.github.com"
+    api: "https://api.github.com",
+    // The base of GitHub's web pages, which serve the device flow of signing in - replaced, in a build for testing
+    // alone, by `githubWeb` in storage
+    web: "https://github.com",
+    // The client id of the OAuth App "Edit in Infusion", with its device flow enabled. It is public, and no secret
+    // goes with it - see ponder's packages/wend/notes/github-sign-in.md. Were it empty, signing in would be offered as
+    // unavailable, and only a personal access token taken in the options. Replaced, in a build for testing alone, by
+    // `githubClientId` in storage
+    clientId: "Ov23lignaxZLCR1CTDoX",
+    // The scope asked of the user - writing to the public repositories they can write to
+    scope: "public_repo"
 };
 
 /**
@@ -16,10 +26,21 @@ const fluidGitHub = {
  * @return {Promise<String>} The base, without a trailing slash
  */
 fluidGitHub.apiBase = async function () {
-    const stored = await chrome.storage.local.get("githubApi");
-    // Honoured only by a build for testing, whose manifest bears `fluid_testing` - see extension/test/harness.js
-    const api = chrome.runtime.getManifest().fluid_testing && stored.githubApi || fluidGitHub.api;
+    // Replaced only in a build for testing, whose manifest bears `fluid_testing` - see extension/test/harness.js
+    const api = await fluidGitHub.setting("githubApi", fluidGitHub.api);
     return api.replace(/\/$/, "");
+};
+
+/**
+ * Find a setting of the extension, which a build for testing alone may replace from storage
+ * @param {String} key - The key of its replacement in storage, e.g. "githubWeb"
+ * @param {String} value - The setting
+ * @return {Promise<String>} The setting in force
+ */
+fluidGitHub.setting = async function (key, value) {
+    const stored = await chrome.storage.local.get(key);
+    // A replacement held, even an empty one, e.g. a client id of "" to test a copy of the extension without one
+    return chrome.runtime.getManifest().fluid_testing && stored[key] !== undefined ? stored[key] : value;
 };
 
 /**
@@ -115,7 +136,7 @@ fluidGitHub.write = async function ({repo, branch, path, text, baseSha, message}
             togo = {ok: false, conflict, message: "GitHub refused the commit: " + response.status + " " + (await response.text())};
         }
     } else {
-        togo = {ok: false, conflict: false, message: "No GitHub token is saved - set one in the extension's options"};
+        togo = {ok: false, conflict: false, message: "Not signed in to GitHub - sign in from the extension's options"};
     }
     return togo;
 };
@@ -168,7 +189,7 @@ fluidGitHub.commitChangeset = async function ({repo, branch, files, message}) {
     const fail = (conflict, text, paths = []) => ({ok: false, conflict, message: text, paths});
     let togo;
     if (!headers.Authorization) {
-        togo = fail(false, "No GitHub token is saved - set one in the extension's options");
+        togo = fail(false, "Not signed in to GitHub - sign in from the extension's options");
     } else {
         const ref = await fluidGitHub.call("GET", base + "/ref/heads/" + branch.split("/").map(encodeURIComponent).join("/"));
         const head = ref.ok ? await fluidGitHub.call("GET", base + "/commits/" + ref.body.object.sha) : null;
@@ -211,4 +232,134 @@ fluidGitHub.commitChangeset = async function ({repo, branch, files, message}) {
         }
     }
     return togo;
+};
+
+// Signing in by GitHub's device flow, which needs only the OAuth App's public client id: the extension asks GitHub for
+// a code, the user enters it at GitHub's page for devices and authorizes the App, and the extension polls until GitHub
+// issues the token. No secret, and so no server of the extension's own, is needed - the service worker, holding
+// GitHub among its host permissions, is not held to CORS. The pending sign-in is kept in session storage, since the
+// service worker may be stopped between polls; the options page, which shows the code, drives the polling.
+
+/**
+ * A sign-in in progress, as shown to the user
+ * @typedef {Object} SignInStart
+ * @property {String} userCode - The code the user enters, e.g. "WDJB-MJHT"
+ * @property {String} verificationUri - The page at which they enter it
+ * @property {Number} interval - How long to wait between polls, in seconds
+ * @property {Number} expiresIn - How long the code lasts, in seconds
+ */
+
+/**
+ * Post a form to GitHub's web endpoints of signing in, which reply in JSON when asked
+ * @param {String} endpoint - The path beneath GitHub's web base, e.g. "/login/device/code"
+ * @param {Object} params - The form's fields
+ * @return {Promise<Object>} The parsed reply
+ */
+fluidGitHub.postForm = async function (endpoint, params) {
+    const web = (await fluidGitHub.setting("githubWeb", fluidGitHub.web)).replace(/\/$/, "");
+    const response = await fetch(web + endpoint, {
+        method: "POST",
+        headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+        body: new URLSearchParams(params).toString(),
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error("GitHub refused to sign in: " + response.status + " " + (await response.text()));
+    }
+    return response.json();
+};
+
+/**
+ * Begin signing in - ask GitHub for a code for the user to enter
+ * @return {Promise<SignInStart>} What the user is to be shown
+ */
+fluidGitHub.startSignIn = async function () {
+    const clientId = await fluidGitHub.setting("githubClientId", fluidGitHub.clientId);
+    if (!clientId) {
+        throw new Error("Signing in through GitHub isn't set up in this copy of the extension - give a token below instead");
+    }
+    const reply = await fluidGitHub.postForm("/login/device/code", {client_id: clientId, scope: fluidGitHub.scope});
+    if (!reply.device_code) {
+        throw new Error("GitHub refused to sign in: " + (reply.error_description || reply.error || JSON.stringify(reply)));
+    }
+    const interval = reply.interval || 5, expiresIn = reply.expires_in || 900;
+    await chrome.storage.session.set({githubSignIn: {deviceCode: reply.device_code, interval, expiresAt: Date.now() + expiresIn * 1000}});
+    return {userCode: reply.user_code, verificationUri: reply.verification_uri, interval, expiresIn};
+};
+
+/**
+ * The state of a sign-in, after a poll
+ * @typedef {Object} SignInPoll
+ * @property {String} state - "pending", "signed-in", "denied", "expired" or "none"
+ * @property {Number} [interval] - While pending, how long to wait before polling again, in seconds
+ * @property {String} [login] - Once signed in, the user's login
+ */
+
+/**
+ * Ask GitHub once whether the user has authorized the App, saving the token if they have
+ * @return {Promise<SignInPoll>} The state of the sign-in
+ */
+fluidGitHub.pollSignIn = async function () {
+    const {githubSignIn: pending} = await chrome.storage.session.get("githubSignIn");
+    let togo;
+    if (!pending) {
+        togo = {state: "none"};
+    } else if (Date.now() > pending.expiresAt) {
+        await chrome.storage.session.remove("githubSignIn");
+        togo = {state: "expired"};
+    } else {
+        const clientId = await fluidGitHub.setting("githubClientId", fluidGitHub.clientId);
+        const reply = await fluidGitHub.postForm("/login/oauth/access_token", {
+            client_id: clientId,
+            device_code: pending.deviceCode,
+            grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+        });
+        if (reply.access_token) {
+            await chrome.storage.session.remove("githubSignIn");
+            await chrome.storage.local.set({githubToken: reply.access_token, githubTokenKind: "oauth"});
+            const user = await fluidGitHub.call("GET", (await fluidGitHub.apiBase()) + "/user");
+            const login = user.ok ? user.body.login : null;
+            await chrome.storage.local.set({githubLogin: login});
+            togo = {state: "signed-in", login};
+        } else if (reply.error === "authorization_pending") {
+            togo = {state: "pending", interval: pending.interval};
+        } else if (reply.error === "slow_down") {
+            // GitHub asks for a longer wait, which holds for the rest of this sign-in
+            const interval = reply.interval || pending.interval + 5;
+            await chrome.storage.session.set({githubSignIn: {...pending, interval}});
+            togo = {state: "pending", interval};
+        } else if (reply.error === "expired_token" || reply.error === "access_denied") {
+            await chrome.storage.session.remove("githubSignIn");
+            togo = {state: reply.error === "access_denied" ? "denied" : "expired"};
+        } else {
+            throw new Error("GitHub refused to sign in: " + (reply.error_description || reply.error || JSON.stringify(reply)));
+        }
+    }
+    return togo;
+};
+
+/**
+ * Whether, and how, the extension is signed in to GitHub
+ * @return {Promise<Object>} `{signedIn, kind, login, available}` - `kind` "oauth" for signing in, or "token" for a
+ * personal access token given in the options, and `available` whether signing in is set up in this copy
+ */
+fluidGitHub.signInStatus = async function () {
+    const stored = await chrome.storage.local.get(["githubToken", "githubTokenKind", "githubLogin"]);
+    const clientId = await fluidGitHub.setting("githubClientId", fluidGitHub.clientId);
+    return {
+        signedIn: !!stored.githubToken,
+        kind: stored.githubToken ? stored.githubTokenKind || "token" : null,
+        login: stored.githubToken && stored.githubLogin || null,
+        available: !!clientId
+    };
+};
+
+/**
+ * Sign out - forget the token, and any sign-in in progress. The App's authorization stays with GitHub, which lists it
+ * under Settings, Applications, until the user revokes it there
+ * @return {Promise} Resolves once signed out
+ */
+fluidGitHub.signOut = async function () {
+    await chrome.storage.local.remove(["githubToken", "githubTokenKind", "githubLogin"]);
+    await chrome.storage.session.remove("githubSignIn");
 };

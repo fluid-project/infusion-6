@@ -51,11 +51,13 @@ harness.buildPonder = function (repoDir, outDir, commit) {
  */
 harness.startPonder = async function (options = {}) {
     const siteDir = options.siteDir ?? path.resolve(harness.infusionDir, "../ponder");
-    const linkage = JSON.parse(fs.readFileSync(path.join(siteDir, "infusion/linkage.json"), "utf8"));
+    // The site's editing configuration, which wend.site.json names, gives the repository and branch edits are committed to
+    const descriptor = JSON.parse(fs.readFileSync(path.join(siteDir, "wend.site.json"), "utf8"));
+    const editing = JSON.parse(fs.readFileSync(path.join(siteDir, descriptor.editing), "utf8"));
     const mock = mockGitHub.create({
         siteDir,
-        repo: linkage.repo,
-        branch: linkage.branch,
+        repo: editing.repo,
+        branch: editing.branch,
         buildDelay: options.buildDelay ?? 500,
         build: harness.buildPonder,
         // e.g. MOCK_GITHUB_REUSE=../ponder/docs, while developing a scenario - the published site must be current
@@ -98,6 +100,23 @@ harness.launch = async function (mock) {
     const browser = await puppeteer.launch({headless: "new", args: ["--disable-extensions-except=" + extensionDir,
         "--load-extension=" + extensionDir, "--no-sandbox"]});
     browser.on("disconnected", () => fs.rmSync(extensionDir, {recursive: true, force: true}));
+    // Each commit a page asks for is confirmed by the user in a window of the extension's own - see fluidConfirm in
+    // background.js - which is confirmed here as the user would, or declined if `confirmDecision` is false, recording
+    // what it showed
+    browser.confirmations = [];
+    browser.confirmDecision = true;
+    browser.on("targetcreated", async target => {
+        if (process.env.MOCK_GITHUB_VERBOSE) {
+            console.log("  [target] " + target.type() + " " + target.url());
+        }
+        if (target.url().includes("/confirm.html")) {
+            const page = await target.page();
+            await page.waitForSelector("#approve:not([disabled])", {timeout: 15000});
+            browser.confirmations.push(await page.evaluate(() => ({path: document.getElementById("path").textContent,
+                repo: document.getElementById("repo").textContent, diff: document.getElementById("diff").textContent})));
+            await page.click(browser.confirmDecision ? "#approve" : "#decline");
+        }
+    });
     const worker = await (await browser.waitForTarget(target => target.type() === "service_worker")).worker();
     await worker.evaluate(apiUrl => chrome.storage.local.set({githubApi: apiUrl, githubToken: "mock-token"}), mock.apiUrl);
     return {browser, worker};
@@ -138,6 +157,28 @@ harness.activate = async function (worker, page) {
     // eslint-disable-next-line no-undef
     await worker.evaluate(async () => fluidEditBackground.activateTab((await chrome.tabs.query({active: true, lastFocusedWindow: true}))[0]));
     await page.waitForSelector(".fluid-edit-panel[data-fluid-edit-ready]:not([hidden])", {timeout: 30000});
+};
+
+/**
+ * Activate the extension on a page through its panel, as the user does - clicking its button, which opens the panel,
+ * and then *Edit this page* in it. A test can't click the button, so the panel is opened as a page of its own, naming
+ * the tab it would have been opened over
+ * @param {Object} browser - The browser
+ * @param {Object} worker - The extension's service worker
+ * @param {Object} page - The page
+ * @return {Promise<Object>} The panel's page, once the editor holds the page's source - closed, as the panel closes itself
+ */
+harness.activateByPanel = async function (browser, worker, page) {
+    const pageUrl = page.url();
+    const tabId = await worker.evaluate(async url => (await chrome.tabs.query({url}))[0].id, pageUrl);
+    const panel = await browser.newPage();
+    // The origin of a chrome-extension: URL is opaque, so the panel's URL is made from its host
+    await panel.goto("chrome-extension://" + new URL(worker.url()).host + "/popup.html?tab=" + tabId);
+    await panel.waitForSelector("#start:not([disabled])", {timeout: 15000});
+    await panel.click("#start");
+    await page.bringToFront();
+    await page.waitForSelector(".fluid-edit-panel[data-fluid-edit-ready]:not([hidden])", {timeout: 30000});
+    return panel;
 };
 
 /**

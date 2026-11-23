@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "Edit in Infusion",
     "version": "0.1.0",
-    "description": "Edit a statically published site in place, on pages which advertise their sources with a Fluid linkage record",
+    "description": "Edit a statically published site in place, on pages which advertise their sources with a Fluid provenance record",
     "icons": {
         "16": "icons/icon-16.png",
         "32": "icons/icon-32.png",
@@ -11,11 +11,13 @@
     },
     "permissions": [
         "storage",
+        "contextMenus",
         "activeTab",
         "scripting"
     ],
     "host_permissions": [
-        "https://api.github.com/*"
+        "https://api.github.com/*",
+        "https://github.com/*"
     ],
     "optional_host_permissions": [
         "http://*/*",
@@ -25,7 +27,8 @@
         "service_worker": "js/background.js"
     },
     "action": {
-        "default_title": "Edit in Infusion - click to edit this site",
+        "default_title": "Edit in Infusion",
+        "default_popup": "popup.html",
         "default_icon": {
             "16": "icons/icon-16.png",
             "32": "icons/icon-32.png"
@@ -35,10 +38,7 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "js/bridge.js",
-                "js/fluid-withEditing.js",
-                "js/fluid-markdownSerializer.js",
-                "sfc/fluid-blockEditor.vue"
+                "js/bridge.js"
             ],
             "matches": [
                 "http://*/*",

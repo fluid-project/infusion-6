@@ -1,5 +1,5 @@
 {
-    "extends": "eslint-config-fluid",
+    "extends": ["eslint-config-fluid", "plugin:fluid-lint/recommended"],
     "globals": {
         "$": true
     },

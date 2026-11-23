@@ -7,20 +7,43 @@
         body { font-family: system-ui, sans-serif; max-width: 40em; margin: 2em auto; padding: 0 16px; }
         input { width: 100%; font-family: monospace; }
         .status { min-height: 1.5em; color: #2b6cb0; }
+        .note { color: #555; font-size: 0.9em; }
+        .code { font-family: monospace; font-size: 2em; letter-spacing: 0.15em; margin: 0.3em 0; }
+        button.primary { font-size: 1.1em; padding: 0.4em 1em; }
+        details { margin-top: 1em; }
         #sites li { display: flex; gap: 1em; align-items: center; justify-content: space-between; padding: 4px 0; }
         #sites code { overflow-wrap: anywhere; }
     </style>
 </head>
 <body>
     <h1><img src="icons/icon-32.png" alt="" width="32" height="32" style="vertical-align: middle"> Edit in Infusion</h1>
-    <p>Edits are committed to the repository named by each page's linkage record, through the GitHub API. Until signing
-       in through GitHub is supported, give a fine-grained personal access token with <em>Contents: read and write</em>
-       on the repositories you edit. It is kept in this browser's extension storage and is never visible to the pages
-       you edit.</p>
-    <label for="token">GitHub token</label>
-    <input id="token" type="password" autocomplete="off">
-    <p><button id="save">Save</button> <button id="clear">Forget token</button></p>
-    <p class="status" id="status"></p>
+    <h2>GitHub</h2>
+    <p>Your edits are saved to the site's repository on GitHub, as you. Sign in once, and the extension can save edits to
+       any public repository you can write to. It keeps your sign-in in this browser's extension storage, where the pages
+       you edit can't see it.</p>
+    <div id="signed-in" hidden>
+        <p>Signed in to GitHub<span id="login"></span>.</p>
+        <p><button id="signout">Sign out</button></p>
+        <p class="note">Signing out forgets your sign-in in this browser. To withdraw the extension's access entirely,
+           revoke "Edit in Infusion" in GitHub's <a href="https://github.com/settings/applications" target="_blank">settings for applications</a>.</p>
+    </div>
+    <div id="signed-out" hidden>
+        <p><button id="signin" class="primary">Sign in with GitHub</button></p>
+    </div>
+    <div id="device" hidden>
+        <p>Enter this code on GitHub's page, then click <em>Authorize</em> there:</p>
+        <p class="code" id="user-code"></p>
+        <p><button id="open-github" class="primary">Copy code and open GitHub</button> <button id="cancel">Cancel</button></p>
+        <p class="note">This page signs you in as soon as you've authorized - keep it open until then.</p>
+    </div>
+    <p class="status" id="status" role="status"></p>
+    <details id="token-details">
+        <summary>Use a personal access token instead</summary>
+        <p>Give a fine-grained personal access token with <em>Contents: read and write</em> on the repositories you edit.</p>
+        <label for="token">GitHub token</label>
+        <input id="token" type="password" autocomplete="off">
+        <p><button id="save">Save token</button></p>
+    </details>
 
     <h2>Sites</h2>
     <p>The extension does nothing on a site until you click its button there. Once you allow it access to a site, every
