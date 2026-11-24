@@ -1,7 +1,6 @@
-/* eslint-env node */
 "use strict";
 
-// Scenario: widgets in a post - see a-scratch/reports/widgets-in-content.md. Against a mock GitHub hosting ponder, whose
+// Scenario: widgets in a post - see a-scratch/reports/widgets-in-content.md. Against a mock GitHub hosting the test site, whose
 // static/sfc is given the counter widget of Infusion's tldraw demo - see mock-github.js:
 //  1. The block editor's toolbar offers the site's widgets; "+" inserts a counter after the block in hand, written into
 //     the source as an island element, and rendered live

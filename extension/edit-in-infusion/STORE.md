@@ -4,8 +4,13 @@ What the submission needs beyond the extension itself. The account, fee and subm
 
 ## Package
 
-Zip the *contents* of this directory (`manifest.json` at the root of the zip). Before each submission bump `version`
-in `manifest.json`. The release manifest must not bear `fluid_testing` - only the scenario tests' copy does (see
+Bump `version` in `manifest.json` before each submission, then run `npm run zip:extension` from the repository's
+root: it zips the *contents* of this directory (`manifest.json` at the root of the zip), leaving out these notes, into
+`dist/extension/edit-in-infusion-<version>.zip`, ignored by git and npm. `npm run release` does so too when the
+version has no tag `edit-in-infusion@<version>` on origin, and makes a GitHub release of that tag, marked latest, with
+the zip as `edit-in-infusion.zip` - so that
+`https://github.com/fluid-project/infusion-6/releases/latest/download/edit-in-infusion.zip`, linked from ponder's
+`content/docs/wend.md`, is always the latest. The release manifest must not bear `fluid_testing` - only the scenario tests' copy does (see
 `extension/test/harness.js`).
 
 ## Listing
@@ -41,8 +46,9 @@ edits to the sites' GitHub repositories.
   options, by GitHub's device flow - asking GitHub for the code shown to the user, then for the token once they have
   authorized the extension at GitHub. These endpoints of GitHub's don't serve web pages' cross-origin requests.
 - **Optional host permissions http://\*/\*, https://\*/\***: requested for one site at a time, only when the user
-  clicks the extension's action on it, so that the site's pages show the edits the user holds for them. Withdrawn
-  from the extension's options.
+  chooses *Show my edits on every page of this site* in the extension's panel on it, so that the site's pages show
+  the edits the user holds for them without a click. Editing a page needs no such access - it is opened through
+  activeTab. Withdrawn from the extension's options.
 
 ## Remote code
 
@@ -65,6 +71,6 @@ committing the user's edits, nor used for anything unrelated to the extension's 
 ## Before going public
 
 The OAuth App "Edit in Infusion" is registered, with *Enable Device Flow* ticked, and its client id is set as
-`fluidGitHub.clientId` in `js/github.js`. See ponder's `packages/wend/notes/github-sign-in.md` for the choice of an OAuth App over a GitHub App. The
+`fluidGitHub.clientId` in `js/github.js`. See `packages/wend/notes/github-sign-in.md` of this repository for the choice of an OAuth App over a GitHub App. The
 scope asked for is `public_repo`, which lets the extension write to every public repository the user can write to.
 State this plainly in the listing's description.

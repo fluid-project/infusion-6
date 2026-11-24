@@ -131,6 +131,8 @@ fluid.def("fluid.staticEditor", {
          data-fluid-claim-state="@{state.claimState}">
         <header><strong>Edit in Infusion</strong> <span class="fluid-edit-path">@{state.path}</span>
             <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
+        <!-- Beneath the header, so that it is in view however long the source shown below it -->
+        <div class="fluid-edit-status">@{state.status}</div>
         <div class="fluid-edit-framing-row" hidden="@{state.framingRowHidden}">
             <label><input type="checkbox" class="fluid-edit-framing" checked="@{state.framing}"
                           @onchange="{self}.framingChanged({0})"> Also edit framing</label>
@@ -162,7 +164,6 @@ fluid.def("fluid.staticEditor", {
             <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()">Commit</button>
             <button class="fluid-edit-discard" disabled="@{state.discardDisabled}" @onclick="{self}.discard()">Discard edits</button>
         </div>
-        <div class="fluid-edit-status">@{state.status}</div>
     </div>
 </template>
 
@@ -417,12 +418,13 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
 
 /* The markdown source, folded away while the page's blocks are edited in place - the panel is then a narrow card, leaving
    the page to be edited; unfolded, it fills the panel beside the page */
+/* It is never shrunk below its content - the source view's height is fixed, so shrunk, it would overflow onto the
+   buttons beneath it, e.g. in a short window, or with a status long enough to wrap - but the panel scrolls instead */
 .fluid-edit-source[open] {
-    flex: 1;
+    flex: 1 0 auto;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    min-height: 0;
 }
 
 .fluid-edit-source[hidden] {

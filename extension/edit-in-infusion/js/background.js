@@ -119,7 +119,11 @@ const confirmAndCommit = async function (id) {
 const handlers = {
     "claim-get": message => fluidClaims.get(fluidClaims.idOf(message.repo, message.path)),
     "claim-put": message => fluidClaims.put({...message.claim, id: fluidClaims.idOf(message.claim.repo, message.claim.path)}),
-    "claim-remove": message => fluidClaims.remove(message.id),
+    "claim-remove": async (message, sender) => {
+        await fluidClaims.remove(message.id);
+        fluidEditBackground.tellRemoved(message, sender);
+        return true;
+    },
     "claim-commit": (message, sender) => fromExtensionPage(sender) ? commitClaim(message.id) : confirmAndCommit(message.id),
     // What a request for confirmation would commit, for confirm.html - the claim, and the text it replaces
     "confirm-review": async function (message, sender) {
@@ -176,6 +180,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 const fluidEditBackground = {
     // The content scripts, injected into a page in hand or registered for an enlisted site's pages
     scripts: ["js/edit.js"]
+};
+
+/**
+ * Tell every other tab that a claim has been removed, and why - so that a page showing it learns at once that it was
+ * published, and reloads, rather than at its next poll, or not at all if it never saw the claim committed. Each tab's
+ * content script passes it on only to a page of the claim's repository - see edit.js. A tab with no content script
+ * refuses the message, which is ignored
+ * @param {Object} message - The "claim-remove" request - `{id, reason}`
+ * @param {Object} sender - Its sender, whose own tab is not told
+ */
+fluidEditBackground.tellRemoved = async function (message, sender) {
+    const notice = {type: "fluid-edit-claim-removed", id: message.id, reason: message.reason || "discarded"};
+    const tabs = await chrome.tabs.query({});
+    tabs.filter(tab => !sender.tab || tab.id !== sender.tab.id)
+        .forEach(tab => chrome.tabs.sendMessage(tab.id, notice).catch(() => null));
 };
 
 /**
@@ -463,6 +482,8 @@ handlers["panel-edit-intent"] = async function (message) {
 handlers["panel-edit"] = message => fluidEditBackground.editIntended(message.tabId, message.granted);
 
 chrome.permissions.onAdded.addListener(permissions => {
+    // Access granted to a site enlists it, however late the grant comes - the panel does not wait for it
+    (permissions.origins || []).forEach(pattern => fluidEditBackground.enlist(pattern).catch(() => null));
     const pending = fluidEditBackground.pendingEdit;
     if (pending && (permissions.origins || []).includes(pending.pattern)) {
         fluidEditBackground.editIntended(pending.tabId, true).catch(() => null);

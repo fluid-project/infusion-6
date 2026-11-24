@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // A mock of GitHub's device flow of signing in, for scenario tests of the "Edit in Infusion" extension's sign-in - see

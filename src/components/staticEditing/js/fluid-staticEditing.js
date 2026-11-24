@@ -25,6 +25,8 @@ const fluidStaticEditingScope = function (fluid) {
 
     // The DOM event, on the document, by which the editing client asks for the panel to be opened
     fluid.staticEditing.activateEvent = "fluid-edit-activate";
+    // Dispatched on the document when a claim is removed from another page - see fluid.staticEditing.claimRemoved
+    fluid.staticEditing.claimRemovedEvent = "fluid-edit-claim-removed";
 
     /**
      * Ask the editing client for something only it may do, through the relay, unwrapping its reply
@@ -372,7 +374,7 @@ const fluidStaticEditingScope = function (fluid) {
             publishedOf(path) === undefined : publishedOf(path) === file.hash);
         let togo = false;
         if (published === claim.hash && filesPublished) {
-            await fluid.staticEditing.send(edit, {type: "claim-remove", id: claim.id});
+            await fluid.staticEditing.send(edit, {type: "claim-remove", id: claim.id, reason: "published"});
             togo = true;
         } else if (published !== undefined && published !== claim.baseHash && claim.state !== "conflict") {
             await fluid.staticEditing.putClaim(edit, {...claim, state: "conflict", message: "the published source is neither the one edited nor this edit"});
@@ -389,25 +391,61 @@ const fluidStaticEditingScope = function (fluid) {
         // Any claim held is polled - one shown here may have been committed from another page, e.g. one of the framing
         if (fluid.staticEditing.allClaims(edit).length > 0) {
             edit.pollTimer = setTimeout(async function () {
+                let published = false;
                 // Each claim is read afresh, since another page may have committed, or discarded, it
                 for (const claim of fluid.staticEditing.allClaims(edit)) {
                     const fresh = await fluid.staticEditing.send(edit, {type: "claim-get", repo: claim.repo, path: claim.path});
-                    if (!fresh || fresh.state !== claim.state || fresh.hash !== claim.hash) {
+                    if (!fresh && claim.state === "committed") {
+                        // Gone once committed - another page showing it found it published first, and dropped it. This
+                        // page is reloaded too, since shown without its claim it would revert to the page as it loaded,
+                        // from before the edit
+                        published = true;
+                    } else if (!fresh || fresh.state !== claim.state || fresh.hash !== claim.hash) {
                         await fluid.staticEditing.showClaimOf(edit, claim.path, fresh || null);
                     }
                 }
                 const trace = await fluid.staticEditing.fetchTrace(edit);
-                let published = false;
                 for (const claim of trace ? fluid.staticEditing.allClaims(edit).filter(one => one.state === "committed") : []) {
                     published = await fluid.staticEditing.reconcile(edit, trace, claim) || published;
                 }
                 if (published) {
-                    fluid.staticEditing.markBlocks(edit, "published", fluid.staticEditing.stateLabels.published + " - reloading the page");
-                    setTimeout(() => location.reload(), 1500);
-                } else {
+                    fluid.staticEditing.reloadPublished(edit);
+                } else if (!edit.reloading) {
                     fluid.staticEditing.poll(edit);
                 }
             }, edit.pollInterval);
+        }
+    };
+
+    /**
+     * Show the page's claims as published, and reload it to show the site as rebuilt - once, however many times asked,
+     * since both a poll and a notice from another page may find a claim published
+     * @param {Object} edit - The controller
+     */
+    fluid.staticEditing.reloadPublished = function (edit) {
+        if (!edit.reloading) {
+            edit.reloading = true;
+            clearTimeout(edit.pollTimer);
+            fluid.staticEditing.markBlocks(edit, "published", fluid.staticEditing.stateLabels.published + " - reloading the page");
+            setTimeout(() => location.reload(), 1500);
+        }
+    };
+
+    /**
+     * Respond to the removal of a claim by another page, of which the service worker tells every other page - see
+     * "claim-remove" in the extension's background.js. A claim this page shows which was removed as published is
+     * published here too, and the page reloads, whatever this page last knew of it - committed or not, since another
+     * page may have committed it since this one last polled. One removed as discarded, or moved, is shown gone
+     * @param {Object} edit - The controller
+     * @param {Object} removal - `{id, reason}` - the claim's key, and why it was removed: "published", "discarded" or "moved"
+     * @return {Promise} Resolves once shown
+     */
+    fluid.staticEditing.claimRemoved = async function (edit, removal) {
+        const claim = fluid.staticEditing.allClaims(edit).find(one => one.id === removal.id);
+        if (claim && removal.reason === "published") {
+            fluid.staticEditing.reloadPublished(edit);
+        } else if (claim) {
+            await fluid.staticEditing.showClaimOf(edit, claim.path, null);
         }
     };
 
@@ -524,8 +562,10 @@ const fluidStaticEditingScope = function (fluid) {
             edit.source.setLanguage(target.path);
             if (claim) {
                 edit.source.setText(claim.text);
+                fluid.staticEditing.setStatus(edit, claim.message || "Editing " + target.path + " - your edits are held, not yet committed");
             } else if (edit.bases[target.path]) {
                 edit.source.setText(edit.bases[target.path].text);
+                fluid.staticEditing.setStatus(edit, "Editing " + target.path);
             } else {
                 await fluid.staticEditing.readTarget(edit, target);
             }
@@ -781,7 +821,7 @@ const fluidStaticEditingScope = function (fluid) {
         if (path !== edit.targetPath) {
             const old = edit.newClaims[edit.targetPath];
             if (old) {
-                await fluid.staticEditing.send(edit, {type: "claim-remove", id: old.id});
+                await fluid.staticEditing.send(edit, {type: "claim-remove", id: old.id, reason: "moved"});
                 delete edit.newClaims[edit.targetPath];
             }
             edit.bases[path] = edit.bases[edit.targetPath];
@@ -1250,7 +1290,7 @@ const fluidStaticEditingScope = function (fluid) {
     fluid.staticEditing.discard = async function (edit) {
         const path = edit.targetPath;
         const creating = fluid.staticEditing.target(edit) && fluid.staticEditing.target(edit).creating;
-        await fluid.staticEditing.send(edit, {type: "claim-remove", id: fluid.staticEditing.claimOf(edit, path).id});
+        await fluid.staticEditing.send(edit, {type: "claim-remove", id: fluid.staticEditing.claimOf(edit, path).id, reason: "discarded"});
         delete edit.bases[path];
         await fluid.staticEditing.showClaimOf(edit, path, null);
         edit.source.setText("");
@@ -1397,7 +1437,7 @@ const fluidStaticEditingScope = function (fluid) {
         const claim = await fluid.staticEditing.send(edit, {type: "claim-get", repo: edit.provenance.repo, path});
         let togo = claim || null;
         if (claim && claim.hash === hash) {
-            await fluid.staticEditing.send(edit, {type: "claim-remove", id: claim.id});
+            await fluid.staticEditing.send(edit, {type: "claim-remove", id: claim.id, reason: "published"});
             togo = null;
         }
         return togo;
@@ -1427,7 +1467,8 @@ const fluidStaticEditingScope = function (fluid) {
                     }
                 }
             },
-            [fluid.staticEditing.activateEvent]: () => edit.started.then(() => fluid.staticEditing.activate(edit))
+            [fluid.staticEditing.activateEvent]: () => edit.started.then(() => fluid.staticEditing.activate(edit)),
+            [fluid.staticEditing.claimRemovedEvent]: event => edit.started.then(() => fluid.staticEditing.claimRemoved(edit, JSON.parse(event.detail)))
         };
         Object.entries(edit.listeners).forEach(([type, listener]) => document.addEventListener(type, listener));
         edit.onFramingClick = event => fluid.staticEditing.onFramingClick(edit, event);

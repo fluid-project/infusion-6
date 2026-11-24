@@ -1,4 +1,3 @@
-/* eslint-env browser */
 /* global globalThis */
 "use strict";
 /**

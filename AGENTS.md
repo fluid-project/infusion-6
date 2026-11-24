@@ -14,11 +14,8 @@
   - If possible, first branch of if statement condition should not be negated.
   - JSDocs using @return, with capitalised built-ins, e.g. String, Number, Any, with [] for array syntax
   - Do not use Void return type
-  - Assume an eslint environment, and begin all node.js files with
-```
-   /* eslint-env node */
-   "use strict";
-```
+  - Begin all node.js files with `"use strict";`. ESLint 10 reports `/* eslint-env */` comments as errors - a file's
+    environment, e.g. node's globals, is given by its pattern in `eslint.config.js`, so list a new node file there
 
 ## Testing instructions
  - Run npm test in node to run virtually all view tests

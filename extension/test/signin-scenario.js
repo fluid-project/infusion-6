@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Scenario test of signing in to GitHub from the "Edit in Infusion" extension's options, by GitHub's device flow,
@@ -99,8 +98,7 @@ const main = async function () {
     console.log("# Signing in to GitHub from the extension's options");
     const {server, flow, webUrl, apiUrl} = await startServer();
     const extensionDir = harness.testBuild();
-    const browser = await puppeteer.launch({headless: "new", args: ["--disable-extensions-except=" + extensionDir,
-        "--load-extension=" + extensionDir, "--no-sandbox"]});
+    const browser = await puppeteer.launch(harness.launchOptions(extensionDir));
     try {
         const workerTarget = await browser.waitForTarget(target => target.type() === "service_worker");
         const worker = await workerTarget.worker();

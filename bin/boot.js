@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // The boot of Infusion 6's command-line tools as run by a site which depends on Infusion 6 through npm, e.g. from the

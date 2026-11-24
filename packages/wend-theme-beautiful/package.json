@@ -1,0 +1,15 @@
+{
+    "name": "wend-theme-beautiful",
+    "version": "1.0.0",
+    "description": "A theme for wend sites - the page furniture of Beautiful Hugo, as Infusion 6 layers",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/fluid-project/infusion-6.git",
+        "directory": "packages/wend-theme-beautiful"
+    },
+    "peerDependencies": {
+        "infusion-6": ">=6.6.0",
+        "wend": "^1.0.0"
+    }
+}

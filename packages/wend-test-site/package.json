@@ -1,0 +1,12 @@
+{
+    "name": "wend-test-site",
+    "version": "1.0.0",
+    "private": true,
+    "description": "The wend site which the scenario tests of the Edit in Infusion extension edit, against a mock GitHub - built with the wend and wend-theme-beautiful of this repository, installed in its root node_modules",
+    "license": "(BSD-3-Clause OR ECL-2.0)",
+    "dependencies": {
+        "infusion-6": "*",
+        "wend": "*",
+        "wend-theme-beautiful": "*"
+    }
+}

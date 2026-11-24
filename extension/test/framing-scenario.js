@@ -1,8 +1,7 @@
-/* eslint-env node */
 "use strict";
 
 // Scenario: editing through abstractions - a user edits the framing of a page, its footer, which every page of the
-// site renders from one SFC. Against a mock GitHub hosting ponder - see mock-github.js:
+// site renders from one SFC. Against a mock GitHub hosting the test site (packages/wend-test-site) - see mock-github.js:
 //  1. On a post, the user activates the extension, ticks "Also edit framing", and clicks the footer
 //  2. They edit the footer's source - the claim is held in IndexedDB, and the footer re-renders live, marked uncommitted
 //  3. They browse to another page, one with no source of its own - the edited footer is shown there too, marked alike,
@@ -19,7 +18,7 @@ const harness = require("./harness.js");
 
 const postPath = "post/2025-03-20-ui-as-code/";
 const listPath = "post/";
-// The theme's footer, which the site forks on its first edit - see `framing` in ponder's wend/editing.json
+// The theme's footer, which the site forks on its first edit - see `framing` in the test site's wend/editing.json
 const footerPath = "wend/override/beautifulWend/sfc/beautifulWend-footer.vue";
 const marker = "edited in place through its framing";
 
@@ -83,7 +82,7 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     expect(browser.confirmations.length === 2, "The panel's own commit is confirmed by the user too");
     expect(mock.commits.length === 1 && mock.commits[0].path === footerPath, "One commit, of the footer's SFC");
     expect(fs.existsSync(path.join(mock.repoDir, footerPath)) &&
-        !fs.readFileSync(path.join(mock.repoDir, "packages/beautiful-wend/sfc/beautifulWend-footer.vue"), "utf8").includes(marker),
+        !fs.readFileSync(path.join(mock.repoDir, "node_modules/wend-theme-beautiful/sfc/beautifulWend-footer.vue"), "utf8").includes(marker),
     "The commit forks the theme's footer into the site, leaving the theme's own unchanged");
     await mock.idle();
     expect(mock.runs.length === 1 && mock.runs[0].conclusion === "success", "The Action rebuilt the site: " +

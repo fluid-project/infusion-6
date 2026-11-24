@@ -9,6 +9,6 @@
         "test": "node test/pluginTests.js"
     },
     "peerDependencies": {
-        "eslint": ">=8"
+        "eslint": ">=9"
     }
 }

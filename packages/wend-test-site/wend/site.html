@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <!-- Host document for wend's build, js/buildSite.js of the wend package: declares Infusion and this site's SFCs, and renders nothing itself.
+         The rendered pages are separate documents, one per beautifulWend.document.
+         Under node Infusion is already loaded, and FluidBoot.js only declares the module infusion-6 at the directory
+         holding it. Its files are read from the checkout which buildSite.js locates - that named for infusion-6 by
+         the site's moduleOverrides.json5, or else the one installed in node_modules. -->
+    <script src="../node_modules/infusion-6/src/framework/core/js/FluidBoot.js"></script>
+
+    <!-- The site's modules, as wend.site.json names them: wend's own SFCs, its theme's, and the site's -->
+    <fluid-module id="wend" src="../node_modules/wend/"></fluid-module>
+    <fluid-module id="beautifulWend" src="../node_modules/wend-theme-beautiful/"></fluid-module>
+    <fluid-module id="testSite" src="./"></fluid-module>
+
+    <!-- Every SFC of the site's modules, listed one by one, since Infusion has no import of a whole directory -->
+    <fluid-import src="%beautifulWend/adapt/disclaimer/beautifulWend-feature-disclaimer.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/disclaimer/beautifulWend-footer-disclaimer.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/gcse/beautifulWend-document-gcse.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/gcse/beautifulWend-feature-gcse.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/gcse/beautifulWend-navbar-gcse.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/gcse/beautifulWend-navItem-gcseSearch.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/hljs/beautifulWend-document-hljs.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/hljs/beautifulWend-feature-hljs.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/multilingual/beautifulWend-feature-multilingual.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/multilingual/beautifulWend-navbar-multilingual.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/multilingual/beautifulWend-navItem-languages.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/multilingual/beautifulWend-postMeta-translations.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/piwik/beautifulWend-document-piwik.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/piwik/beautifulWend-feature-piwik.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/selfHosted/beautifulWend-document-selfHosted.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/selfHosted/beautifulWend-feature-selfHosted.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/staticman/beautifulWend-document-staticman.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/staticman/beautifulWend-feature-staticman.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/adapt/staticman/beautifulWend-postMeta-staticman.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/i18n/beautifulWend-i18n-en.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/i18n/beautifulWend-i18n.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-kind-404.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-kind-home.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-kind-page.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-kind-section.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-kind-taxonomy.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-kind-term.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-type-page.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/kinds/beautifulWend-type-post.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-comments-giscus.vue"></fluid-import>
+    <fluid-import src="%wend/sfc/wend-alias.vue"></fluid-import>
+    <fluid-import src="%wend/sfc/wend-content.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-document.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-footer.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-header-bigimg.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-header-home.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-header-page.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-header-post.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-header.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-head.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-listPager.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-main-home.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-main-list.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-main-notFound.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-main-single.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-main-terms.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-main.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-mediaIcons.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-mediaIcon.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-navbar.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-navItem-leaf.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-navItem-parent.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-navItem.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-pageMeta.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-pager.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-postMeta.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-postPreview.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-relatedPosts.vue"></fluid-import>
+    <fluid-import src="%wend/sfc/wend-scriptTag.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-shareLinks.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-site.vue"></fluid-import>
+    <fluid-import src="%wend/sfc/wend-stylesheetTag.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-tags.vue"></fluid-import>
+    <fluid-import src="%beautifulWend/sfc/beautifulWend-termPanel.vue"></fluid-import>
+    <fluid-import src="%testSite/sfc/shortcodes/wend-shortcode-figure.vue"></fluid-import>
+    <title>wend test site - host</title>
+</head>
+<body>
+</body>
+</html>

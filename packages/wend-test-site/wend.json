@@ -1,0 +1,41 @@
+{
+    "config": {
+        "title": "wend test site",
+        "baseURL": "https://example.org/wend-test-site",
+        "defaultContentLanguage": "en",
+        "mainSections": [
+            "post"
+        ],
+        "author": {
+            "name": "Antranig Basman",
+            "website": "/"
+        },
+        "params": {
+            "homeTitle": "wend test site",
+            "subtitle": "The site the extension's scenarios edit",
+            "logo": "img/pond.jpg",
+            "favicon": "img/favicon.ico",
+            "dateFormat": "January 2, 2006",
+            "comments": false,
+            "socialShare": false,
+            "showRelatedPosts": false
+        },
+        "menu": {
+            "main": [
+                {
+                    "name": "Posts",
+                    "url": "post",
+                    "weight": 1
+                },
+                {
+                    "name": "About",
+                    "url": "page/about/",
+                    "weight": 2
+                }
+            ]
+        }
+    },
+    "features": {
+        "selfHosted": true
+    }
+}

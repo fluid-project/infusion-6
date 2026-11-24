@@ -1,8 +1,7 @@
-/* eslint-env node */
 "use strict";
 
 // Scenario: claims of several files, committed as one changeset through the Git Data API - step 1 of
-// a-scratch/reports/images-in-place.md. Against a mock GitHub hosting ponder - see mock-github.js:
+// a-scratch/reports/images-in-place.md. Against a mock GitHub hosting the test site (packages/wend-test-site) - see mock-github.js:
 //  1. A post is edited to show an image, held in its claim as a further file, in static/img - committing makes one
 //     commit of both, and the Action publishes the image
 //  2. The post's page, polling the published trace, finds both published - the post's text in `sources`, the image's
@@ -38,7 +37,7 @@ const makeClaim = async function (worker, mock, edit, files) {
     const edited = edit(text);
     // eslint-disable-next-line no-undef
     return worker.evaluate(claim => fluidClaims.put({...claim, id: fluidClaims.idOf(claim.repo, claim.path)}), {
-        repo: "amb26/ponder", branch: "ponder-infusion", path: sourcePath, page: "/" + postPath,
+        repo: "fluid-project/wend-test-site", branch: "main", path: sourcePath, page: "/" + postPath,
         baseHash: hashOf(Buffer.from(text, "utf8")), baseSha: mockGitHub.blobSha(Buffer.from(text, "utf8")),
         text: edited, hash: hashOf(Buffer.from(edited, "utf8")), state: "uncommitted", files
     });

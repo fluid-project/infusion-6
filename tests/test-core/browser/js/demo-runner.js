@@ -11,7 +11,6 @@ You may obtain a copy of the ECL 2.0 License and BSD License at
 https://github.com/fluid-project/infusion/raw/main/Infusion-LICENSE.txt
 */
 
-/* eslint-env node */
 
 "use strict";
 
@@ -150,8 +149,8 @@ fluidDemoRunner.performAction = async function (page, action) {
         await page.mouse.click(point.x, point.y, {button: "right"});
     } else if (action.type === "dblclick") {
         const point = await fluidDemoRunner.pointFor(page, action.target);
-        await page.mouse.click(point.x, point.y);
-        await page.mouse.click(point.x, point.y, {clickCount: 2});
+        // Two presses, the second bearing a click count of 2, as a browser reports a double click
+        await page.mouse.click(point.x, point.y, {count: 2});
     } else if (action.type === "hover") {
         const point = await fluidDemoRunner.pointFor(page, action.target);
         await page.mouse.move(point.x, point.y);

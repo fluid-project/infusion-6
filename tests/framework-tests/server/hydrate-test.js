@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Smoke test for server-side hydration: runs src/framework/server/hydrate.js on the todo-list-sfc demo and checks

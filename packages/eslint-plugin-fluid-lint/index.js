@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // eslint-plugin-fluid-lint - reports the diagnostics of fluid-lint, packages/fluid-lint, through ESLint. fluid-lint
@@ -163,7 +162,7 @@ const vueProcessor = {
     supportsAutofix: false
 };
 
-module.exports = {
+const plugin = {
     meta: {
         name: "eslint-plugin-fluid-lint",
         version: "1.0.0"
@@ -174,18 +173,24 @@ module.exports = {
     },
     processors: {
         vue: vueProcessor
-    },
-    configs: {
-        recommended: {
-            plugins: ["fluid-lint"],
-            rules: {
-                "fluid-lint/errors": "error",
-                "fluid-lint/warnings": "warn"
-            },
-            overrides: [{
-                files: ["*.vue"],
-                processor: "fluid-lint/vue"
-            }]
-        }
     }
 };
+
+// The flat configuration for ESLint 9 and later: both rules, at the severities fluid-lint gives its diagnostics, and the
+// processor for Single File Components
+plugin.configs = {
+    recommended: [{
+        name: "fluid-lint/recommended",
+        plugins: {"fluid-lint": plugin},
+        rules: {
+            "fluid-lint/errors": "error",
+            "fluid-lint/warnings": "warn"
+        }
+    }, {
+        name: "fluid-lint/vue",
+        files: ["**/*.vue"],
+        processor: "fluid-lint/vue"
+    }]
+};
+
+module.exports = plugin;

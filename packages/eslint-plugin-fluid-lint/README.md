@@ -13,15 +13,18 @@ and the directives and full forms of the layer records written to `fluid.def`, i
     `<template>`.
   - ESLint parses no part of the SFC itself, so other rules don't apply to it.
   - Its diagnostics are reported under the same rule names, at the severity fluid-lint gives them.
-- **A configuration.** `plugin:fluid-lint/recommended` enables both rules, and the processor for `*.vue`.
+- **A configuration.** `configs.recommended`, a flat configuration for ESLint 9 or later, enables both rules, and the
+  processor for `*.vue`.
 
 A fix which fluid-lint proposes, e.g. inserting a missing `}`, is offered as a suggestion, e.g. in an editor, rather
 than applied by `eslint --fix`, since it is a guess at what was meant.
 
 ## Use
 
-Infusion's `.eslintrc.json` extends `plugin:fluid-lint/recommended`, and `npm run lint` passes `--ext .js,.vue`. The
-plugin is a devDependency of Infusion, installed from this directory (`file:packages/eslint-plugin-fluid-lint`).
+Spread `configs.recommended` into a project's `eslint.config.js`, e.g.
+`module.exports = [...require("eslint-plugin-fluid-lint").configs.recommended];` - Infusion's configuration,
+[eslint-config-infusion-6](../eslint-config-infusion-6/index.js), does so. The plugin is a devDependency of Infusion,
+installed from this directory (`file:packages/eslint-plugin-fluid-lint`).
 
 The plugin loads fluid-lint's ES module with `require`, which needs node 22.12 or later. fluid-lint's own packages must
 be installed in `packages/fluid-lint`.

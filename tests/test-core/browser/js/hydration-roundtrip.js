@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Support for testing that a page renders identically whether booted in the browser from its minimal, dehydrated form,
@@ -128,8 +127,12 @@ fluidHydrationRoundTrip.loadPage = async function (browser, url, options) {
     const errors = [];
     const ignored = text => (options.ignoreErrors || []).some(pattern => pattern.test(text));
     page.on("console", msg => {
-        if (msg.type() === "error" && !ignored(msg.text())) {
-            errors.push(msg.text());
+        // A failure to load a resource names it only by its location. Chrome asks for /favicon.ico of itself, which
+        // no page here serves, and whose absence is no fault of the page
+        const url = msg.location() && msg.location().url || "";
+        const located = url ? msg.text() + " - " + url : msg.text();
+        if (msg.type() === "error" && !url.endsWith("/favicon.ico") && !ignored(located)) {
+            errors.push(located);
         }
     });
     page.on("pageerror", error => {

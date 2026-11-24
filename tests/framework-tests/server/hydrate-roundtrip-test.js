@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Test that a page with nested Single File Components and placeholder data renders identically whether booted in the

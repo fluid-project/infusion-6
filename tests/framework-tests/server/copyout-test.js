@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Test copyOut.js, which copies into a project the files of the modules its pages depend upon, and writes the module

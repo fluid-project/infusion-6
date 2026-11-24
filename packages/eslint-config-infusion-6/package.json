@@ -1,0 +1,17 @@
+{
+    "name": "eslint-config-infusion-6",
+    "version": "1.0.0",
+    "private": true,
+    "description": "The ESLint configuration of Infusion 6 - the rules of eslint-config-fluid, which it replaces, with Infusion's own settings, as an ESLint flat configuration",
+    "license": "(BSD-3-Clause OR ECL-2.0)",
+    "main": "index.js",
+    "dependencies": {
+        "@stylistic/eslint-plugin": "6.0.1",
+        "eslint-plugin-jsdoc": "65.5.4",
+        "globals": "17.14.0"
+    },
+    "peerDependencies": {
+        "eslint": ">=10",
+        "eslint-plugin-fluid-lint": "*"
+    }
+}

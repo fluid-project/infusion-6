@@ -1,8 +1,7 @@
-/* eslint-env node */
 "use strict";
 
 // Scenario: widgets cut, pasted and dropped into a post, and images dropped into it. Against a mock GitHub hosting
-// ponder, whose static/sfc is given the counter widget of Infusion's tldraw demo - see mock-github.js:
+// the test site, whose static/sfc is given the counter widget of Infusion's tldraw demo - see mock-github.js:
 //  1. A counter inserted from the toolbar is cut - it is put on the clipboard as PTF, and leaves the source
 //  2. Pasted back with the caret within a paragraph, it splits the paragraph there, as a block of its own
 //  3. A widget dropped as a ZIP file - its layer, an image it shows, and the counter's layer defined otherwise than the

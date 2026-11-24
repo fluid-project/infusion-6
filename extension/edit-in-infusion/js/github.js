@@ -13,7 +13,7 @@ const fluidGitHub = {
     // alone, by `githubWeb` in storage
     web: "https://github.com",
     // The client id of the OAuth App "Edit in Infusion", with its device flow enabled. It is public, and no secret
-    // goes with it - see ponder's packages/wend/notes/github-sign-in.md. Were it empty, signing in would be offered as
+    // goes with it - see packages/wend/notes/github-sign-in.md of this repository. Were it empty, signing in would be offered as
     // unavailable, and only a personal access token taken in the options. Replaced, in a build for testing alone, by
     // `githubClientId` in storage
     clientId: "Ov23lignaxZLCR1CTDoX",

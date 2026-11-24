@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Write the material of a placeholder into a Single File Component as a top-level <placeholder> block, replacing any

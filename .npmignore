@@ -1,8 +1,7 @@
 .codecov.yml
 .dockerignore
 .editorconfig
-.eslintignore
-.eslintrc.json
+eslint.config.js
 .git
 .github
 .gitignore
@@ -43,3 +42,7 @@ docs/demo/tldraw/cavi-key.json
 # The sources of fluid-lint and its ESLint plugin, used in development alone - the browser bundle of fluid-lint ships
 # in src/lib/fluid-lint
 packages/
+# The script publishing this repository's packages - see package.json "release"
+scripts/
+# Zips of the extension, for its GitHub release and the Chrome Web Store - see scripts/zipExtension.js
+dist/extension/

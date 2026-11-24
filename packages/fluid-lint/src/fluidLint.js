@@ -1,4 +1,3 @@
-/* eslint-env node, browser */
 // fluid-lint - linting of Infusion 6 JavaScript and Single File Components. JavaScript is parsed by @lezer/javascript,
 // within which the interior of each String and template literal configuring a layer is parsed by the grammar of
 // configuration's runes, grammar/fluid-runes.grammar - so that a reference, a compact record or a template's

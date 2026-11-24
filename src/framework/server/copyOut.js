@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Copy into a project the files of the modules which one of its pages depends upon, from checkouts of those modules,

@@ -3045,7 +3045,11 @@ const $fluidILScope = function (fluid) {
                 };
 
                 let togo;
-                if (Array.isArray(source)) {
+                // A source computed from a component's material, e.g. by a $compute returning an array it was given,
+                // may be a proxy onto that material, which is not itself an Array - see fluid.proxyMat. Its shape is
+                // judged by the material it fronts, and its entries read through it, keeping their provenance
+                const material = fluid.unwrapProxy(source);
+                if (Array.isArray(material)) {
                     togo = source.map((value, index) => pushSubcomponentPotentia(value, index, index, source.length));
                 } else if (fluid.isPlainObject(source)) {
                     const entries = fluid.orderKeyedRecords(source);
@@ -4032,8 +4036,11 @@ const $fluidILScope = function (fluid) {
         });
     };
 
-    fluid.mutatingArrayMethods = Object.fromEntries(["copyWithin", "fill", "pop", "push",
-        "reverse", "shift", "sort", "splice", "unshift"].map(key => [key, true]));
+    // Read by a proxy onto an array for each method called on it, and so holding no prototype, whose members such as
+    // "toString" would otherwise be taken for mutating methods - String(array) would then write the array back to its
+    // site, re-merging its component, which may re-render the array in turn, without end
+    fluid.mutatingArrayMethods = Object.assign(Object.create(null), Object.fromEntries(["copyWithin", "fill", "pop", "push",
+        "reverse", "shift", "sort", "splice", "unshift"].map(key => [key, true])));
 
     /**
      * "Follow fish upstream" - trace a signal held at a component member through its chain of `$sitedRef`s to the
@@ -4249,7 +4256,13 @@ const $fluidILScope = function (fluid) {
                     return Reflect.ownKeys(Object(fluid.deSignalSoft(target) ?? {}));
                 },
                 getOwnPropertyDescriptor: function (target, prop) {
-                    return Reflect.getOwnPropertyDescriptor(Object(fluid.deSignalSoft(target) ?? {}), prop);
+                    const descriptor = Reflect.getOwnPropertyDescriptor(Object(fluid.deSignalSoft(target) ?? {}), prop);
+                    // A proxy may report a property non-configurable only if its target holds it so - the target here
+                    // is the signal, not the material, e.g. an array, whose `length` is non-configurable
+                    if (descriptor && !descriptor.configurable && !Reflect.getOwnPropertyDescriptor(target, prop)) {
+                        descriptor.configurable = true;
+                    }
+                    return descriptor;
                 },
                 getPrototypeOf: () => {
                     const deTarget = fluid.deSignalSoft(target);

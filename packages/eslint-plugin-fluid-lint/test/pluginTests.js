@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Tests of eslint-plugin-fluid-lint - run with: npm test, in this package. Texts are linted through ESLint's own API,
@@ -26,12 +25,8 @@ const expect = function (condition, message) {
 };
 
 const eslint = new ESLint({
-    useEslintrc: false,
-    plugins: {"fluid-lint": plugin},
-    overrideConfig: {
-        ...plugin.configs.recommended,
-        parserOptions: {ecmaVersion: 2022}
-    }
+    overrideConfigFile: true,
+    overrideConfig: [{files: ["**/*.js"], languageOptions: {ecmaVersion: 2022, sourceType: "script"}}, ...plugin.configs.recommended]
 });
 
 /**

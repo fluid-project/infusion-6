@@ -13,7 +13,7 @@ GitHub's page for devices, where the user enters it and authorizes the extension
 itself, and returns the user to their page. Signed in, the panel shows their account, offers to edit the page, and
 to sign out. Right-clicking the button also offers to sign out. The extension's options offer the same sign-in. This is
 GitHub's device flow, of an OAuth App asking for `public_repo`, which needs no secret and so no server - see
-`fluidGitHub.startSignIn` in `js/github.js`, and ponder's `packages/wend/notes/github-sign-in.md`. The options also take a
+`fluidGitHub.startSignIn` in `js/github.js`, and `packages/wend/notes/github-sign-in.md` of this repository. The options also take a
 fine-grained GitHub token with *Contents: read and write* on the site's repository, instead of signing in.
 
 The extension does nothing until its action is clicked: on a page built by ponder's `npm run build`,

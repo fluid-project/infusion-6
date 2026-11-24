@@ -15,7 +15,6 @@ http://underscorejs.org
 Underscore may be freely distributed under the MIT license.
 */
 
-/* eslint-env node */
 
 "use strict";
 

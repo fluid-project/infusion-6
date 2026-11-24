@@ -140,6 +140,20 @@ const fluidMarkdownSerializerScope = function (fluid) {
     };
 
     /**
+     * Serialise the content of a paragraph or heading. Markdown holds no empty paragraph, so one the user makes, e.g. by
+     * Enter at the end of a block, is written as "&nbsp;" - see fluid.blockEditor.beforeInput. Its non-breaking space
+     * is kept, since otherwise it would serialise to nothing, render as nothing, and so fail `roundTrips`, leaving the
+     * new paragraph unable to be edited in place. Within other text a non-breaking space is an ordinary space, as the
+     * browser inserts them for spaces typed in a run, or at the end of a line
+     * @param {Element} element - The paragraph's or heading's element
+     * @return {String} Its content, as markdown
+     */
+    fluid.markdownSerializer.textBlock = function (element) {
+        const inline = fluid.markdownSerializer.inline(element).trim();
+        return inline === "" && element.textContent.includes(" ") ? "&nbsp;" : inline;
+    };
+
+    /**
      * Serialise a block
      * @param {Element} element - The block's element, one of `blockTags`
      * @return {String} The block, as markdown, without a trailing newline
@@ -148,9 +162,9 @@ const fluidMarkdownSerializerScope = function (fluid) {
         const tag = element.tagName.toLowerCase();
         let togo;
         if (tag === "p") {
-            togo = fluid.markdownSerializer.inline(element).trim();
+            togo = fluid.markdownSerializer.textBlock(element);
         } else if (/^h[1-6]$/.test(tag)) {
-            togo = "#".repeat(+tag[1]) + " " + fluid.markdownSerializer.inline(element).trim();
+            togo = "#".repeat(+tag[1]) + " " + fluid.markdownSerializer.textBlock(element);
         } else if (tag === "ul" || tag === "ol") {
             togo = fluid.markdownSerializer.list(element, "");
         } else if (tag === "blockquote") {

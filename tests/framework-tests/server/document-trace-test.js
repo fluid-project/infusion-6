@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Test of the traces of output documents - fluid.traceOutputDocuments, over fluid.cell.recordUpdates and

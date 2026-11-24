@@ -2943,6 +2943,51 @@ QUnit.test("$for positionAs gives position of member regardless of keying", func
     that.destroy();
 });
 
+fluid.def("fluid.tests.forOverComputedProxy", {
+    $layers: "fluid.component",
+    // A reactive root, as a wend site's configuration is
+    config: {
+        $reactiveRoot: {
+            links: [{title: "One"}, {title: "Two"}]
+        }
+    },
+    holder: {
+        $component: {
+            $layers: "fluid.component",
+            // A $compute returning the array it was given from another component's material returns a proxy onto
+            // that material, which is not itself an Array - see fluid.proxyMat
+            passed: "$compute:fluid.tests.forOverComputedProxy.pass({forOverComputedProxy}.config.links)",
+            members: {
+                $component: {
+                    $layers: "fluid.component",
+                    $for: {
+                        source: "{holder}.passed",
+                        valueAs: "link"
+                    },
+                    title: "{self}.link.title"
+                }
+            }
+        }
+    }
+});
+
+fluid.tests.forOverComputedProxy.pass = links => links || [];
+
+QUnit.test("$for over a computed proxy onto material - stabilises, and its source may be enumerated and stringified", function (assert) {
+    const that = fluid.tests.forOverComputedProxy();
+    fluid.cell.stabilize();
+    assert.deepEqual(that.holder.members.list.map(member => member.title), ["One", "Two"],
+        "A member is made for each element of the array fronted by the proxy");
+    assert.deepEqual(Object.keys(that.holder.passed), ["0", "1"], "The proxy onto an array may be enumerated");
+    const shadow = that[fluid.metadataSymbol];
+    const instance = shadow.computer._value;
+    assert.equal(String(that.holder.passed), "[object Object],[object Object]", "The proxy onto an array may be stringified");
+    fluid.cell.stabilize();
+    assert.notOk("config" in shadow.liveLayer, "Stringifying it writes nothing back to the material it fronts");
+    assert.equal(shadow.computer._value, instance, "Nor re-merges the component holding it");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.removable", {
     $layers: ["fluid.component", "{self}.extraLayers"],
     extraLayers: [],

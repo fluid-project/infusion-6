@@ -1,12 +1,12 @@
-/* eslint-env node */
 "use strict";
 
-// Scenario: editing a post in place, block by block, never seeing a "#" - against a mock GitHub hosting ponder, see
+// Scenario: editing a post in place, block by block, never seeing a "#" - against a mock GitHub hosting the test site, see
 // mock-github.js. The user activates the extension on a post, which is made editable in place, its markdown source
 // folded away, and:
 //  1. types at the end of a paragraph, and leaves it - the source changes in that paragraph's lines alone
 //  2. selects a word of another paragraph and makes it bold with Ctrl+B
 //  3. splits a paragraph with Enter - the new paragraph has the caret
+//  3a. presses Enter at the end of a paragraph - the new, empty paragraph is edited in place, and may be typed into
 //  4. makes a paragraph a subheading from the toolbar
 //  5. unfolds the markdown source, in CodeMirror, and finds every edit there
 //  6. focuses a block in the page, and its lines are highlighted in the source
@@ -165,14 +165,32 @@ harness.scenario("Editing a post in place, block by block", async function ({moc
         {timeout: 5000}, third).then(() => expect(true, "The caret moves to the new paragraph"),
         () => expect(false, "The caret moves to the new paragraph"));
 
+    // 3a. Press Enter at the end of a paragraph - the new paragraph is empty, written in the source as "&nbsp;", and
+    // must be edited in place like any other, not marked as edited through the source alone
+    await placeCaret(post, third + 1, "end");
+    await post.keyboard.press("Enter");
+    const afterEnd = await sourceChange(post, afterSplit);
+    expect(afterEnd.split("\n").includes("&nbsp;"), "Enter at the end of a paragraph adds an empty one to the source: " +
+        JSON.stringify(linesAdded(afterSplit, afterEnd)));
+    await post.waitForFunction(index => {
+        const element = document.querySelector(`[data-fluid-block-index="${index}"]`);
+        return element && element.getAttribute("data-fluid-block") === "editable" && document.activeElement === element;
+    }, {timeout: 5000}, third + 2).then(() => expect(true, "The empty paragraph is edited in place, and has the caret"),
+        () => expect(false, "The empty paragraph is edited in place, and has the caret"));
+    await post.keyboard.type("Typed after Enter");
+    await post.evaluate(() => document.activeElement.blur());
+    const afterTyped = await sourceChange(post, afterEnd);
+    expect(afterTyped.split("\n").includes("Typed after Enter") && !afterTyped.split("\n").includes("&nbsp;"),
+        "What is typed into it replaces its \"&nbsp;\" in the source: " + JSON.stringify(linesAdded(afterEnd, afterTyped)));
+
     // 4. Make a paragraph a subheading from the toolbar
     const fourth = await plainParagraph(post, 3);
     const fourthText = await post.$eval(`[data-fluid-block-index="${fourth}"]`, node => node.textContent.trim());
     await placeCaret(post, fourth, "end");
     await post.select(".fluid-block-toolbar .fluid-block-kind", "h3");
-    const afterKind = await sourceChange(post, afterSplit);
+    const afterKind = await sourceChange(post, afterTyped);
     expect(afterKind.split("\n").some(line => line === "### " + fourthText.replace(/\s+/g, " ")), "The paragraph is a subheading in the source: " +
-        JSON.stringify(linesAdded(afterSplit, afterKind)));
+        JSON.stringify(linesAdded(afterTyped, afterKind)));
     expect(await post.evaluate(text => [...document.querySelectorAll("h3")].some(node => node.textContent.replace(/\s+/g, " ").trim() ===
         text.replace(/\s+/g, " ")), fourthText),
     "The page renders it as a subheading");

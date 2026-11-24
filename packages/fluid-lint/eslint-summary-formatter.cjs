@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // A formatter for ESLint: ESLint's own "stylish" report of the problems found, followed by a count of the files linted

@@ -1,4 +1,3 @@
-/* eslint-env browser */
 // fluid-lint for CodeMirror 6 - languages of Infusion JavaScript and SFCs, whose configuration Strings are parsed and
 // highlighted by the grammar of runes, and a linter reporting the diagnostics of fluidLint.js beside the text.
 // `fluidEditor` makes an editor of either, as the live examples of Infusion's documentation use - see

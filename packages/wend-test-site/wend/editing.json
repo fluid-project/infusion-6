@@ -1,0 +1,18 @@
+{
+    "repo": "fluid-project/wend-test-site",
+    "branch": "main",
+    "bootLayers": [],
+    "framing": [
+        {
+            "module": "beautifulWend",
+            "file": "sfc/beautifulWend-footer.vue",
+            "layer": "beautifulWend.footer",
+            "label": "Footer"
+        },
+        {
+            "path": "wend.json",
+            "kind": "patch",
+            "label": "Site configuration"
+        }
+    ]
+}

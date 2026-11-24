@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // A mock of the parts of GitHub which the "Edit in Infusion" extension and a site's publishing depend on, for scenario

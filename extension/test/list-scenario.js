@@ -1,7 +1,6 @@
-/* eslint-env node */
 "use strict";
 
-// Scenario: editing from a list of posts, against a mock GitHub hosting ponder - see mock-github.js:
+// Scenario: editing from a list of posts, against a mock GitHub hosting the test site (packages/wend-test-site) - see mock-github.js:
 //  1. On /post/, the user activates the extension - nothing is chosen to edit, so no source is shown, and the list
 //     offers "+" at its head. The framing is not edited by default (a footer would once have been)
 //  2. They choose "+", and title a new post - its path follows the title, and its claim is held, uncommitted

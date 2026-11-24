@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 const fs = require("fs");
@@ -35,7 +34,7 @@ for (const file of files) {
     const imports = [];
     src = src.replace(commentedImportRE, (_, clause) => {
         // Rewrite .js -> .mjs inside import clause
-        const rewritten = clause.replace(/(["'])(.+?)\.js\1/g, '$1$2.mjs$1');
+        const rewritten = clause.replace(/(["'])(.+?)\.js\1/g, "$1$2.mjs$1");
         imports.push(`import ${rewritten};`);
         return "";
     });

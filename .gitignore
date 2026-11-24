@@ -13,3 +13,5 @@ ifm-password.txt
 cavi-key.txt
 demo/tldraw/cavi-key.json
 docs/demo/tldraw/cavi-key.json
+# Zips of the extension, for its GitHub release and the Chrome Web Store - see scripts/zipExtension.js
+dist/extension/

@@ -1,4 +1,3 @@
-/* eslint-env node */
 /* eslint strict: ["error", "global"] */
 
 "use strict";

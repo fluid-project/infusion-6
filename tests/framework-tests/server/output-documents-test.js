@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Test of multi-document rendering on the server: one component tree renders a page per record into an output

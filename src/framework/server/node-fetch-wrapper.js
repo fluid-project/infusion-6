@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // A fetch for node which also serves file: URLs, as the browser's would for a page loaded from a file. Other URLs are

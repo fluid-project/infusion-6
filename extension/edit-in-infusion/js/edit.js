@@ -228,6 +228,13 @@
                 edit.boot().then(() => document.dispatchEvent(new CustomEvent("fluid-edit-activate")), () => null);
                 // Answered, so that the service worker knows the page had something to edit
                 sendResponse(true);
+            } else if (message.type === "fluid-edit-claim-removed" && edit.isOwnRepo({type: "claim-remove", id: message.id})) {
+                // A claim removed from another page - passed on to this page only if of its own repository, and only
+                // once its editing is booted, since until then it shows no claim - see fluid.staticEditing.claimRemoved
+                if (edit.bootPromise) {
+                    edit.bootPromise.then(() => document.dispatchEvent(new CustomEvent("fluid-edit-claim-removed",
+                        {detail: JSON.stringify({id: message.id, reason: message.reason})})), () => null);
+                }
             }
         });
         edit.send({type: "fluid-provenance-found", sourcePath: edit.provenance.source ? edit.provenance.source.path : edit.provenance.page,

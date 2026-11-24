@@ -1,4 +1,3 @@
-/* eslint-env node */
 "use strict";
 
 // Support for scenario tests of the "Edit in Infusion" extension against a mock GitHub - see mock-github.js. A scenario
@@ -14,7 +13,9 @@ const mockGitHub = require("./mock-github.js");
 
 const harness = {
     extensionDir: path.resolve(__dirname, "../edit-in-infusion"),
-    infusionDir: path.resolve(__dirname, "../..")
+    infusionDir: path.resolve(__dirname, "../.."),
+    // The site the scenarios edit
+    testSiteDir: path.resolve(__dirname, "../../packages/wend-test-site")
 };
 
 // Puppeteer is that installed with Infusion, which keeps its captive browser within the checkout - see .puppeteerrc.cjs
@@ -22,16 +23,16 @@ process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR ?? require(pat
 const puppeteer = require("puppeteer");
 
 /**
- * Build the ponder site in a scratch repository, as its workflow does - with its own build script, against the
- * Infusion checkout holding this file
+ * Build a wend site in a scratch repository, as its workflow does - with wend's build script, installed in the site's
+ * node_modules, against the Infusion checkout holding this file unless EDIT_TEST_INSTALLED_INFUSION is set
  * @param {String} repoDir - The scratch repository
  * @param {String} outDir - The directory into which to publish
  * @param {String} commit - The sha of the commit built
  * @return {Promise} Resolves once built, rejects if the build fails
  */
-harness.buildPonder = function (repoDir, outDir, commit) {
+harness.buildSite = function (repoDir, outDir, commit) {
     return new Promise((resolve, reject) => {
-        const child = childProcess.spawn(process.execPath, [path.join(repoDir, "packages/wend/js/buildSite.js"), "-o", outDir],
+        const child = childProcess.spawn(process.execPath, [path.join(repoDir, "node_modules/wend/js/buildSite.js"), "-o", outDir],
             {cwd: repoDir, env: {...process.env, GITHUB_SHA: commit}, stdio: ["ignore", "pipe", "pipe"]});
         let output = "";
         child.stdout.on("data", data => output += data);
@@ -41,16 +42,23 @@ harness.buildPonder = function (repoDir, outDir, commit) {
 };
 
 /**
- * Start a mock GitHub hosting ponder
+ * Start a mock GitHub hosting a wend site - by default packages/wend-test-site, which holds what the scenarios rely on.
+ * Two environment variables choose what is built, for checking a release before it is published - e.g. a copy of the
+ * site with tarballs made by `npm pack` installed into it, as scripts/testPacked.js makes:
+ *  - EDIT_TEST_SITE: the working tree of the site, in place of packages/wend-test-site
+ *  - EDIT_TEST_INSTALLED_INFUSION: if set, the site is built with the Infusion installed in its node_modules, rather
+ *    than with the checkout holding this file
  * @param {Object} [options] - Options
- * @param {String} [options.siteDir] - The ponder working tree, by default the checkout beside Infusion's
+ * @param {String} [options.siteDir] - The site's working tree, by default EDIT_TEST_SITE, or else
+ * packages/wend-test-site
  * @param {Number} [options.buildDelay] - How long each Action waits before building, in ms
  * @param {Function} [options.prepareRepo] - Receives the scratch repository's directory before it is first built, e.g.
  * to add files the scenario needs
  * @return {Promise<Object>} The mock, serving
  */
-harness.startPonder = async function (options = {}) {
-    const siteDir = options.siteDir ?? path.resolve(harness.infusionDir, "../ponder");
+harness.startSite = async function (options = {}) {
+    const siteDir = path.resolve(options.siteDir ?? process.env.EDIT_TEST_SITE ?? harness.testSiteDir);
+    const installedInfusion = !!process.env.EDIT_TEST_INSTALLED_INFUSION;
     // The site's editing configuration, which wend.site.json names, gives the repository and branch edits are committed to
     const descriptor = JSON.parse(fs.readFileSync(path.join(siteDir, "wend.site.json"), "utf8"));
     const editing = JSON.parse(fs.readFileSync(path.join(siteDir, descriptor.editing), "utf8"));
@@ -59,12 +67,21 @@ harness.startPonder = async function (options = {}) {
         repo: editing.repo,
         branch: editing.branch,
         buildDelay: options.buildDelay ?? 500,
-        build: harness.buildPonder,
-        // e.g. MOCK_GITHUB_REUSE=../ponder/docs, while developing a scenario - the published site must be current
+        build: harness.buildSite,
+        // e.g. MOCK_GITHUB_REUSE=<a build of the same site>, while developing a scenario - the published site must be current
         reusePages: process.env.MOCK_GITHUB_REUSE,
         // The scratch repository is elsewhere, so the checkout of Infusion it builds with is named absolutely
         prepare: async repoDir => {
-            fs.writeFileSync(path.join(repoDir, "moduleOverrides.json5"), JSON.stringify([{moduleName: "infusion-6", baseDir: harness.infusionDir}]));
+            // A site with no install of its own, as packages/wend-test-site, is built with Infusion's root node_modules,
+            // where npm links the workspaces wend and wend-theme-beautiful
+            if (!fs.existsSync(path.join(repoDir, "node_modules"))) {
+                fs.symlinkSync(path.join(harness.infusionDir, "node_modules"), path.join(repoDir, "node_modules"));
+            }
+            if (installedInfusion) {
+                console.log("# Building " + siteDir + " with the Infusion installed in its node_modules");
+            } else {
+                fs.writeFileSync(path.join(repoDir, "moduleOverrides.json5"), JSON.stringify([{moduleName: "infusion-6", baseDir: harness.infusionDir}]));
+            }
             if (options.prepareRepo) {
                 await options.prepareRepo(repoDir);
             }
@@ -91,14 +108,24 @@ harness.testBuild = function () {
 };
 
 /**
+ * The options with which to launch Chromium holding a test build of the extension - loaded as an unpacked extension,
+ * which Chrome for Testing, as puppeteer installs it, allows, though branded Chrome no longer does
+ * @param {String} extensionDir - The directory of the test build - see harness.testBuild
+ * @param {Object} [options] - Further options of puppeteer.launch, e.g. `{headless: false}`, whose `args` are added
+ * @return {Object} The options of puppeteer.launch
+ */
+harness.launchOptions = function (extensionDir, options = {}) {
+    return {headless: true, enableExtensions: [extensionDir], ...options, args: ["--no-sandbox", ...options.args ?? []]};
+};
+
+/**
  * Launch Chromium with a test build of the extension, pointed at a mock's API and holding a token
  * @param {Object} mock - The mock, serving
  * @return {Promise<Object>} `{browser, worker}` - the browser, and the extension's service worker
  */
 harness.launch = async function (mock) {
     const extensionDir = harness.testBuild();
-    const browser = await puppeteer.launch({headless: "new", args: ["--disable-extensions-except=" + extensionDir,
-        "--load-extension=" + extensionDir, "--no-sandbox"]});
+    const browser = await puppeteer.launch(harness.launchOptions(extensionDir));
     browser.on("disconnected", () => fs.rmSync(extensionDir, {recursive: true, force: true}));
     // Each commit a page asks for is confirmed by the user in a window of the extension's own - see fluidConfirm in
     // background.js - which is confirmed here as the user would, or declined if `confirmDecision` is false, recording
@@ -118,7 +145,8 @@ harness.launch = async function (mock) {
         }
     });
     const worker = await (await browser.waitForTarget(target => target.type() === "service_worker")).worker();
-    await worker.evaluate(apiUrl => chrome.storage.local.set({githubApi: apiUrl, githubToken: "mock-token"}), mock.apiUrl);
+    // The published trace is polled every 2s rather than every 15s, so that a page finds a rebuild well within a test's wait
+    await worker.evaluate(apiUrl => chrome.storage.local.set({githubApi: apiUrl, githubToken: "mock-token", pollInterval: 2000}), mock.apiUrl);
     return {browser, worker};
 };
 
@@ -138,7 +166,9 @@ harness.openPage = async function (browser, mock, pagePath) {
     page.on("pageerror", error => page.errors.push(String(error)));
     page.on("console", message => {
         if (process.env.MOCK_GITHUB_VERBOSE || message.type() === "error") {
-            console.log("  [" + pagePath + " " + message.type() + "] " + message.text().substring(0, 300));
+            // A failure to load a resource names it only by its location
+            const url = message.location() && message.location().url;
+            console.log("  [" + pagePath + " " + message.type() + "] " + message.text().substring(0, 300) + (url ? " - " + url : ""));
         }
     });
     await page.goto(mock.url + pagePath, {waitUntil: "load"});
@@ -219,7 +249,7 @@ harness.claims = worker => worker.evaluate(() => fluidClaims.list());
  * @param {String} name - The scenario's name
  * @param {Function} body - Receives `{mock, browser, worker, expect}`, where `expect(condition, message)` records an
  * expectation, and returns a promise
- * @param {Object} [options] - Options for the mock, as for `startPonder`
+ * @param {Object} [options] - Options for the mock, as for `startSite`
  */
 harness.scenario = async function (name, body, options) {
     const failures = [];
@@ -233,7 +263,7 @@ harness.scenario = async function (name, body, options) {
         console.log((condition ? "ok - " : "not ok - ") + message);
     };
     console.log("# " + name);
-    const mock = await harness.startPonder(options);
+    const mock = await harness.startSite(options);
     let browser;
     try {
         const launched = await harness.launch(mock);

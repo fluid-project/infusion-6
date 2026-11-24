@@ -61,6 +61,10 @@ const showCode = function (view) {
     show("code");
 };
 
+// The tab the panel was opened over, once rendered, and whether access to its site is held already
+let panelTab = null;
+let panelGranted = false;
+
 /**
  * Show the panel as the state of signing in requires
  * @return {Promise} Resolves once shown
@@ -71,6 +75,11 @@ const render = async function () {
         byId("login").textContent = status.login ? " as " + status.login : "";
         show("ready");
         const tab = await currentTab();
+        // Held for the click on "Edit this page", which must ask for access before it awaits anything
+        panelTab = tab;
+        const tabPattern = tab && tab.url && /^https?:/.test(tab.url) ? new URL(tab.url).protocol + "//" + new URL(tab.url).hostname + "/*" : null;
+        panelGranted = tabPattern ? await chrome.permissions.contains({origins: [tabPattern]}).catch(() => false) : false;
+        byId("keep-holder").hidden = !tabPattern || panelGranted;
         const editable = tab ? await ask({type: "tab-editable", tabId: tab.id}) : {editable: false, reason: "There is no page to edit"};
         byId("start").disabled = !editable.editable;
         // The tooltip is held by the button's wrapper too, since a disabled button may show none of its own
@@ -110,21 +119,40 @@ byId("cancel").addEventListener("click", async function () {
 });
 
 byId("start").addEventListener("click", async function () {
-    const tab = await currentTab();
+    const tab = panelTab;
     const url = tab && tab.url ? new URL(tab.url) : null;
     if (url && (url.protocol === "http:" || url.protocol === "https:")) {
         const pattern = url.protocol + "//" + url.hostname + "/*";
-        // Declared first, since Chrome may close this panel while it asks for access - see panel-edit in background.js
+        // No access to the site is asked for here - the editor opens through the access which opening the panel grants
+        // to the tab in hand. Lasting access is asked for only if the user chooses it - see "keep" below
+        statusNode.textContent = "Opening the editor...";
         await ask({type: "panel-edit-intent", tabId: tab.id, pattern});
-        // Asked here, while the click still counts as the user's - the service worker could not ask on its behalf
-        const granted = await chrome.permissions.request({origins: [pattern]}).catch(() => false);
-        const activated = await ask({type: "panel-edit", tabId: tab.id, granted});
+        const activated = await ask({type: "panel-edit", tabId: tab.id, granted: panelGranted});
         if (activated) {
             window.close();
         } else {
             statusNode.textContent = "The editor couldn't be opened on this page";
         }
     }
+});
+
+// Lasting access to the site, asked for as the user clicks, so that Chrome counts the request as theirs. Once granted,
+// the service worker enlists the site - see chrome.permissions.onAdded in background.js
+byId("keep").addEventListener("click", async function () {
+    const tab = panelTab;
+    const pattern = new URL(tab.url).protocol + "//" + new URL(tab.url).hostname + "/*";
+    statusNode.textContent = "Chrome is asking you to allow access to " + new URL(tab.url).hostname + " - look for its prompt";
+    const granted = await chrome.permissions.request({origins: [pattern]}).catch(() => false);
+    panelGranted = granted;
+    byId("keep-holder").hidden = granted;
+    statusNode.textContent = granted ? "Your edits will show on every page of " + new URL(tab.url).hostname : "Access wasn't allowed - only pages you open the editor on will show your edits";
+});
+
+// A failure in starting to edit is shown in the panel, rather than lost in the panel's own console
+window.addEventListener("unhandledrejection", event => {
+    const error = event.reason;
+    statusNode.textContent = "The editor couldn't be opened: " + (error && error.message || error);
+    console.error("Edit in Infusion:", error);
 });
 
 byId("signout").addEventListener("click", async function () {

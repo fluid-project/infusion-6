@@ -1,4 +1,3 @@
-/* eslint-env node */
 // Bundles fluid-lint, with Infusion's one copy of CodeMirror 6 - the parts its own editor and Infusion's other editors
 // use, e.g. the source view of its static editing - as `fluid.codemirror6`, beneath the global `fluid` (Infusion's, if
 // loaded first), into Infusion's src/lib/fluid-lint/fluid-lint.js - which Infusion's live examples load, e.g. those of

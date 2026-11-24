@@ -1,4 +1,3 @@
-/* eslint-env node */
 // Tests of fluid-lint's linting of JavaScript, fragments of layer records and SFCs - run with: npm test, in this package.
 // Each kind of malformation is checked for a diagnostic of the right severity, covering the right text, with a message
 // naming what is wrong, and each correct style of writing is checked to lint clean. Texts holding several

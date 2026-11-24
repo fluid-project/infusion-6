@@ -54,6 +54,9 @@
     <section id="ready" hidden>
         <p><strong>Connected to GitHub<span id="login"></span>.</strong></p>
         <span id="start-holder" class="holder"><button id="start" class="primary">Edit this page</button></span>
+        <!-- Asked for only when chosen, since Chrome's prompt may open out of sight, e.g. behind another tab -->
+        <p class="note" id="keep-holder" hidden style="margin-top: 10px"><button id="keep" class="link">Show my edits on every page of this site</button>
+           - Chrome will ask you to allow this</p>
     </section>
 
     <p class="status" id="status" role="status"></p>
