@@ -81,9 +81,10 @@ wend.trace.publishRenderer = function (siteDir, outDir) {
             name = script.name + "-" + digest + ".js";
         } else if (script.local) {
             source = path.join(__dirname, script.local);
-            // Named by its content, as the packages are by their versions, below
-            const digest = siteModel.hashText(fs.readFileSync(source, "utf8")).substring("sha256-".length, "sha256-".length + 12);
-            name = "wend-" + script.local.replace(/\.js$/, "-" + digest + ".js");
+            // Named by wend's version, as the packages are by theirs, below - so a change to the file must come with a
+            // fresh version of wend, or a browser may hold the former file under the same name
+            const version = JSON.parse(fs.readFileSync(path.join(__dirname, "../package.json"), "utf8")).version;
+            name = "wend-" + script.local.replace(/\.js$/, "-" + version + ".js");
         } else {
             const dir = wend.trace.packageDir(script.packageName, siteDir);
             const version = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version;

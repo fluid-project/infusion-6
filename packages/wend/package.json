@@ -1,6 +1,6 @@
 {
     "name": "@fluid-project/wend",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "//publishConfig": "Published under the fluid-project scope - npm refuses the bare name \"wend\" as too like the names of existing packages",
     "publishConfig": {
         "access": "public"
