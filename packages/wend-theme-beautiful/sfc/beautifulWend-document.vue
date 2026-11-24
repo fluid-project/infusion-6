@@ -30,7 +30,9 @@ fluid.def("beautifulWend.document", {
         bootstrap: {priority: 970, href: "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css"},
         main: {priority: 960, href: "/css/main.css"},
         syntax: {priority: 940, href: "/css/syntax.css"},
-        codeblock: {priority: 930, href: "/css/codeblock.css"}
+        codeblock: {priority: 930, href: "/css/codeblock.css"},
+        // The theme's own styling of its markup - its navigation bar, menus, avatar and media icons
+        beautifulWend: {priority: 925, href: "/css/beautifulWend.css"}
     },
     // The site's former /js/ponder.js, which added an anchor to each heading once the page had loaded, is gone - the
     // anchors of content's headings are rendered by its markdown pipeline (packages/wend/js/markdown.js)

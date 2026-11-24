@@ -175,13 +175,14 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Show the extension's badge for the page - marked if any claim is held on a source it renders
+     * Tell the extension what the page is showing, for the mark on its icon - whether any claim is held on a source it
+     * renders, and whether the editor is open
      * @param {Object} edit - The controller
      */
     fluid.staticEditing.updateBadge = function (edit) {
         const claims = fluid.staticEditing.allClaims(edit);
         fluid.staticEditing.send(edit, {type: "fluid-provenance-found", sourcePath: edit.provenance.source ? edit.provenance.source.path : edit.provenance.page,
-            claimState: claims.length > 0 ? claims[0].state : null});
+            claimState: claims.length > 0 ? claims[0].state : null, open: !edit.state.hidden}).catch(() => null);
     };
 
     /**
@@ -1251,6 +1252,7 @@ const fluidStaticEditingScope = function (fluid) {
         const top = wasDocked ? document.body.scrollTop : window.scrollY;
         root.setAttribute("fl-docking-area-mode", on ? "right edge" : "minimized");
         edit.state.hidden = !on;
+        fluid.staticEditing.updateBadge(edit);
         if (on) {
             document.body.scrollTop = top;
         } else {

@@ -1,0 +1,66 @@
+/* The theme's own styling of its markup, beyond Beautiful Hugo's main.css - the layout of its navigation bar, its
+ * dropdown menus, the home page's avatar and media icons. Linked by beautifulWend.document after main.css */
+
+.navbar-ponder {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Dropdown menus, e.g. under "Docs" - Beautiful Hugo's script which toggles .show-children on mobile is not shipped, so
+ * there the children are always listed beneath their parent, and on desktop they also open on keyboard focus */
+.navbar-custom .nav .navlinks-parent:after {
+    content: none;
+}
+
+.navbar-custom .nav .navlinks-container .navlinks-children a {
+    text-align: left;
+    white-space: nowrap;
+}
+
+@media only screen and (max-width: 767px) {
+    .navbar-custom .nav .navlinks-children {
+        display: block;
+    }
+}
+
+@media only screen and (min-width: 768px) {
+    .navbar-custom .nav .navlinks-children {
+        width: auto;
+        min-width: 100%;
+        z-index: 1000;
+    }
+
+    .navbar-custom .nav .navlinks-container:focus-within {
+        background: #eee;
+    }
+
+    .navbar-custom .nav .navlinks-container:focus-within .navlinks-children {
+        display: block;
+    }
+}
+
+@media only screen and (min-width: 768px) and (prefers-color-scheme: dark) {
+    .navbar-custom .nav .navlinks-container:focus-within {
+        background: #666;
+    }
+}
+
+/* The avatar is cropped to its square, whatever the shape of the site's image */
+.avatar-img {
+    width: 128px;
+    height: 128px;
+    object-fit: cover;
+}
+
+@media (max-width: 768px) {
+    .avatar-img {
+        width: 64px;
+        height: 64px;
+    }
+}
+
+.media-icons {
+    margin-top: 30px;
+    height: 0;
+}

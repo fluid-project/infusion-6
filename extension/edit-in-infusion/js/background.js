@@ -149,12 +149,15 @@ const handlers = {
     "claim-list": async message => (await fluidClaims.list()).filter(claim => claim.repo === message.repo && claim.path.startsWith(message.prefix)),
     "source-read": message => fluidGitHub.read(message.repo, message.branch, message.path),
     "signin-status": () => fluidGitHub.signInStatus(),
+    // A page's report of what it is showing - marking the icon with a pencil while its editor is open, or while an edit
+    // is held on it - see fluidEditBackground.markPage
     "fluid-provenance-found": async function (message, sender) {
         if (sender.tab) {
-            chrome.action.setBadgeText({tabId: sender.tab.id, text: message.claimState ? "●" : "✎"});
-            chrome.action.setBadgeBackgroundColor({tabId: sender.tab.id, color: message.claimState ? "#c77800" : "#2b6cb0"});
             chrome.action.setTitle({tabId: sender.tab.id, title: "Edit in Infusion - edit " + message.sourcePath});
+            // A failure to mark the icon, e.g. of a tab since closed, is no concern of the page
+            await fluidEditBackground.markPage(sender.tab.id, message.claimState ? "held" : message.open ? "editing" : null).catch(() => null);
         }
+        return true;
     }
 };
 
@@ -409,6 +412,80 @@ fluidSignIn.drawTickedIcon = async function (size) {
 };
 
 /**
+ * Draw the extension's icon at a size, overlaid with a pencil across its lower right - blue while the page's editor is
+ * open, amber while an edit is held on the page. Drawn rather than given as a badge, whose glyph Chrome places itself,
+ * and on no disc, so that it reads at the icon's small size
+ * @param {Number} size - The icon's size, in pixels
+ * @param {String} colour - The pencil's colour
+ * @return {Promise<ImageData>} The icon
+ */
+fluidEditBackground.drawPencilIcon = async function (size, colour) {
+    const blob = await (await fetch(chrome.runtime.getURL("icons/icon-" + size + ".png"))).blob();
+    const canvas = new OffscreenCanvas(size, size);
+    const context = canvas.getContext("2d");
+    context.drawImage(await createImageBitmap(blob), 0, 0, size, size);
+    // The pencil is drawn along the diagonal rising from its tip at the lower left of its quadrant - in units of the
+    // icon's size, its length and width, and the length of its sharpened tip
+    const length = 0.62, width = 0.24, tipLength = 0.2;
+    context.save();
+    context.translate(size * 0.34, size * 0.9);
+    context.rotate(-Math.PI / 4);
+    context.scale(size, size);
+    const outline = function () {
+        context.beginPath();
+        context.moveTo(0, 0);
+        context.lineTo(tipLength, -width / 2);
+        context.lineTo(length, -width / 2);
+        context.lineTo(length, width / 2);
+        context.lineTo(tipLength, width / 2);
+        context.closePath();
+    };
+    // A white rim, so that the pencil stands out from the icon beneath it, then the pencil itself
+    context.lineJoin = "round";
+    context.lineWidth = Math.max(2, size / 8) / size;
+    context.strokeStyle = "#fff";
+    outline();
+    context.stroke();
+    context.fillStyle = colour;
+    outline();
+    context.fill();
+    // Its tip, bared of paint
+    context.fillStyle = "#f3d9a4";
+    context.beginPath();
+    context.moveTo(tipLength * 0.45, -width * 0.225);
+    context.lineTo(tipLength, -width / 2);
+    context.lineTo(tipLength, width / 2);
+    context.lineTo(tipLength * 0.45, width * 0.225);
+    context.closePath();
+    context.fill();
+    context.restore();
+    return context.getImageData(0, 0, size, size);
+};
+
+// The colours of the pencil overlaid on the icon, for each mark a page may bear - see fluidEditBackground.markPage
+fluidEditBackground.pencilColours = {
+    editing: "#2b6cb0",
+    held: "#c77800"
+};
+
+/**
+ * Mark the extension's icon in a tab for its page - a blue pencil while its editor is open, an amber one while an edit
+ * is held on a source it renders, whether or not the editor is open, and none otherwise
+ * @param {Number} tabId - The tab
+ * @param {String|null} mark - "editing", "held", or `null` for none
+ * @return {Promise} Resolves once marked
+ */
+fluidEditBackground.markPage = async function (tabId, mark) {
+    if (mark) {
+        const colour = fluidEditBackground.pencilColours[mark];
+        const imageData = {16: await fluidEditBackground.drawPencilIcon(16, colour), 32: await fluidEditBackground.drawPencilIcon(32, colour)};
+        await chrome.action.setIcon({tabId, imageData});
+    } else {
+        await chrome.action.setIcon({tabId, path: {16: "/icons/icon-16.png", 32: "/icons/icon-32.png"}});
+    }
+};
+
+/**
  * Mark, or unmark, the extension's icon in a tab with a tick, showing that the user is signed in there
  * @param {Number} tabId - The tab
  * @param {Boolean} ticked - Whether to mark it
@@ -419,7 +496,7 @@ fluidSignIn.markTab = async function (tabId, ticked) {
         const imageData = {16: await fluidSignIn.drawTickedIcon(16), 32: await fluidSignIn.drawTickedIcon(32)};
         await chrome.action.setIcon({tabId, imageData});
     } else {
-        await chrome.action.setIcon({tabId, path: {16: "icons/icon-16.png", 32: "icons/icon-32.png"}});
+        await chrome.action.setIcon({tabId, path: {16: "/icons/icon-16.png", 32: "/icons/icon-32.png"}});
     }
 };
 
