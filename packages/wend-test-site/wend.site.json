@@ -1,13 +1,13 @@
 {
     "//": "How wend builds this site - see js/site.js of the wend package. Modules are listed from the most general to the site's own, and are published and imported in that order",
     "modules": {
-        "wend": "node_modules/wend",
-        "beautifulWend": "node_modules/wend-theme-beautiful",
+        "wend": "node_modules/@fluid-project/wend",
+        "beautifulWend": "node_modules/@fluid-project/wend-theme-beautiful",
         "testSite": "wend"
     },
     "root": "beautifulWend.site",
     "host": "wend/site.html",
     "editing": "wend/editing.json",
-    "staticDirs": ["node_modules/wend-theme-beautiful/static", "static"],
+    "staticDirs": ["node_modules/@fluid-project/wend-theme-beautiful/static", "static"],
     "overrides": "wend/override"
 }

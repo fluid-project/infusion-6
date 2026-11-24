@@ -1,7 +1,8 @@
 # wend
 
 Building, and editing in place, a static site of Infusion 6 components - the parts any such site shares. Published
-to npm from Infusion 6's repository, independently of Infusion itself.
+to npm as `@fluid-project/wend`, from Infusion 6's repository, independently of Infusion itself - npm refuses the bare
+name `wend`. A site depends on it, and on Infusion 6.6.0 or later, and builds with its command `wend-build`.
 
 - `js/buildSite.js` - the build: renders every page of the site as one component tree, writes each page with its
   provenance record, and the trace by which an editing client tells when an edit is published. Run in the site's

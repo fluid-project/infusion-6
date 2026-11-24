@@ -32,7 +32,7 @@ const puppeteer = require("puppeteer");
  */
 harness.buildSite = function (repoDir, outDir, commit) {
     return new Promise((resolve, reject) => {
-        const child = childProcess.spawn(process.execPath, [path.join(repoDir, "node_modules/wend/js/buildSite.js"), "-o", outDir],
+        const child = childProcess.spawn(process.execPath, [path.join(repoDir, "node_modules/@fluid-project/wend/js/buildSite.js"), "-o", outDir],
             {cwd: repoDir, env: {...process.env, GITHUB_SHA: commit}, stdio: ["ignore", "pipe", "pipe"]});
         let output = "";
         child.stdout.on("data", data => output += data);
@@ -73,7 +73,7 @@ harness.startSite = async function (options = {}) {
         // The scratch repository is elsewhere, so the checkout of Infusion it builds with is named absolutely
         prepare: async repoDir => {
             // A site with no install of its own, as packages/wend-test-site, is built with Infusion's root node_modules,
-            // where npm links the workspaces wend and wend-theme-beautiful
+            // where npm links the workspaces @fluid-project/wend and @fluid-project/wend-theme-beautiful
             if (!fs.existsSync(path.join(repoDir, "node_modules"))) {
                 fs.symlinkSync(path.join(harness.infusionDir, "node_modules"), path.join(repoDir, "node_modules"));
             }

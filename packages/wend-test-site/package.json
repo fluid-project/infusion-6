@@ -6,7 +6,7 @@
     "license": "(BSD-3-Clause OR ECL-2.0)",
     "dependencies": {
         "infusion-6": "*",
-        "wend": "*",
-        "wend-theme-beautiful": "*"
+        "@fluid-project/wend": "*",
+        "@fluid-project/wend-theme-beautiful": "*"
     }
 }

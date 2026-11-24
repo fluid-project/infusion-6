@@ -1,7 +1,18 @@
 # wend-theme-beautiful
 
 A theme for wend sites: the page furniture of [Beautiful Hugo](https://github.com/halogenica/beautifulhugo), as
-Infusion 6 layers. Published to npm from Infusion 6's repository, independently of Infusion itself.
+Infusion 6 layers. Published to npm as `@fluid-project/wend-theme-beautiful`, from Infusion 6's repository,
+independently of Infusion itself. It needs Infusion 6.6.0 or later.
+
+A site configures it in the `params` of its `wend.json`, as Beautiful Hugo's sites do in their `config.toml`. Beyond
+Beautiful Hugo's own parameters:
+
+- `customCSS` - the site's own stylesheets, linked after the theme's, e.g. `["css/site.css"]` - Beautiful Hugo's
+  `custom_css`
+- `mediaIcons` - the icons in the home page's header, each `{"title", "href", "icon"}`, `icon` being the classes of a
+  Font Awesome icon, e.g. `{"title": "GitHub profile", "href": "https://github.com/x", "icon": "fab fa-github-alt"}`
+- `giscus` - for the comments layer `beautifulWend.comments.giscus`, chosen by `commentsLayer`, the discussions
+  giscus.app gives for the site's repository: `{"repo", "repoId", "category", "categoryId"}`
 
 - `sfc/` - the document and its head, headers, navigation bar, footer, the main block of each kind of page, previews,
   pagers, tags, share links, related posts, comments and translated strings.

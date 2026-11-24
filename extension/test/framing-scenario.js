@@ -82,7 +82,7 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     expect(browser.confirmations.length === 2, "The panel's own commit is confirmed by the user too");
     expect(mock.commits.length === 1 && mock.commits[0].path === footerPath, "One commit, of the footer's SFC");
     expect(fs.existsSync(path.join(mock.repoDir, footerPath)) &&
-        !fs.readFileSync(path.join(mock.repoDir, "node_modules/wend-theme-beautiful/sfc/beautifulWend-footer.vue"), "utf8").includes(marker),
+        !fs.readFileSync(path.join(mock.repoDir, "node_modules/@fluid-project/wend-theme-beautiful/sfc/beautifulWend-footer.vue"), "utf8").includes(marker),
     "The commit forks the theme's footer into the site, leaving the theme's own unchanged");
     await mock.idle();
     expect(mock.runs.length === 1 && mock.runs[0].conclusion === "success", "The Action rebuilt the site: " +
