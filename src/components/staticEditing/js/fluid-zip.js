@@ -9,8 +9,12 @@
 //   components/[<member>/...]live.json    - the live values of a component, as a PTF "live" part holds them
 //   img/<name>                            - an image, written to the site's images as <name>
 // A ZIP file holding a PTF document itself, as a file ending ".ptf", is read as that document, and any images beside it.
-// Any other .vue or .js file is taken as a layer, named for its file, and an image anywhere is taken as if in img/. A
-// ZIP file with no potentia for its root but a single layer is a widget of that layer.
+// Any other .vue or .js file is taken as a layer, named for its file as fluid.pathToLayerName names an SFC's - e.g.
+// energy-driver.vue defines energy.driver - and an image anywhere is taken as if in img/. Each layer's file must define
+// the layer it is named for, since a site finds a layer by its file's name once published, and a script loaded by the
+// `src` of another file is refused, since a widget can't carry plain scripts. A ZIP file with no potentia for its root
+// is a widget of its only layer, or else of its driver - the one layer which no other of its files refers to, whether
+// by a <fluid-import> or <script> src, or by its name, e.g. in a `$layers` or `fluid-layers`.
 // Entries are read by the ZIP file's central directory, each stored or deflated - ZIP64 and encrypted entries are not.
 
 const fluidZipScope = function (fluid) {
@@ -113,6 +117,114 @@ const fluidZipScope = function (fluid) {
     fluid.zip.segsToFilename = segs => "/" + segs.map(seg => encodeURIComponent(seg)).join("/");
 
     /**
+     * Name the layer a file of a ZIP file defines, as Infusion's fluid.pathToLayerName names that of a Single File
+     * Component - e.g. "energy-driver.vue" defines energy.driver, and "fluid.demos.counter.vue" fluid.demos.counter
+     * @param {String} base - The file's name, without its directory
+     * @return {String} The layer's name
+     */
+    fluid.zip.fileToLayerName = base => base.substring(0, base.lastIndexOf(".")).replace(/-/g, ".");
+
+    /**
+     * Name the file a layer is held in, as the extension writes it to the site - see fluid.blockEditor.layerFile
+     * @param {String} layerName - The layer's name
+     * @param {String} extension - The file's extension, e.g. "vue"
+     * @return {String} The file's name, e.g. "energy-driver.vue"
+     */
+    fluid.zip.layerToFileName = (layerName, extension) => layerName.replace(/\./g, "-") + "." + extension;
+
+    /**
+     * Find the names of the layers a layer's text defines, by its calls to `fluid.def` with a literal name
+     * @param {String} text - The text
+     * @return {String[]} The names
+     */
+    fluid.zip.definedLayers = text => [...text.matchAll(/fluid\.def\(\s*["'`]([^"'`]+)["'`]\s*,/g)].map(match => match[1]);
+
+    /**
+     * Determine whether a text loads a file by the `src` of an element, e.g. a `<fluid-import>` or `<script>`
+     * @param {String} file - The file's name
+     * @param {String} text - The text
+     * @return {Boolean} `true` if it does
+     */
+    fluid.zip.loadsBySrc = (file, text) => new RegExp("src\\s*=\\s*[\"'](?:[^\"']*/)?" + fluid.zip.escapeRegExp(file) + "[\"']").test(text);
+
+    /**
+     * Escape a string to be matched literally within a regular expression
+     * @param {String} text - The string
+     * @return {String} It, escaped
+     */
+    fluid.zip.escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    /**
+     * Determine whether a layer's file is referred to by another of the widget's files - by the `src` of a
+     * `<fluid-import>` or `<script>`, by a `fluid-layers` attribute, or by its name as a string, e.g. in `$layers`
+     * @param {String} layerName - The layer's name
+     * @param {String} file - The name of its file
+     * @param {String} text - The text of another file
+     * @return {Boolean} `true` if that text refers to it
+     */
+    fluid.zip.refersTo = function (layerName, file, text) {
+        return new RegExp("[\"'`\\s]" + fluid.zip.escapeRegExp(layerName) + "[\"'`\\s,]").test(text) || fluid.zip.loadsBySrc(file, text);
+    };
+
+    /**
+     * Check the layers a ZIP file holds, that each will be found where the site looks for it once published: a Single
+     * File Component must define the layer its file is named for, since a site finds a layer by its file's name, and a
+     * script loaded by another file's `src` is not a layer, which a widget can't yet carry
+     * @param {Object[]} layerParts - The layer parts
+     * @param {String[]} layerFiles - The name of the file of each
+     */
+    fluid.zip.checkLayers = function (layerParts, layerFiles) {
+        const problems = [];
+        layerParts.forEach((part, i) => {
+            const file = layerFiles[i];
+            const others = layerParts.filter((other, j) => j !== i);
+            const defined = fluid.zip.definedLayers(part.body);
+            if (file.endsWith(".js") && others.some(other => fluid.zip.loadsBySrc(file, other.body))) {
+                problems.push(file + " is a script loaded by its src, which a widget can't carry - move its code into the " +
+                    "<script> of the SFC which loads it");
+            }
+            const missing = [...part.body.matchAll(/<fluid-import\s[^>]*src\s*=\s*["']([^"']+)["']/g)].map(match => match[1])
+                .filter(src => !src.startsWith("%") && !/^([a-z]+:)?\//i.test(src) && !layerFiles.includes(src.substring(src.lastIndexOf("/") + 1)));
+            if (missing.length > 0) {
+                problems.push(file + " imports " + missing.join(", ") + ", which the ZIP file doesn't hold");
+            }
+            if (defined.length > 0 && !defined.includes(part.filename)) {
+                const extension = file.substring(file.lastIndexOf(".") + 1);
+                problems.push(file + " defines " + defined.join(", ") + " but no " + part.filename + ", the layer its name gives - " +
+                    "a file defines the layer it is named for, e.g. " + fluid.zip.layerToFileName(defined[0], extension));
+            }
+        });
+        if (problems.length > 0) {
+            throw new Error("The ZIP file's layers can't be published as they are: " + problems.join("; "));
+        }
+    };
+
+    /**
+     * Find the root layer of a widget whose ZIP file names none in components/potentia.json - its only layer, or else
+     * its driver, the only one which none of its other files refers to
+     * @param {Object[]} layerParts - The layer parts
+     * @param {String[]} layerFiles - The name of the file of each
+     * @return {String} The root layer's name
+     */
+    fluid.zip.rootLayer = function (layerParts, layerFiles) {
+        const unreferred = layerParts.filter((part, i) => !layerParts.some((other, j) => j !== i &&
+            fluid.zip.refersTo(part.filename, layerFiles[i], other.body)));
+        let togo;
+        if (layerParts.length === 0) {
+            throw new Error("The ZIP file holds no widget - neither layers nor a .ptf file");
+        } else if (layerParts.length === 1) {
+            togo = layerParts[0].filename;
+        } else if (unreferred.length === 1) {
+            togo = unreferred[0].filename;
+        } else {
+            throw new Error("The ZIP file holds several layers but no components/potentia.json naming the widget's own, " +
+                "and its driver can't be told - " + (unreferred.length === 0 ? "each layer is referred to by another" :
+                unreferred.map(part => part.filename).join(", ") + " are each referred to by no other"));
+        }
+        return togo;
+    };
+
+    /**
      * @typedef {Object} ZipWidget
      * @property {String} [ptf] - The text of a PTF document the ZIP file holds, if it holds one
      * @property {Object[]} [parts] - Otherwise, the PTF parts its files make, `{kind, contentType, filename, body}`
@@ -129,6 +241,8 @@ const fluidZipScope = function (fluid) {
         const images = [];
         const layerParts = [];
         const componentParts = [];
+        // The name of the file of each layer part, in step with layerParts
+        const layerFiles = [];
         let ptf = null;
         entries.filter(entry => !fluid.zip.isIgnored(entry.name)).forEach(entry => {
             const name = entry.name.replace(/^\/+/, "");
@@ -145,20 +259,19 @@ const fluidZipScope = function (fluid) {
             } else if (/\.(vue|js)$/.test(base) || name.startsWith("layers/") && base.endsWith(".json")) {
                 const extension = base.substring(base.lastIndexOf(".") + 1);
                 layerParts.push({kind: "layer", contentType: fluid.zip.layerMimeTypes[extension],
-                    filename: base.substring(0, base.lastIndexOf(".")), body: decoder.decode(entry.bytes)});
+                    filename: fluid.zip.fileToLayerName(base), body: decoder.decode(entry.bytes)});
+                layerFiles.push(base);
             }
         });
         let togo;
         if (ptf !== null) {
             togo = {ptf, images};
         } else {
+            fluid.zip.checkLayers(layerParts, layerFiles);
             const hasRoot = componentParts.some(part => part.kind === "potentia" && part.filename === "/");
-            if (!hasRoot && layerParts.length === 1) {
+            if (!hasRoot) {
                 componentParts.unshift({kind: "potentia", contentType: fluid.zip.layerMimeTypes.json, filename: "/",
-                    body: JSON.stringify({$layers: [layerParts[0].filename]})});
-            } else if (!hasRoot) {
-                throw new Error(layerParts.length === 0 ? "The ZIP file holds no widget - neither layers/ nor a .ptf file" :
-                    "The ZIP file holds several layers but no components/potentia.json naming the widget's own");
+                    body: JSON.stringify({$layers: [fluid.zip.rootLayer(layerParts, layerFiles)]})});
             }
             togo = {parts: [...layerParts, ...componentParts], images};
         }

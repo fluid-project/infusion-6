@@ -21,6 +21,7 @@ fluid.def("fluid.staticEditor", {
             ready: false,
             path: "",
             status: "",
+            statusKind: "",
             stateText: "",
             claimState: "none",
             commitDisabled: true,
@@ -132,7 +133,7 @@ fluid.def("fluid.staticEditor", {
         <header><strong>Edit in Infusion</strong> <span class="fluid-edit-path">@{state.path}</span>
             <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
         <!-- Beneath the header, so that it is in view however long the source shown below it -->
-        <div class="fluid-edit-status">@{state.status}</div>
+        <div class="fluid-edit-status" data-fluid-status-kind="@{state.statusKind}" role="status">@{state.status}</div>
         <div class="fluid-edit-framing-row" hidden="@{state.framingRowHidden}">
             <label><input type="checkbox" class="fluid-edit-framing" checked="@{state.framing}"
                           @onchange="{self}.framingChanged({0})"> Also edit framing</label>
@@ -351,6 +352,17 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     font-size: 12px;
     color: #555;
     overflow-wrap: anywhere;
+}
+
+/* An error, in the colour the extension's popup shows its own in, set apart from the notes of progress */
+.fluid-edit-status[data-fluid-status-kind="error"] {
+    padding: 6px 10px;
+    border-left: 4px solid #b7410e;
+    border-radius: 3px;
+    background: #fdf0ea;
+    color: #b7410e;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 /* The framing of a page - e.g. its footer, rendered by an SFC shared by every page - marked by attributes alone, since

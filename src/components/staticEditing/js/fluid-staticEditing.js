@@ -258,7 +258,7 @@ const fluidStaticEditingScope = function (fluid) {
             }
             await fluid.staticEditing.markFraming(edit, framing);
         } catch (error) {
-            fluid.staticEditing.setStatus(edit, String(error.message || error));
+            fluid.staticEditing.setError(edit, error);
         }
         fluid.staticEditing.updatePanel(edit);
         fluid.staticEditing.updateBadge(edit);
@@ -616,7 +616,7 @@ const fluidStaticEditingScope = function (fluid) {
                 target.framing ? "Editing " + target.label + ", shared by every page of the site" +
                     (origin ? " - the site's own copy of it, " + target.path + ", is made on committing" : "") : "Editing the source of this page");
         } catch (error) {
-            fluid.staticEditing.setStatus(edit, String(error.message || error));
+            fluid.staticEditing.setError(edit, error);
         }
     };
 
@@ -971,7 +971,7 @@ const fluidStaticEditingScope = function (fluid) {
             if (redefined.length > 0) {
                 await fluid.staticEditing.ask(edit, {op: "registerLayers", layers: redefined, override: true});
             }
-        }).catch(error => fluid.staticEditing.setStatus(edit, "The pasted widget's files can't be held, since " + (error.message || error)));
+        }).catch(error => fluid.staticEditing.setError(edit, error, "The pasted widget's files can't be held, since "));
         return edit.filesPromise;
     };
 
@@ -989,7 +989,7 @@ const fluidStaticEditingScope = function (fluid) {
             fluid.staticEditing.ask(edit, {op: "widgetFromPTF", text, source: edit.source.getText()}).then(async ({markup, files}) => {
                 await fluid.staticEditing.addFiles(edit, files);
                 edit.source.insertBlock(markup);
-            }).catch(error => fluid.staticEditing.setStatus(edit, String(error.message || error)));
+            }).catch(error => fluid.staticEditing.setError(edit, error));
         }
         return taken;
     };
@@ -1008,7 +1008,7 @@ const fluidStaticEditingScope = function (fluid) {
             Promise.all(files.map(async file => ({name: file.name, type: file.type, content: fluid.staticEditing.encodeBytes(edit, new Uint8Array(await file.arrayBuffer()))})))
                 .then(files => fluid.staticEditing.takeDroppedFiles(edit, files))
                 .then(markdown => edit.source.insertBlock(markdown))
-                .catch(error => fluid.staticEditing.setStatus(edit, String(error.message || error)));
+                .catch(error => fluid.staticEditing.setError(edit, error));
         }
         return taken;
     };
@@ -1024,7 +1024,7 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.onBlockDrop = function (edit, {slot, files}) {
         return fluid.staticEditing.takeDroppedFiles(edit, files).then(markdown => fluid.staticEditing.ask(edit, {op: "fillSlot", slot, markdown}), error => {
-            fluid.staticEditing.setStatus(edit, String(error.message || error));
+            fluid.staticEditing.setError(edit, error);
             return fluid.staticEditing.ask(edit, {op: "fillSlot", slot, markdown: ""});
         });
     };
@@ -1214,6 +1214,18 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.setStatus = function (edit, text) {
         edit.state.status = text;
+        edit.state.statusKind = "";
+    };
+
+    /**
+     * Show an error in the panel's line of status, marked as one, so that it stands out from the panel's notes of progress
+     * @param {Object} edit - The controller
+     * @param {Error|String} error - The error
+     * @param {String} [prefix] - Text to precede the error's message
+     */
+    fluid.staticEditing.setError = function (edit, error, prefix) {
+        edit.state.status = (prefix || "") + String(error.message || error);
+        edit.state.statusKind = "error";
     };
 
     /**
@@ -1261,7 +1273,7 @@ const fluidStaticEditingScope = function (fluid) {
         if (on && !edit.resizeBarBound) {
             edit.resizeBarBound = true;
             fluid.staticEditing.ask(edit, {op: "bindResizeBar", bar: ".fluid-edit-resize-bar", panel: ".fluid-edit-panel"})
-                .catch(error => fluid.staticEditing.setStatus(edit, "The panel cannot be resized, since " + (error.message || error)));
+                .catch(error => fluid.staticEditing.setError(edit, error, "The panel cannot be resized, since "));
         }
         fluid.staticEditing.rememberSession(edit);
         fluid.staticEditing.showListHead(edit);
@@ -1279,7 +1291,7 @@ const fluidStaticEditingScope = function (fluid) {
             await fluid.staticEditing.showClaimOf(edit, claim.path, claim);
             fluid.staticEditing.setStatus(edit, claim.state === "committed" ? "Committed as " + claim.commitSha.substring(0, 7) : claim.message || "");
         } catch (error) {
-            fluid.staticEditing.setStatus(edit, String(error.message || error));
+            fluid.staticEditing.setError(edit, error);
         }
         fluid.staticEditing.poll(edit);
     };

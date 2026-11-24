@@ -233,6 +233,20 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
         return img && img.src.startsWith("blob:") && img.complete && img.naturalWidth > 0;
     }, {timeout: 15000});
     expect(true, "The widget's image shows before it is published, from a blob: URL");
+
+    // A ZIP file naming no widget of several layers is refused, the panel showing why as an error
+    const unnamed = makeZip({
+        "layers/fluid.tests.pictured.vue": Buffer.from(picturedSFC),
+        "layers/fluid.demos.counter.vue": Buffer.from(otherCounter)
+    });
+    await dropAt(1, "unnamed.zip", "application/zip", unnamed.toString("base64"));
+    await post.waitForSelector(".fluid-edit-status[data-fluid-status-kind=\"error\"]", {timeout: 15000});
+    const refusal = await post.$eval(".fluid-edit-status", node => ({text: node.textContent, colour: getComputedStyle(node).color}));
+    expect(refusal.text.includes("no components/potentia.json") && refusal.colour === "rgb(183, 65, 14)",
+        "A ZIP file of several layers naming none is refused, shown as an error: " + JSON.stringify(refusal));
+    if (process.env.EDIT_TEST_SHOT) {
+        await (await post.$(".fluid-edit-panel")).screenshot({path: process.env.EDIT_TEST_SHOT});
+    }
     await post.waitForFunction(() => document.querySelector("[fluid-layers=\"fluid.demos.counter\"]")?.textContent.includes("Pressed 1"), {timeout: 15000});
     expect(true, "The counter renders afresh from the layer the ZIP file brought, once its replacement is agreed");
     const zipClaim = await claimSatisfying(worker, claim => claim.files && claim.files["static/img/zip-cat.png"] && claim.text.includes(picturedLayer));

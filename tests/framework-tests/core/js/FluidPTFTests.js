@@ -1054,3 +1054,79 @@ QUnit.test("The potentia of a PTF document's nested components fold into an isla
     assert.equal(fluid.ptf.islandMarkup({layers: island.layers, potentia: {quote: "it's <b>"}}),
         `<div fluid-layers="a.b c.d" fluid-potentia='{"quote":"it&#39;s &lt;b>"}'></div>`, "Quotes in potentia escaped");
 });
+
+/**
+ * Make the files of a ZIP file, as fluid.zip.read reads them, from their texts
+ * @param {Object<String, String>} files - The text of each file, keyed by its path within the ZIP file
+ * @return {Object[]} `{name, bytes}` for each
+ */
+fluid.tests.ptf.zipEntries = files => Object.entries(files).map(([name, text]) => ({name, bytes: new TextEncoder().encode(text)}));
+
+/**
+ * Read the widget a ZIP file of texts holds, reporting any error as its message
+ * @param {Object<String, String>} files - The text of each file, keyed by its path within the ZIP file
+ * @return {Object} `{widget}`, or `{error}` - the message of the error reading it
+ */
+fluid.tests.ptf.readZip = function (files) {
+    let togo;
+    try {
+        togo = {widget: fluid.zip.toWidget(fluid.tests.ptf.zipEntries(files))};
+    } catch (error) {
+        togo = {error: error.message};
+    }
+    return togo;
+};
+
+fluid.tests.ptf.zipBase = `<script>
+fluid.def("zip.chartBase", {$layers: "fluid.component", title: ""});
+</script>
+<template><div>@{title}</div></template>`;
+
+fluid.tests.ptf.zipDriver = `<fluid-import src="./zip-chartBase.vue"></fluid-import>
+<script>
+fluid.def("zip.historyChart", {$layers: "zip.chartBase", title: "History"});
+fluid.def("zip.driver", {$layers: "fluid.component"});
+</script>
+<template><main><div fluid-layers="zip.historyChart"></div></main></template>`;
+
+QUnit.test("ZIP file of a driver and the layers it imports, with no potentia", function (assert) {
+    const {widget, error} = fluid.tests.ptf.readZip({
+        "zip-chartBase.vue": fluid.tests.ptf.zipBase,
+        "zip-driver.vue": fluid.tests.ptf.zipDriver
+    });
+    assert.equal(error, undefined, "The ZIP file is read");
+    assert.deepEqual(widget.parts.filter(part => part.kind === "layer").map(part => part.filename), ["zip.chartBase", "zip.driver"],
+        "Each file at the top level is a layer, named for its file as an SFC's is");
+    const root = widget.parts.find(part => part.kind === "potentia" && part.filename === "/");
+    assert.deepEqual(JSON.parse(root.body), {$layers: ["zip.driver"]}, "The root is the driver, the only layer no other file refers to");
+});
+
+QUnit.test("ZIP file whose layers can't be published as they are", function (assert) {
+    const misnamed = fluid.tests.ptf.readZip({
+        "zip-chart-base.vue": fluid.tests.ptf.zipBase,
+        "zip-driver.vue": fluid.tests.ptf.zipDriver.replace("zip-chartBase.vue", "zip-chart-base.vue")
+    });
+    assert.ok(misnamed.error.includes("zip-chart-base.vue defines zip.chartBase but no zip.chart.base") &&
+        misnamed.error.includes("zip-chartBase.vue"), "A file defining a layer other than its name gives is refused, naming the file it should be: " + misnamed.error);
+    const unheld = fluid.tests.ptf.readZip({"zip-driver.vue": fluid.tests.ptf.zipDriver});
+    assert.ok(unheld.error.includes("zip-driver.vue imports ./zip-chartBase.vue, which the ZIP file doesn't hold"),
+        "An import of a file the ZIP file doesn't hold is refused: " + unheld.error);
+    const script = fluid.tests.ptf.readZip({
+        "zip-core.js": "window.zip = {};",
+        "zip-chartBase.vue": "<script src=\"./zip-core.js\"></script>\n" + fluid.tests.ptf.zipBase,
+        "zip-driver.vue": fluid.tests.ptf.zipDriver
+    });
+    assert.ok(script.error.includes("zip-core.js is a script loaded by its src"), "A plain script loaded by its src is refused: " + script.error);
+    const twoRoots = fluid.tests.ptf.readZip({
+        "zip-chartBase.vue": fluid.tests.ptf.zipBase,
+        "zip-other.vue": "<script>\nfluid.def(\"zip.other\", {$layers: \"fluid.component\"});\n</script>"
+    });
+    assert.ok(twoRoots.error.includes("no components/potentia.json") && twoRoots.error.includes("zip.chartBase, zip.other"),
+        "Several layers of which none is the driver are refused, naming them: " + twoRoots.error);
+    const named = fluid.tests.ptf.readZip({
+        "zip-chartBase.vue": fluid.tests.ptf.zipBase,
+        "zip-other.vue": "<script>\nfluid.def(\"zip.other\", {$layers: \"fluid.component\"});\n</script>",
+        "components/potentia.json": JSON.stringify({$layers: ["zip.other"]})
+    });
+    assert.equal(named.error, undefined, "A root named by components/potentia.json needs no driver to be told");
+});
