@@ -2179,6 +2179,14 @@ const fluidViewScope = function (fluid) {
      */
     fluid.islandElements = new WeakSet();
 
+    /**
+     * Name the member of a component placed in a template by `fluid-layers` without a `fluid-id` - the last segment of
+     * its first layer's name, e.g. "historyChart" for "energy.historyChart"
+     * @param {String} layerName - The layer's name
+     * @return {String} The member name, or "" if the layer's name has none
+     */
+    fluid.layerMemberName = layerName => layerName.split(".").pop().replace(/[^\w$-]/g, "");
+
     // The attribute marking the root element of a page whose own component tree will be booted over the whole of it, e.g.
     // from its model - so that the document's self-boot effect boots none of its elements, e.g. the islands of its
     // content, which the page's components render as their children, as free components of their own
@@ -3327,7 +3335,9 @@ const fluidViewScope = function (fluid) {
      *
      * Nodes marked `verbatim`, as parsed by `fluid.parseVerbatimMarkup`, are not scanned for bindings, but any element
      * among them bearing `fluid-layers` is an island - it is rendered by a child component of `self` bearing those
-     * layers, whose member `dataset` holds the element's `data-` attributes.
+     * layers, whose member `dataset` holds the element's `data-` attributes. Its member is named by its `fluid-id`, or
+     * else allocated in order, e.g. "island-1". An element of the template itself bearing `fluid-layers` is an island
+     * too, named by its `fluid-id` or else for its first layer - see `allocateTemplateIsland`.
      *
      * An element bearing `@if` (or `@else`, following one bearing `@if`) is rendered only whilst its condition holds,
      * by a child component of `self` which exists only whilst it does - see `fluid.templateBlock`. An element bearing
@@ -3433,12 +3443,15 @@ const fluidViewScope = function (fluid) {
         }
 
         /**
-         * Allocate the child component of `self` rendering an island within verbatim markup
+         * Allocate the child component of `self` rendering an island - an element bearing `fluid-layers`, within verbatim
+         * markup or a template
          * @param {VNode} vnode - The element bearing `fluid-layers`
+         * @param {String} [givenName] - The child's member name - by default, its `fluid-id`, or else one allocated in
+         * order, e.g. "island-1"
          */
-        function allocateIsland(vnode) {
+        function allocateIsland(vnode, givenName) {
             const layers = vnode.attrs["fluid-layers"].split(/\s+/).filter(layer => layer);
-            const memberName = vnode.attrs["fluid-id"] || allocateJointName("island");
+            const memberName = givenName || vnode.attrs["fluid-id"] || allocateJointName("island");
             const parentTemplate = {
                 tag: vnode.tag,
                 attrs: {...vnode.attrs},
@@ -3483,6 +3496,35 @@ const fluidViewScope = function (fluid) {
             jointNames.push(memberName);
         }
 
+        // The members allocated for the islands of the template, as against verbatim markup - see allocateTemplateIsland
+        const templateIslandNames = new Set();
+
+        /**
+         * Allocate the child component of `self` rendering an element of a template bearing `fluid-layers` - named by
+         * its `fluid-id`, or else for its first layer, e.g. "historyChart" for "energy.historyChart", so that its name
+         * is stable however the template changes, and the PTF parts of its state are found again. Unlike a member
+         * holding a `$component` record placed by `@id`, it is not declared by a layer, so no layer can remove it with
+         * `null`. An element bearing both `@id` and `fluid-layers`, or naming a member already named by another, is an
+         * error, and is rendered as plain markup
+         * @param {VNode} vnode - The element
+         */
+        function allocateTemplateIsland(vnode) {
+            const layers = vnode.attrs["fluid-layers"].split(/\s+/).filter(layer => layer);
+            const memberName = vnode.attrs["fluid-id"] || fluid.layerMemberName(layers[0] || "");
+            if (vnode.attrs["@id"] || !memberName || templateIslandNames.has(memberName)) {
+                const why = vnode.attrs["@id"] ? "bears both @id and fluid-layers - place a component by one or the other" :
+                    !memberName ? "names no layer in its fluid-layers" :
+                        "names the member " + memberName + ", as another element of the template does - give each its own fluid-id";
+                fluid.log(fluid.logLevel.FAIL, `Error in template of component at path ${selfShadow.path}: an element ${why}`, vnode);
+                if (vnode.children !== undefined) {
+                    vnode.children = vnode.children.map(processVNode);
+                }
+            } else {
+                templateIslandNames.add(memberName);
+                allocateIsland(vnode, memberName);
+            }
+        }
+
         /**
          * Recursively processes a VNode by rendering any template strings found in its text or attributes
          * @param {VNode} vnode - The VNode to be processed.
@@ -3509,6 +3551,8 @@ const fluidViewScope = function (fluid) {
                 }
             } else if (vnode.blockCondition) {
                 allocateTemplateBlock(vnode);
+            } else if (typeof(vnode.attrs?.["fluid-layers"]) === "string") {
+                allocateTemplateIsland(vnode);
             } else if (vnode.attrs?.["@id"] && fluid.isRemovedMember(shadow, vnode.attrs["@id"])) {
                 omitRemovedMember(vnode);
             } else {

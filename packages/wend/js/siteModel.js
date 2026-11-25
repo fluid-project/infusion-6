@@ -36,7 +36,8 @@ wend.siteModel.loadHljs = function (file) {
 
 // The theme's highlight.js, which pages formerly loaded to highlight their code once loaded, and which the build
 // publishes for the editing client with the rest of the pipeline - see trace.js
-wend.siteModel.hljsFile = require("./site.js").staticFile("js/highlight.min.js");
+const wendSite = require("./site.js");
+wend.siteModel.hljsFile = wendSite.staticFile("js/highlight.min.js");
 
 // The site's markdown pipeline, shared with the editing client - see markdown.js
 const markdown = wendMarkdown.make({markdownIt, attrs: markdownItAttrs, footnote: markdownItFootnote, deflist: markdownItDeflist,
@@ -179,25 +180,24 @@ wend.siteModel.hashText = function (text) {
  * `siteDir` with "/" separators
  */
 wend.siteModel.hashSources = function (siteDir, extraPaths = []) {
-    const contentDir = path.join(siteDir, "content");
-    const content = wend.siteModel.listFiles(contentDir).filter(file => file.endsWith(".md")).map(file =>
-        [["content", ...file.split(path.sep)].join("/"), wend.siteModel.hashText(fs.readFileSync(path.join(contentDir, file), "utf8"))]);
+    // The site's complement of content, its bases' included - see wendSite.merge
+    const content = wendSite.list("content").filter(file => file.endsWith(".md")).map(file =>
+        ["content/" + file, wend.siteModel.hashText(fs.readFileSync(wendSite.resolve("content/" + file), "utf8"))]);
     const extra = extraPaths.filter(file => fs.existsSync(path.join(siteDir, file))).map(file =>
         [file, wend.siteModel.hashText(fs.readFileSync(path.join(siteDir, file), "utf8"))]);
     return Object.fromEntries([...content, ...extra]);
 };
 
 /**
- * Read one regular content page
- * @param {String} contentDir - The content directory
- * @param {String} relPath - The path of the markdown file relative to `contentDir`
+ * Read one regular content page, from the site's complement of content - its own, or a base's
+ * @param {String} relPath - The path of the markdown file relative to the content directory, with "/" separators
  * @param {String} baseURL - The site's base URL
  * @return {PageRecord} The page record
  */
-wend.siteModel.readPage = function (contentDir, relPath, baseURL) {
-    const {params, body} = wend.siteModel.splitFrontMatter(fs.readFileSync(path.join(contentDir, relPath), "utf8"));
+wend.siteModel.readPage = function (relPath, baseURL) {
+    const {params, body} = wend.siteModel.splitFrontMatter(fs.readFileSync(wendSite.resolve("content/" + relPath), "utf8"));
     // Hugo's path sanitisation - spaces become hyphens, and characters other than letters, digits and -._~ are dropped
-    const segments = relPath.replace(/\.md$/, "").split(path.sep)
+    const segments = relPath.replace(/\.md$/, "").split("/")
         .map(segment => segment.replace(/\s+/g, "-").replace(/[^\p{L}\p{N}\-._~]/gu, ""));
     const section = segments.length > 1 ? segments[0] : "";
     const relPermalink = "/" + segments.join("/") + "/";
@@ -213,7 +213,7 @@ wend.siteModel.readPage = function (contentDir, relPath, baseURL) {
         permalink: baseURL + relPermalink,
         outputPath: relPermalink + "index.html",
         params,
-        sourcePath: ["content", ...relPath.split(path.sep)].join("/"),
+        sourcePath: "content/" + relPath,
         content,
         ...wend.siteModel.summarise(content)
     };
@@ -262,7 +262,9 @@ wend.siteModel.patchFile = "wend.json";
  * @return {Object} The patch
  */
 wend.siteModel.readPatch = function (siteDir) {
-    return JSON.parse(fs.readFileSync(path.join(siteDir, wend.siteModel.patchFile), "utf8"));
+    // Merged over those of the site's bases, once it is merged with them - see wendSite.merge
+    return wendSite.files ? wendSite.readPatch(wend.siteModel.patchFile) :
+        JSON.parse(fs.readFileSync(path.join(siteDir, wend.siteModel.patchFile), "utf8"));
 };
 
 /**
@@ -286,11 +288,11 @@ wend.siteModel.patchOptions = function (patch) {
 wend.siteModel.load = function (siteDir) {
     const patch = wend.siteModel.readPatch(siteDir);
     const config = {...patch.config, baseURL: patch.config.baseURL.replace(/\/$/, "")};
-    const contentDir = path.join(siteDir, "content");
-    const files = wend.siteModel.listFiles(contentDir)
+    // The site's complement of content, its bases' included - see wendSite.merge
+    const files = wendSite.list("content")
         .filter(file => file.endsWith(".md") && !path.basename(file).startsWith("_index"));
     const byDateDesc = (a, b) => (b.date ?? "").localeCompare(a.date ?? "");
-    const regular = files.map(file => wend.siteModel.readPage(contentDir, file, config.baseURL))
+    const regular = files.map(file => wend.siteModel.readPage(file, config.baseURL))
         .filter(page => !page.params.draft).sort(byDateDesc);
 
     // Previous and next within each section, by date
@@ -307,7 +309,7 @@ wend.siteModel.load = function (siteDir) {
         permalink: config.baseURL + relPermalink, params: {}, content: "", summary: "", summaryText: "", ...extra
     });
 
-    const homeIndex = wend.siteModel.splitFrontMatter(fs.readFileSync(path.join(contentDir, "_index.md"), "utf8"));
+    const homeIndex = wend.siteModel.splitFrontMatter(fs.readFileSync(wendSite.resolve("content/_index.md"), "utf8"));
     const mainSections = config.mainSections ?? ["post"];
     const home = wend.siteModel.paginate(listPage("home", config.title, "/", {
         content: markdown.render(homeIndex.body)

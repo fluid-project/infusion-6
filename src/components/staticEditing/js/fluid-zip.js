@@ -169,7 +169,8 @@ const fluidZipScope = function (fluid) {
     /**
      * Check the layers a ZIP file holds, that each will be found where the site looks for it once published: a Single
      * File Component must define the layer its file is named for, since a site finds a layer by its file's name, and a
-     * script loaded by another file's `src` is not a layer, which a widget can't yet carry
+     * script loaded by another file's `src` is not a layer, which a widget can't yet carry. `{self}.container` is
+     * refused too: it names nothing, a component's element being its view's, and whatever waits on it never runs
      * @param {Object[]} layerParts - The layer parts
      * @param {String[]} layerFiles - The name of the file of each
      */
@@ -187,6 +188,10 @@ const fluidZipScope = function (fluid) {
                 .filter(src => !src.startsWith("%") && !/^([a-z]+:)?\//i.test(src) && !layerFiles.includes(src.substring(src.lastIndexOf("/") + 1)));
             if (missing.length > 0) {
                 problems.push(file + " imports " + missing.join(", ") + ", which the ZIP file doesn't hold");
+            }
+            if (/\{self\}\.container\b/.test(part.body)) {
+                problems.push(file + " refers to {self}.container, which no component has, so whatever waits on it never " +
+                    "runs - a component's element is {self}.view.container");
             }
             if (defined.length > 0 && !defined.includes(part.filename)) {
                 const extension = file.substring(file.lastIndexOf(".") + 1);

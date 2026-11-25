@@ -148,6 +148,11 @@ const handlers = {
     // The claims held on the sources of a repository beneath a path, e.g. the new posts of a section
     "claim-list": async message => (await fluidClaims.list()).filter(claim => claim.repo === message.repo && claim.path.startsWith(message.prefix)),
     "source-read": message => fluidGitHub.read(message.repo, message.branch, message.path),
+    // A source a site inherits from one of its bases, and the heads of its bases' branches - each read without
+    // credentials, since the page names the repository
+    "base-read": message => fluidGitHub.readPublic(message.repo, message.ref, message.path),
+    "base-heads": message => fluidGitHub.baseHeads(message.bases || []),
+    "bases-rebuild": message => fluidGitHub.rebuildFromBases(message),
     "signin-status": () => fluidGitHub.signInStatus(),
     // A page's report of what it is showing - marking the icon with a pencil while its editor is open, or while an edit
     // is held on it - see fluidEditBackground.markPage

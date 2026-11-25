@@ -107,6 +107,68 @@ fluidGitHub.read = async function (repo, branch, path) {
 };
 
 /**
+ * Read a file of a public repository without credentials - e.g. a source a site inherits from one of its bases, which a
+ * page may name, so that it must never lead the editor's token to a repository of its choosing
+ * @param {String} repo - The repository, "owner/name"
+ * @param {String} ref - The commit, or branch, to read it at
+ * @param {String} path - The path of the file
+ * @return {Promise<Object>} The file's `text`
+ */
+fluidGitHub.readPublic = async function (repo, ref, path) {
+    const response = await fetch(await fluidGitHub.contentsUrl(repo, path) + "?ref=" + encodeURIComponent(ref),
+        {headers: fluidGitHub.publicHeaders, credentials: "omit", cache: "no-store"});
+    if (response.ok) {
+        const body = await response.json();
+        return {text: fluidGitHub.decode(body.content)};
+    } else {
+        throw new Error("GitHub refused to read " + path + " of " + repo + ": " + response.status + " " + (await response.text()));
+    }
+};
+
+// The headers of a request made without credentials
+fluidGitHub.publicHeaders = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"};
+
+/**
+ * Find the commits at the heads of the branches of a site's bases, which are public repositories, without credentials
+ * @param {Object[]} bases - `{repo, branch, sha}` for each, as a site's trace records them
+ * @return {Promise<Object[]>} Each, with `head`, the commit at the head of its branch, or null if it can't be read
+ */
+fluidGitHub.baseHeads = async function (bases) {
+    const apiBase = await fluidGitHub.apiBase();
+    return Promise.all(bases.map(async base => {
+        let head = null;
+        try {
+            const response = await fetch(apiBase + "/repos/" + base.repo + "/commits/" + encodeURIComponent(base.branch),
+                {headers: fluidGitHub.publicHeaders, credentials: "omit", cache: "no-store"});
+            head = response.ok ? (await response.json()).sha || null : null;
+        } catch (error) {
+            head = null;
+        }
+        return {...base, head};
+    }));
+};
+
+/**
+ * Rebuild a site from newer commits of its bases, by committing its wend.bases.lock.json naming them - which sets off
+ * the site's workflow, as a commit of its sources does
+ * @param {Object} options - The rebuild
+ * @param {String} options.repo - The site's repository
+ * @param {String} options.branch - Its branch
+ * @param {Object[]} options.bases - `{repo, sha}` for each base to move on, `sha` the commit to build it at
+ * @return {Promise<Object>} As for `write`
+ */
+fluidGitHub.rebuildFromBases = async function ({repo, branch, bases}) {
+    const lockPath = "wend.bases.lock.json";
+    const current = await fluidGitHub.read(repo, branch, lockPath);
+    const lock = JSON.parse(current.text);
+    bases.forEach(base => {
+        lock[base.repo] = {...lock[base.repo], sha: base.sha};
+    });
+    return fluidGitHub.write({repo, branch, path: lockPath, text: JSON.stringify(lock, null, 4) + "\n", baseSha: current.sha,
+        message: "Rebuild from the latest commits of " + bases.map(base => base.repo).join(", ")});
+};
+
+/**
  * Write a file of a repository, only if it is still the file with the given sha
  * @param {Object} options - The write
  * @param {String} options.repo - The repository

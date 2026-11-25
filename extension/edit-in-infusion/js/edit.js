@@ -31,7 +31,7 @@
         // The key, in the page's sessionStorage, by which the panel remembers that it is open - see fluid.staticEditing.rememberSession
         sessionKey: "fluid-edit-open",
         // The kinds of request the panel may relay to the service worker
-        relayed: ["claim-get", "claim-put", "claim-remove", "claim-list", "claim-commit", "source-read", "fluid-provenance-found", "prefs-set"]
+        relayed: ["claim-get", "claim-put", "claim-remove", "claim-list", "claim-commit", "source-read", "base-read", "base-heads", "bases-rebuild", "fluid-provenance-found", "prefs-set"]
     };
 
     /**
@@ -103,7 +103,7 @@
             togo = !!message.claim && message.claim.repo === repo && message.claim.branch === branch;
         } else if (message.type === "claim-remove" || message.type === "claim-commit") {
             togo = ownId(message.id);
-        } else if (message.type === "source-read") {
+        } else if (message.type === "source-read" || message.type === "bases-rebuild") {
             togo = message.repo === repo && message.branch === branch;
         } else if (message.type === "claim-get" || message.type === "claim-list") {
             togo = message.repo === repo;

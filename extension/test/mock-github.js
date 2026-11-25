@@ -66,6 +66,14 @@ mockGitHub.copyTree = function (from, to, omit = []) {
  */
 
 /**
+ * A public repository holding a base of the site - see `bases` in wend's site.js
+ * @typedef {Object} MockBase
+ * @property {String} branch - Its branch
+ * @property {String} head - The commit at the head of its branch
+ * @property {Object<String, String>} versions - The working tree of each of its commits, by sha
+ */
+
+/**
  * Create a mock GitHub hosting one site
  * @param {Object} options - The mock's configuration
  * @param {String} options.siteDir - The site's working tree, copied into the scratch repository
@@ -77,6 +85,8 @@ mockGitHub.copyTree = function (from, to, omit = []) {
  * @param {Function} [options.prepare] - Receives the scratch repository's directory once it is copied, e.g. to write a
  * moduleOverrides.json5 naming checkouts by absolute paths
  * @param {String} [options.reusePages] - A site already built from the same tree, copied rather than built afresh
+ * @param {Object<String, MockBase>} [options.bases] - Public repositories the site is an overlay of, by "owner/name",
+ * read without credentials - each of whose `head` a scenario may move on, as its author commits to it
  * @return {Object} The mock - call `start` to build the site and begin serving it
  */
 mockGitHub.create = function (options) {
@@ -94,6 +104,7 @@ mockGitHub.create = function (options) {
         blobs: new Map(),
         trees: new Map(),
         gitCommits: new Map(),
+        bases: options.bases || {},
         server: null,
         url: null,
         queue: Promise.resolve()
@@ -294,6 +305,8 @@ mockGitHub.create = function (options) {
             res.writeHead(204, {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, PUT, POST, PATCH, OPTIONS",
                 "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-GitHub-Api-Version"});
             res.end();
+        } else if (req.method === "GET" && mock.handleBase(res, apiPath, query)) {
+            // A base of the site, read without credentials
         } else if (gitMatch && gitMatch[1] === options.repo) {
             await handleGit(req, res, gitMatch[2].split("/").map(decodeURIComponent).join("/"), query);
         } else if (!match || match[1] !== options.repo || !file) {
@@ -332,6 +345,40 @@ mockGitHub.create = function (options) {
         } else {
             reply(res, 405, {message: "Method not allowed"});
         }
+    };
+
+    /**
+     * Answer a read of a base of the site, a public repository - the commit at the head of its branch, or a file of one
+     * of its commits, by the Contents API
+     * @param {http.ServerResponse} res - The response
+     * @param {String} apiPath - The path of the request beneath /__github
+     * @param {URLSearchParams} query - The request's query
+     * @return {Boolean} `true` if it was a read of a base, and answered
+     */
+    mock.handleBase = function (res, apiPath, query) {
+        const commitMatch = apiPath.match(/^\/repos\/([^/]+\/[^/]+)\/commits\/(.+)$/);
+        const contentsMatch = apiPath.match(/^\/repos\/([^/]+\/[^/]+)\/contents\/(.+)$/);
+        const base = mock.bases[(commitMatch || contentsMatch || [])[1]];
+        let togo = false;
+        if (base && commitMatch) {
+            togo = true;
+            if (decodeURIComponent(commitMatch[2]) === base.branch) {
+                reply(res, 200, {sha: base.head});
+            } else {
+                reply(res, 404, {message: "No commit found"});
+            }
+        } else if (base && contentsMatch) {
+            togo = true;
+            const dir = base.versions[query.get("ref") || base.head];
+            const file = dir && path.resolve(dir, contentsMatch[2].split("/").map(decodeURIComponent).join("/"));
+            if (file && file.startsWith(dir + path.sep) && fs.existsSync(file)) {
+                const content = fs.readFileSync(file);
+                reply(res, 200, {type: "file", sha: mockGitHub.blobSha(content), encoding: "base64", content: content.toString("base64")});
+            } else {
+                reply(res, 404, {message: "Not Found"});
+            }
+        }
+        return togo;
     };
 
     const types = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json",

@@ -465,7 +465,9 @@ const fluidStaticEditingScope = function (fluid) {
         } else if (edit.creating && edit.targetPath === edit.creating.path) {
             togo = {path: edit.creating.path, hash: null, label: "A new post", framing: null, creating: true};
         } else if (edit.provenance.source && edit.targetPath === edit.provenance.source.path) {
-            togo = {path: edit.provenance.source.path, hash: edit.provenance.source.hash, label: "This page's content", framing: null, creating: false};
+            togo = {path: edit.provenance.source.path, hash: edit.provenance.source.hash, label: "This page's content", framing: null, creating: false,
+                // A source the site inherits from one of its bases, not yet its own - see `inherited` in the provenance
+                inherited: edit.provenance.source.inherited || null};
         }
         return togo;
     };
@@ -590,6 +592,10 @@ const fluidStaticEditingScope = function (fluid) {
         if (target && !target.framing) {
             fluid.staticEditing.learnSite(edit).then(() => fluid.staticEditing.learnHeadings(edit, edit.source.getText()));
         }
+        if (!edit.basesChecked) {
+            edit.basesChecked = true;
+            fluid.staticEditing.checkBases(edit);
+        }
     };
 
     /**
@@ -605,8 +611,12 @@ const fluidStaticEditingScope = function (fluid) {
             // A source of the framing which the site forks from one of its modules - e.g. its theme's footer - and has
             // not yet forked is read as published, and its first commit creates the fork - see `origin` in the provenance
             const origin = target.framing && target.framing.origin;
+            // A source inherited from one of the site's bases is read from the base, at the commit the site was built from,
+            // and its first commit likewise creates the site's own copy of it
+            const inherited = target.inherited;
             const source = origin ? {text: await (await fetch(new URL(origin, location.href), {cache: "no-store"})).text(), sha: undefined} :
-                await fluid.staticEditing.send(edit, {type: "source-read", repo: edit.provenance.repo, branch: edit.provenance.branch, path: target.path});
+                inherited ? {text: (await fluid.staticEditing.send(edit, {type: "base-read", repo: inherited.repo, ref: inherited.sha, path: inherited.path})).text, sha: undefined} :
+                    await fluid.staticEditing.send(edit, {type: "source-read", repo: edit.provenance.repo, branch: edit.provenance.branch, path: target.path});
             const hash = await fluid.staticEditing.hashText(edit, source.text);
             edit.bases[target.path] = {text: source.text, sha: source.sha, hash};
             if (edit.targetPath === target.path) {
@@ -614,7 +624,9 @@ const fluidStaticEditingScope = function (fluid) {
             }
             fluid.staticEditing.setStatus(edit, hash !== target.hash ? "The repository's source differs from the one this page was published from - edits are based on the repository's" :
                 target.framing ? "Editing " + target.label + ", shared by every page of the site" +
-                    (origin ? " - the site's own copy of it, " + target.path + ", is made on committing" : "") : "Editing the source of this page");
+                    (origin ? " - the site's own copy of it, " + target.path + ", is made on committing" : "") :
+                    inherited ? "Editing the source of this page, which this site inherits from " + inherited.repo + " - the site's own copy of it is made on committing" :
+                        "Editing the source of this page");
         } catch (error) {
             fluid.staticEditing.setError(edit, error);
         }
@@ -1103,22 +1115,30 @@ const fluidStaticEditingScope = function (fluid) {
         return path;
     };
 
+    // The MIME types of files held which are not images, by extension, as the site will serve them
+    fluid.staticEditing.fileTypes = {css: "text/css", js: "text/javascript", json: "application/json", vue: "text/plain",
+        txt: "text/plain", csv: "text/csv", pdf: "application/pdf", html: "text/html"};
+
     /**
-     * Show in the page the images held to be committed which it does not yet publish - those of a claim's further
-     * files, and those pending
+     * Show in the page the files held to be committed which the site does not yet publish - those of a claim's further
+     * files, and those pending, beneath static/: images wherever the page shows them, and, by the site's service worker
+     * if it publishes one, every file to whatever loads it, e.g. a stylesheet's `url()` or a widget's `fetch` - see
+     * previewWorker.js of wend
      * @param {Object} edit - The controller
      * @param {Object<String, ClaimFile>} files - Further files, by path, beside those pending
      * @return {Promise<Number>} The number of images previewed
      */
     fluid.staticEditing.previewImages = function (edit, files) {
-        const dir = fluid.staticEditing.imageDir(edit) + "/";
-        const images = Object.entries({...files, ...edit.pendingFiles}).filter(([path, file]) => path.startsWith(dir) && file && file.content)
+        const held = Object.entries({...files, ...edit.pendingFiles}).filter(([path, file]) => path.startsWith("static/") && file && file.content)
             .map(([path, file]) => {
                 const kind = fluid.staticEditing.sniffImage(edit, fluid.staticEditing.decodeBase64(edit, file.content));
-                return kind ? {url: new URL(fluid.sourceView.relativePath(edit.provenance.page, fluid.staticEditing.sitePathOf(edit, path)), location.href).href,
-                    type: kind.type, content: file.content} : null;
-            }).filter(image => image);
-        return images.length > 0 ? fluid.staticEditing.ask(edit, {op: "previewImages", images}) : Promise.resolve(0);
+                const extension = path.substring(path.lastIndexOf(".") + 1).toLowerCase();
+                return {url: new URL(fluid.sourceView.relativePath(edit.provenance.page, fluid.staticEditing.sitePathOf(edit, path)), location.href).href,
+                    type: kind ? kind.type : fluid.staticEditing.fileTypes[extension] || "application/octet-stream", content: file.content};
+            });
+        const worker = edit.provenance.previewWorker ? new URL(edit.provenance.previewWorker, location.href).href : null;
+        // With a worker, the files held are given even when there are none, so that it ceases to answer for any since published
+        return held.length > 0 || worker ? fluid.staticEditing.ask(edit, {op: "previewImages", images: held, worker}) : Promise.resolve(0);
     };
 
     /**
@@ -1208,6 +1228,76 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
+     * Check whether any base of the site, held as a git repository, has moved on since the site was built, and if so
+     * offer to rebuild the site from it - see `bases` in wend.site.json, and the site's trace
+     * @param {Object} edit - The controller
+     * @return {Promise<Object[]>} `{repo, branch, sha, head}` for each base which has moved on
+     */
+    fluid.staticEditing.checkBases = async function (edit) {
+        const trace = await fluid.staticEditing.fetchTrace(edit);
+        const bases = trace && trace.bases || [];
+        let stale = [];
+        if (bases.length > 0) {
+            try {
+                const heads = await fluid.staticEditing.send(edit, {type: "base-heads", bases});
+                stale = heads.filter(base => base.head && base.head !== base.sha);
+            } catch (error) {
+                stale = [];
+            }
+        }
+        edit.staleBases = stale;
+        edit.state.basesHidden = stale.length === 0;
+        edit.state.basesText = stale.length === 0 ? "" : (stale.length === 1 ? "This site's base " + stale[0].repo + " has" :
+            "This site's bases " + stale.map(base => base.repo).join(", ") + " have") + " changed since the site was last built.";
+        edit.state.basesDisabled = false;
+        return stale;
+    };
+
+    /**
+     * Rebuild the site from the latest commits of its bases which have moved on, by committing its record of the
+     * commits it builds them at, and reload the page once the site is published afresh
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once the rebuild is asked for
+     */
+    fluid.staticEditing.rebuildBases = async function (edit) {
+        const stale = edit.staleBases || [];
+        edit.state.basesDisabled = true;
+        try {
+            const result = await fluid.staticEditing.send(edit, {type: "bases-rebuild", repo: edit.provenance.repo, branch: edit.provenance.branch,
+                bases: stale.map(base => ({repo: base.repo, sha: base.head}))});
+            if (result.ok) {
+                edit.state.basesText = "Rebuilding the site from the latest of " + stale.map(base => base.repo).join(", ") +
+                    " - the page reloads once it is published.";
+                fluid.staticEditing.awaitBases(edit, stale);
+            } else {
+                edit.state.basesDisabled = false;
+                fluid.staticEditing.setError(edit, result.message);
+            }
+        } catch (error) {
+            edit.state.basesDisabled = false;
+            fluid.staticEditing.setError(edit, error);
+        }
+    };
+
+    /**
+     * Poll the published trace until it records the site built from the given commits of its bases, then reload the page
+     * @param {Object} edit - The controller
+     * @param {Object[]} bases - `{repo, head}` for each base rebuilt from
+     */
+    fluid.staticEditing.awaitBases = function (edit, bases) {
+        clearTimeout(edit.basesTimer);
+        edit.basesTimer = setTimeout(async function () {
+            const trace = await fluid.staticEditing.fetchTrace(edit);
+            const built = trace && bases.every(base => (trace.bases || []).some(one => one.repo === base.repo && one.sha === base.head));
+            if (built) {
+                location.reload();
+            } else {
+                fluid.staticEditing.awaitBases(edit, bases);
+            }
+        }, edit.pollInterval);
+    };
+
+    /**
      * Show a line of status in the panel
      * @param {Object} edit - The controller
      * @param {String} text - The status
@@ -1287,6 +1377,7 @@ const fluidStaticEditingScope = function (fluid) {
     fluid.staticEditing.commit = async function (edit) {
         fluid.staticEditing.setStatus(edit, "Committing - confirm the commit in the window the extension opens ...");
         try {
+            await fluid.staticEditing.flushInput(edit);
             const claim = await fluid.staticEditing.send(edit, {type: "claim-commit", id: fluid.staticEditing.claimOf(edit, edit.targetPath).id});
             await fluid.staticEditing.showClaimOf(edit, claim.path, claim);
             fluid.staticEditing.setStatus(edit, claim.state === "committed" ? "Committed as " + claim.commitSha.substring(0, 7) : claim.message || "");
@@ -1361,7 +1452,21 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.sourceChanged = function (edit, event) {
         clearTimeout(edit.inputTimer);
-        edit.inputTimer = setTimeout(() => fluid.staticEditing.onInput(edit, event.detail.text), 300);
+        edit.pendingInput = event.detail.text;
+        edit.inputTimer = setTimeout(() => fluid.staticEditing.flushInput(edit), 300);
+    };
+
+    /**
+     * Record at once any edit of the source view still awaiting its pause - see `sourceChanged` - e.g. before
+     * committing, so that what was typed or dropped a moment before is committed with the rest
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once it is recorded, or at once if none awaits
+     */
+    fluid.staticEditing.flushInput = function (edit) {
+        clearTimeout(edit.inputTimer);
+        const text = edit.pendingInput;
+        edit.pendingInput = undefined;
+        return text === undefined ? Promise.resolve() : fluid.staticEditing.onInput(edit, text);
     };
 
     /**

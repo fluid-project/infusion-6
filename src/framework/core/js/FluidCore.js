@@ -2,7 +2,7 @@
 
 const $fluidCoreJSScope = function (fluid) {
 
-    fluid.version = "Infusion 6.1.0";
+    fluid.version = "Infusion 6.7.0";
 
     // Export this for use in environments like node.js, where it is useful for
     // configuring stack trace behaviour

@@ -42,6 +42,20 @@ harness.buildSite = function (repoDir, outDir, commit) {
 };
 
 /**
+ * Place a site's bases beneath it at the commits its wend.bases.lock.json records, as wend-fetch-bases does
+ * @param {String} repoDir - The site's scratch repository
+ * @param {Object<String, MockBase>} bases - Its bases, by repository
+ */
+harness.fetchBases = function (repoDir, bases) {
+    const lock = JSON.parse(fs.readFileSync(path.join(repoDir, "wend.bases.lock.json"), "utf8"));
+    Object.entries(lock).forEach(([repo, {sha}]) => {
+        const target = path.join(repoDir, ".wend/bases", ...repo.split("/"));
+        fs.rmSync(target, {recursive: true, force: true});
+        fs.cpSync(bases[repo].versions[sha], target, {recursive: true});
+    });
+};
+
+/**
  * Start a mock GitHub hosting a wend site - by default packages/wend-test-site, which holds what the scenarios rely on.
  * Two environment variables choose what is built, for checking a release before it is published - e.g. a copy of the
  * site with tarballs made by `npm pack` installed into it, as scripts/testPacked.js makes:
@@ -54,6 +68,9 @@ harness.buildSite = function (repoDir, outDir, commit) {
  * @param {Number} [options.buildDelay] - How long each Action waits before building, in ms
  * @param {Function} [options.prepareRepo] - Receives the scratch repository's directory before it is first built, e.g.
  * to add files the scenario needs
+ * @param {Object<String, MockBase>} [options.bases] - The site's bases held as git repositories, which the mock serves
+ * as public repositories - each build fetches each at the commit the site's wend.bases.lock.json records, as
+ * wend-fetch-bases does, from the base's working tree for that commit
  * @return {Promise<Object>} The mock, serving
  */
 harness.startSite = async function (options = {}) {
@@ -67,7 +84,11 @@ harness.startSite = async function (options = {}) {
         repo: editing.repo,
         branch: editing.branch,
         buildDelay: options.buildDelay ?? 500,
-        build: harness.buildSite,
+        bases: options.bases,
+        build: options.bases ? (repoDir, outDir, commit) => {
+            harness.fetchBases(repoDir, options.bases);
+            return harness.buildSite(repoDir, outDir, commit);
+        } : harness.buildSite,
         // e.g. MOCK_GITHUB_REUSE=<a build of the same site>, while developing a scenario - the published site must be current
         reusePages: process.env.MOCK_GITHUB_REUSE,
         // The scratch repository is elsewhere, so the checkout of Infusion it builds with is named absolutely

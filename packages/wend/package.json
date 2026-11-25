@@ -1,6 +1,6 @@
 {
     "name": "@fluid-project/wend",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "//publishConfig": "Published under the fluid-project scope - npm refuses the bare name \"wend\" as too like the names of existing packages",
     "publishConfig": {
         "access": "public"
@@ -8,7 +8,8 @@
     "description": "Building, and editing in place, a static site of Infusion 6 components - the parts shared by any such site",
     "main": "js/buildSite.js",
     "bin": {
-        "wend-build": "js/buildSite.js"
+        "wend-build": "js/buildSite.js",
+        "wend-fetch-bases": "js/fetchBases.js"
     },
     "license": "ISC",
     "repository": {

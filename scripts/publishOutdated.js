@@ -21,6 +21,9 @@
 //                  then left alone
 // and any others are passed to each npm publish, e.g. --otp=123456. The GitHub release is made by the gh command, as
 // the account it is signed in to.
+//
+// First, fluid.version in src/framework/core/js/FluidCore.js is made to name the root package's version. If it didn't,
+// the file is rewritten and the release stops, since what is tagged must be committed - commit it and run again.
 
 const fs = require("fs");
 const path = require("path");
@@ -111,6 +114,38 @@ const tagAndRelease = function (release) {
 };
 
 const rootPackage = readPackage(".");
+
+// fluid.version, in FluidCore.js, names the version of Infusion, so that it can be inspected programmatically
+const fluidCorePath = path.join(root, "src/framework/core/js/FluidCore.js");
+const fluidVersionPattern = /fluid\.version = "Infusion [^"]*";/;
+
+/**
+ * Make FluidCore.js's `fluid.version` name the root package's version
+ * @return {Boolean} `true` if FluidCore.js was rewritten, `false` if it already named that version
+ */
+const syncFluidVersion = function () {
+    const text = fs.readFileSync(fluidCorePath, "utf8");
+    const wanted = "fluid.version = \"Infusion " + rootPackage.version + "\";";
+    if (!fluidVersionPattern.test(text)) {
+        throw new Error("Can't find the line fluid.version = \"Infusion ...\"; in " + fluidCorePath);
+    }
+    const synced = text.replace(fluidVersionPattern, wanted);
+    const changed = synced !== text;
+    if (changed) {
+        fs.writeFileSync(fluidCorePath, synced);
+    }
+    return changed;
+};
+
+if (syncFluidVersion()) {
+    const message = "Updated fluid.version in src/framework/core/js/FluidCore.js to \"Infusion " + rootPackage.version +
+        "\" - commit it, and run the release again";
+    if (dryRun) {
+        console.log(message);
+    } else {
+        throw new Error(message);
+    }
+}
 const candidates = [".", ...(rootPackage.workspaces || [])];
 const outdated = candidates.map(dir => ({dir, pkg: readPackage(dir)}))
     .filter(({pkg}) => !pkg.private)

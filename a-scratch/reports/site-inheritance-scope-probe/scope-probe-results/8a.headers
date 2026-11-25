@@ -1,0 +1,31 @@
+HTTP/2 201 
+date: Tue, 24 Nov 2026 22:21:08 GMT
+content-type: application/json; charset=utf-8
+content-length: 391
+cache-control: private, max-age=60, s-maxage=60
+vary: Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With
+etag: "07c137d9d03754c3d92d964ae5e09c9a85fb2a1e643012a5450244768dd43198"
+last-modified: Tue, 24 Nov 2026 22:20:40 GMT
+x-oauth-scopes: public_repo
+x-accepted-oauth-scopes: 
+github-authentication-token-expiration: 2026-12-24 22:12:03 UTC
+location: https://api.github.com/repos/amb26/wend-fork-test/pages
+x-github-media-type: github.v3; format=json
+x-github-api-version-selected: 2022-11-28
+access-control-expose-headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+access-control-allow-origin: *
+strict-transport-security: max-age=31536000; includeSubdomains; preload
+x-frame-options: deny
+x-content-type-options: nosniff
+x-xss-protection: 0
+referrer-policy: origin-when-cross-origin, strict-origin-when-cross-origin
+content-security-policy: default-src 'none'
+server: github.com
+x-ratelimit-limit: 5000
+x-ratelimit-remaining: 4993
+x-ratelimit-reset: 1795562373
+x-ratelimit-used: 7
+x-ratelimit-resource: core
+x-github-request-id: C40C:1E8D16:471D3:6B6EA:6B060DD3
+x-github-edge-region: uksouth
+

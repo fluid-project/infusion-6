@@ -124,8 +124,13 @@ wend.trace.templateFiles = function (siteDir) {
  * @return {String} The hash, as by `siteModel.hashText`
  */
 wend.trace.templateHash = function (siteDir, infusionVersion) {
-    const parts = wend.trace.templateFiles(siteDir).map(file => file + "\n" + siteModel.hashText(fs.readFileSync(path.join(siteDir, file), "utf8")));
-    return siteModel.hashText(["infusion-6@" + infusionVersion, ...parts].join("\n"));
+    // A file may be inherited from one of the site's bases - see wendSite.merge
+    const resolve = file => wendSite.files && wendSite.resolve(file) || path.join(siteDir, file);
+    const parts = wend.trace.templateFiles(siteDir).filter(file => fs.existsSync(resolve(file)))
+        .map(file => file + "\n" + siteModel.hashText(fs.readFileSync(resolve(file), "utf8")));
+    // The commit of each base held as a git repository stands for all of its files, its configuration amongst them
+    const bases = wendSite.gitBases().map(base => "base " + base.repo + "@" + base.sha);
+    return siteModel.hashText(["infusion-6@" + infusionVersion, ...bases, ...parts].join("\n"));
 };
 
 // The script, relative to the site's infusion directory, booting a page's whole component tree in the browser
@@ -323,26 +328,32 @@ wend.trace.headingsOf = function (html) {
 };
 
 /**
- * List the site's own static files which content may link to - its images and documents, not the theme's
- * @param {String} staticDir - The site's static directory
+ * List the static files of the site's complement - its own, and its bases' - and not those of its modules, e.g. the theme
+ * @return {String[]} Their paths beneath static/, with "/" separators, sorted
+ */
+wend.trace.siteStaticFiles = function () {
+    const complement = wendSite.complement();
+    return wendSite.list("static").filter(file => complement["static/" + file].site);
+};
+
+/**
+ * List the site's own static files which content may link to - its images and documents, its bases' included, not the theme's
  * @return {String[]} Their paths from the root of the site, e.g. "/img/pond.jpg", sorted
  */
-wend.trace.assetPaths = function (staticDir) {
-    return fs.existsSync(staticDir) ? siteModel.listFiles(staticDir).filter(file => /\.(png|jpe?g|gif|svg|webp|pdf)$/i.test(file))
-        .map(file => "/" + file.split(path.sep).join("/")).sort() : [];
+wend.trace.assetPaths = function () {
+    return wend.trace.siteStaticFiles().filter(file => /\.(png|jpe?g|gif|svg|webp|pdf)$/i.test(file)).map(file => "/" + file);
 };
 
 /**
  * Hash each of the site's static files, so that an editing client may tell when a file it committed - an image, or
- * an SFC of a widget - is published, as it tells by `sources` for content files
- * @param {String} siteDir - The site's working tree
+ * an SFC of a widget - is published, as it tells by `sources` for content files. They are those of the site's
+ * complement, its bases' included, and not its modules'
  * @return {Object<String, String>} The hash of each file beneath static/, as `siteModel.hashText` hashes text, keyed by
  * its path in the repository, e.g. "static/img/pond.jpg"
  */
-wend.trace.staticHashes = function (siteDir) {
-    const staticDir = path.join(siteDir, "static");
-    return fs.existsSync(staticDir) ? Object.fromEntries(siteModel.listFiles(staticDir).sort().map(file => ["static/" + file.split(path.sep).join("/"),
-        "sha256-" + crypto.createHash("sha256").update(fs.readFileSync(path.join(staticDir, file))).digest("hex")])) : {};
+wend.trace.staticHashes = function () {
+    return Object.fromEntries(wend.trace.siteStaticFiles().map(file => ["static/" + file,
+        "sha256-" + crypto.createHash("sha256").update(fs.readFileSync(wendSite.resolve("static/" + file))).digest("hex")]));
 };
 
 /**
@@ -389,7 +400,10 @@ wend.trace.make = function ({model, sources, template, infusionVersion, commit, 
         pages,
         // The site's own static files which may be linked to, e.g. images, by their paths from the root of the site
         assets: assets || [],
-        staticFiles: staticFiles || {}
+        staticFiles: staticFiles || {},
+        // The site's bases held as git repositories, each with the commit it is built at - by which an editing client
+        // tells when a base has moved on since, and offers to rebuild the site from it - see fetchBases.js
+        bases: wendSite.gitBases()
     };
 };
 
@@ -458,10 +472,9 @@ wend.trace.infusionDir = "js/infusion-6/";
 /**
  * List the files of Infusion to which the site refers - its content, as `/js/infusion-6/<path within Infusion>`, and its
  * SFCs, as that or as `%infusion-6/<path within Infusion>`
- * @param {String} siteDir - The directory holding the site
  * @return {String[]} The paths within Infusion, sorted
  */
-wend.trace.infusionReferences = function (siteDir) {
+wend.trace.infusionReferences = function () {
     const escaped = wend.trace.infusionDir.replace(/[/.-]/g, "\\$&");
     const pattern = new RegExp("(?:/" + escaped + "|%infusion-6/)([^\"'\\s)<>?#]+)", "g");
     const found = new Set();
@@ -469,7 +482,10 @@ wend.trace.infusionReferences = function (siteDir) {
         const text = fs.readFileSync(path.join(dir, file), "utf8");
         [...text.matchAll(pattern)].forEach(match => found.add(match[1]));
     });
-    scan(path.join(siteDir, "content"), ".md");
+    // The site's complement of content, its bases' included
+    wendSite.list("content").filter(file => file.endsWith(".md")).forEach(file => {
+        [...fs.readFileSync(wendSite.resolve("content/" + file), "utf8").matchAll(pattern)].forEach(match => found.add(match[1]));
+    });
     // The host document, e.g. importing Infusion's own components, such as the live examples of content
     [...fs.readFileSync(wendSite.host, "utf8").matchAll(pattern)].forEach(match => found.add(match[1]));
     [...Object.values(wendSite.modules), wendSite.overrides].filter(dir => fs.existsSync(dir)).forEach(dir => scan(dir, ".vue"));
@@ -539,14 +555,13 @@ wend.trace.imageDir = "img";
 wend.trace.layerOfFile = file => path.basename(file).replace(/\.(vue|js)$/, "").replace(/-/g, ".");
 
 /**
- * List the SFCs of widgets the site holds in static/sfc
- * @param {String} siteDir - The site's working tree
+ * List the SFCs of widgets the site holds in static/sfc - its own, and its bases'
  * @return {Object[]} `{file, layer}` for each, `file` relative to static/sfc
  */
-wend.trace.widgetFiles = function (siteDir) {
-    const dir = path.join(siteDir, "static", wend.trace.widgetDir);
-    return fs.existsSync(dir) ? siteModel.listFiles(dir).filter(file => file.endsWith(".vue")).sort()
-        .map(file => ({file: file.split(path.sep).join("/"), layer: wend.trace.layerOfFile(file)})) : [];
+wend.trace.widgetFiles = function () {
+    // The site's complement, its bases' widgets included
+    return wendSite.list("static/" + wend.trace.widgetDir).filter(file => file.endsWith(".vue"))
+        .map(file => ({file, layer: wend.trace.layerOfFile(file)}));
 };
 
 /**
@@ -585,7 +600,7 @@ wend.trace.publishMigration = function (siteDir, outDir, infusionDir, bootRecord
         // The same copy as content refers to, and pages booting Infusion load, so that a page which has booted it, e.g.
         // for a live island, is recognised as running this Infusion - see bridge.js in the "Edit in Infusion" extension
         framework: {root: wend.trace.publishInfusion(outDir, infusionDir,
-            [...new Set([bootRecord.bootPath, ...infusionFiles, ...wend.trace.infusionReferences(siteDir), ...wend.trace.editingFiles])].sort()),
+            [...new Set([bootRecord.bootPath, ...infusionFiles, ...wend.trace.infusionReferences(), ...wend.trace.editingFiles])].sort()),
         files: infusionFiles, bootPath: bootRecord.bootPath},
         // The script booting a page's whole component tree, published with wend's SFCs - see pageBoot.js
         pageBoot: modules.wend.root + wend.trace.pageBootFile
@@ -622,6 +637,34 @@ wend.trace.framingHashes = function (editing) {
         .map(framing => [framing.path, siteModel.hashText(fs.readFileSync(framing.effective, "utf8"))]));
 };
 
+// The service worker by which an editing client shows the files of edits held in the browser as if published, at the
+// root of the site - see previewWorker.js
+wend.trace.previewWorkerFile = "wend-preview-sw.js";
+
+/**
+ * Publish the service worker by which an editing client shows held files as if published, at the root of the site,
+ * which is the widest scope it may have - written only if changed
+ * @param {String} outDir - The publish directory
+ */
+wend.trace.publishPreviewWorker = function (outDir) {
+    const target = path.join(outDir, wend.trace.previewWorkerFile);
+    const text = fs.readFileSync(path.join(__dirname, "previewWorker.js"), "utf8");
+    if (!fs.existsSync(target) || fs.readFileSync(target, "utf8") !== text) {
+        fs.writeFileSync(target, text);
+    }
+};
+
+/**
+ * Describe where a source inherited from one of the site's bases may be read, for an editing client to base its edit on
+ * @param {String} sourcePath - The source's path in the site's repository
+ * @return {Object} `{inherited: {repo, sha, path}}` for a source inherited from a base held as a git repository, or else
+ * nothing
+ */
+wend.trace.inheritedSource = function (sourcePath) {
+    const from = wendSite.inheritedFrom(sourcePath);
+    return from && from.repo ? {inherited: {repo: from.repo, sha: from.sha, path: from.path}} : {};
+};
+
 /**
  * Make the provenance record of a page - what an editing client needs to find the source of the page and of its
  * blocks, and the trace by which to tell when an edit of them has been published
@@ -643,6 +686,8 @@ wend.trace.provenanceRecord = function (page, editing, sources, rendererScripts,
         repo: editing.repo,
         branch: editing.branch,
         trace: toRoot + wend.trace.traceFile,
+        // The service worker by which a client shows files held in the browser as if published - see previewWorker.js
+        previewWorker: toRoot + wend.trace.previewWorkerFile,
         page: page.relPermalink,
         // How a client boots the page's whole component tree over it - from the slice of the model it alone needs,
         // beside it, with the SFCs of the whole site
@@ -676,7 +721,10 @@ wend.trace.provenanceRecord = function (page, editing, sources, rendererScripts,
     // A page with a source of its own has blocks which can be edited
     if (page.sourcePath) {
         Object.assign(togo, {
-            source: {path: page.sourcePath, hash: sources[page.sourcePath]},
+            source: {path: page.sourcePath, hash: sources[page.sourcePath],
+                // A source inherited from a base held as a git repository names the commit it is read from - its first
+                // commit to the site's own repository makes the site's own copy of it
+                ...wend.trace.inheritedSource(page.sourcePath)},
             // Each block names the layers of the component which renders it, so that a client may boot one over it
             blocks: [{selector: "[data-fluid-block=\"markdown\"]", kind: "markdown", key: page.sourcePath + "#body", layers: ["wend.content"]}],
             // How the client renders a source as the build does: load these scripts, in order, into the page, and

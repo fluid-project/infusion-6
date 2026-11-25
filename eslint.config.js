@@ -49,6 +49,7 @@ module.exports = [{
         "packages/fluid-lint/src/fluidLint.js",
         "packages/wend/js/buildSite.js",
         "packages/wend/js/feeds.js",
+        "packages/wend/js/fetchBases.js",
         "packages/wend/js/markdown.js",
         "packages/wend/js/site.js",
         "packages/wend/js/siteModel.js",

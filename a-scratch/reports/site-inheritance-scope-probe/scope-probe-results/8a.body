@@ -1,0 +1,16 @@
+{
+  "url": "https://api.github.com/repos/amb26/wend-fork-test/pages",
+  "status": null,
+  "cname": null,
+  "custom_404": false,
+  "html_url": "https://amb26.github.io/wend-fork-test/",
+  "build_type": "legacy",
+  "source": {
+    "branch": "main",
+    "path": "/docs"
+  },
+  "public": true,
+  "protected_domain_state": null,
+  "pending_domain_unverified_at": null,
+  "https_enforced": true
+}

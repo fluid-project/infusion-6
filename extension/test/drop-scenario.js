@@ -6,8 +6,10 @@
 //  2. Pasted back with the caret within a paragraph, it splits the paragraph there, as a block of its own
 //  3. A widget dropped as a ZIP file - its layer, an image it shows, and the counter's layer defined otherwise than the
 //     site does - asks before replacing the counter's layer, renders at once showing its image before it is published,
-//     and holds its files in the claim
-//  4. An image dropped into the source view is written as markdown where it fell, named for the post, and previewed
+//     and holds its files in the claim. Another dropped onto it takes its place. A widget pressed on is shown selected,
+//     and copying it flashes "Copied"
+//  4. An image dropped into the source view is written as markdown where it fell, named for the post, and previewed. A
+//     widget dropped onto a widget's element there takes its place whole
 //  5. Committing makes one commit of the post and all its files, which the site publishes
 // Run with: node extension/test/drop-scenario.js
 
@@ -254,6 +256,41 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
         .every(file => zipClaim.files[file]) && Object.keys(zipClaim.files).length === 3 && !!zipClaim.files["static/sfc/fluid-demos-counter.vue"].baseSha,
     "The claim holds the widget's layers and its image, the counter's replacing the site's: " + JSON.stringify(zipClaim && Object.keys(zipClaim.files || {})));
 
+    // Another widget dropped onto the first takes its place, rather than joining it
+    const picturedSelector = "[fluid-layers=\"" + picturedLayer + "\"]";
+    const picturedLines = source => source.split("\n").filter(line => line.includes("fluid-layers=\"" + picturedLayer + "\""));
+    const captioned = caption => makeZip({
+        "layers/fluid.tests.pictured.vue": Buffer.from(picturedSFC),
+        "components/potentia.json": Buffer.from(JSON.stringify({$layers: [picturedLayer], caption})),
+        "img/zip-cat.png": Buffer.from(pixel, "base64")
+    });
+    await dropAt(picturedSelector, "displacing.zip", "application/zip", captioned("Displacing").toString("base64"));
+    const displaced = await sourceSatisfying(post, source => source.includes("Displacing"));
+    expect(picturedLines(displaced).length === 1 && !displaced.includes("From a ZIP"),
+        "A widget dropped onto another takes its place: " + JSON.stringify(picturedLines(displaced)));
+    await post.waitForFunction(selector => document.querySelector(selector + " figcaption")?.textContent === "Displacing",
+        {timeout: 15000}, picturedSelector);
+    expect(true, "The displacing widget renders in its place");
+
+    // A widget pressed on is shown selected, and copying it flashes "Copied"
+    const copiedWidget = await post.evaluate(selector => {
+        document.querySelector(selector).dispatchEvent(new PointerEvent("pointerdown", {bubbles: true}));
+        const island = document.querySelector(selector);
+        const selected = island.hasAttribute("data-fluid-block-selected") && getComputedStyle(island).outlineStyle === "solid";
+        document.getSelection().removeAllRanges();
+        const clipboardData = new DataTransfer();
+        island.dispatchEvent(new ClipboardEvent("copy", {clipboardData, bubbles: true, cancelable: true}));
+        const flash = document.querySelector(".fluid-block-flash");
+        return {selected, ptf: clipboardData.getData("text/plain"), flash: flash && flash.textContent};
+    }, picturedSelector);
+    expect(copiedWidget.selected, "A widget pressed on is shown selected");
+    expect(/^MIME-Version: 1\.0/.test(copiedWidget.ptf) && copiedWidget.ptf.includes(picturedLayer) && copiedWidget.flash === "Copied",
+        "Copying the selected widget puts it on the clipboard, flashing \"Copied\": " + JSON.stringify({flash: copiedWidget.flash}));
+    await post.waitForFunction(() => !document.querySelector(".fluid-block-flash"), {timeout: 5000});
+    expect(true, "The flash goes once it has faded");
+    await post.evaluate(() => document.querySelector("p[data-fluid-block=\"editable\"]").dispatchEvent(new PointerEvent("pointerdown", {bubbles: true})));
+    expect(!(await post.$(picturedSelector + "[data-fluid-block-selected]")), "Pressing elsewhere selects the widget no longer");
+
     // 4. Drop an image into the source view
     await post.evaluate(() => {
         const details = document.querySelector(".fluid-edit-source");
@@ -267,9 +304,53 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
     await post.waitForFunction(() => [...document.querySelectorAll("img[data-fluid-preview-of]")].some(img =>
         img.getAttribute("data-fluid-preview-of").endsWith("ui-as-code-1.png") && img.complete && img.naturalWidth > 0), {timeout: 15000});
     expect(true, "The dropped image shows in the post before it is published");
+    // Whatever loads it, not only an <img> - the site's service worker answers for the files held
+    const loaded = await post.evaluate(async () => {
+        await navigator.serviceWorker.ready;
+        const url = new URL("../../img/ui-as-code-1.png", location.href).href;
+        const response = await fetch(url, {cache: "no-store"});
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const element = document.createElement("div");
+        element.style.cssText = "width: 1px; height: 1px; background-image: url(" + JSON.stringify(url) + ")";
+        document.body.appendChild(element);
+        // The background loads through the worker too, which the Performance API records as served
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const entry = performance.getEntriesByName(url).find(one => one.initiatorType === "css");
+        element.remove();
+        return {status: response.status, png: bytes[0] === 0x89 && bytes[1] === 0x50, controlled: !!navigator.serviceWorker.controller,
+            css: entry ? entry.responseStatus : null};
+    });
+    expect(loaded.controlled && loaded.status === 200 && loaded.png && loaded.css === 200,
+        "The site's service worker serves the held image to a fetch and to a stylesheet's url() before it is published: " + JSON.stringify(loaded));
     const imageClaim = await claimSatisfying(worker, claim => claim.files && claim.files["static/img/ui-as-code-1.png"] && claim.text.includes("ui-as-code-1.png"));
     expect(!!imageClaim && Object.keys(imageClaim.files).length === 4, "The claim holds the image beside the widget's files: " +
         JSON.stringify(imageClaim && Object.keys(imageClaim.files || {})));
+
+    // A widget dropped onto a widget's element in the source view takes its place, rather than splitting it
+    const sourceIslandLine = await post.evaluate(async layer => {
+        const scroller = document.querySelector(".fluid-edit-source-view .cm-scroller");
+        // CodeMirror renders only the lines near its viewport, amongst spacers - the line is found, and marked to drop onto
+        const find = () => [...document.querySelectorAll(".fluid-edit-source-view .cm-line")]
+            .find(line => line.textContent.includes("fluid-layers=\"" + layer + "\""));
+        let line = find();
+        for (let top = 0; !line && top < scroller.scrollHeight; top += 200) {
+            scroller.scrollTop = top;
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            line = find();
+        }
+        if (line) {
+            line.scrollIntoView({block: "center"});
+            line.setAttribute("data-test-island-line", "");
+        }
+        return !!line;
+    }, picturedLayer);
+    expect(sourceIslandLine, "The widget's element shows in the source view");
+    await dropAt(".fluid-edit-source-view [data-test-island-line]", "source.zip", "application/zip",
+        captioned("From the source view").toString("base64"));
+    const sourceDisplaced = await sourceSatisfying(post, source => source.includes("From the source view"));
+    expect(picturedLines(sourceDisplaced).length === 1 && !sourceDisplaced.includes("Displacing") &&
+        picturedLines(sourceDisplaced)[0].trim().startsWith("<div") && picturedLines(sourceDisplaced)[0].trim().endsWith("</div>"),
+    "A widget dropped onto a widget's element in the source view takes its place whole: " + JSON.stringify(picturedLines(sourceDisplaced)));
 
     // 5. Commit, and find all published
     await post.click(".fluid-edit-commit");
@@ -282,7 +363,8 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
     expect(fs.readFileSync(path.join(mock.pagesDir, "img/zip-cat.png")).equals(Buffer.from(pixel, "base64")) &&
         fs.readFileSync(path.join(mock.pagesDir, "img/ui-as-code-1.png")).equals(Buffer.from(redPixel, "base64")), "Both images are published");
     const published = fs.readFileSync(path.join(mock.pagesDir, postPath, "index.html"), "utf8");
-    expect(published.includes("From a ZIP") && published.includes("ui-as-code-1.png"), "The post is published showing the widget and the image");
+    expect(published.includes("From the source view") && published.includes("ui-as-code-1.png"), "The post is published showing the widget and the image: " +
+        JSON.stringify({caption: (published.match(/<figcaption[^>]*>([^<]*)/) || [])[1], widgets: (published.match(/fluid-potentia='[^']*'/g) || [])}));
     expect(post.errors.length === 0, "No errors in the page: " + post.errors.join("; "));
 }, {
     prepareRepo: repoDir => {

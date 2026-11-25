@@ -22,6 +22,10 @@ fluid.def("fluid.staticEditor", {
             path: "",
             status: "",
             statusKind: "",
+            // A notice that a base of the site has moved on since it was built, offering to rebuild it
+            basesHidden: true,
+            basesText: "",
+            basesDisabled: false,
             stateText: "",
             claimState: "none",
             commitDisabled: true,
@@ -73,6 +77,12 @@ fluid.def("fluid.staticEditor", {
         $method: {
             func: "fluid.staticEditing.framingChanged",
             args: ["{self}.controller", "{0}:event"]
+        }
+    },
+    rebuildBases: {
+        $method: {
+            func: "fluid.staticEditing.rebuildBases",
+            args: ["{self}.controller"]
         }
     },
     editConfig: {
@@ -134,6 +144,8 @@ fluid.def("fluid.staticEditor", {
             <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
         <!-- Beneath the header, so that it is in view however long the source shown below it -->
         <div class="fluid-edit-status" data-fluid-status-kind="@{state.statusKind}" role="status">@{state.status}</div>
+        <div class="fluid-edit-bases" hidden="@{state.basesHidden}"><span>@{state.basesText}</span>
+            <button class="fluid-edit-rebuild" disabled="@{state.basesDisabled}" @onclick="{self}.rebuildBases()">Rebuild from it</button></div>
         <div class="fluid-edit-framing-row" hidden="@{state.framingRowHidden}">
             <label><input type="checkbox" class="fluid-edit-framing" checked="@{state.framing}"
                           @onchange="{self}.framingChanged({0})"> Also edit framing</label>
@@ -352,6 +364,23 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     font-size: 12px;
     color: #555;
     overflow-wrap: anywhere;
+}
+
+/* A notice that a base of the site has moved on, offering to rebuild it */
+.fluid-edit-bases {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 6px 10px;
+    border-left: 4px solid #2b6cb0;
+    border-radius: 3px;
+    background: #ebf4ff;
+    font-size: 13px;
+}
+
+.fluid-edit-bases[hidden] {
+    display: none;
 }
 
 /* An error, in the colour the extension's popup shows its own in, set apart from the notes of progress */

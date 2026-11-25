@@ -1645,6 +1645,56 @@ QUnit.test("Verbatim markup with component islands", function (assert) {
     that.destroy();
 });
 
+fluid.def("fluid.tests.templateIslands", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="host"><div class="first" fluid-layers="fluid.tests.island" data-src="a.png" data-caption="A"></div>` +
+                `<span class="second" fluid-layers="fluid.tests.islandCaption" fluid-id="named" data-src="b.png" data-image-caption="B"></span></div>`
+        }
+    }
+});
+
+QUnit.test("Elements of a template bearing fluid-layers rendered as named child components", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.templateIslands({container});
+    fluid.cell.stabilize();
+    const children = that[fluid.metadataSymbol].childComponents;
+    assert.ok(children.island && fluid.hasLayer(children.island.that, "fluid.tests.island"),
+        "An element with no fluid-id is the child named for its first layer's last segment");
+    assert.equal(qs(".first img", container).getAttribute("src"), "a.png", "It renders by its layers, reading its dataset");
+    assert.ok(children.named && fluid.hasLayer(children.named.that, "fluid.tests.islandCaption"), "An element's fluid-id names its child");
+    assert.equal(qs(".second figcaption", container).textContent, "B", "It renders by its own layers");
+    assert.equal(children["island-1"], undefined, "No child is named in order, as one in verbatim markup is");
+
+    that.destroy();
+});
+
+fluid.def("fluid.tests.faultyTemplateIslands", {
+    $layers: "fluid.component",
+    view: {
+        $component: {
+            $layers: "fluid.templateViewComponent",
+            template: `<div class="host"><div class="one" fluid-layers="fluid.tests.island" data-src="a.png"></div>` +
+                `<div class="two" fluid-layers="fluid.tests.island" data-src="b.png"></div>` +
+                `<div class="both" @id="both" fluid-layers="fluid.tests.island" data-src="c.png"></div></div>`
+        }
+    }
+});
+
+QUnit.test("Elements of a template bearing fluid-layers which can't be named are errors, rendered as plain markup", function (assert) {
+    const container = qs(".container");
+    const that = fluid.tests.faultyTemplateIslands({container});
+    fluid.cell.stabilize();
+    const childNames = Object.keys(that[fluid.metadataSymbol].childComponents).filter(name => name !== "view");
+    assert.deepEqual(childNames, ["island"], "Only the first of two elements naming the same member has a child");
+    assert.equal(qs(".one img", container).getAttribute("src"), "a.png", "The first renders");
+    assert.equal(qs(".two img", container), null, "The second is rendered as plain markup");
+    assert.equal(qs(".both img", container), null, "An element bearing both @id and fluid-layers is rendered as plain markup");
+    that.destroy();
+});
+
 fluid.def("fluid.tests.siteUrls", {
     $layers: "fluid.component",
     stylesheet: "/css/main.css",

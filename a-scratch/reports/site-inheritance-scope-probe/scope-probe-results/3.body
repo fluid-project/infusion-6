@@ -1,0 +1,18 @@
+{
+  "name": "probe.yml",
+  "path": ".github/workflows/probe.yml",
+  "sha": "5fca12de2e84b05fe657142d1815abeca235094b",
+  "size": 116,
+  "url": "https://api.github.com/repos/amb26/wend-fork-test/contents/.github/workflows/probe.yml?ref=main",
+  "html_url": "https://github.com/amb26/wend-fork-test/blob/main/.github/workflows/probe.yml",
+  "git_url": "https://api.github.com/repos/amb26/wend-fork-test/git/blobs/5fca12de2e84b05fe657142d1815abeca235094b",
+  "download_url": "https://raw.githubusercontent.com/amb26/wend-fork-test/main/.github/workflows/probe.yml",
+  "type": "file",
+  "content": "bmFtZTogcHJvYmUKb246IFtwdXNoLCB3b3JrZmxvd19kaXNwYXRjaF0Kam9i\nczoKICBwcm9iZToKICAgIHJ1bnMtb246IHVidW50dS1sYXRlc3QKICAgIHN0\nZXBzOgogICAgICAtIHJ1bjogZWNobyBvawo=\n",
+  "encoding": "base64",
+  "_links": {
+    "self": "https://api.github.com/repos/amb26/wend-fork-test/contents/.github/workflows/probe.yml?ref=main",
+    "git": "https://api.github.com/repos/amb26/wend-fork-test/git/blobs/5fca12de2e84b05fe657142d1815abeca235094b",
+    "html": "https://github.com/amb26/wend-fork-test/blob/main/.github/workflows/probe.yml"
+  }
+}

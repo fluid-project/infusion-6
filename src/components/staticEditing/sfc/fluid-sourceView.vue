@@ -293,11 +293,26 @@ fluid.sourceView.bind = function (parent) {
     };
     that.focus = () => view.focus();
     // Insert text at the cursor, as its own block - set off by blank lines, splitting the line the cursor is within -
-    // as the user's edit
+    // as the user's edit. A widget inserted within another widget's element takes its place, rather than splitting it
     that.insertBlock = function (text) {
         const doc = view.state.doc;
         const head = view.state.selection.main.head;
         const line = doc.lineAt(head);
+        const island = fluid.sourceView.isIsland(text) ? fluid.sourceView.islandBlockAt(doc, line.number) : null;
+        if (island) {
+            view.dispatch({changes: {from: island.from, to: island.to, insert: text}, selection: {anchor: island.from + text.length}});
+        } else {
+            that.insertBetween(text, head, line);
+        }
+    };
+    /**
+     * Insert text at a position, as its own block, splitting the line holding it
+     * @param {String} text - The text
+     * @param {Number} head - The position
+     * @param {Line} line - The line holding it
+     */
+    that.insertBetween = function (text, head, line) {
+        const doc = view.state.doc;
         const before = doc.sliceString(line.from, head);
         const after = doc.sliceString(head, line.to);
         const previous = line.number > 1 ? doc.line(line.number - 1).text : "";
@@ -317,6 +332,42 @@ fluid.sourceView.bind = function (parent) {
         }
     });
     return that;
+};
+
+// The opening of an element bearing `fluid-layers` - a widget's island, as fluid.ptf.islandMarkup writes it
+fluid.sourceView.islandOpening = /^\s*<[a-zA-Z][\w-]*\s[^>]*\bfluid-layers\s*=/;
+
+/**
+ * Determine whether text to be inserted is a widget's element alone - a single block opening with an element bearing
+ * `fluid-layers`
+ * @param {String} text - The text
+ * @return {Boolean} `true` if it is
+ */
+fluid.sourceView.isIsland = text => fluid.sourceView.islandOpening.test(text) && !/\n\s*\n/.test(text.trim());
+
+/**
+ * Find the widget's element a line lies within - the block of lines, unbroken by a blank line, holding the line and
+ * opening with an element bearing `fluid-layers`, as markdown takes an HTML block
+ * @param {Text} doc - The CodeMirror document
+ * @param {Number} lineNumber - The line's number, counting from 1
+ * @return {Object|null} `{from, to}`, the positions of the block, or null if the line is in no widget's element
+ */
+fluid.sourceView.islandBlockAt = function (doc, lineNumber) {
+    let togo = null;
+    if (doc.line(lineNumber).text.trim() !== "") {
+        let first = lineNumber;
+        while (first > 1 && doc.line(first - 1).text.trim() !== "") {
+            --first;
+        }
+        let last = lineNumber;
+        while (last < doc.lines && doc.line(last + 1).text.trim() !== "") {
+            ++last;
+        }
+        if (fluid.sourceView.islandOpening.test(doc.line(first).text)) {
+            togo = {from: doc.line(first).from, to: doc.line(last).to};
+        }
+    }
+    return togo;
 };
 
 /**

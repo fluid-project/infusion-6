@@ -121,31 +121,13 @@ const listHtmlFiles = function (dir) {
 };
 
 /**
- * Copy a directory's contents into another, recursively, overwriting files of the same name - `fs.cpSync`, which node
- * 16.6 lacks
- * @param {String} source - The directory to copy from
- * @param {String} target - The directory to copy into, created if absent
- */
-const copyDir = function (source, target) {
-    fs.mkdirSync(target, {recursive: true});
-    fs.readdirSync(source, {withFileTypes: true}).forEach(entry => {
-        const from = path.join(source, entry.name), to = path.join(target, entry.name);
-        if (entry.isDirectory()) {
-            copyDir(from, to);
-        } else {
-            fs.copyFileSync(from, to);
-        }
-    });
-};
-
-/**
  * Remove HTML files left in the publish directory by an earlier build which this build neither wrote nor copied, e.g.
  * the page of a content file since renamed
- * @param {String[]} staticDirs - The static directories copied into the publish directory
+ * @param {String[]} staticFiles - The static files copied into the publish directory, by their paths within it
  * @param {String[]} rendered - The files of the documents rendered by this build
  */
-const pruneStale = function (staticDirs, rendered) {
-    const keep = new Set([...rendered, ...staticDirs.flatMap(dir => listHtmlFiles(dir).map(file => path.join(outDir, path.relative(dir, file))))]);
+const pruneStale = function (staticFiles, rendered) {
+    const keep = new Set([...rendered, ...staticFiles.filter(file => file.endsWith(".html")).map(file => path.join(outDir, file))]);
     listHtmlFiles(outDir).filter(file => !keep.has(file)).forEach(file => {
         fs.rmSync(file);
         report("Removed stale " + path.relative(outDir, file));
@@ -163,36 +145,47 @@ const outputPathsByPermalink = function (model) {
 };
 
 const main = async function () {
+    // The site's complement of files - its own, overlaying those of its bases and its modules' static files - see site.js
+    const complement = wendSite.merge(fluid);
+    wendSite.sites.filter(one => one.base).forEach(one => report("Inheriting from base " + (one.base.repo || wendSite.rel(one.dir)) + ": " +
+        Object.values(complement).filter(file => file.site === one).length + " files"));
+    wendSite.shadowed.forEach(file => report("The site's " + file + " takes the place of a base's"));
     // The host document holds no markup of its own - it only declares the modules and SFC imports
     // Each module named by the overrides, and Infusion, has its files read from its checkout, wherever site.html
     // locates it
-    const moduleSources = Object.fromEntries(overrides.map(entry => [entry.moduleName, entry.baseDir]));
+    // The site's modules are read from the directories wend.site.json names, so that a host document inherited from a
+    // base, whose relative paths lead to node_modules which only the site built has, finds them - see site.js
+    const moduleSources = {...wendSite.modules, ...Object.fromEntries(overrides.map(entry => [entry.moduleName, entry.baseDir]))};
     moduleSources["infusion-6"] = infusionDir;
     const hostDocument = fluid.loadAndBootDocument(wendSite.host, {moduleSources});
     // The site's forks of its modules' SFCs stand in place of the modules' own - each is defined from the fork's text
     // before any is demanded, so that the module's own is never read - see site.js
-    if (fs.existsSync(wendSite.overrides)) {
-        siteModel.listFiles(wendSite.overrides).filter(file => file.endsWith(".vue")).forEach(file => {
-            const [moduleId, ...within] = file.split(path.sep);
-            const forked = wendSite.modules[moduleId] && path.join(wendSite.modules[moduleId], ...within);
-            if (forked && fs.existsSync(forked)) {
-                const layer = trace.layerOfFile(file);
-                fluid.loadSFCText(layer, fs.readFileSync(path.join(wendSite.overrides, file), "utf8"));
-                report("Using the site's fork " + wendSite.rel(path.join(wendSite.overrides, file)) + " for " + layer);
-            } else {
-                // e.g. a fork of a file since renamed, which would otherwise silently stand for nothing
-                report("Ignoring the site's fork " + wendSite.rel(path.join(wendSite.overrides, file)) + ", which forks no file of its modules");
-            }
-        });
-    }
+    // A base's forks are inherited as any of its files are, the site's own taking their place
+    wendSite.list("override").filter(file => file.endsWith(".vue")).forEach(file => {
+        const [moduleId, ...within] = file.split("/");
+        const forked = wendSite.modules[moduleId] && path.join(wendSite.modules[moduleId], ...within);
+        const fork = wendSite.resolve("override/" + file);
+        if (forked && fs.existsSync(forked)) {
+            const layer = trace.layerOfFile(file);
+            fluid.loadSFCText(layer, fs.readFileSync(fork, "utf8"));
+            report("Using the fork " + wendSite.rel(fork) + " for " + layer);
+        } else {
+            // e.g. a fork of a file since renamed, which would otherwise silently stand for nothing
+            report("Ignoring the fork " + wendSite.rel(fork) + ", which forks no file of its modules");
+        }
+    });
     const fullModel = siteModel.load(siteDir);
     // --from M --limit N renders just N pages starting from the Mth, e.g. for debugging the theme
     const from = +(parsedArgs.from ?? 0);
     const model = parsedArgs.limit || parsedArgs.from ? {...fullModel, pages: fullModel.pages.slice(from, from + +(parsedArgs.limit ?? Infinity))} : fullModel;
 
-    // Hugo's static files - the theme's, overlaid by the site's
-    const staticDirs = wendSite.staticDirs;
-    staticDirs.forEach(dir => copyDir(dir, outDir));
+    // Hugo's static files - the theme's, overlaid by the bases', overlaid by the site's
+    const staticFiles = wendSite.list("static");
+    staticFiles.forEach(file => {
+        const target = path.join(outDir, file);
+        fs.mkdirSync(path.dirname(target), {recursive: true});
+        fs.copyFileSync(wendSite.resolve("static/" + file), target);
+    });
 
     // Every update is recorded, so that the trace of each document may be formed from the cell graph - see trace.js
     const recorder = fluid.cell.recordUpdates();
@@ -221,6 +214,7 @@ const main = async function () {
     const sources = {...siteModel.hashSources(siteDir), ...trace.framingHashes(editing)};
     const pagesByPermalink = new Map(fullModel.pages.map(page => [page.permalink, page]));
     const rendererScripts = trace.publishRenderer(siteDir, outDir);
+    trace.publishPreviewWorker(outDir);
     const migration = trace.publishMigration(siteDir, outDir, infusionDir, fluid.bootRecord);
     // The widgets of static/sfc are loaded, so that content holding them renders them, and every one of them must run
     // in the browser - those reaching fluid.topLevelWidget are offered for insertion by an editing client
@@ -228,7 +222,7 @@ const main = async function () {
     // An SFC's layer is defined once it is demanded - each is bound into the host document at once, as PTF binds a
     // pasted one, and the widgets are listed once the documents have settled, as each page's provenance is written
     widgetFiles.forEach(widget => {
-        fluid.loadSFCText(widget.layer, fs.readFileSync(path.join(siteDir, "static", trace.widgetDir, widget.file), "utf8"));
+        fluid.loadSFCText(widget.layer, fs.readFileSync(wendSite.resolve("static/" + trace.widgetDir + "/" + widget.file), "utf8"));
         fluid.subscribeDocToInjections(widget.layer, hostDocument);
     });
     Object.defineProperty(migration, "widgets", {enumerable: true, get: () => {
@@ -281,12 +275,12 @@ const main = async function () {
             template: trace.templateHash(siteDir, infusionVersion),
             infusionVersion,
             commit: process.env.GITHUB_SHA,
-            assets: trace.assetPaths(path.join(siteDir, "static")),
-            staticFiles: trace.staticHashes(siteDir),
+            assets: trace.assetPaths(),
+            staticFiles: trace.staticHashes(),
             outDir
         });
         fluid.writeFile(path.join(outDir, trace.traceFile), JSON.stringify(built, null, 2) + "\n");
-        pruneStale(staticDirs, fluid.outputDocuments.get().map(record => path.join(outDir, outputPathOf(record))));
+        pruneStale(staticFiles, fluid.outputDocuments.get().map(record => path.join(outDir, outputPathOf(record))));
     } else if (!complete) {
         report("The build is incomplete - its traces are not written, and nothing is pruned");
     }

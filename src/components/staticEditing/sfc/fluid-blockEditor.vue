@@ -137,6 +137,10 @@ fluid.blockEditor.apply = function (that, container, blocks, on) {
             }
         });
         record.blocks = blocks;
+        // The widget selected stays so, on its element as rendered afresh
+        const selectedId = record.selectedIsland ? record.selectedIsland.getAttribute("fluid-id") : null;
+        fluid.blockEditor.selectIsland(record, selectedId ?
+            container.querySelector(`[fluid-layers][fluid-id="${CSS.escape(selectedId)}"]`) : null);
         fluid.blockEditor.restoreFocus(record);
         if (fluid.blockEditor.cursorLine !== undefined) {
             const index = blocks.findIndex(block => block.startLine !== null && fluid.blockEditor.cursorLine >= block.startLine &&
@@ -146,6 +150,7 @@ fluid.blockEditor.apply = function (that, container, blocks, on) {
             }
         }
     } else {
+        fluid.blockEditor.selectIsland(record, null);
         fluid.blockEditor.toolbar.hide();
     }
 };
@@ -157,7 +162,7 @@ fluid.blockEditor.apply = function (that, container, blocks, on) {
  * @return {Object} The container's record
  */
 fluid.blockEditor.listen = function (container) {
-    const record = {container, elements: [], blocks: [], before: null, focus: null};
+    const record = {container, elements: [], blocks: [], before: null, focus: null, selectedIsland: null};
     fluid.blockEditor.records.set(container, record);
     const editableOf = target => {
         const element = target && target.nodeType === 1 ? target.closest("[data-fluid-block=\"editable\"]") : target && target.parentElement && target.parentElement.closest("[data-fluid-block=\"editable\"]");
@@ -182,11 +187,24 @@ fluid.blockEditor.listen = function (container) {
             fluid.blockEditor.saveIsland(record, island);
         }
     });
-    // A widget copied is put on the clipboard as PTF, and as its element - one cut is then removed from the source
+    // A widget pressed on is selected, and shown so, until something else is pressed on or Escape is pressed - see
+    // fluid.blockEditor.selectIsland
+    container.addEventListener("pointerdown", event => {
+        fluid.blockEditor.selectIsland(record, container.classList.contains("fluid-block-editing") ? islandOf(event.target) : null);
+    });
+    container.addEventListener("focusin", event => {
+        const island = islandOf(event.target);
+        if (island) {
+            fluid.blockEditor.selectIsland(record, island);
+        }
+    });
+    // A widget copied is put on the clipboard as PTF, and as its element - one cut is then removed from the source. A
+    // flash over it confirms what was taken
     const copyOrCut = event => {
         const selection = document.getSelection();
         const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-        const island = islandOf(selection.anchorNode) || islandOf(document.activeElement) ||
+        const selected = record.selectedIsland && record.selectedIsland.isConnected ? record.selectedIsland : null;
+        const island = selected || islandOf(selection.anchorNode) || islandOf(document.activeElement) ||
             (range ? [...container.querySelectorAll("[fluid-layers][fluid-id]")].find(one => range.intersectsNode(one)) : null);
         if (island) {
             const copied = fluid.blockEditor.copyIsland(record, island);
@@ -194,7 +212,9 @@ fluid.blockEditor.listen = function (container) {
                 event.preventDefault();
                 event.clipboardData.setData("text/plain", copied.ptf);
                 event.clipboardData.setData("text/html", copied.markup);
+                fluid.blockEditor.flash(island, event.type === "cut" ? "Cut" : "Copied");
                 if (event.type === "cut") {
+                    fluid.blockEditor.selectIsland(record, null);
                     fluid.blockEditor.removeIsland(record, island);
                 }
             }
@@ -204,20 +224,32 @@ fluid.blockEditor.listen = function (container) {
     container.addEventListener("cut", copyOrCut);
     // A file dropped - a widget as a ZIP file, or an image - is handed to the extension, to fill the slot where it fell
     container.addEventListener("dragover", event => {
-        if (fluid.blockEditor.carriesFiles(event.dataTransfer)) {
+        // Text may be dropped onto a widget, e.g. another widget dragged as PTF - only its drop can tell whether it is one
+        const textOntoIsland = !!event.dataTransfer && [...event.dataTransfer.types].includes("text/plain") && !!islandOf(event.target);
+        if (fluid.blockEditor.carriesFiles(event.dataTransfer) || textOntoIsland) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
         }
     });
+    // A widget dropped onto another takes its place - see fluid.blockEditor.islandSlot
     container.addEventListener("drop", event => {
-        if (fluid.blockEditor.carriesFiles(event.dataTransfer) && event.dataTransfer.files.length > 0) {
+        const files = fluid.blockEditor.carriesFiles(event.dataTransfer) ? [...event.dataTransfer.files] : [];
+        const text = files.length === 0 && event.dataTransfer ? event.dataTransfer.getData("text/plain") : "";
+        const island = islandOf(event.target);
+        if (files.length > 0 || (island && text && fluid.ptf.isPTF(text))) {
             event.preventDefault();
             event.stopPropagation();
             const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(event.clientX, event.clientY) : null;
             const target = (range && editableOf(range.startContainer)) || event.target.closest?.("[data-fluid-block-index]");
             const element = target && container.contains(target) ? target : fluid.peek(record.elements.filter(one => one));
             if (element) {
-                fluid.blockEditor.dropFiles(record, fluid.blockEditor.slotAt(record, element, range), [...event.dataTransfer.files]);
+                const after = fluid.blockEditor.slotAt(record, element, range);
+                const slot = island ? fluid.blockEditor.islandSlot(record, island, after) : after;
+                if (files.length > 0) {
+                    fluid.blockEditor.dropFiles(record, slot, files);
+                } else {
+                    fluid.blockEditor.pasteWidget(record, slot, text);
+                }
             }
         }
     });
@@ -246,6 +278,8 @@ fluid.blockEditor.listen = function (container) {
             fluid.blockEditor.toggleInline(record, element, command);
         } else if (element && event.key === "Escape") {
             element.blur();
+        } else if (event.key === "Escape") {
+            fluid.blockEditor.selectIsland(record, null);
         }
     });
     return record;
@@ -516,6 +550,51 @@ fluid.blockEditor.saveIsland = function (record, island) {
     }
 };
 
+// The attribute marking the widget selected, e.g. to be copied - never written into the source, since a widget is
+// written from its layers, id and potentia alone. It is marked afresh on the widget's element as the blocks render
+// afresh, and removed once they cease to be edited - see fluid.blockEditor.apply
+fluid.blockEditor.selectedAttribute = "data-fluid-block-selected";
+
+/**
+ * Select a widget of a container, e.g. once pressed on, marking it as selected - or select none
+ * @param {Object} record - The container's record
+ * @param {Element|null} island - The widget's element, or null to select none
+ */
+fluid.blockEditor.selectIsland = function (record, island) {
+    if (record.selectedIsland && record.selectedIsland !== island) {
+        record.selectedIsland.removeAttribute(fluid.blockEditor.selectedAttribute);
+    }
+    record.selectedIsland = island;
+    if (island) {
+        island.setAttribute(fluid.blockEditor.selectedAttribute, "");
+    }
+};
+
+/**
+ * Flash a short message over an element, e.g. "Copied" over a widget copied to the clipboard, fading after a moment -
+ * in place of any flash still showing
+ * @param {Element} element - The element
+ * @param {String} message - The message
+ * @return {Element} The flash's element, which removes itself once faded
+ */
+fluid.blockEditor.flash = function (element, message) {
+    // Any flash still showing, e.g. from a copy a moment ago, gives way to this one
+    document.querySelectorAll(".fluid-block-flash").forEach(previous => previous.remove());
+    const bounds = element.getBoundingClientRect();
+    const flash = document.createElement("div");
+    flash.className = "fluid-block-flash";
+    // The extension's own - see bridge.js
+    flash.setAttribute("data-fluid-edit-ui", "");
+    flash.setAttribute("role", "status");
+    flash.textContent = message;
+    flash.style.left = (window.scrollX + bounds.left + bounds.width / 2) + "px";
+    flash.style.top = (window.scrollY + bounds.top + Math.min(bounds.height / 2, 60)) + "px";
+    document.body.appendChild(flash);
+    setTimeout(() => flash.classList.add("fluid-block-flash-fading"), 900);
+    setTimeout(() => flash.remove(), 1400);
+    return flash;
+};
+
 /**
  * Make what is put on the clipboard when a widget is copied
  * @param {Object} record - The container's record
@@ -608,6 +687,52 @@ fluid.blockEditor.slotAt = function (record, element, range) {
         };
     }
     return togo;
+};
+
+/**
+ * Determine whether markdown is a widget's element alone, as fluid.ptf.islandMarkup writes it
+ * @param {String} markdown - The markdown
+ * @return {Boolean} `true` if it is
+ */
+fluid.blockEditor.isIsland = markdown => /^\s*<[a-zA-Z][\w-]*\s[^>]*\bfluid-layers\s*=/.test(markdown) && !/\n\s*\n/.test(markdown.trim());
+
+/**
+ * Find the slot taking the place of a widget, for another dropped onto it - its line of the source, or the whole block
+ * holding it if its element opens the block, so that an element written over several lines is replaced whole. The slot
+ * is filled so only by a widget: anything else, e.g. an image, fills `after` instead - see fluid.blockEditor.fillSlotWith
+ * @param {Object} record - The container's record
+ * @param {Element} island - The widget's element
+ * @param {BlockSlot} after - The slot to fill with anything other than a widget
+ * @return {BlockSlot} The slot, bearing `displaces` and `after` - or `after` itself if the source holds no such widget
+ */
+fluid.blockEditor.islandSlot = function (record, island, after) {
+    const index = fluid.blockEditor.islandBlock(record, island);
+    let togo = after;
+    if (index >= 0) {
+        const block = record.blocks[index];
+        const lines = record.source.split("\n").slice(block.startLine, block.endLine);
+        const marker = `fluid-id="${island.getAttribute("fluid-id")}"`;
+        const at = lines.findIndex(line => line.includes(marker));
+        togo = at === 0 ? {index, head: "", tail: "", displaces: true, after} : {
+            index,
+            head: lines.slice(0, at).join("\n").trim(),
+            tail: lines.slice(at + 1).join("\n").trim(),
+            displaces: true,
+            after
+        };
+    }
+    return togo;
+};
+
+/**
+ * Fill a slot with what was made of something dropped or pasted into it - a slot displacing a widget is filled so only
+ * by a widget, anything else filling the slot after it - see fluid.blockEditor.islandSlot
+ * @param {Object} record - The container's record
+ * @param {BlockSlot} slot - The slot
+ * @param {String} markdown - What to fill it with
+ */
+fluid.blockEditor.fillSlotWith = function (record, slot, markdown) {
+    fluid.blockEditor.fillSlot(record, slot.displaces && !fluid.blockEditor.isIsland(markdown) ? slot.after : slot, markdown);
 };
 
 /**
@@ -722,7 +847,7 @@ fluid.blockEditor.pasteWidget = function (record, slot, text) {
     } else {
         const {markup, files} = fluid.blockEditor.widgetFromParts(parts, record.source);
         document.dispatchEvent(new CustomEvent("fluid-block-edit-files", {detail: JSON.stringify({files})}));
-        fluid.blockEditor.fillSlot(record, slot, markup);
+        fluid.blockEditor.fillSlotWith(record, slot, markup);
     }
 };
 
@@ -779,7 +904,7 @@ fluid.blockEditor.fillSlotById = function (id, markdown) {
     if (held && markdown) {
         const {record, slot} = held;
         const element = record.elements[slot.index];
-        fluid.blockEditor.fillSlot(record, record.source === held.source || !element ? slot : fluid.blockEditor.slotAt(record, element), markdown);
+        fluid.blockEditor.fillSlotWith(record, record.source === held.source || !element ? slot : fluid.blockEditor.slotAt(record, element), markdown);
     }
     return !!held;
 };
@@ -938,6 +1063,31 @@ fluid.blockEditor.toolbar.holds = element => !!(element && fluid.blockEditor.too
 .fluid-block-editing [data-fluid-block="source"],
 .fluid-block-editing [data-fluid-block="island"] {
     box-shadow: -4px 0 0 #bbb;
+}
+
+.fluid-block-editing [data-fluid-block-selected] {
+    outline: 2px solid #2b6cb0;
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+
+.fluid-block-flash {
+    position: absolute;
+    z-index: 2147482001;
+    transform: translate(-50%, -50%);
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: #1f2933;
+    color: #f5f7fa;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    font: 600 13px/1 system-ui, sans-serif;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.5s ease;
+}
+
+.fluid-block-flash.fluid-block-flash-fading {
+    opacity: 0;
 }
 
 .fluid-block-toolbar {

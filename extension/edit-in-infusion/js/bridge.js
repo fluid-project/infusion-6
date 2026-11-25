@@ -42,9 +42,11 @@
 //                              {id, op: "fillSlot", slot, markdown} - fill the slot into which files were dropped
 //                                                               onto the blocks, announced by the block editor as the
 //                                                               event fluid-block-edit-drop {slot, files}
-//                              {id, op: "previewImages", images} - show images the site does not yet publish, e.g.
-//                                                               dropped, `{url, type, content}` each, `content` their
-//                                                               base64, wherever the page shows `url`
+//                              {id, op: "previewImages", images, worker} - show files the site does not yet publish,
+//                                                               e.g. dropped images, `{url, type, content}` each,
+//                                                               `content` their base64: images wherever the page shows
+//                                                               `url`, and, given the site's service worker, every file
+//                                                               to whatever loads it
 //   fluid-edit-bridge-reply    {id, result} or {id, error}
 // The bridge holds nothing of the extension's - no token, no claims - so that the page gains nothing by speaking to it.
 
@@ -235,8 +237,12 @@
             fillSlot: async function ({slot, markdown}) {
                 return fluid.blockEditor.fillSlotById(slot, markdown);
             },
-            previewImages: async function ({images}) {
-                return bridge.previewImages(images);
+            previewImages: async function ({images, worker}) {
+                const count = bridge.previewImages(images);
+                if (worker) {
+                    await bridge.syncPreviewWorker(worker, images);
+                }
+                return count;
             },
             markLayer: async function (request) {
                 return bridge.markLayer(request);
@@ -286,6 +292,40 @@
             }
             substitute(document.body);
             return bridge.previews.size;
+        };
+
+        /**
+         * Show the files held in the browser as if the site published them, to whatever loads them - a stylesheet's
+         * `url()`, a `srcset`, a widget's `fetch` - by the site's service worker, wend's previewWorker.js, which answers
+         * requests from the Cache written here. The Cache is made to hold exactly the files given, so that a file since
+         * published, or discarded, is no longer answered from it
+         * @param {String} worker - The absolute URL of the site's service worker, at the root of the site
+         * @param {Object[]} files - `{url, type, content}` for each, as for `previewImages`
+         * @return {Promise<Boolean>} `true` once the Cache holds the files and the worker controls the page, `false` if
+         * the browser offers no service workers to the page
+         */
+        bridge.syncPreviewWorker = async function (worker, files) {
+            let togo = false;
+            if (navigator.serviceWorker && window.caches) {
+                const scope = new URL("./", worker).href;
+                await navigator.serviceWorker.register(worker, {scope});
+                // Named as the worker names it - see cacheName in previewWorker.js
+                const cache = await caches.open("wend-preview " + scope);
+                const keep = new Set(files.map(file => file.url));
+                for (const request of await cache.keys()) {
+                    if (!keep.has(request.url)) {
+                        await cache.delete(request);
+                    }
+                }
+                for (const {url, type, content} of files) {
+                    const bytes = Uint8Array.from(atob(content), char => char.charCodeAt(0));
+                    await cache.put(url, new Response(bytes, {headers: {"Content-Type": type || "application/octet-stream",
+                        "X-Wend-Held": String(Date.now())}}));
+                }
+                await navigator.serviceWorker.ready;
+                togo = true;
+            }
+            return togo;
         };
 
         /**

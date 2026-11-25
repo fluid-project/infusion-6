@@ -1,0 +1,108 @@
+# Builds the site into docs/, from which GitHub Pages publishes it, whenever its sources change - see README.md. An edit
+# committed by the "Edit in Infusion" browser extension is a commit to content/ or wend/, so this is the step whose
+# completion the extension waits on: it recognises its edit as published once docs/fluid-trace.json records the hash of
+# the edited file. Only docs/ is committed, and this workflow is not triggered by changes to docs/, so its own commits
+# do not set it off again.
+# A site may be an overlay of other sites, its bases - see `bases` in wend.site.json, and js/site.js of the wend package.
+# Each base held as a git repository is built at the commit wend.bases.lock.json records. A commit of that file - e.g.
+# by the extension, when it finds a base has moved on, or by this workflow's scheduled run, which checks each base's
+# branch - rebuilds the site from the commits it names. The lock file is committed with docs/, and is among the paths
+# setting this workflow off, but a run commits it only together with the build it caused, so never sets itself off again.
+name: Build site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "content/**"
+      - "wend/**"
+      - "wend.site.json"
+      - "static/**"
+      - "wend.json"
+      - "package.json"
+      - "package-lock.json"
+      - "wend.bases.lock.json"
+      # A change to how the site is built rebuilds it
+      - ".github/workflows/build-site.yml"
+  workflow_dispatch:
+  # Whether any base has moved on - a site with no bases stops at once. GitHub suspends the schedules of a repository
+  # with no activity for 60 days, and runs them late at busy times, so the extension checks too, whenever it edits
+  schedule:
+    - cron: "17,47 * * * *"
+
+permissions:
+  contents: write
+
+# One run at a time, so that two never commit at once. A run queued behind another builds the branch's latest commit,
+# so edits pushed while a build runs are published by the next
+concurrency:
+  group: build-site
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # A scheduled run goes on only if the site has bases held as git repositories
+      - name: Check for bases
+        id: bases
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ -f wend.bases.lock.json ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "The site has no bases held as git repositories - nothing to check"
+          fi
+      # Infusion 6 is installed from npm - a moduleOverrides.json5 naming a checkout is never committed
+      - name: Install
+        if: steps.bases.outputs.proceed
+        run: npm ci
+      # Build, and commit the published site if it changed. Should anything have been pushed since the checkout, the
+      # push is refused - docs/ is generated, so rather than merge or rebase it, which conflicts whenever both sides
+      # rebuilt it, e.g. a docs/ built and committed by hand, the job resets to what was pushed and builds that afresh
+      # A scheduled run first moves each base on to the head of its branch, and builds only if one has moved
+      - name: Build and publish
+        if: steps.bases.outputs.proceed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            source=$(git rev-parse --short HEAD)
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              if [ "$(npx wend-fetch-bases --update | tail -1)" = "unchanged" ]; then
+                echo "No base has moved on"
+                exit 0
+              fi
+            elif grep -q '"bases"' wend.site.json; then
+              npx wend-fetch-bases
+            fi
+            npm run build
+            git add docs
+            if [ -f wend.bases.lock.json ]; then
+              git add wend.bases.lock.json
+            fi
+            if git diff --cached --quiet; then
+              echo "The published site is unchanged"
+              exit 0
+            fi
+            git commit -m "Build site for $source"
+            if git push; then
+              exit 0
+            fi
+            echo "The branch moved during the build - rebuilding from its latest commit"
+            before=$(git rev-parse HEAD~1)
+            git fetch origin "$GITHUB_REF_NAME"
+            git reset --hard "origin/$GITHUB_REF_NAME"
+            # The packages are installed afresh only if what was pushed changed them
+            if ! git diff --quiet "$before" HEAD -- package.json package-lock.json; then
+              npm ci
+            fi
+          done
+          echo "The branch kept moving - giving up after 3 builds"
+          exit 1

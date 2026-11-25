@@ -1085,9 +1085,9 @@ fluid.def("zip.chartBase", {$layers: "fluid.component", title: ""});
 fluid.tests.ptf.zipDriver = `<fluid-import src="./zip-chartBase.vue"></fluid-import>
 <script>
 fluid.def("zip.historyChart", {$layers: "zip.chartBase", title: "History"});
-fluid.def("zip.driver", {$layers: "fluid.component"});
+fluid.def("zip.driver", {$layers: "fluid.component", historyChart: {$component: {$layers: "zip.historyChart"}}});
 </script>
-<template><main><div fluid-layers="zip.historyChart"></div></main></template>`;
+<template><main><div @id="historyChart"></div></main></template>`;
 
 QUnit.test("ZIP file of a driver and the layers it imports, with no potentia", function (assert) {
     const {widget, error} = fluid.tests.ptf.readZip({
@@ -1117,6 +1117,22 @@ QUnit.test("ZIP file whose layers can't be published as they are", function (ass
         "zip-driver.vue": fluid.tests.ptf.zipDriver
     });
     assert.ok(script.error.includes("zip-core.js is a script loaded by its src"), "A plain script loaded by its src is refused: " + script.error);
+    const byLayers = fluid.tests.ptf.readZip({
+        "zip-chartBase.vue": fluid.tests.ptf.zipBase,
+        "zip-driver.vue": fluid.tests.ptf.zipDriver.replace("<div @id=\"historyChart\"></div>", "<div fluid-layers=\"zip.historyChart\"></div>")
+    });
+    assert.equal(byLayers.error, undefined, "A component placed in a template by fluid-layers is accepted");
+    const selfContainer = fluid.tests.ptf.readZip({
+        "zip-chartBase.vue": fluid.tests.ptf.zipBase.replace("title: \"\"", "title: \"\", drawEffect: \"$effect:fluid.identity({self}.container)\""),
+        "zip-driver.vue": fluid.tests.ptf.zipDriver
+    });
+    assert.ok(selfContainer.error.includes("zip-chartBase.vue refers to {self}.container") &&
+        selfContainer.error.includes("{self}.view.container"), "{self}.container is refused, pointing to {self}.view.container: " + selfContainer.error);
+    const viewContainer = fluid.tests.ptf.readZip({
+        "zip-chartBase.vue": fluid.tests.ptf.zipBase.replace("title: \"\"", "title: \"\", drawEffect: \"$effect:fluid.identity({self}.view.container)\""),
+        "zip-driver.vue": fluid.tests.ptf.zipDriver
+    });
+    assert.equal(viewContainer.error, undefined, "{self}.view.container is accepted");
     const twoRoots = fluid.tests.ptf.readZip({
         "zip-chartBase.vue": fluid.tests.ptf.zipBase,
         "zip-other.vue": "<script>\nfluid.def(\"zip.other\", {$layers: \"fluid.component\"});\n</script>"
