@@ -125,6 +125,49 @@ fluidGitHub.readPublic = async function (repo, ref, path) {
     }
 };
 
+/**
+ * Determine whether a commit was made by a bot, e.g. the site's workflow committing its rebuilt pages
+ * @param {Object} commit - The commit, as GitHub's list of commits gives it
+ * @return {Boolean} `true` if a bot made it
+ */
+fluidGitHub.isBotCommit = function (commit) {
+    const login = commit.author?.login || commit.committer?.login || "";
+    return commit.author?.type === "Bot" || /\[bot\]$/.test(login) || /\[bot\]/.test(commit.commit?.author?.name || "");
+};
+
+/**
+ * Find where a file of a repository is shown on GitHub, and the last commit a person made to it - passing over any a
+ * bot made, e.g. a rebuild of the site
+ * @param {String} repo - The repository, "owner/name"
+ * @param {String} ref - The branch, or commit, whose history is read
+ * @param {String} path - The path of the file
+ * @param {Boolean} anonymous - Whether to read it without the token - as for any repository but that of the page edited
+ * @return {Promise<Object>} `{fileUrl, commit}` - `commit` `{sha, url, date, name, login, profileUrl}`, `login` and
+ * `profileUrl` null if GitHub knows no account of its author, or null if no such commit is found
+ */
+fluidGitHub.history = async function (repo, ref, path, anonymous) {
+    const web = (await fluidGitHub.setting("githubWeb", fluidGitHub.web)).replace(/\/$/, "");
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const response = await fetch((await fluidGitHub.apiBase()) + "/repos/" + repo + "/commits?sha=" + encodeURIComponent(ref) +
+        "&path=" + encodeURIComponent(path) + "&per_page=20", anonymous ? {headers: fluidGitHub.publicHeaders, credentials: "omit", cache: "no-store"} :
+        {headers: await fluidGitHub.headers(), cache: "no-store"});
+    let commit = null;
+    if (response.ok) {
+        const found = (await response.json()).find(one => !fluidGitHub.isBotCommit(one));
+        if (found) {
+            commit = {
+                sha: found.sha,
+                url: found.html_url || web + "/" + repo + "/commit/" + found.sha,
+                date: found.commit.author?.date || found.commit.committer?.date,
+                name: found.commit.author?.name || found.author?.login || "",
+                login: found.author?.login || null,
+                profileUrl: found.author ? found.author.html_url || web + "/" + found.author.login : null
+            };
+        }
+    }
+    return {fileUrl: web + "/" + repo + "/blob/" + encodeURIComponent(ref) + "/" + encodedPath, commit};
+};
+
 // The headers of a request made without credentials
 fluidGitHub.publicHeaders = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"};
 

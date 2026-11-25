@@ -312,13 +312,22 @@ const fluidStaticEditingScope = function (fluid) {
      * @return {Promise} Resolves once the text is shown
      */
     fluid.staticEditing.showText = async function (edit, text, claim) {
-        if (text !== null) {
+        if (text !== null && edit.blockEditText !== undefined && text !== edit.blockEditText) {
+            // A claim held of an edit in the page which has since moved on - the page already shows the newer edit,
+            // whose claim follows - see onBlockEdit
+        } else if (text !== null) {
+            if (text === edit.blockEditText) {
+                edit.blockEditText = undefined;
+            }
             // The layers of widgets pasted into the claim, not yet published, are defined first
             await fluid.staticEditing.registerClaimLayers(edit, claim);
             await fluid.staticEditing.ask(edit, {op: "setSource", text});
-        } else if (edit.shownText) {
-            // The blocks' components were booted from a claim's text - the page as published is restored by reloading
-            location.reload();
+        } else {
+            edit.blockEditText = undefined;
+            if (edit.shownText) {
+                // The blocks' components were booted from a claim's text - the page as published is restored by reloading
+                location.reload();
+            }
         }
         edit.shownText = text !== null;
     };
@@ -525,7 +534,7 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.updateSourceOpen = function (edit) {
         const target = fluid.staticEditing.target(edit);
-        const needed = !!target && (!!target.framing || target.creating || !edit.inPageWanted || edit.inPageUnavailable);
+        const needed = !!target && (!!target.framing || target.creating || edit.inPageUnavailable);
         edit.state.sourceHidden = !target;
         edit.state.sourceOpen = needed || !!edit.prefs.sourceOpen;
     };
@@ -545,6 +554,75 @@ const fluidStaticEditingScope = function (fluid) {
         return edit.activating;
     };
 
+    // The months, as the panel's header writes a date
+    fluid.staticEditing.months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    /**
+     * Write a date as the panel's header shows it, in the user's own time - e.g. "25th Nov 2026 14:45"
+     * @param {Date} date - The date
+     * @return {String} The date written
+     */
+    fluid.staticEditing.formatDate = function (date) {
+        const day = date.getDate();
+        const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
+        const pad = number => String(number).padStart(2, "0");
+        return day + suffix + " " + fluid.staticEditing.months[date.getMonth()] + " " + date.getFullYear() + " " +
+            pad(date.getHours()) + ":" + pad(date.getMinutes());
+    };
+
+    /**
+     * Find where the source the panel edits lies in a repository - for one inherited from a base, in the base
+     * @param {Object} edit - The controller
+     * @param {Object} target - The target, as by fluid.staticEditing.target
+     * @return {Object} `{repo, ref, path}`
+     */
+    fluid.staticEditing.sourceLocation = function (edit, target) {
+        return target.inherited ? {repo: target.inherited.repo, ref: target.inherited.sha, path: target.inherited.path} :
+            {repo: edit.provenance.repo, ref: edit.provenance.branch, path: target.path};
+    };
+
+    /**
+     * Show, in the panel's header, a link to the source edited on GitHub, and who last changed it and when - the last
+     * commit a person made to it, passing over any a bot made, e.g. the site's rebuild. Nothing is shown of a new post,
+     * which has no history
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once shown
+     */
+    fluid.staticEditing.showHistory = async function (edit) {
+        const target = fluid.staticEditing.target(edit);
+        const shown = edit.historyCount = (edit.historyCount || 0) + 1;
+        edit.state.updatedHidden = true;
+        if (target && !target.creating) {
+            const location = fluid.staticEditing.sourceLocation(edit, target);
+            edit.state.pathHref = "https://github.com/" + location.repo + "/blob/" + encodeURIComponent(location.ref) + "/" +
+                location.path.split("/").map(encodeURIComponent).join("/");
+            try {
+                const history = await fluid.staticEditing.send(edit, {type: "source-history", ...location});
+                // Shown only if the panel still edits the source asked about
+                if (shown === edit.historyCount) {
+                    edit.state.pathHref = history.fileUrl;
+                    const commit = history.commit;
+                    if (commit) {
+                        const date = new Date(commit.date);
+                        Object.assign(edit.state, {
+                            updatedBy: commit.login || commit.name,
+                            // An author GitHub knows no account of is linked to the commit itself
+                            updatedByHref: commit.profileUrl || commit.url,
+                            updatedDate: fluid.staticEditing.formatDate(date),
+                            updatedHref: commit.url,
+                            updatedTitle: commit.sha.substring(0, 7) + " - " + date.toString(),
+                            updatedHidden: false
+                        });
+                    }
+                }
+            } catch (error) {
+                // The history can't be read, e.g. offline - the header shows the source's link alone
+            }
+        } else {
+            edit.state.pathHref = "";
+        }
+    };
+
     /**
      * Show the source the panel edits - the claim's text on it, or else the source as it stands in the repository
      * @param {Object} edit - The controller
@@ -554,6 +632,7 @@ const fluidStaticEditingScope = function (fluid) {
         const target = fluid.staticEditing.target(edit);
         edit.state.ready = false;
         edit.state.path = target ? target.path : edit.provenance.page;
+        fluid.staticEditing.showHistory(edit);
         edit.state.newHidden = !(target && target.creating);
         fluid.staticEditing.updateSourceOpen(edit);
         await Promise.all((edit.provenance.framing || []).map(framing => fluid.staticEditing.markFraming(edit, framing)));
@@ -574,7 +653,7 @@ const fluidStaticEditingScope = function (fluid) {
             }
             // The blocks are edited in place once the page is live, unless the repository's source differs from the
             // one the page was published from, which would change the page before any edit
-            if (!target.framing && !target.creating && !edit.blockEditing && edit.inPageWanted) {
+            if (!target.framing && !target.creating && !edit.blockEditing) {
                 const base = edit.bases[target.path];
                 if (claim || base && base.hash === target.hash) {
                     await fluid.staticEditing.setBlockEditing(edit, true);
@@ -652,7 +731,6 @@ const fluidStaticEditingScope = function (fluid) {
         edit.blockEditing = togo;
         // The page's blocks can't be edited in place, e.g. since it couldn't be made live - the source is shown instead
         edit.inPageUnavailable = on && !togo;
-        edit.state.inPage = togo;
         fluid.staticEditing.updateSourceOpen(edit);
         return togo;
     };
@@ -665,6 +743,8 @@ const fluidStaticEditingScope = function (fluid) {
     fluid.staticEditing.onBlockEdit = function (edit, text) {
         if (edit.provenance.source) {
             edit.targetPath = edit.provenance.source.path;
+            // The newest edit in the page, which the page already shows - see showText
+            edit.blockEditText = text;
             edit.source.setText(text);
             fluid.staticEditing.onInput(edit, text);
         }
@@ -1196,6 +1276,10 @@ const fluidStaticEditingScope = function (fluid) {
      * @param {String} text - The edited text of the source
      */
     fluid.staticEditing.onInput = async function (edit, text) {
+        // An edit other than one in the page, e.g. in the source view, is shown in the page once held
+        if (text !== edit.blockEditText) {
+            edit.blockEditText = undefined;
+        }
         if (edit.provenance.source && edit.targetPath === edit.provenance.source.path) {
             fluid.staticEditing.learnHeadings(edit, text);
         }
@@ -1325,14 +1409,12 @@ const fluidStaticEditingScope = function (fluid) {
     fluid.staticEditing.updatePanel = function (edit) {
         const claim = edit.targetPath ? fluid.staticEditing.claimOf(edit, edit.targetPath) : null;
         const state = claim ? claim.state : null;
-        const target = fluid.staticEditing.target(edit);
         Object.assign(edit.state, {
             claimState: state || "none",
             commitDisabled: state !== "uncommitted",
             discardDisabled: !state,
             buttonsHidden: !edit.targetPath,
-            stateText: !edit.targetPath ? "" : state ? fluid.staticEditing.stateLabels[state] : "No edits",
-            modeHidden: !(target && !target.framing && !target.creating)
+            stateText: !edit.targetPath ? "" : state ? fluid.staticEditing.stateLabels[state] : "No edits"
         });
         if (claim && claim.message) {
             fluid.staticEditing.setStatus(edit, claim.message);
@@ -1381,6 +1463,9 @@ const fluidStaticEditingScope = function (fluid) {
             const claim = await fluid.staticEditing.send(edit, {type: "claim-commit", id: fluid.staticEditing.claimOf(edit, edit.targetPath).id});
             await fluid.staticEditing.showClaimOf(edit, claim.path, claim);
             fluid.staticEditing.setStatus(edit, claim.state === "committed" ? "Committed as " + claim.commitSha.substring(0, 7) : claim.message || "");
+            if (claim.state === "committed") {
+                fluid.staticEditing.showHistory(edit);
+            }
         } catch (error) {
             fluid.staticEditing.setError(edit, error);
         }
@@ -1422,16 +1507,6 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.editConfig = function (edit) {
         fluid.staticEditing.switchTarget(edit, edit.provenance.framing.find(framing => framing.kind === "patch").path);
-    };
-
-    /**
-     * Respond to the "Edit in the page" control
-     * @param {Object} edit - The controller
-     * @param {Event} event - Its change
-     */
-    fluid.staticEditing.inPageChanged = function (edit, event) {
-        edit.inPageWanted = event.target.checked;
-        fluid.staticEditing.setBlockEditing(edit, event.target.checked);
     };
 
     /**
@@ -1657,8 +1732,6 @@ const fluidStaticEditingScope = function (fluid) {
             creating: null,
             framingMode: false,
             blockEditing: false,
-            // Whether the user would edit the page's blocks in place - the "Edit in the page" control
-            inPageWanted: true,
             // The user's preferences for the panel - see setPref
             prefs: {sourceOpen: false, ...config.prefs},
             pollTimer: null,

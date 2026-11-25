@@ -31,7 +31,7 @@
         // The key, in the page's sessionStorage, by which the panel remembers that it is open - see fluid.staticEditing.rememberSession
         sessionKey: "fluid-edit-open",
         // The kinds of request the panel may relay to the service worker
-        relayed: ["claim-get", "claim-put", "claim-remove", "claim-list", "claim-commit", "source-read", "base-read", "base-heads", "bases-rebuild", "fluid-provenance-found", "prefs-set"]
+        relayed: ["claim-get", "claim-put", "claim-remove", "claim-list", "claim-commit", "source-read", "source-history", "base-read", "base-heads", "bases-rebuild", "fluid-provenance-found", "prefs-set"]
     };
 
     /**
@@ -127,6 +127,11 @@
         } else {
             const forwarded = {...message};
             delete forwarded.requestId;
+            if (message.type === "source-history") {
+                // Another repository's history, e.g. that of a base a source is inherited from, is read without the
+                // token, since the page names the repository
+                forwarded.anonymous = message.repo !== edit.provenance.repo;
+            }
             togo = edit.send(forwarded);
         }
         return togo;

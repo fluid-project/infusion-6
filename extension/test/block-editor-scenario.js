@@ -126,6 +126,21 @@ harness.scenario("Editing a post in place, block by block", async function ({moc
     expect(await post.evaluate(() => [...document.querySelectorAll("p")].some(p => p.textContent.includes("Typed in place."))),
         "The page renders the edit from the source");
 
+    // 1a. Type in a paragraph without leaving it - the source follows a moment after the typing pauses, the block keeps
+    // the caret, and what is typed after the pause lands after what was typed before it
+    const live = await plainParagraph(post, 3);
+    await placeCaret(post, live, "end");
+    await post.keyboard.type(" Live one");
+    const afterLive = await sourceChange(post, afterTyping);
+    expect(afterLive.includes(" Live one"), "What is typed reaches the source while the block is still in hand");
+    expect(await post.evaluate(index => document.activeElement && document.activeElement.dataset.fluidBlockIndex === String(index), live),
+        "The block keeps the focus as its source renders");
+    await post.keyboard.type(" two");
+    const afterLiveTwo = await sourceChange(post, afterLive);
+    expect(afterLiveTwo.includes(" Live one two"), "Typing on after the pause continues at the caret: " +
+        JSON.stringify(linesAdded(afterLive, afterLiveTwo)));
+    await post.keyboard.press("Escape");
+
     // 2. Select a word of another paragraph, and make it bold
     const second = await plainParagraph(post, 1);
     const word = await post.evaluate(index => {
@@ -146,7 +161,7 @@ harness.scenario("Editing a post in place, block by block", async function ({moc
     await post.keyboard.down("Control");
     await post.keyboard.press("b");
     await post.keyboard.up("Control");
-    const afterBold = await sourceChange(post, afterTyping);
+    const afterBold = await sourceChange(post, afterLiveTwo);
     expect(afterBold.includes("**" + word + "**"), "Ctrl+B makes \"" + word + "\" bold in the source");
     expect(await post.evaluate(word => [...document.querySelectorAll("strong")].some(node => node.textContent === word), word),
         "The page renders it bold");

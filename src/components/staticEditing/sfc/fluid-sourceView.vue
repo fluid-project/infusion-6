@@ -227,8 +227,22 @@ fluid.sourceView.bind = function (parent) {
                         }
                         return taken;
                     },
+                    // Files dragged over the source show where they would land - see fluid.sourceView.showDropCaret
+                    dragover: (event, dropView) => {
+                        const carries = !!event.dataTransfer && [...event.dataTransfer.types].includes("Files");
+                        const pos = carries ? dropView.posAtCoords({x: event.clientX, y: event.clientY}) : null;
+                        fluid.sourceView.showDropCaret(pos === null ? null : dropView.coordsAtPos(pos));
+                        return false;
+                    },
+                    dragleave: (event, dropView) => {
+                        if (!dropView.dom.contains(event.relatedTarget)) {
+                            fluid.sourceView.showDropCaret(null);
+                        }
+                        return false;
+                    },
                     // A drop of files may be taken by the extension, e.g. a widget as a ZIP file, or an image
                     drop: (event, dropView) => {
+                        fluid.sourceView.showDropCaret(null);
                         const files = event.dataTransfer ? [...event.dataTransfer.files] : [];
                         let taken = false;
                         if (files.length > 0) {
@@ -335,6 +349,31 @@ fluid.sourceView.bind = function (parent) {
 };
 
 // The opening of an element bearing `fluid-layers` - a widget's island, as fluid.ptf.islandMarkup writes it
+/**
+ * Show where files dragged over the source would land if dropped - a caret, sliding as the drag moves - or show none
+ * @param {Object|null} coords - The place, in the viewport, of the position they would land at, as CodeMirror's
+ * `coordsAtPos` gives it `{left, top, bottom}`, or null to show none
+ */
+fluid.sourceView.showDropCaret = function (coords) {
+    let caret = document.querySelector(".fluid-edit-source-drop-caret");
+    if (coords) {
+        if (!caret) {
+            caret = document.createElement("div");
+            caret.className = "fluid-edit-source-drop-caret";
+            caret.setAttribute("data-fluid-edit-ui", "");
+            caret.setAttribute("aria-hidden", "true");
+            document.body.appendChild(caret);
+        }
+        Object.assign(caret.style, {left: coords.left + "px", top: coords.top + "px", height: (coords.bottom - coords.top) + "px"});
+    } else if (caret) {
+        caret.remove();
+    }
+};
+
+// A drag ended anywhere leaves no caret behind
+document.addEventListener("dragend", () => fluid.sourceView.showDropCaret(null));
+document.addEventListener("drop", () => fluid.sourceView.showDropCaret(null));
+
 fluid.sourceView.islandOpening = /^\s*<[a-zA-Z][\w-]*\s[^>]*\bfluid-layers\s*=/;
 
 /**
@@ -413,5 +452,16 @@ fluid.sourceView.unbind = function (that) {
 
 .fluid-edit-source-view .fluid-source-block-line {
     background-color: rgba(43, 108, 176, 0.09);
+}
+
+/* Where files dragged over the source would land - see fluid.sourceView.showDropCaret */
+.fluid-edit-source-drop-caret {
+    position: fixed;
+    z-index: 2147482001;
+    width: 2px;
+    margin-left: -1px;
+    background: #2b6cb0;
+    pointer-events: none;
+    transition: left 0.08s ease-out, top 0.08s ease-out;
 }
 </style>

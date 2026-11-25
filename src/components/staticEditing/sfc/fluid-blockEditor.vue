@@ -6,9 +6,10 @@
 // The source is segmented by the site's own pipeline into its top-level blocks, each with the lines it was parsed
 // from (wendMarkdown.segment). Each block whose rendering the serialiser reproduces (fluid-markdownSerializer.js,
 // `roundTrips`) is made contenteditable in place; any other - an island, a table, a fence, raw HTML, a paragraph with a
-// footnote - is marked as edited through the source view alone. When the user leaves an edited block, or formats it
-// from the toolbar, its DOM is serialised back to markdown and spliced into the source in place of its lines alone, so
-// that every other block's source is kept as written. The source is then announced, as the event
+// footnote - is marked as edited through the source view alone. A moment after the user stops typing in a block
+// (fluid.blockEditor.liveDelay), and when they leave it or format it from the toolbar, its DOM is serialised back to
+// markdown and spliced into the source in place of its lines alone, so that every other block's source is kept as
+// written - see fluid.blockEditor.commitLive. The source is then announced, as the event
 // "fluid-block-edit-source" on the document, to the extension, which holds it as the claim and renders it as for any
 // edit of the source - so that what is shown is always the site's own rendering of the markdown.
 // The serialiser is loaded beforehand by the bridge, as the global fluid.markdownSerializer.
@@ -229,10 +230,19 @@ fluid.blockEditor.listen = function (container) {
         if (fluid.blockEditor.carriesFiles(event.dataTransfer) || textOntoIsland) {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
+            fluid.blockEditor.showDropCaret(fluid.blockEditor.dropPlace(record, event, islandOf(event.target), editableOf));
+        } else {
+            fluid.blockEditor.hideDropCaret();
+        }
+    });
+    container.addEventListener("dragleave", event => {
+        if (!container.contains(event.relatedTarget)) {
+            fluid.blockEditor.hideDropCaret();
         }
     });
     // A widget dropped onto another takes its place - see fluid.blockEditor.islandSlot
     container.addEventListener("drop", event => {
+        fluid.blockEditor.hideDropCaret();
         const files = fluid.blockEditor.carriesFiles(event.dataTransfer) ? [...event.dataTransfer.files] : [];
         const text = files.length === 0 && event.dataTransfer ? event.dataTransfer.getData("text/plain") : "";
         const island = islandOf(event.target);
@@ -253,10 +263,18 @@ fluid.blockEditor.listen = function (container) {
             }
         }
     });
+    // What is typed is committed a moment after the typing stops - see fluid.blockEditor.commitLive
+    container.addEventListener("input", event => {
+        const element = editableOf(event.target);
+        if (element && !event.isComposing) {
+            fluid.blockEditor.scheduleLive(record, element);
+        }
+    });
     container.addEventListener("focusout", event => {
         const element = editableOf(event.target);
         // Focus moving into the toolbar keeps the block in hand
         if (element && !fluid.blockEditor.toolbar.holds(event.relatedTarget)) {
+            clearTimeout(record.liveTimer);
             // A block already committed, e.g. by Enter, loses focus as its source renders - it is not committed again
             if (record.before !== null && element.isConnected && element.innerHTML !== record.before) {
                 fluid.blockEditor.commit(record, element);
@@ -367,6 +385,8 @@ fluid.blockEditor.beforeInput = function (record, element, event) {
             range.deleteContents();
             range.insertNode(document.createTextNode(text.replace(/\s*\n\s*/g, " ")));
             range.collapse(false);
+            // Inserted by hand, which fires no input
+            fluid.blockEditor.scheduleLive(record, element);
         }
     }
 };
@@ -399,6 +419,82 @@ fluid.blockEditor.commit = function (record, element, focus) {
     fluid.blockEditor.splice(record, index, index, fluid.markdownSerializer.block(element), focus);
 };
 
+// How long, in ms, after the user stops typing in a block, what they typed is committed to the source
+fluid.blockEditor.liveDelay = 300;
+
+/**
+ * Commit what is typed in a block a moment after the typing stops - see fluid.blockEditor.commitLive
+ * @param {Object} record - The container's record
+ * @param {Element} element - The block's element
+ */
+fluid.blockEditor.scheduleLive = function (record, element) {
+    clearTimeout(record.liveTimer);
+    record.liveTimer = setTimeout(() => fluid.blockEditor.commitLive(record, element), fluid.blockEditor.liveDelay);
+};
+
+/**
+ * Commit a block being typed in, keeping it in hand - its source is rendered into the block at once, rather than once
+ * the extension has held it, so that nothing typed meanwhile is overwritten - and the caret is put back where it was
+ * @param {Object} record - The container's record
+ * @param {Element} element - The block's element
+ */
+fluid.blockEditor.commitLive = function (record, element) {
+    if (element.isConnected && record.before !== null && element.innerHTML !== record.before) {
+        const index = +element.dataset.fluidBlockIndex;
+        const offset = fluid.blockEditor.caretOffset(element);
+        fluid.blockEditor.splice(record, index, index, fluid.markdownSerializer.block(element),
+            offset === null ? null : {index, offset, text: element.textContent});
+        record.before = element.innerHTML;
+        fluid.setForComponent(record.that, ["editSource"], record.source);
+    }
+};
+
+/**
+ * Find how far into a block's text the caret lies
+ * @param {Element} element - The block's element
+ * @return {Number|null} The number of characters of its text before the caret, or null if the caret is not within it
+ */
+fluid.blockEditor.caretOffset = function (element) {
+    const selection = document.getSelection();
+    let togo = null;
+    if (selection.rangeCount > 0 && element.contains(selection.focusNode)) {
+        const before = document.createRange();
+        before.selectNodeContents(element);
+        before.setEnd(selection.focusNode, selection.focusOffset);
+        togo = before.toString().length;
+    }
+    return togo;
+};
+
+/**
+ * Put the caret a number of characters into a block's text - at its end if its text is shorter
+ * @param {Element} element - The block's element
+ * @param {Number} offset - The number of characters of its text before the caret
+ */
+fluid.blockEditor.placeCaret = function (element, offset) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let remaining = offset;
+    let node = walker.nextNode();
+    let placed = false;
+    while (node && !placed) {
+        if (remaining <= node.nodeValue.length) {
+            range.setStart(node, remaining);
+            placed = true;
+        } else {
+            remaining -= node.nodeValue.length;
+            node = walker.nextNode();
+        }
+    }
+    if (!placed) {
+        range.selectNodeContents(element);
+        range.collapse(false);
+    }
+    range.collapse(true);
+    document.getSelection().removeAllRanges();
+    document.getSelection().addRange(range);
+};
+
 /**
  * Replace the lines of a run of blocks in the source with markdown, and announce the source
  * @param {Object} record - The container's record
@@ -421,6 +517,7 @@ fluid.blockEditor.splice = function (record, first, last, markdown, focus) {
         fluid.markdownSerializer.wrapParagraph(paragraph, width)).join("\n\n") : markdown).split("\n");
     lines.splice(start, end - start, ...replaced);
     const text = lines.join("\n");
+    clearTimeout(record.liveTimer);
     record.source = text;
     record.before = null;
     record.focus = focus || null;
@@ -428,7 +525,8 @@ fluid.blockEditor.splice = function (record, first, last, markdown, focus) {
 };
 
 /**
- * Restore the focus a commit asked for, once its source has rendered - to the start or end of a block
+ * Restore the focus a commit asked for, once its source has rendered - to the start or end of a block, or, for one
+ * committed as it was typed in, to where its caret was
  * @param {Object} record - The container's record
  */
 fluid.blockEditor.restoreFocus = function (record) {
@@ -436,12 +534,21 @@ fluid.blockEditor.restoreFocus = function (record) {
     const element = focus && record.elements[focus.index];
     if (element && element.getAttribute("data-fluid-block") === "editable" && record.source === record.that.editSource) {
         record.focus = null;
-        element.focus();
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        range.collapse(!focus.atEnd);
-        document.getSelection().removeAllRanges();
-        document.getSelection().addRange(range);
+        if (focus.offset === undefined) {
+            element.focus();
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            range.collapse(!focus.atEnd);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(range);
+        } else if (element.textContent === focus.text) {
+            // Unless more has been typed since, in which case the caret is where the typing left it
+            if (document.activeElement !== element) {
+                element.focus();
+            }
+            fluid.blockEditor.placeCaret(element, focus.offset);
+            record.before = element.innerHTML;
+        }
     }
 };
 
@@ -688,6 +795,70 @@ fluid.blockEditor.slotAt = function (record, element, range) {
     }
     return togo;
 };
+
+/**
+ * Find where something dragged over the blocks would land if dropped, as the drop finds it - see fluid.blockEditor.listen
+ * @param {Object} record - The container's record
+ * @param {DragEvent} event - The drag
+ * @param {Element|null} island - The widget dragged over, which a widget dropped takes the place of, or null
+ * @param {Function} editableOf - Finds the editable block holding a node
+ * @return {Object|null} `{kind, rect}` - `kind` "island" for a widget displaced, "text" for a caret within a paragraph or
+ * heading which the drop splits, "block" for the slot after a block - with `rect` its place in the viewport - or null
+ */
+fluid.blockEditor.dropPlace = function (record, event, island, editableOf) {
+    const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(event.clientX, event.clientY) : null;
+    const target = (range && editableOf(range.startContainer)) || event.target.closest?.("[data-fluid-block-index]");
+    const element = target && record.container.contains(target) ? target : fluid.peek(record.elements.filter(one => one));
+    const tag = element ? element.tagName.toLowerCase() : "";
+    const splits = !!element && !!range && element.getAttribute("data-fluid-block") === "editable" &&
+        (tag === "p" || /^h[1-6]$/.test(tag)) && element.contains(range.startContainer);
+    const caretRect = splits ? [...range.getClientRects()].find(rect => rect.height > 0) || range.getBoundingClientRect() : null;
+    let togo = null;
+    if (island) {
+        togo = {kind: "island", rect: island.getBoundingClientRect()};
+    } else if (caretRect && caretRect.height > 0) {
+        togo = {kind: "text", rect: caretRect};
+    } else if (element) {
+        togo = {kind: "block", rect: element.getBoundingClientRect()};
+    }
+    return togo;
+};
+
+/**
+ * Show where something dragged would land if dropped - a caret sliding through the text, a bar beneath the block it
+ * would follow, or an outline of the widget it would take the place of - see fluid.blockEditor.dropPlace
+ * @param {Object|null} place - The place, or null to show none
+ */
+fluid.blockEditor.showDropCaret = function (place) {
+    let caret = document.querySelector(".fluid-block-drop-caret");
+    if (place) {
+        if (!caret) {
+            caret = document.createElement("div");
+            caret.className = "fluid-block-drop-caret";
+            // The extension's own - see bridge.js
+            caret.setAttribute("data-fluid-edit-ui", "");
+            caret.setAttribute("aria-hidden", "true");
+            document.body.appendChild(caret);
+        }
+        const rect = place.rect;
+        const left = window.scrollX + rect.left, top = window.scrollY + rect.top;
+        caret.setAttribute("data-fluid-drop-kind", place.kind);
+        Object.assign(caret.style, place.kind === "text" ? {left: left + "px", top: top + "px", width: "", height: rect.height + "px"} :
+            place.kind === "block" ? {left: left + "px", top: (top + rect.height + 2) + "px", width: rect.width + "px", height: ""} :
+                {left: left + "px", top: top + "px", width: rect.width + "px", height: rect.height + "px"});
+    } else if (caret) {
+        caret.remove();
+    }
+};
+
+/**
+ * Cease showing where something dragged would land
+ */
+fluid.blockEditor.hideDropCaret = () => fluid.blockEditor.showDropCaret(null);
+
+// A drag ended anywhere, e.g. abandoned with Escape, leaves no caret behind
+document.addEventListener("dragend", fluid.blockEditor.hideDropCaret);
+document.addEventListener("drop", fluid.blockEditor.hideDropCaret);
 
 /**
  * Determine whether markdown is a widget's element alone, as fluid.ptf.islandMarkup writes it
@@ -1088,6 +1259,34 @@ fluid.blockEditor.toolbar.holds = element => !!(element && fluid.blockEditor.too
 
 .fluid-block-flash.fluid-block-flash-fading {
     opacity: 0;
+}
+
+/* Where something dragged would land - see fluid.blockEditor.showDropCaret. It slides as the drag moves */
+.fluid-block-drop-caret {
+    position: absolute;
+    z-index: 2147482001;
+    pointer-events: none;
+    box-sizing: border-box;
+    transition: left 0.08s ease-out, top 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out;
+}
+
+.fluid-block-drop-caret[data-fluid-drop-kind="text"] {
+    width: 2px;
+    margin-left: -1px;
+    background: #2b6cb0;
+}
+
+.fluid-block-drop-caret[data-fluid-drop-kind="block"] {
+    height: 3px;
+    border-radius: 2px;
+    background: #2b6cb0;
+}
+
+.fluid-block-drop-caret[data-fluid-drop-kind="island"] {
+    outline: 2px dashed #2b6cb0;
+    outline-offset: 3px;
+    border-radius: 2px;
+    background: rgba(43, 108, 176, 0.08);
 }
 
 .fluid-block-toolbar {

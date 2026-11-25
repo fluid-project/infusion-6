@@ -219,6 +219,23 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
         element.dispatchEvent(new DragEvent("drop", init));
     }, selector, name, type, content);
     const before = await paragraph(post, 0);
+    // Dragged over a paragraph, a caret shows where the file would land, and goes once the drag leaves
+    const dragCaret = await post.evaluate(() => {
+        const element = [...document.querySelectorAll("p[data-fluid-block=\"editable\"]")].filter(p => p.textContent.trim().split(/\s+/).length > 8)[0];
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(["x"], "any.zip", {type: "application/zip"}));
+        // In view, since only there can a point be found in its text
+        element.scrollIntoView({block: "center"});
+        const bounds = element.getBoundingClientRect();
+        const init = {dataTransfer: transfer, bubbles: true, cancelable: true, clientX: bounds.left + bounds.width / 2, clientY: bounds.top + 6};
+        element.dispatchEvent(new DragEvent("dragover", init));
+        const caret = document.querySelector(".fluid-block-drop-caret");
+        const shown = caret ? {kind: caret.getAttribute("data-fluid-drop-kind"), height: caret.getBoundingClientRect().height} : null;
+        element.dispatchEvent(new DragEvent("dragleave", {...init, relatedTarget: null}));
+        return {shown, gone: !document.querySelector(".fluid-block-drop-caret")};
+    });
+    expect(dragCaret.shown && dragCaret.shown.kind === "text" && dragCaret.shown.height > 0 && dragCaret.gone,
+        "A caret shows where a file dragged over a paragraph would land, and goes once the drag leaves: " + JSON.stringify(dragCaret));
     await dropAt(0, "pictured.zip", "application/zip", zip.toString("base64"));
     await post.waitForSelector("[fluid-layers=\"fluid.tests.pictured\"] figcaption", {timeout: 15000});
     expect((await post.$eval("[fluid-layers=\"fluid.tests.pictured\"] figcaption", node => node.textContent)) === "From a ZIP",
@@ -345,6 +362,17 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
         return !!line;
     }, picturedLayer);
     expect(sourceIslandLine, "The widget's element shows in the source view");
+    const sourceCaret = await post.evaluate(() => {
+        const line = document.querySelector(".fluid-edit-source-view [data-test-island-line]");
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(["x"], "any.zip", {type: "application/zip"}));
+        const bounds = line.getBoundingClientRect();
+        line.dispatchEvent(new DragEvent("dragover", {dataTransfer: transfer, bubbles: true, cancelable: true,
+            clientX: bounds.left + 20, clientY: bounds.top + bounds.height / 2}));
+        const caret = document.querySelector(".fluid-edit-source-drop-caret");
+        return caret ? Math.abs(caret.getBoundingClientRect().top - bounds.top) < bounds.height : null;
+    });
+    expect(sourceCaret === true, "A caret shows where a file dragged over the source would land, on the line beneath the pointer");
     await dropAt(".fluid-edit-source-view [data-test-island-line]", "source.zip", "application/zip",
         captioned("From the source view").toString("base64"));
     const sourceDisplaced = await sourceSatisfying(post, source => source.includes("From the source view"));
@@ -355,6 +383,22 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
     // 5. Commit, and find all published
     await post.click(".fluid-edit-commit");
     await harness.waitForState(post, "committed");
+    // The panel's header names who last changed the post, and when, linking each to GitHub
+    await post.waitForSelector(".fluid-edit-updated:not([hidden])", {timeout: 15000}).catch(() => null);
+    const updated = await post.evaluate(() => ({
+        pathHref: document.querySelector(".fluid-edit-path").getAttribute("href"),
+        hidden: document.querySelector(".fluid-edit-updated").hidden,
+        text: document.querySelector(".fluid-edit-updated").textContent.replace(/\s+/g, " ").trim(),
+        by: document.querySelector(".fluid-edit-updated-by").getAttribute("href"),
+        at: document.querySelector(".fluid-edit-updated-at").getAttribute("href"),
+        title: document.querySelector(".fluid-edit-updated-at").getAttribute("title")
+    }));
+    const commitSha = mock.commits[0] && mock.commits[0].sha;
+    expect(/\/blob\/main\/content\/post\/2025-03-20-ui-as-code\.md$/.test(updated.pathHref || ""), "The source's name links to it on GitHub: " + updated.pathHref);
+    expect(!updated.hidden && /^Last updated by reviewer at \d{1,2}(st|nd|rd|th) [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/.test(updated.text) &&
+        updated.by === "https://github.com/reviewer" && updated.at.endsWith("/commit/" + commitSha) &&
+        updated.title.startsWith(commitSha.substring(0, 7) + " - "), "Who last changed the post and when, linked to their profile and the commit: " +
+        JSON.stringify(updated));
     expect(mock.commits.length === 1 && ["static/img/ui-as-code-1.png", "static/img/zip-cat.png", "static/sfc/fluid-tests-pictured.vue"]
         .every(file => mock.commits[0].paths.includes(file)), "One commit, of the post and all its files: " + JSON.stringify(mock.commits.map(commit => commit.paths)));
     await mock.idle();

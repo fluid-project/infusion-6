@@ -148,6 +148,8 @@ const handlers = {
     // The claims held on the sources of a repository beneath a path, e.g. the new posts of a section
     "claim-list": async message => (await fluidClaims.list()).filter(claim => claim.repo === message.repo && claim.path.startsWith(message.prefix)),
     "source-read": message => fluidGitHub.read(message.repo, message.branch, message.path),
+    // Where a source is shown on GitHub, and who last changed it, for the panel's header
+    "source-history": message => fluidGitHub.history(message.repo, message.ref, message.path, message.anonymous !== false),
     // A source a site inherits from one of its bases, and the heads of its bases' branches - each read without
     // credentials, since the page names the repository
     "base-read": message => fluidGitHub.readPublic(message.repo, message.ref, message.path),

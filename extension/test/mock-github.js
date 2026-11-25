@@ -55,6 +55,7 @@ mockGitHub.copyTree = function (from, to, omit = []) {
  * @property {String[]} paths - Every file it wrote or removed
  * @property {String} message - Its message
  * @property {String} blobSha - The sha of the file as written - for a commit of several, of the first written
+ * @property {String} date - When it was made, as an ISO 8601 date
  */
 
 /**
@@ -200,11 +201,26 @@ mockGitHub.create = function (options) {
      * @return {MockCommit} The commit
      */
     const recordCommit = function (sha, paths, message, blobSha) {
-        const commit = {sha, path: paths[0], paths, message, blobSha};
+        const commit = {sha, path: paths[0], paths, message, blobSha, date: new Date().toISOString()};
         mock.commits.push(commit);
         mock.head = sha;
         mock.queueRun(sha);
         return commit;
+    };
+
+    /**
+     * List the commits which changed a file, newest first, as GitHub's list of commits gives them - each made by the
+     * user "reviewer"
+     * @param {String|null} filePath - The file, or null for every commit
+     * @return {Object[]} The commits
+     */
+    mock.listCommits = function (filePath) {
+        return mock.commits.filter(commit => !filePath || (commit.paths || [commit.path]).includes(filePath)).reverse().map(commit => ({
+            sha: commit.sha,
+            html_url: "https://github.com/" + options.repo + "/commit/" + commit.sha,
+            author: {login: "reviewer", type: "User", html_url: "https://github.com/reviewer"},
+            commit: {message: commit.message, author: {name: "Reviewer", date: commit.date}}
+        }));
     };
 
     /**
@@ -307,6 +323,9 @@ mockGitHub.create = function (options) {
             res.end();
         } else if (req.method === "GET" && mock.handleBase(res, apiPath, query)) {
             // A base of the site, read without credentials
+        } else if (req.method === "GET" && apiPath === "/repos/" + options.repo + "/commits") {
+            // The commits which changed a file, newest first, as made by the user "reviewer" - see mock.listCommits
+            reply(res, 200, mock.listCommits(query.get("path")));
         } else if (gitMatch && gitMatch[1] === options.repo) {
             await handleGit(req, res, gitMatch[2].split("/").map(decodeURIComponent).join("/"), query);
         } else if (!match || match[1] !== options.repo || !file) {

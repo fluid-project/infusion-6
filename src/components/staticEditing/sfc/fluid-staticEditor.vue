@@ -20,6 +20,15 @@ fluid.def("fluid.staticEditor", {
             // Whether the panel shows the source it edits, so that what drives it may proceed
             ready: false,
             path: "",
+            // Where the source edited is shown on GitHub, and the last commit a person made to it - see
+            // fluid.staticEditing.showHistory
+            pathHref: "",
+            updatedHidden: true,
+            updatedBy: "",
+            updatedByHref: "",
+            updatedDate: "",
+            updatedHref: "",
+            updatedTitle: "",
             status: "",
             statusKind: "",
             // A notice that a base of the site has moved on since it was built, offering to rebuild it
@@ -31,12 +40,10 @@ fluid.def("fluid.staticEditor", {
             commitDisabled: true,
             discardDisabled: true,
             buttonsHidden: true,
-            modeHidden: true,
             framingRowHidden: true,
             configHidden: true,
             newHidden: true,
             framing: false,
-            inPage: true,
             sourceHidden: true,
             sourceOpen: false
         }
@@ -91,12 +98,6 @@ fluid.def("fluid.staticEditor", {
             args: ["{self}.controller"]
         }
     },
-    inPageChanged: {
-        $method: {
-            func: "fluid.staticEditing.inPageChanged",
-            args: ["{self}.controller", "{0}:event"]
-        }
-    },
     titleInput: {
         $method: {
             func: "fluid.staticEditing.titleInput",
@@ -140,8 +141,12 @@ fluid.def("fluid.staticEditor", {
     <!-- The editing client's own, which it keeps out of the page while the page's component tree is first booted -->
     <div class="fluid-edit-panel" data-fluid-edit-ui="" hidden="@{state.hidden}" data-fluid-edit-ready="@{state.ready}"
          data-fluid-claim-state="@{state.claimState}">
-        <header><strong>Edit in Infusion</strong> <span class="fluid-edit-path">@{state.path}</span>
+        <header><strong>Edit in Infusion</strong> <a class="fluid-edit-path" href="@{state.pathHref}" target="_blank"
+            rel="noopener" title="Show this source on GitHub">@{state.path}</a>
             <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
+        <div class="fluid-edit-updated" hidden="@{state.updatedHidden}">Last updated by <a class="fluid-edit-updated-by"
+            href="@{state.updatedByHref}" target="_blank" rel="noopener">@{state.updatedBy}</a> at <a class="fluid-edit-updated-at"
+            href="@{state.updatedHref}" title="@{state.updatedTitle}" target="_blank" rel="noopener">@{state.updatedDate}</a></div>
         <!-- Beneath the header, so that it is in view however long the source shown below it -->
         <div class="fluid-edit-status" data-fluid-status-kind="@{state.statusKind}" role="status">@{state.status}</div>
         <div class="fluid-edit-bases" hidden="@{state.basesHidden}"><span>@{state.basesText}</span>
@@ -157,10 +162,6 @@ fluid.def("fluid.staticEditor", {
                                 @oninput="{self}.titleInput({0})"></label>
         </div>
         <div class="fluid-edit-state">@{state.stateText}</div>
-        <div class="fluid-edit-mode" hidden="@{state.modeHidden}">
-            <label><input type="checkbox" class="fluid-edit-inpage" checked="@{state.inPage}"
-                          @onchange="{self}.inPageChanged({0})"> Edit in the page</label>
-        </div>
         <!-- The source view announces what happens in it as events, which bubble to here - see fluid.sourceView.bind. Its
              fold's "toggle", which does not bubble, is listened for by the controller - see fluid.staticEditing.bind -->
         <details class="fluid-edit-source" hidden="@{state.sourceHidden}" open="@{state.sourceOpen}"
@@ -341,6 +342,15 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     font-size: 12px;
 }
 
+a.fluid-edit-path {
+    color: inherit;
+}
+
+.fluid-edit-updated {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
 .fluid-edit-panel textarea {
     flex: 1;
     width: 100%;
@@ -504,11 +514,5 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
 /* Whilst the source is folded away, as whilst the page's blocks are edited in place, the panel is a narrow column */
 .fluid-edit-panel:has(.fluid-edit-source:not([open])) {
     flex-basis: 320px;
-}
-
-.fluid-edit-mode label {
-    display: flex;
-    gap: 6px;
-    align-items: center;
 }
 </style>

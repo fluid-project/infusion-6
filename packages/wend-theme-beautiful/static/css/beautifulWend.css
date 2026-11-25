@@ -63,4 +63,6 @@
 .media-icons {
     margin-top: 30px;
     height: 0;
+    display: flex;
+    gap: 6px;
 }
