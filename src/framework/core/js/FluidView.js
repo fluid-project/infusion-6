@@ -4024,8 +4024,13 @@ const fluidViewScope = function (fluid) {
         }
         // A text node whose text interpolates values, e.g. "@{author.name}", is marked, so that an editor of what renders
         // it can tell it from text written literally in the template - see fluid.staticEditing's in-place framing
+        // Its text as the template writes it, references and all, is recorded with it, and the range of the template's
+        // text it was parsed from, so that the editor may find where in the template it is rendered from. The range
+        // indexes the text the template was parsed from - for an SFC's <template>, the whole SFC - as it then stood
         if (vnode.text !== undefined) {
             element.flBound = fluid.isSignal(vnode.text);
+            element.flTemplateText = element.flBound ? vnode.text.$source : vnode.text;
+            element.flTemplateRange = vnode.start !== undefined && vnode.end !== undefined ? {start: vnode.start, end: vnode.end} : undefined;
         }
         if (vnode.attrs !== undefined || vnode.defaultAttrs !== undefined) {
             fluid.patchAttrs(vnode, element, isRoot);

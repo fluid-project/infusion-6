@@ -168,6 +168,9 @@ harness.scenario("Inserting, using, pasting and committing widgets in a post", a
         dialog.accept();
     });
     await post.waitForFunction(() => !document.querySelector(".fluid-edit-cleanup").disabled, {timeout: 15000});
+    const cleanupTitle = await post.$eval(".fluid-edit-cleanup", node => node.getAttribute("title") || node.getAttribute("data-fl-title"));
+    expect(cleanupTitle.includes(unusedLayer) && cleanupTitle.includes("static/sfc/fluid-tests-unused.vue") && !cleanupTitle.includes("fluid.demos.counter"),
+        "The clean-up's tooltip names the layer it would delete, and its file, and no other: " + JSON.stringify(cleanupTitle));
     await post.click(".fluid-edit-cleanup");
     const unusedPath = "static/sfc/fluid-tests-unused.vue";
     let held = [];

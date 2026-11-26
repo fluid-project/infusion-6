@@ -320,6 +320,7 @@ const fluidStaticEditingScope = function (fluid) {
                 const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
                 for (let node = walker.nextNode(); node; node = walker.nextNode()) {
                     node.flRenderedText = node.nodeValue;
+                    delete node.flSourceRange;
                     if (node.flBound && node.parentElement !== root) {
                         node.parentElement.setAttribute("contenteditable", "false");
                         node.parentElement.setAttribute("data-fluid-templated", "");
@@ -329,6 +330,251 @@ const fluidStaticEditingScope = function (fluid) {
             });
         }
     };
+
+    /**
+     * The template of an SFC - the text between its <template> and </template>
+     * @param {String} source - The SFC's text
+     * @return {Object|null} `{from, text}` - where it begins in the source, and its text - or null if it has none
+     */
+    fluid.staticEditing.templateOf = function (source) {
+        const open = source.indexOf("<template>");
+        const close = source.lastIndexOf("</template>");
+        return open >= 0 && close > open ? {from: open, text: source.substring(open, close)} : null;
+    };
+
+    /**
+     * Find the range of the source from which a text node was parsed, as Infusion's renderer records it on the node (see
+     * `flTemplateRange` in FluidView.js) - valid only while the source still holds, there, the node's template text,
+     * since the range indexes the text as it was last parsed, which typing in the source or the page runs ahead of
+     * until the page next renders. A template held other than in an SFC's <template>, e.g. as a string of its layer's
+     * definition, is parsed from text other than the source, and its ranges are not found valid
+     * @param {Text} node - The text node
+     * @param {String} source - The SFC's text, as it now stands
+     * @return {Object|null} `{from, to}` - the range of the source holding the node's template text, less any whitespace
+     * about it - or null if the node bears no range, or it is no longer valid
+     */
+    fluid.staticEditing.carriedRange = function (node, source) {
+        const range = node.flTemplateRange;
+        const template = fluid.staticEditing.templateOf(source);
+        let togo = null;
+        if (range && template && range.start >= template.from && range.end <= template.from + template.text.length &&
+            node.flTemplateText !== undefined) {
+            const raw = source.substring(range.start, range.end);
+            if (fluid.decodeHtmlEntity(raw) === node.flTemplateText && raw.trim() !== "") {
+                togo = {from: range.start + raw.length - raw.trimStart().length, to: range.end - (raw.length - raw.trimEnd().length)};
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * Find, by search, where in the source of the framing a text node of it is rendered from - the one place in the
+     * SFC's template outside its tags at which the node's template text is written, entities and runs of whitespace as
+     * the template writes them. A node whose text is found nowhere, or more than once, has no range
+     * @param {Text} node - The text node
+     * @param {String} source - The SFC's text
+     * @param {String} [text] - The text to be found - by default the node's template text, or else its text
+     * @return {Object|null} `{from, to}` - the range of its template text in the source - or null
+     */
+    fluid.staticEditing.searchedRange = function (node, source, text) {
+        const template = fluid.staticEditing.templateOf(source);
+        const sought = (text ?? node.flTemplateText ?? node.nodeValue ?? "").trim();
+        let togo = null;
+        if (template && sought !== "") {
+            const pattern = new RegExp(fluid.staticEditing.templateTextPattern(sought), "g");
+            const matches = [...template.text.matchAll(pattern)].filter(match => !/^[^<]*>/.test(template.text.substring(match.index + match[0].length)));
+            if (matches.length === 1) {
+                togo = {from: template.from + matches[0].index, to: template.from + matches[0].index + matches[0][0].length};
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * Find where in the source of the framing a text node of it is rendered from - by the range the renderer recorded
+     * on it, while that is valid, or else by searching the template for its text
+     * @param {Text} node - The text node
+     * @param {String} source - The SFC's text
+     * @return {Object|null} `{from, to}` - the range of its template text in the source, less any whitespace about it -
+     * or null if it can't be found
+     */
+    fluid.staticEditing.framingRange = (node, source) => fluid.staticEditing.carriedRange(node, source) || fluid.staticEditing.searchedRange(node, source);
+
+    /**
+     * Find where in the source of the framing a position within one of its text nodes is rendered from - within text
+     * written literally, the position matching the characters before it, and within text interpolated from a value,
+     * the start of the reference
+     * @param {Text} node - The text node
+     * @param {Number} offset - The position within its text
+     * @param {String} source - The SFC's text
+     * @return {Number|null} The position in the source, or null if the node's range can't be found
+     */
+    fluid.staticEditing.framingSourcePosition = function (node, offset, source) {
+        const range = fluid.staticEditing.framingRange(node, source);
+        let togo = null;
+        if (range && node.flBound) {
+            togo = range.from;
+        } else if (range) {
+            const text = node.nodeValue;
+            const lead = text.length - text.trimStart().length;
+            const before = text.substring(lead, Math.max(lead, offset));
+            const sticky = new RegExp(fluid.staticEditing.templateTextPattern(before), "y");
+            sticky.lastIndex = range.from;
+            const match = before === "" ? null : sticky.exec(source);
+            togo = Math.min(range.to, range.from + (match ? match[0].length : 0));
+        }
+        return togo;
+    };
+
+    /**
+     * Show, in the framing edited in place, the text rendered from where the source view's cursor stands - the text
+     * node whose template text holds it is highlighted, by the CSS Custom Highlight API, and scrolled into view
+     * @param {Object} edit - The controller
+     * @param {Number} pos - The cursor's position in the source
+     */
+    fluid.staticEditing.showFramingPosition = function (edit, pos) {
+        const root = document.querySelector(`[data-fluid-framing="${CSS.escape(edit.targetPath || "")}"]`);
+        let found = null;
+        if (root && edit.source && typeof(pos) === "number") {
+            const source = edit.source.getText();
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const range = fluid.staticEditing.framingRange(node, source);
+                if (range && pos >= range.from && pos <= range.to && (!found || range.to - range.from < found.range.to - found.range.from)) {
+                    found = {node, range};
+                }
+            }
+        }
+        if (typeof(CSS) !== "undefined" && CSS.highlights) {
+            if (found) {
+                const range = document.createRange();
+                const text = found.node.nodeValue;
+                range.setStart(found.node, text.length - text.trimStart().length);
+                range.setEnd(found.node, text.trimEnd().length);
+                CSS.highlights.set("fluid-framing-cursor", new Highlight(range));
+                const bounds = range.getBoundingClientRect();
+                if (bounds.top < 0 || bounds.bottom > window.innerHeight) {
+                    found.node.parentElement.scrollIntoView({block: "center", behavior: "smooth"});
+                }
+            } else {
+                CSS.highlights.delete("fluid-framing-cursor");
+            }
+        }
+        edit.framingCursorNode = found ? found.node : null;
+    };
+
+    /**
+     * Respond to the selection of the page moving - one within the framing edited in place moves the source view's
+     * cursor to where the text selected is rendered from. A selection within templated text, which can't be typed into,
+     * stands at the start of its reference
+     * @param {Object} edit - The controller
+     */
+    fluid.staticEditing.onFramingSelection = function (edit) {
+        const selection = document.getSelection();
+        const anchor = selection && selection.rangeCount > 0 ? selection.anchorNode : null;
+        const root = anchor ? (anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor).closest("[data-fluid-framing-editable]") : null;
+        if (root && root.getAttribute("data-fluid-framing") === edit.targetPath && edit.source) {
+            let node = anchor;
+            let offset = selection.anchorOffset;
+            if (node.nodeType !== Node.TEXT_NODE) {
+                const walker = document.createTreeWalker(node.childNodes[offset] || node, NodeFilter.SHOW_TEXT);
+                node = walker.nextNode();
+                offset = 0;
+            }
+            const pos = node ? fluid.staticEditing.framingSourcePosition(node, offset, edit.source.getText()) : null;
+            if (pos !== null) {
+                edit.source.showPosition(pos);
+                fluid.staticEditing.showFramingPosition(edit, pos);
+            }
+        }
+    };
+
+    /**
+     * What a template reference written in the source the panel edits may name - the contexts in scope of the component
+     * rendering it, and the members of each - for completing them as they are typed - see fluid.sourceView's
+     * `templateCompletions`. Known only of a source of the framing, whose component the page renders
+     * @param {Object} edit - The controller
+     * @return {Object|null} `{contexts(), members(context)}` - the names of the contexts in scope, and the members, as
+     * `{name, detail}`, of a context, or of the component itself for null - or null if no component renders the source
+     */
+    fluid.staticEditing.templateScope = function (edit) {
+        const target = fluid.staticEditing.target(edit);
+        const framing = target && target.framing;
+        const root = fluid.globalInstantiator && fluid.globalInstantiator.rootComponent;
+        const component = framing && framing.layer && root ? fluid.queryILSelector(root, framing.layer).find(one => !fluid.isUnavailable(one)) : null;
+        const shadow = component ? component[fluid.metadataSymbol] : null;
+        return shadow ? {
+            contexts: () => fluid.staticEditing.scopeContexts(shadow),
+            members: context => {
+                const rec = context === null ? null : shadow.ownScope[context];
+                const scoped = context === null || context === "self" ? shadow : rec ? rec.value : null;
+                return scoped ? fluid.staticEditing.scopeMembers(scoped) : [];
+            }
+        } : null;
+    };
+
+    /**
+     * The names of the contexts in scope of a component, as its template's references `@{{context}.path}` resolve them
+     * @param {Shadow} shadow - The component's shadow
+     * @return {String[]} The names, sorted, "self" amongst them
+     */
+    fluid.staticEditing.scopeContexts = function (shadow) {
+        const names = new Set(["self"]);
+        // A scope holds its parent's as its prototype - each name in any is in scope
+        for (const name in shadow.ownScope) {
+            if (typeof(name) === "string" && !name.startsWith("$")) {
+                names.add(name);
+            }
+        }
+        return [...names].sort();
+    };
+
+    // How deep the members of a component are offered for completing a template's references, e.g. "author.name"
+    fluid.staticEditing.scopeDepth = 2;
+
+    /**
+     * Describe a value for completing a reference to it - its text, or what kind of value it is
+     * @param {any} value - The value
+     * @return {String} The description
+     */
+    fluid.staticEditing.describeValue = function (value) {
+        const text = typeof(value) === "string" ? JSON.stringify(value) : typeof(value) === "number" || typeof(value) === "boolean" ? String(value) :
+            Array.isArray(value) ? "array of " + value.length : value === null ? "null" : typeof(value) === "object" ? "object" : typeof(value);
+        return text.length > 40 ? text.substring(0, 39) + "…" : text;
+    };
+
+    /**
+     * The members of a component which its template, or another's, may refer to - each top-level member its layers
+     * define, other than the framework's own, and the members of those holding plain objects, to `scopeDepth`
+     * @param {Shadow} shadow - The component's shadow
+     * @return {Object[]} `{name, detail}` for each - its path, e.g. "author.name", and a description of its value
+     */
+    fluid.staticEditing.scopeMembers = function (shadow) {
+        const togo = [];
+        const visit = (path, value, depth) => {
+            const plain = value !== null && typeof(value) === "object" && !Array.isArray(value) && !fluid.isComponent(value) && !fluid.isSignal(value) &&
+                Object.getPrototypeOf(value) === Object.prototype;
+            togo.push({name: path, detail: fluid.staticEditing.describeValue(value)});
+            if (plain && depth < fluid.staticEditing.scopeDepth) {
+                Object.keys(value).filter(key => !key.startsWith("$")).forEach(key => visit(path + "." + key, value[key], depth + 1));
+            }
+        };
+        Object.keys(shadow.layerMap || {}).filter(key => !key.startsWith("$") && !fluid.staticEditing.frameworkMembers.has(key)).sort().forEach(key => {
+            let value;
+            try {
+                value = fluid.deSignal(fluid.getForComponent(shadow, key));
+            } catch (error) {
+                value = undefined;
+            }
+            if (typeof(value) !== "function") {
+                visit(key, value, 1);
+            }
+        });
+        return togo;
+    };
+
+    // Members which every component has of the framework, not offered for completing a template's references
+    fluid.staticEditing.frameworkMembers = new Set(["view", "template", "container", "elideParent", "events", "renderedContainer"]);
 
     /**
      * Respond to text typed into the framing edited in place - it is written back into the template a moment after the
@@ -379,7 +625,8 @@ const fluidStaticEditingScope = function (fluid) {
 
     /**
      * Write the text typed into the framing edited in place back into its template - each text node whose text differs
-     * from that it was rendered with is found in the template's markup by what it was rendered with, and the part of it
+     * from that it was rendered with is found in the template's markup by the range the renderer recorded on it, while
+     * the source still holds its text there, or else by searching for what it was rendered with, and the part of it
      * which changed is replaced. The source as rewritten is then the edit of the source, as one typed into its view. A
      * text which can't be found exactly once in the template is not written, and the user told to edit the source
      * @param {Object} edit - The controller
@@ -391,14 +638,16 @@ const fluidStaticEditingScope = function (fluid) {
         if (path === edit.targetPath && edit.source) {
             root.normalize();
             const source = edit.source.getText();
-            const open = source.indexOf("<template>");
-            const close = source.lastIndexOf("</template>");
-            let template = open >= 0 && close > open ? source.substring(open, close) : null;
+            const template = fluid.staticEditing.templateOf(source);
             const problems = [];
+            // Each node's change, as an edit of the source as it now stands - applied once all are found, from the last
+            const edits = [];
             const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
             for (let node = walker.nextNode(); node && template !== null; node = walker.nextNode()) {
-                const was = node.flRenderedText;
-                const now = node.nodeValue;
+                // Compared less the whitespace about them, which is the template's layout - the page collapses, or drops,
+                // it as it is typed into, and the template keeps its own
+                const was = node.flRenderedText === undefined ? undefined : node.flRenderedText.trim();
+                const now = node.nodeValue.trim();
                 if (was !== undefined && was !== now && !node.flBound) {
                     // The part which changed, between what is common to the start and the end of the text
                     let prefix = 0;
@@ -409,19 +658,24 @@ const fluidStaticEditingScope = function (fluid) {
                     while (suffix < was.length - prefix && suffix < now.length - prefix && was[was.length - 1 - suffix] === now[now.length - 1 - suffix]) {
                         ++suffix;
                     }
-                    const pattern = new RegExp("(" + fluid.staticEditing.templateTextPattern(was.substring(0, prefix)) + ")(" +
+                    // Matched against the range of the template's text less the whitespace about it, which is the
+                    // range found
+                    const parts = "^(" + fluid.staticEditing.templateTextPattern(was.substring(0, prefix)) + ")(" +
                         fluid.staticEditing.templateTextPattern(was.substring(prefix, was.length - suffix)) + ")(" +
-                        fluid.staticEditing.templateTextPattern(was.substring(was.length - suffix)) + ")", "g");
-                    // Text of the template's markup lies outside its tags
-                    const matches = [...template.matchAll(pattern)].filter(match => !/^[^<]*>/.test(template.substring(match.index + match[0].length)));
-                    if (was.trim() === "" || matches.length !== 1) {
+                        fluid.staticEditing.templateTextPattern(was.substring(was.length - suffix)) + ")$";
+                    // Where the node's text was rendered from - the range the renderer recorded, should the source still
+                    // hold the node's text there, within which the change is placed exactly; or else the one place the
+                    // template holds the text, outside its tags
+                    const carried = fluid.staticEditing.carriedRange(node, source);
+                    const searched = carried ? null : fluid.staticEditing.searchedRange(node, source, was);
+                    const range = carried || searched;
+                    const match = range ? new RegExp(parts).exec(source.substring(range.from, range.to)) : null;
+                    if (was === "" || !match) {
                         problems.push(JSON.stringify(was.trim().substring(0, 40)));
                     } else {
-                        const match = matches[0];
-                        const at = match.index + match[1].length;
-                        template = template.substring(0, at) + fluid.staticEditing.templateText(now.substring(prefix, now.length - suffix)) +
-                            template.substring(at + match[2].length);
-                        node.flRenderedText = now;
+                        const at = range.from + match[1].length;
+                        edits.push({from: at, to: at + match[2].length, insert: fluid.staticEditing.templateText(now.substring(prefix, now.length - suffix))});
+                        node.flRenderedText = node.nodeValue;
                     }
                 }
             }
@@ -430,7 +684,7 @@ const fluidStaticEditingScope = function (fluid) {
             } else if (problems.length > 0) {
                 fluid.staticEditing.setError(edit, "What was typed into " + problems.join(", ") + " can't be found once in the template - edit the source instead");
             } else {
-                const text = source.substring(0, open) + template + source.substring(close);
+                const text = edits.sort((a, b) => b.from - a.from).reduce((text, one) => text.substring(0, one.from) + one.insert + text.substring(one.to), source);
                 if (text !== source) {
                     edit.source.setText(text);
                     await fluid.staticEditing.onInput(edit, text);
@@ -1097,12 +1351,27 @@ const fluidStaticEditingScope = function (fluid) {
         if (edit.site) {
             edit.site.widgetLayers = edit.state.widgetLayers;
         }
+        // None is chosen until the user chooses one, and Insert is offered only then
         if (!topLevel.some(widget => widget.layer === edit.state.widgetChoice)) {
-            edit.state.widgetChoice = topLevel.length > 0 ? topLevel[0].layer : "";
+            edit.state.widgetChoice = "";
         }
+        fluid.staticEditing.renderTabs(edit);
         edit.state.widgetsHidden = !edit.provenance.widgets;
-        edit.state.cleanupDisabled = fluid.staticEditing.unusedLayers(edit, widgets, edit.widgetClaims).length === 0;
+        const unused = fluid.staticEditing.unusedLayers(edit, widgets, edit.widgetClaims);
+        edit.state.cleanupDisabled = unused.length === 0;
+        edit.state.cleanupTitle = fluid.staticEditing.cleanupTitle(unused);
         return widgets;
+    };
+
+    /**
+     * The tooltip of "Clean up unused layers" - naming each layer it would delete, with its file
+     * @param {WidgetLayer[]} unused - The layers used nowhere, as by `unusedLayers`
+     * @return {String} The tooltip's text
+     */
+    fluid.staticEditing.cleanupTitle = function (unused) {
+        return "Clean up unused layers - " + (unused.length === 0 ? "every widget of the site is used, so there is none to delete" :
+            "delete these, used nowhere on the site, nor in any edit held in this browser:\n" +
+            unused.map(widget => "  " + widget.layer + (widget.path ? " (" + widget.path + ")" : "")).join("\n"));
     };
 
     /**
@@ -1112,6 +1381,7 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.widgetChosen = function (edit, event) {
         edit.state.widgetChoice = event.detail.layer;
+        fluid.staticEditing.renderTabs(edit);
     };
 
     /**
@@ -1215,10 +1485,10 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Pop "Ask me anything" out from the sparkles at the panel's foot, or withdraw it into them. It is made once, the
+     * Slide "Ask me anything" open from the sparkles at the panel's foot, or closed into them. It is made once, the
      * first time it is shown, and thereafter only shown and hidden, keeping its conversation. The share of the panel's
-     * height its bar last gave it is remembered, in the user's preferences, and given it again each time it is shown -
-     * whilst it is hidden, what edits the page takes the whole of the panel
+     * height its bar last gave it is remembered, in the user's preferences, and it slides open to that share each time
+     * it is shown - whilst it is hidden, what edits the page takes the whole of the panel
      * @param {Object} edit - The controller
      * @return {Promise} Resolves once it is shown, or hidden
      */
@@ -1228,17 +1498,14 @@ const fluidStaticEditingScope = function (fluid) {
         const main = panel.querySelector(".fluid-edit-main");
         const ai = panel.querySelector(".fluid-edit-ai");
         edit.state.aiOpen = open;
-        clearTimeout(edit.aiClosingTimer);
         if (open) {
-            edit.state.aiClosing = false;
             const split = edit.prefs.aiSplit;
-            if (split && split.main && split.ai) {
-                main.style.flexGrow = "0";
-                main.style.flexBasis = split.main;
-                ai.style.flexGrow = "0";
-                ai.style.flexBasis = split.ai;
-            }
+            const basis = split && split.ai ? split.ai : fluid.staticEditing.aiBasis;
+            // What edits the page takes whatever the panel leaves - its own share, as the bar last wrote it, is not needed
+            main.style.removeProperty("flex-basis");
+            main.style.removeProperty("flex-grow");
             edit.state.aiHidden = false;
+            await fluid.staticEditing.slideAI(edit, ai, "0px", basis);
             if (!edit.ai) {
                 edit.ai = fluid.staticEditing.makeAI(edit, panel, main, ai);
             }
@@ -1252,16 +1519,43 @@ const fluidStaticEditingScope = function (fluid) {
             }
         } else {
             fluid.staticEditing.rememberAISplit(edit, main, ai);
-            edit.state.aiClosing = true;
-            await new Promise(resolve => {
-                edit.aiClosingTimer = setTimeout(resolve, 150);
-            });
+            await fluid.staticEditing.slideAI(edit, ai, ai.style.flexBasis || fluid.staticEditing.aiBasis, "0px");
+            // Unless opened again as it slid
             if (!edit.state.aiOpen) {
                 edit.state.aiHidden = true;
-                edit.state.aiClosing = false;
                 main.style.removeProperty("flex-basis");
                 main.style.removeProperty("flex-grow");
             }
+        }
+    };
+
+    // The share of the panel's height "Ask me anything" is first given
+    fluid.staticEditing.aiBasis = "40%";
+
+    // How long "Ask me anything" takes to slide open or closed, in ms - as its styles' transition
+    fluid.staticEditing.aiSlideTime = 200;
+
+    /**
+     * Slide "Ask me anything" from one share of the panel's height to another, by a transition of its basis - its
+     * least height is waived as it slides, so that it closes all the way
+     * @param {Object} edit - The controller
+     * @param {Element} ai - Its container
+     * @param {String} from - Its basis to begin, e.g. "0px"
+     * @param {String} to - Its basis to end, e.g. "40%"
+     * @return {Promise} Resolves once it has slid
+     */
+    fluid.staticEditing.slideAI = async function (edit, ai, from, to) {
+        const slide = edit.aiSlide = (edit.aiSlide || 0) + 1;
+        ai.classList.add("fluid-edit-ai-sliding");
+        ai.style.flexGrow = "0";
+        ai.style.flexBasis = from;
+        // Laid out at its first basis, measuring it, so that the transition runs from it
+        await fluid.cell.settle();
+        ai.getBoundingClientRect();
+        ai.style.flexBasis = to;
+        await new Promise(resolve => setTimeout(resolve, fluid.staticEditing.aiSlideTime + 20));
+        if (slide === edit.aiSlide) {
+            ai.classList.remove("fluid-edit-ai-sliding");
         }
     };
 
@@ -1272,10 +1566,10 @@ const fluidStaticEditingScope = function (fluid) {
      * @param {Element} ai - The container of "Ask me anything", beneath it
      */
     fluid.staticEditing.rememberAISplit = function (edit, main, ai) {
-        const split = {main: main.style.flexBasis, ai: ai.style.flexBasis};
+        const basis = ai.style.flexBasis;
         const known = edit.prefs.aiSplit || {};
-        if (split.ai && (split.ai !== known.ai || split.main !== known.main)) {
-            fluid.staticEditing.setPref(edit, "aiSplit", split);
+        if (basis && basis !== "0px" && basis !== known.ai) {
+            fluid.staticEditing.setPref(edit, "aiSplit", {ai: basis});
         }
     };
 
@@ -1306,7 +1600,8 @@ const fluidStaticEditingScope = function (fluid) {
             before: main,
             after: ai,
             axis: "vertical",
-            minBefore: 120,
+            // What edits the page keeps room for its controls and its buttons, its editor shrinking first
+            minBefore: 200,
             minAfter: 160,
             view: {$component: {container: panel.querySelector(".fluid-edit-ai-bar"), elideParent: true}}
         });
@@ -1426,8 +1721,7 @@ const fluidStaticEditingScope = function (fluid) {
 
     /**
      * Write the tabs of the sources opened - each coloured by its kind, the one shown selected, and spotted while its
-     * source holds an edit not yet committed, or in conflict. The site's configuration is offered by its button only
-     * while it has no tab
+     * source holds an edit not yet committed, or in conflict
      * @param {Object} edit - The controller
      */
     fluid.staticEditing.renderTabs = function (edit) {
@@ -1484,7 +1778,8 @@ const fluidStaticEditingScope = function (fluid) {
         edit.state.tabsHidden = paths.length === 0;
         edit.state.tabKind = edit.targetPath ? fluid.staticEditing.tabKind(edit, edit.targetPath) : "";
         const config = (edit.provenance.framing || []).find(framing => framing.kind === "patch");
-        edit.state.configHidden = !edit.framingMode || !config || paths.includes(config.path);
+        edit.state.configHidden = !edit.framingMode || !config;
+        edit.state.insertDisabled = !edit.state.widgetChoice || !fluid.staticEditing.target(edit) || !!fluid.staticEditing.target(edit).framing;
     };
 
     /**
@@ -2214,11 +2509,21 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Respond to the "Site configuration" control, editing the site's configuration
+     * Respond to the "Site configuration" control, editing the site's configuration in its tab - opened, should it not
+     * be open, and given the focus
      * @param {Object} edit - The controller
+     * @return {Promise} Resolves once its tab is shown
      */
-    fluid.staticEditing.editConfig = function (edit) {
-        fluid.staticEditing.switchTarget(edit, edit.provenance.framing.find(framing => framing.kind === "patch").path);
+    fluid.staticEditing.editConfig = async function (edit) {
+        const path = edit.provenance.framing.find(framing => framing.kind === "patch").path;
+        if (path !== edit.targetPath) {
+            await fluid.staticEditing.switchTarget(edit, path);
+        }
+        // Its tab is given the focus, whether opened now or already open
+        const tab = edit.panel.querySelector(`.fluid-edit-tab[data-fluid-tab-path="${CSS.escape(path)}"]`);
+        if (tab) {
+            tab.focus();
+        }
     };
 
     /**
@@ -2257,13 +2562,21 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Respond to the line of the source view's cursor moving - the block holding it is marked in the page - see
-     * fluid-blockEditor.vue
+     * Respond to the source view's cursor moving - while the page's own source is edited, the block holding its line is
+     * marked in the page (see fluid-blockEditor.vue), and while a source of its framing is, the text of the framing
+     * rendered from where it stands - see `showFramingPosition`
      * @param {Object} edit - The controller
-     * @param {Event} event - The move, whose `detail` holds its `line`
+     * @param {Event} event - The move, whose `detail` holds its `line` and `pos`
      */
     fluid.staticEditing.sourceCursor = function (edit, event) {
-        document.dispatchEvent(new CustomEvent("fluid-source-cursor", {detail: JSON.stringify({line: event.detail.line})}));
+        const target = fluid.staticEditing.target(edit);
+        if (target && target.framing) {
+            // The framing's text, rather than the page's blocks, shows where the cursor stands
+            fluid.staticEditing.showFramingPosition(edit, event.detail.pos);
+        } else if (event.detail.line !== edit.cursorLine) {
+            edit.cursorLine = event.detail.line;
+            document.dispatchEvent(new CustomEvent("fluid-source-cursor", {detail: JSON.stringify({line: event.detail.line})}));
+        }
     };
 
     /**
@@ -2289,12 +2602,14 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Supply the source view with what is known of the site, for completing links - see fluid.sourceView
+     * Supply the source view with what is known of the site, for completing links, and of the component rendering the
+     * source it edits, for completing the references of its template - see fluid.sourceView
      * @param {Object} edit - The controller
      * @param {Event} event - The request, whose `detail` receives the `site`
      */
     fluid.staticEditing.sourceSite = function (edit, event) {
         event.detail.site = edit.site || null;
+        event.detail.templateScope = fluid.staticEditing.templateScope(edit);
     };
 
     /**
@@ -2358,6 +2673,8 @@ const fluidStaticEditingScope = function (fluid) {
         edit.listeners = {
             // Text typed into the framing edited in place - see fluid.staticEditing.framingInPlace
             "input": event => fluid.staticEditing.onFramingInput(edit, event),
+            // The selection moved within the framing edited in place moves the source view's cursor with it
+            "selectionchange": () => fluid.staticEditing.onFramingSelection(edit),
             "fluid-block-edit-source": event => fluid.staticEditing.onBlockEdit(edit, JSON.parse(event.detail).text),
             // The layers of a widget pasted into a block - see fluid-blockEditor.vue
             "fluid-block-edit-files": event => fluid.staticEditing.addFiles(edit, JSON.parse(event.detail).files),
@@ -2379,6 +2696,15 @@ const fluidStaticEditingScope = function (fluid) {
             [fluid.staticEditing.claimRemovedEvent]: event => edit.started.then(() => fluid.staticEditing.claimRemoved(edit, JSON.parse(event.detail)))
         };
         Object.entries(edit.listeners).forEach(([type, listener]) => document.addEventListener(type, listener));
+        // The titles of the panel's controls, and of the marks it makes in the page, are shown as tooltips placed by
+        // Popper - once loaded, from the site's copy of Infusion - see the foot of this file
+        fluid.staticEditing.tooltipsLoaded.then(() => {
+            if (fluid.titleTooltips && !edit.unbound) {
+                edit.titleTooltips = fluid.titleTooltips.bind(document, fluid.staticEditing.tooltipScope, {className: "fluid-edit-tooltip", global: window});
+                // Kept, as the panel is, while the page's tree boots - see bridge.js
+                edit.titleTooltips.tooltip.node.setAttribute("data-fluid-edit-ui", "");
+            }
+        });
         edit.onFramingClick = event => fluid.staticEditing.onFramingClick(edit, event);
         document.addEventListener("click", edit.onFramingClick, true);
         edit.blocks = (edit.provenance.blocks || []).flatMap(block => [...document.querySelectorAll(block.selector)]);
@@ -2470,7 +2796,11 @@ const fluidStaticEditingScope = function (fluid) {
      * @param {Object} edit - The controller
      */
     fluid.staticEditing.unbind = function (edit) {
+        edit.unbound = true;
         clearTimeout(edit.pollTimer);
+        if (edit.titleTooltips) {
+            fluid.titleTooltips.unbind(edit.titleTooltips);
+        }
         clearTimeout(edit.widgetsTimer);
         Object.entries(edit.listeners || {}).forEach(([type, listener]) => document.removeEventListener(type, listener));
         document.removeEventListener("click", edit.onFramingClick, true);
@@ -2484,6 +2814,26 @@ if (typeof(fluid) !== "undefined") {
     // The panel's shared components, which an editing client need not know of, are found beside this script, as the
     // site publishes Infusion - see wend's trace.js
     const script = typeof(document) !== "undefined" && document.currentScript;
+    // Where the titles of the panel's controls and of its marks in the page are shown as tooltips
+    fluid.staticEditing.tooltipScope = "[data-fluid-edit-ui], [data-fluid-framing-editable], .fluid-edit-list-head";
+    /**
+     * Load a script of the site's copy of Infusion into the page
+     * @param {String} src - Its URL
+     * @return {Promise} Resolves once it has run, or rejects should it fail to load
+     */
+    const loadScript = src => new Promise((resolve, reject) => {
+        const element = document.createElement("script");
+        element.src = src;
+        element.setAttribute("data-fluid-edit-ui", "");
+        element.onload = resolve;
+        element.onerror = () => reject(new Error("Failed to load " + src));
+        document.head.appendChild(element);
+    });
+    // The tooltips, and Popper placing them - a site whose Infusion holds neither shows the browser's own
+    fluid.staticEditing.tooltipsLoaded = script && script.src && !fluid.titleTooltips ? (async function () {
+        await loadScript(new URL("../../../lib/popper/popper-lite.min.js", script.src).href).catch(() => null);
+        await loadScript(new URL("../../tooltip/fluid-tooltip.js", script.src).href);
+    })().catch(error => console.warn("Edit in Infusion: tooltips are shown by the browser, since " + error.message)) : Promise.resolve();
     if (script && script.src && fluid.loadImportMap) {
         // The directory of the static editor's own SFCs, e.g. the host of "Ask me anything" - see toggleAI
         fluid.staticEditing.sfcDir = new URL("../sfc/", script.src).href;

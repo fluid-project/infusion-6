@@ -66,7 +66,8 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     });
     await post.keyboard.type(" and friends");
     await post.waitForFunction(() => document.querySelector(".fluid-edit-panel textarea").value.includes("by Boz and friends"), {timeout: 15000});
-    expect(true, "Text typed into the footer in place is written into its SFC");
+    expect(/by Boz and friends\n {20}<\/p>/.test(await post.$eval(".fluid-edit-panel textarea", node => node.value)),
+        "Text typed into the footer in place is written into its SFC, keeping the template's layout about it");
     await post.waitForSelector(`footer[data-fluid-claim-state="uncommitted"]`, {timeout: 15000});
     expect(await post.$eval("footer", node => node.textContent.split("and friends").length === 2), "The footer shows what was typed once, as its SFC renders it");
 

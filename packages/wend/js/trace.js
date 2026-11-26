@@ -520,6 +520,8 @@ wend.trace.editingFiles = [
     "src/components/askAnything/fluid-ai.js",
     "src/components/askAnything/fluid-ai-arena.js",
     "src/lib/snarkdown/snarkdown.umd.js",
+    "src/lib/popper/popper-lite.min.js",
+    "src/components/tooltip/fluid-tooltip.js",
     "src/lib/fluid-lint/fluid-lint.js"
 ];
 

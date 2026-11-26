@@ -126,6 +126,22 @@ harness.scenario("Asking an AI about a page, and receiving widgets from it", asy
     ]), {model: "test", direction: "Delete it"}), sentId);
     const withoutSent = await sourceSatisfying(post, source => !source.includes(`fluid-id="${sentId}"`));
     expect(!withoutSent.includes(`fluid-id="${sentId}"`), "A reply deleting the widget removes it from the source: " + JSON.stringify(deleted));
+
+    // 6. With text selected, the workspace marks it, and a reply's selection part replaces it
+    const selected = await post.evaluate(find => {
+        const edit = window.fluidEditBridge.editor.controller;
+        const at = edit.source.getText().indexOf(find);
+        edit.source.view.dispatch({selection: {anchor: at, head: at + find.length}});
+        return fluid.staticEditing.ai.makeHost(edit).workspaceParts()[0].body;
+    }, mid);
+    expect(selected.includes("<fluid-infusion-selection>" + mid + "</fluid-infusion-selection>") && !selected.includes("<fluid-infusion-cursor/>"),
+        "Selected text is sent marked as the selection");
+    const replaced = await post.evaluate(() => fluid.staticEditing.ai.assistant.interpret(fluid.ptf.encode([
+        {kind: "selection", contentType: "text/plain; charset=utf-8", filename: "selection", body: "Replaced by the AI"}
+    ]), {model: "test", direction: "Reword the selection"}));
+    const withReplacement = await sourceSatisfying(post, source => source.includes("Replaced by the AI"));
+    expect(replaced.problems.length === 0 && withReplacement.includes("Replaced by the AI") && !withReplacement.includes(mid),
+        "A reply's selection part replaces the selected text: " + JSON.stringify(replaced));
     expect(post.errors.length === 0, "No errors in the page: " + post.errors.join("; "));
 }, {
     prepareRepo: repoDir => {

@@ -52,14 +52,16 @@ fluid.def("fluid.staticEditor", {
             widgetChoice: "",
             widgetsHidden: true,
             cleanupDisabled: true,
+            // Naming the layers it would delete - see fluid.staticEditing.cleanupTitle
+            cleanupTitle: "Clean up unused layers",
             // Whether the "Ask me anything" panel is disclosed at the panel's foot - see fluid.staticEditing.toggleAI
             aiHidden: true,
             aiOpen: false,
-            // Set whilst the panel withdraws, briefly, before it is hidden
-            aiClosing: false,
             // Whether the tabs of the sources opened are shown, and the kind of the one shown - see fluid.staticEditing.renderTabs
             tabsHidden: true,
-            tabKind: ""
+            tabKind: "",
+            // Whether Insert is offered - only once a widget is chosen
+            insertDisabled: true
         }
     },
     layerPicker: {
@@ -205,19 +207,18 @@ fluid.def("fluid.staticEditor", {
             <div class="fluid-edit-framing-row" hidden="@{state.framingRowHidden}">
                 <label><input type="checkbox" class="fluid-edit-framing" checked="@{state.framing}"
                               @onchange="{self}.framingChanged({0})"> Also edit framing</label>
-                <button class="fluid-edit-config" hidden="@{state.configHidden}" title="Edit the site's configuration, in a tab of its own"
-                        @onclick="{self}.editConfig()">Site configuration</button>
+                <button class="fluid-edit-icon-button fluid-edit-config" hidden="@{state.configHidden}" aria-label="Site configuration"
+                        title="Site configuration - edit the site's configuration, wend.json, in a tab of its own"
+                        @onclick="{self}.editConfig()"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10.5 2a2.5 2.5 0 0 1 2.5 2.5V5h4a1 1 0 0 1 1 1v4h.5a2.5 2.5 0 0 1 0 5H18v4a1 1 0 0 1-1 1h-4v-.5a2.5 2.5 0 0 0-5 0v.5H4a1 1 0 0 1-1-1v-4h.5a2.5 2.5 0 0 0 0-5H3V6a1 1 0 0 1 1-1h4v-.5A2.5 2.5 0 0 1 10.5 2z"></path></svg></button>
                 <!-- The site's widgets, whether published or held in this browser - see fluid.staticEditing.refreshWidgets -->
                 <span class="fluid-edit-widgets" hidden="@{state.widgetsHidden}" @onfluidlayerchoose="{self}.widgetChosen({0})"
                       @onfluidlayerdelete="{self}.widgetDelete({0})"><span @id="layerPicker"></span><button
-                      class="fluid-edit-widget-insert" title="Insert the widget at the source's cursor" @onclick="{self}.insertWidget()">Insert</button><button
-                      class="fluid-edit-cleanup" disabled="@{state.cleanupDisabled}" title="Delete every widget used nowhere on the site, nor in any edit held in this browser"
-                      @onclick="{self}.cleanUpLayers()">Clean up unused layers</button></span>
+                      class="fluid-edit-icon-button fluid-edit-widget-insert" disabled="@{state.insertDisabled}" aria-label="Insert"
+                      title="Insert the chosen widget at the source's cursor" @onclick="{self}.insertWidget()"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v11M7 9.5l5 5 5-5M5 20h14"></path></svg></button><button
+                      class="fluid-edit-icon-button fluid-edit-cleanup" disabled="@{state.cleanupDisabled}" aria-label="Clean up unused layers"
+                      title="@{state.cleanupTitle}"
+                      @onclick="{self}.cleanUpLayers()"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"></path></svg></button></span>
             </div>
-            <!-- A tab for each source opened - the page's own, each of its framing, the site's configuration, a new post -
-                 coloured by its kind, and spotted while it holds an edit not yet committed. Written by the controller -
-                 see fluid.staticEditing.renderTabs -->
-            <div class="fluid-edit-tabs" role="tablist" hidden="@{state.tabsHidden}"></div>
             <div class="fluid-edit-tab-body" data-fluid-tab-kind="@{state.tabKind}">
                 <div class="fluid-edit-updated" hidden="@{state.updatedHidden}"><a class="fluid-edit-path" href="@{state.pathHref}"
                     target="_blank" rel="noopener" title="Show this source on GitHub">@{state.path}</a> - last updated by <a class="fluid-edit-updated-by"
@@ -238,7 +239,11 @@ fluid.def("fluid.staticEditor", {
                     <summary><svg class="fluid-edit-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
                         <path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
                               stroke-linejoin="round"></path></svg> Edit as source</summary>
-                    <div @id="sourceView"></div>
+                    <!-- A tab for each source opened - the page's own, each of its framing, the site's configuration, a new
+                         post - as the tabs of the layers of tldraw's Inspector, joined to the top of the editor, and spotted
+                         while it holds an edit not yet committed. Written by the controller - see fluid.staticEditing.renderTabs -->
+                    <div class="fluid-edit-tabs" role="tablist" hidden="@{state.tabsHidden}"></div>
+                    <div class="fluid-edit-source-host" @id="sourceView"></div>
                 </details>
                 <div class="fluid-edit-buttons" hidden="@{state.buttonsHidden}">
                     <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()">Commit</button>
@@ -250,7 +255,7 @@ fluid.def("fluid.staticEditor", {
              by a bar sharing the panel's height between them - made once, and thereafter only shown and hidden, keeping
              its conversation and the share the bar last gave it - see fluid.staticEditing.toggleAI -->
         <div class="fluid-edit-ai-bar" hidden="@{state.aiHidden}"></div>
-        <div class="fluid-edit-ai" hidden="@{state.aiHidden}" data-fluid-ai-closing="@{state.aiClosing}"></div>
+        <div class="fluid-edit-ai" hidden="@{state.aiHidden}"></div>
         <footer class="fluid-edit-foot">
             <button class="fluid-edit-ai-toggle" title="Ask me anything - converse with an AI about this page and its widgets"
                     aria-expanded="@{state.aiOpen}" @onclick="{self}.toggleAI()"><svg width="16" height="16"
@@ -454,7 +459,7 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
 }
 
 .fluid-edit-path {
-    font-family: ui-monospace, monospace;
+    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
 }
 
 a.fluid-edit-path {
@@ -586,11 +591,40 @@ a.fluid-edit-path {
    the page to be edited; unfolded, it fills the panel beside the page */
 /* It is never shrunk below its content - the source view's height is fixed, so shrunk, it would overflow onto the
    buttons beneath it, e.g. in a short window, or with a status long enough to wrap - but the panel scrolls instead */
+/* Unfolded, the source takes what the panel's other controls leave, its editor shrinking first, to show a scrollbar of
+   its own, so that the buttons beneath it stay in view */
 .fluid-edit-source[open] {
-    flex: 1 0 auto;
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+}
+
+.fluid-edit-source[open]::details-content {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.fluid-edit-source > summary {
+    margin-bottom: 6px;
+}
+
+.fluid-edit-source-host {
+    flex: 1 1 0;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Kept in view at the foot of what edits the page, should even the editor be shrunk as far as it may */
+.fluid-edit-buttons {
+    position: sticky;
+    bottom: 0;
+    flex: none;
+    padding-top: 4px;
+    background: #fbfbfa;
 }
 
 .fluid-edit-source[hidden] {
@@ -623,7 +657,7 @@ a.fluid-edit-path {
 }
 
 .fluid-edit-source textarea {
-    min-height: 200px;
+    min-height: 80px;
 }
 
 /* Framing edited in place - its literal text may be typed into, and what its template interpolates is set off as
@@ -633,11 +667,17 @@ a.fluid-edit-path {
 }
 
 [data-fluid-framing-editable] [data-fluid-templated] {
-    outline: 1px dashed #2b6cb0;
+    outline: 1.5px dashed #2b6cb0;
     outline-offset: 1px;
     border-radius: 2px;
-    background: rgba(66, 153, 225, 0.14);
+    background: rgba(66, 153, 225, 0.18);
     cursor: help;
+}
+
+/* The text of the framing rendered from where the source view's cursor stands - see
+   fluid.staticEditing.showFramingPosition */
+::highlight(fluid-framing-cursor) {
+    background-color: rgba(43, 108, 176, 0.28);
 }
 
 /* What edits the page scrolls within its share of the panel, whose own height is fixed */
@@ -650,75 +690,70 @@ a.fluid-edit-path {
     gap: 8px;
 }
 
-/* The tabs of the sources opened, as the tabs of tldraw's panels - each coloured by its kind, the one shown joined to
-   the body beneath it, which takes its colour */
+/* The tabs of the sources opened, as the tabs of the layers of tldraw's Inspector (fluid-demos-inspector.vue) - square,
+   each tinted by its kind, the one shown underlined - joined to the top of the editor beneath them */
 .fluid-edit-panel {
-    --fluid-tab-content: #2563eb;
-    --fluid-tab-framing: #059669;
-    --fluid-tab-config: #7c3aed;
-    --fluid-tab-new: #d97706;
+    --fluid-tab-content: #dbe8fb;
+    --fluid-tab-framing: #d9f2e6;
+    --fluid-tab-config: #ebe1fb;
+    --fluid-tab-new: #fbecd3;
 }
 
 .fluid-edit-tabs {
     display: flex;
-    flex-wrap: wrap;
-    gap: 2px;
-    margin-bottom: -8px;
-    padding: 0 4px;
+    flex: 0 0 auto;
+    overflow-x: auto;
 }
 
 .fluid-edit-tab {
-    --fluid-tab: var(--fluid-tab-content);
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    max-width: 14em;
-    padding: 4px 6px 4px 10px;
-    border: 1px solid color-mix(in srgb, var(--fluid-tab) 45%, transparent);
-    border-bottom: 0;
-    border-radius: 6px 6px 0 0;
-    background: color-mix(in srgb, var(--fluid-tab) 12%, #fff);
-    color: var(--fluid-tab);
-    font: 600 12.5px/1.4 system-ui, sans-serif;
+    gap: 5px;
+    max-width: 16em;
+    height: 28px;
+    box-sizing: border-box;
+    padding: 4px 6px 3px;
+    background: var(--fluid-tab-content);
+    color: #222;
+    font-size: 13px;
+    white-space: nowrap;
     cursor: pointer;
 }
 
-.fluid-edit-tab[data-fluid-tab-kind="framing"] { --fluid-tab: var(--fluid-tab-framing); }
-.fluid-edit-tab[data-fluid-tab-kind="config"] { --fluid-tab: var(--fluid-tab-config); }
-.fluid-edit-tab[data-fluid-tab-kind="new"] { --fluid-tab: var(--fluid-tab-new); }
+.fluid-edit-tab[data-fluid-tab-kind="framing"] { background: var(--fluid-tab-framing); }
+.fluid-edit-tab[data-fluid-tab-kind="config"] { background: var(--fluid-tab-config); }
+.fluid-edit-tab[data-fluid-tab-kind="new"] { background: var(--fluid-tab-new); }
 
 .fluid-edit-tab[aria-selected="true"] {
-    background: var(--fluid-tab);
-    color: #fff;
+    border-bottom: #747a80 solid 3px;
+}
+
+.fluid-edit-tab:focus-visible {
+    outline: 2px solid #2b6cb0;
+    outline-offset: -2px;
 }
 
 .fluid-edit-tab-label {
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
-/* The spot of a tab holding an edit not yet committed */
+/* The mark of a tab holding an edit not yet committed - a small spot in the colour of its text */
 .fluid-edit-tab-dirty {
     flex: none;
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: var(--fluid-edit-uncommitted);
-    box-shadow: 0 0 0 1.5px #fff;
-}
-
-.fluid-edit-tab-dirty[data-fluid-claim-state="conflict"] {
-    background: var(--fluid-edit-conflict);
+    background: currentColor;
 }
 
 .fluid-edit-panel .fluid-edit-tab-close {
-    padding: 0 3px;
+    padding: 0 2px;
     border: 0;
     background: none;
     color: inherit;
-    font: 600 14px/1 system-ui, sans-serif;
-    opacity: 0.7;
+    font: 14px/1 system-ui, sans-serif;
+    opacity: 0.55;
     cursor: pointer;
 }
 
@@ -726,24 +761,59 @@ a.fluid-edit-path {
     opacity: 1;
 }
 
+/* The tabs, once shown, are joined to the top of the editor */
+.fluid-edit-tabs:not([hidden]) + .fluid-edit-source-host .fluid-edit-source-view {
+    border-top-left-radius: 0;
+}
+
 .fluid-edit-tab-body {
-    --fluid-tab: var(--fluid-tab-content);
-    flex: 1 0 auto;
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.fluid-edit-tabs:not([hidden]) + .fluid-edit-tab-body {
-    padding: 8px;
-    border-top: 3px solid var(--fluid-tab);
-    border-radius: 0 0 4px 4px;
+/* Icons standing for the panel's lesser controls, each named by its tooltip */
+.fluid-edit-panel .fluid-edit-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 5px;
+    border: 1px solid #cbd5e0;
+    border-radius: 3px;
     background: #fff;
+    color: #2d3748;
+    cursor: pointer;
 }
 
-.fluid-edit-tab-body[data-fluid-tab-kind="framing"] { --fluid-tab: var(--fluid-tab-framing); }
-.fluid-edit-tab-body[data-fluid-tab-kind="config"] { --fluid-tab: var(--fluid-tab-config); }
-.fluid-edit-tab-body[data-fluid-tab-kind="new"] { --fluid-tab: var(--fluid-tab-new); }
+.fluid-edit-icon-button:hover:not(:disabled) {
+    background: #edf2f7;
+}
+
+.fluid-edit-icon-button:disabled {
+    color: #a0aec0;
+    cursor: default;
+}
+
+/* The tooltips of the panel's controls and the page's marks, placed by Popper - see fluid-tooltip.js */
+.fl-tooltip-holder.fluid-edit-tooltip {
+    z-index: 2147483000;
+    max-width: 320px;
+    padding: 5px 8px;
+    background: #fff;
+    color: #222;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    font: 13px/1.35 system-ui, sans-serif;
+    white-space: pre-line;
+    pointer-events: none;
+}
+
+.fl-tooltip-holder[hidden] {
+    display: none;
+}
 
 /* The foot of the panel, from which the sparkles pop out "Ask me anything" */
 .fluid-edit-foot {
@@ -784,25 +854,16 @@ a.fluid-edit-path {
     cursor: row-resize;
 }
 
-/* Popped out from the sparkles beneath it, rising as it grows, and withdrawn into them */
+/* Slid open from the sparkles beneath it, and closed into them, by its basis - see fluid.staticEditing.toggleAI */
 .fluid-edit-ai {
     flex: 0 0 40%;
     min-height: 160px;
     overflow: hidden;
-    transform-origin: bottom left;
-    animation: fluid-edit-ai-out 0.18s ease-out;
 }
 
-.fluid-edit-ai[data-fluid-ai-closing="true"] {
-    animation: fluid-edit-ai-in 0.15s ease-in forwards;
-}
-
-@keyframes fluid-edit-ai-out {
-    from { opacity: 0; transform: translateY(16px) scale(0.96); }
-}
-
-@keyframes fluid-edit-ai-in {
-    to { opacity: 0; transform: translateY(16px) scale(0.96); }
+.fluid-edit-ai.fluid-edit-ai-sliding {
+    min-height: 0;
+    transition: flex-basis 0.2s ease;
 }
 
 .fluid-edit-ai-bar[hidden], .fluid-edit-ai[hidden] {

@@ -24,6 +24,9 @@ fluid.def("fluid.staticEditing.askAnything", {
 // markup rather than as text to be repeated, and which can't be mistaken for anything the source holds
 fluid.staticEditing.ai.cursorMarker = "<fluid-infusion-cursor/>";
 
+// The markers of the text the user has selected in the source sent to the AI, in place of the cursor's - see markedSource
+fluid.staticEditing.ai.selectionMarkers = ["<fluid-infusion-selection>", "</fluid-infusion-selection>"];
+
 fluid.staticEditing.ai.introduction = `You are an assistant embedded in the editor of a page of a website built with wend, a \
 static site generator built on Fluid Infusion 6, a framework in which an application is made of named layers of \
 declarative configuration which any party may add to or override. The page is written in markdown, which may hold \
@@ -42,8 +45,22 @@ cursor stands, as a block of its own - several fresh widgets one after another -
 the cursor. The cursor never stands within a widget's element. The marker is not part of the page: never write it \
 yourself. Never send a \`markdown\` part - the markdown is changed only by your changes to widgets: a fresh widget is \
 inserted, a widget deleted by a \`delete\` part naming its id is removed from it, and a widget altered is written back \
-into it. Text of the page other than its widgets can't be altered by PTF - if the user asks for it to change, reply \
-with the markdown they should write, in text.`;
+into it. Text of the page other than its widgets is altered only by replacing the user's selection - see below - so \
+if the user asks for other text to change, reply with what they should write, in text.`;
+
+fluid.staticEditing.ai.selectionRules = `## The user's selection
+
+Should the user have selected text in the source, the workspace's source part encloses it between \
+${fluid.staticEditing.ai.selectionMarkers[0]} and ${fluid.staticEditing.ai.selectionMarkers[1]}, in place of the \
+cursor's marker - "the selection", "the selected markup", "this" and the like refer to it. The source may be the \
+page's markdown, or another source of the site the user edits, e.g. an SFC of its framing, named by the part's \
+filename. To replace the selected text, e.g. to convert selected HTML markup to its equivalent in markdown, to reword \
+it, or to correct it, reply with a PTF document holding a single part with Content-Description \
+\`selection\`, Content-Type \`text/plain; charset=utf-8\`, any filename, and as its body exactly the text which is to \
+stand in place of the selection - nothing of the text around it, and never the markers. An empty body deletes the \
+selected text. The replacement is applied directly to the source, as the user's own edit, which they can see and \
+undo. Only the selected text can be replaced in this way - if nothing is selected, ask the user to select what they \
+want changed.`;
 
 fluid.staticEditing.ai.pageHints = `* A widget is a fluid.topLevelWidget, sized by the page's layout rather than by any \
 \`preferredSize\`. It is saved into the page with its live state, and published with the site once the user commits.`;
@@ -54,10 +71,11 @@ fluid.def("fluid.staticEditing.ai.systemPrompt", {
     stanzas: {
         introduction: {text: fluid.staticEditing.ai.introduction},
         placingRules: {order: 35, text: fluid.staticEditing.ai.placingRules},
+        selectionRules: {order: 37, text: fluid.staticEditing.ai.selectionRules},
         pageHints: {order: 45, text: fluid.staticEditing.ai.pageHints}
     },
     workspaceCaption: "The following PTF document holds every Infusion widget of the page, with the definitions of the "
-        + "layers they use, followed by the page's markdown source, marked with the user's cursor:",
+        + "layers they use, followed by the source the user edits, marked with the user's cursor or selection:",
     docUrls: [
         "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-integration-language.md",
         "https://raw.githubusercontent.com/amb26/ponder/refs/heads/main/content/docs/fluid-view.md",
@@ -80,14 +98,39 @@ fluid.staticEditing.ai.pastePosition = function (source, pos) {
 };
 
 /**
- * The source as sent to the AI, marked with the user's cursor - see fluid.staticEditing.ai.cursorMarker
+ * The source as sent to the AI, marked with the user's selection, should they have selected text, or else with their
+ * cursor - see fluid.staticEditing.ai.selectionMarkers and fluid.staticEditing.ai.cursorMarker
  * @param {Object} source - The source view
  * @return {String} The marked source
  */
 fluid.staticEditing.ai.markedSource = function (source) {
     const text = source.getText();
-    const pos = fluid.staticEditing.ai.pastePosition(source, source.view.state.selection.main.head);
-    return text.substring(0, pos) + fluid.staticEditing.ai.cursorMarker + text.substring(pos);
+    const {from, to} = source.view.state.selection.main;
+    let togo;
+    if (to > from) {
+        const [open, close] = fluid.staticEditing.ai.selectionMarkers;
+        togo = text.substring(0, from) + open + text.substring(from, to) + close + text.substring(to);
+    } else {
+        const pos = fluid.staticEditing.ai.pastePosition(source, source.view.state.selection.main.head);
+        togo = text.substring(0, pos) + fluid.staticEditing.ai.cursorMarker + text.substring(pos);
+    }
+    return togo;
+};
+
+/**
+ * Replace the text the user has selected in the source with what the AI sent, as the user's own edit of it, leaving the
+ * replacement selected - as the selection stands when the reply is applied
+ * @param {Object} source - The source view
+ * @param {String} text - The replacement
+ * @return {Boolean} `true` if text was selected, and so replaced
+ */
+fluid.staticEditing.ai.replaceSelection = function (source, text) {
+    const {from, to} = source.view.state.selection.main;
+    const togo = to > from;
+    if (togo) {
+        source.view.dispatch({changes: {from, to, insert: text}, selection: {anchor: from, head: from + text.length}});
+    }
+    return togo;
 };
 
 /**
@@ -115,18 +158,23 @@ fluid.staticEditing.ai.pageWidgets = function (edit) {
  * @return {ArenaHost} The host
  */
 fluid.staticEditing.ai.makeHost = function (edit) {
+    const isMarkdown = () => !edit.targetPath || /\.md$/.test(edit.targetPath);
     return {
         itemNoun: "widget",
         workspaceParts: () => [{
-            kind: "markdown",
-            contentType: "text/markdown; charset=utf-8",
+            kind: isMarkdown() ? "markdown" : "source",
+            contentType: isMarkdown() ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8",
             filename: edit.targetPath || "page.md",
             body: fluid.staticEditing.ai.markedSource(edit.source)
         }],
         planWorkspacePart: (part, plan) => {
-            const handled = part.kind === "markdown";
-            if (handled) {
-                plan.problems.push("The markdown part cannot be sent - the page's text is changed only by changing its widgets");
+            let handled = true;
+            if (part.kind === "selection") {
+                plan.selection = part.body;
+            } else if (part.kind === "markdown" || part.kind === "source") {
+                plan.problems.push("The source part cannot be sent - the source is changed only by changing its widgets, or by replacing the user's selection with a `selection` part");
+            } else {
+                handled = false;
             }
             return handled;
         }
@@ -188,9 +236,18 @@ fluid.staticEditing.ai.makeBridge = function (edit) {
     const applyPlan = async function (plan) {
         const summary = [], problems = [];
         const target = fluid.staticEditing.target(edit);
-        if (!target || target.framing) {
+        const widgetChanges = plan.layers.length + plan.deletions.length + plan.updates.length + plan.creations.length > 0;
+        // The selected text is replaced in whichever source the panel edits, the framing's too
+        if (plan.selection !== undefined) {
+            if (fluid.staticEditing.ai.replaceSelection(edit.source, plan.selection)) {
+                summary.push(`Replaced the selected text of ${edit.targetPath || "the source"}`);
+            } else {
+                problems.push("Nothing is selected in the source, so your selection part could not be applied - the user must select the text to be replaced");
+            }
+        }
+        if (widgetChanges && (!target || target.framing)) {
             problems.push("The panel is editing no page's own content, into which widgets could be written - the user must choose the page's content to edit");
-        } else {
+        } else if (widgetChanges) {
             const before = fluid.staticEditing.ai.pageWidgets(edit);
             const existingProblems = new Set(fluid.ai.arena.diagnoseAll(componentsOf(before)));
             const constructedIds = new Set();
