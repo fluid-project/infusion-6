@@ -54,7 +54,12 @@ fluid.def("fluid.staticEditor", {
             cleanupDisabled: true,
             // Whether the "Ask me anything" panel is disclosed at the panel's foot - see fluid.staticEditing.toggleAI
             aiHidden: true,
-            aiOpen: false
+            aiOpen: false,
+            // Set whilst the panel withdraws, briefly, before it is hidden
+            aiClosing: false,
+            // Whether the tabs of the sources opened are shown, and the kind of the one shown - see fluid.staticEditing.renderTabs
+            tabsHidden: true,
+            tabKind: ""
         }
     },
     layerPicker: {
@@ -188,56 +193,70 @@ fluid.def("fluid.staticEditor", {
     <!-- The editing client's own, which it keeps out of the page while the page's component tree is first booted -->
     <div class="fluid-edit-panel" data-fluid-edit-ui="" hidden="@{state.hidden}" data-fluid-edit-ready="@{state.ready}"
          data-fluid-claim-state="@{state.claimState}">
-        <header><strong>Edit in Infusion</strong> <a class="fluid-edit-path" href="@{state.pathHref}" target="_blank"
-            rel="noopener" title="Show this source on GitHub">@{state.path}</a>
-            <button class="fluid-edit-ai-toggle" title="Ask me anything - converse with an AI about this page and its widgets"
-                    aria-label="Ask me anything" aria-expanded="@{state.aiOpen}" @onclick="{self}.toggleAI()"><svg width="16" height="16"
-                    viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9zM5 15l.7 1.8 1.8.7-1.8.7L5 20l-.7-1.8-1.8-.7 1.8-.7z"></path></svg></button>
+        <header><strong>Edit in Infusion</strong>
             <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
-        <div class="fluid-edit-updated" hidden="@{state.updatedHidden}">Last updated by <a class="fluid-edit-updated-by"
-            href="@{state.updatedByHref}" target="_blank" rel="noopener">@{state.updatedBy}</a> at <a class="fluid-edit-updated-at"
-            href="@{state.updatedHref}" title="@{state.updatedTitle}" target="_blank" rel="noopener">@{state.updatedDate}</a></div>
-        <!-- Beneath the header, so that it is in view however long the source shown below it -->
-        <div class="fluid-edit-status" data-fluid-status-kind="@{state.statusKind}" role="status">@{state.status}</div>
-        <div class="fluid-edit-bases" hidden="@{state.basesHidden}"><span>@{state.basesText}</span>
-            <button class="fluid-edit-rebuild" disabled="@{state.basesDisabled}" @onclick="{self}.rebuildBases()">Rebuild from it</button></div>
-        <div class="fluid-edit-framing-row" hidden="@{state.framingRowHidden}">
-            <label><input type="checkbox" class="fluid-edit-framing" checked="@{state.framing}"
-                          @onchange="{self}.framingChanged({0})"> Also edit framing</label>
-            <button class="fluid-edit-config" hidden="@{state.configHidden}" title="Edit the site's configuration"
-                    @onclick="{self}.editConfig()">Site configuration</button>
-            <!-- The site's widgets, whether published or held in this browser - see fluid.staticEditing.refreshWidgets -->
-            <span class="fluid-edit-widgets" hidden="@{state.widgetsHidden}" @onfluidlayerchoose="{self}.widgetChosen({0})"
-                  @onfluidlayerdelete="{self}.widgetDelete({0})"><span @id="layerPicker"></span><button
-                  class="fluid-edit-widget-insert" title="Insert the widget at the source's cursor" @onclick="{self}.insertWidget()">Insert</button><button
-                  class="fluid-edit-cleanup" disabled="@{state.cleanupDisabled}" title="Delete every widget used nowhere on the site, nor in any edit held in this browser"
-                  @onclick="{self}.cleanUpLayers()">Clean up unused layers</button></span>
+        <!-- What edits the page, scrolling within the share of the panel's height which "Ask me anything" leaves it, so
+             that a long source never pushes that panel out of view -->
+        <div class="fluid-edit-main">
+            <!-- Beneath the header, so that it is in view however long the source shown below it -->
+            <div class="fluid-edit-status" data-fluid-status-kind="@{state.statusKind}" role="status">@{state.status}</div>
+            <div class="fluid-edit-bases" hidden="@{state.basesHidden}"><span>@{state.basesText}</span>
+                <button class="fluid-edit-rebuild" disabled="@{state.basesDisabled}" @onclick="{self}.rebuildBases()">Rebuild from it</button></div>
+            <div class="fluid-edit-framing-row" hidden="@{state.framingRowHidden}">
+                <label><input type="checkbox" class="fluid-edit-framing" checked="@{state.framing}"
+                              @onchange="{self}.framingChanged({0})"> Also edit framing</label>
+                <button class="fluid-edit-config" hidden="@{state.configHidden}" title="Edit the site's configuration, in a tab of its own"
+                        @onclick="{self}.editConfig()">Site configuration</button>
+                <!-- The site's widgets, whether published or held in this browser - see fluid.staticEditing.refreshWidgets -->
+                <span class="fluid-edit-widgets" hidden="@{state.widgetsHidden}" @onfluidlayerchoose="{self}.widgetChosen({0})"
+                      @onfluidlayerdelete="{self}.widgetDelete({0})"><span @id="layerPicker"></span><button
+                      class="fluid-edit-widget-insert" title="Insert the widget at the source's cursor" @onclick="{self}.insertWidget()">Insert</button><button
+                      class="fluid-edit-cleanup" disabled="@{state.cleanupDisabled}" title="Delete every widget used nowhere on the site, nor in any edit held in this browser"
+                      @onclick="{self}.cleanUpLayers()">Clean up unused layers</button></span>
+            </div>
+            <!-- A tab for each source opened - the page's own, each of its framing, the site's configuration, a new post -
+                 coloured by its kind, and spotted while it holds an edit not yet committed. Written by the controller -
+                 see fluid.staticEditing.renderTabs -->
+            <div class="fluid-edit-tabs" role="tablist" hidden="@{state.tabsHidden}"></div>
+            <div class="fluid-edit-tab-body" data-fluid-tab-kind="@{state.tabKind}">
+                <div class="fluid-edit-updated" hidden="@{state.updatedHidden}"><a class="fluid-edit-path" href="@{state.pathHref}"
+                    target="_blank" rel="noopener" title="Show this source on GitHub">@{state.path}</a> - last updated by <a class="fluid-edit-updated-by"
+                    href="@{state.updatedByHref}" target="_blank" rel="noopener">@{state.updatedBy}</a> at <a class="fluid-edit-updated-at"
+                    href="@{state.updatedHref}" title="@{state.updatedTitle}" target="_blank" rel="noopener">@{state.updatedDate}</a></div>
+                <div class="fluid-edit-new" hidden="@{state.newHidden}">
+                    <label>Title <input type="text" class="fluid-edit-new-title" placeholder="The title of the new post"
+                                        @oninput="{self}.titleInput({0})"></label>
+                </div>
+                <div class="fluid-edit-state">@{state.stateText}</div>
+                <!-- The source view announces what happens in it as events, which bubble to here - see fluid.sourceView.bind. Its
+                     fold's "toggle", which does not bubble, is listened for by the controller - see fluid.staticEditing.bind -->
+                <details class="fluid-edit-source" hidden="@{state.sourceHidden}" open="@{state.sourceOpen}"
+                         @onfluidsourcechange="{self}.sourceChanged({0})"
+                         @onfluidsourcecursor="{self}.sourceCursor({0})" @onfluidsourcepaste="{self}.sourcePaste({0})"
+                         @onfluidsourcedrop="{self}.sourceDrop({0})" @onfluidsourcesite="{self}.sourceSite({0})">
+                    <!-- The fold control of the source, as in the filter panels of imerss-bioinfo - a chevron turned down when unfolded -->
+                    <summary><svg class="fluid-edit-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                              stroke-linejoin="round"></path></svg> Edit as source</summary>
+                    <div @id="sourceView"></div>
+                </details>
+                <div class="fluid-edit-buttons" hidden="@{state.buttonsHidden}">
+                    <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()">Commit</button>
+                    <button class="fluid-edit-discard" disabled="@{state.discardDisabled}" @onclick="{self}.discard()">Discard edits</button>
+                </div>
+            </div>
         </div>
-        <div class="fluid-edit-new" hidden="@{state.newHidden}">
-            <label>Title <input type="text" class="fluid-edit-new-title" placeholder="The title of the new post"
-                                @oninput="{self}.titleInput({0})"></label>
-        </div>
-        <div class="fluid-edit-state">@{state.stateText}</div>
-        <!-- The source view announces what happens in it as events, which bubble to here - see fluid.sourceView.bind. Its
-             fold's "toggle", which does not bubble, is listened for by the controller - see fluid.staticEditing.bind -->
-        <details class="fluid-edit-source" hidden="@{state.sourceHidden}" open="@{state.sourceOpen}"
-                 @onfluidsourcechange="{self}.sourceChanged({0})"
-                 @onfluidsourcecursor="{self}.sourceCursor({0})" @onfluidsourcepaste="{self}.sourcePaste({0})"
-                 @onfluidsourcedrop="{self}.sourceDrop({0})" @onfluidsourcesite="{self}.sourceSite({0})">
-            <!-- The fold control of the source, as in the filter panels of imerss-bioinfo - a chevron turned down when unfolded -->
-            <summary><svg class="fluid-edit-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-                      stroke-linejoin="round"></path></svg> Edit as source</summary>
-            <div @id="sourceView"></div>
-        </details>
-        <div class="fluid-edit-buttons" hidden="@{state.buttonsHidden}">
-            <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()">Commit</button>
-            <button class="fluid-edit-discard" disabled="@{state.discardDisabled}" @onclick="{self}.discard()">Discard edits</button>
-        </div>
-        <!-- The "Ask me anything" panel, disclosed by the sparkles of the header, set off from what is above it by a bar
-             sharing the panel's height between them - see fluid.staticEditing.toggleAI -->
+        <!-- The "Ask me anything" panel, popped out from the sparkles at the panel's foot, set off from what is above it
+             by a bar sharing the panel's height between them - made once, and thereafter only shown and hidden, keeping
+             its conversation and the share the bar last gave it - see fluid.staticEditing.toggleAI -->
         <div class="fluid-edit-ai-bar" hidden="@{state.aiHidden}"></div>
-        <div class="fluid-edit-ai" hidden="@{state.aiHidden}"></div>
+        <div class="fluid-edit-ai" hidden="@{state.aiHidden}" data-fluid-ai-closing="@{state.aiClosing}"></div>
+        <footer class="fluid-edit-foot">
+            <button class="fluid-edit-ai-toggle" title="Ask me anything - converse with an AI about this page and its widgets"
+                    aria-expanded="@{state.aiOpen}" @onclick="{self}.toggleAI()"><svg width="16" height="16"
+                    viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9zM5 15l.7 1.8 1.8.7-1.8.7L5 20l-.7-1.8-1.8-.7 1.8-.7z"></path></svg>
+                <span>Ask me anything</span></button>
+        </footer>
     </div>
 </template>
 
@@ -360,7 +379,8 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     flex: 0 0 min(40vw, 640px);
     min-width: 0;
     height: 100vh;
-    overflow-y: auto;
+    /* Its height is fixed, and shared between what edits the page, which scrolls, and "Ask me anything" */
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -430,15 +450,11 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     display: flex;
     gap: 8px;
     align-items: baseline;
+    justify-content: space-between;
 }
 
 .fluid-edit-path {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     font-family: ui-monospace, monospace;
-    font-size: 12px;
 }
 
 a.fluid-edit-path {
@@ -610,31 +626,154 @@ a.fluid-edit-path {
     min-height: 200px;
 }
 
-/* The sparkles disclosing the "Ask me anything" panel, beside the close button */
-.fluid-edit-ai-toggle {
-    margin-left: auto;
-    padding: 2px 4px;
+/* Framing edited in place - its literal text may be typed into, and what its template interpolates is set off as
+   templated, read-only, its tooltip suggesting Ask Anything instead - see fluid.staticEditing.framingInPlace */
+[data-fluid-framing-editable]:focus-within {
+    outline-style: solid;
+}
+
+[data-fluid-framing-editable] [data-fluid-templated] {
+    outline: 1px dashed #2b6cb0;
+    outline-offset: 1px;
+    border-radius: 2px;
+    background: rgba(66, 153, 225, 0.14);
+    cursor: help;
+}
+
+/* What edits the page scrolls within its share of the panel, whose own height is fixed */
+.fluid-edit-main {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* The tabs of the sources opened, as the tabs of tldraw's panels - each coloured by its kind, the one shown joined to
+   the body beneath it, which takes its colour */
+.fluid-edit-panel {
+    --fluid-tab-content: #2563eb;
+    --fluid-tab-framing: #059669;
+    --fluid-tab-config: #7c3aed;
+    --fluid-tab-new: #d97706;
+}
+
+.fluid-edit-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-bottom: -8px;
+    padding: 0 4px;
+}
+
+.fluid-edit-tab {
+    --fluid-tab: var(--fluid-tab-content);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 14em;
+    padding: 4px 6px 4px 10px;
+    border: 1px solid color-mix(in srgb, var(--fluid-tab) 45%, transparent);
+    border-bottom: 0;
+    border-radius: 6px 6px 0 0;
+    background: color-mix(in srgb, var(--fluid-tab) 12%, #fff);
+    color: var(--fluid-tab);
+    font: 600 12.5px/1.4 system-ui, sans-serif;
+    cursor: pointer;
+}
+
+.fluid-edit-tab[data-fluid-tab-kind="framing"] { --fluid-tab: var(--fluid-tab-framing); }
+.fluid-edit-tab[data-fluid-tab-kind="config"] { --fluid-tab: var(--fluid-tab-config); }
+.fluid-edit-tab[data-fluid-tab-kind="new"] { --fluid-tab: var(--fluid-tab-new); }
+
+.fluid-edit-tab[aria-selected="true"] {
+    background: var(--fluid-tab);
+    color: #fff;
+}
+
+.fluid-edit-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The spot of a tab holding an edit not yet committed */
+.fluid-edit-tab-dirty {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--fluid-edit-uncommitted);
+    box-shadow: 0 0 0 1.5px #fff;
+}
+
+.fluid-edit-tab-dirty[data-fluid-claim-state="conflict"] {
+    background: var(--fluid-edit-conflict);
+}
+
+.fluid-edit-panel .fluid-edit-tab-close {
+    padding: 0 3px;
     border: 0;
     background: none;
-    color: #6b46c1;
+    color: inherit;
+    font: 600 14px/1 system-ui, sans-serif;
+    opacity: 0.7;
     cursor: pointer;
+}
+
+.fluid-edit-tab-close:hover {
+    opacity: 1;
+}
+
+.fluid-edit-tab-body {
+    --fluid-tab: var(--fluid-tab-content);
+    flex: 1 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.fluid-edit-tabs:not([hidden]) + .fluid-edit-tab-body {
+    padding: 8px;
+    border-top: 3px solid var(--fluid-tab);
+    border-radius: 0 0 4px 4px;
+    background: #fff;
+}
+
+.fluid-edit-tab-body[data-fluid-tab-kind="framing"] { --fluid-tab: var(--fluid-tab-framing); }
+.fluid-edit-tab-body[data-fluid-tab-kind="config"] { --fluid-tab: var(--fluid-tab-config); }
+.fluid-edit-tab-body[data-fluid-tab-kind="new"] { --fluid-tab: var(--fluid-tab-new); }
+
+/* The foot of the panel, from which the sparkles pop out "Ask me anything" */
+.fluid-edit-foot {
+    flex: none;
+    display: flex;
+    margin: 0 -12px -12px;
+    padding: 4px 8px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.fluid-edit-panel .fluid-edit-ai-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: #6b46c1;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.fluid-edit-ai-toggle:hover {
+    background: #f3eefe;
 }
 
 .fluid-edit-ai-toggle[aria-expanded="true"] {
     color: #fff;
     background: #6b46c1;
-    border-radius: 3px;
-}
-
-/* Whilst it is disclosed, the panel holds its height, which its bar shares between the "Ask me anything" panel and what
-   is above it, the source taking what the bar leaves it */
-.fluid-edit-panel:has(> .fluid-edit-ai:not([hidden])) {
-    overflow-y: hidden;
-}
-
-.fluid-edit-panel:has(> .fluid-edit-ai:not([hidden])) > .fluid-edit-source[open] {
-    min-height: 120px;
-    overflow: auto;
 }
 
 .fluid-edit-ai-bar {
@@ -645,10 +784,25 @@ a.fluid-edit-path {
     cursor: row-resize;
 }
 
+/* Popped out from the sparkles beneath it, rising as it grows, and withdrawn into them */
 .fluid-edit-ai {
     flex: 0 0 40%;
     min-height: 160px;
     overflow: hidden;
+    transform-origin: bottom left;
+    animation: fluid-edit-ai-out 0.18s ease-out;
+}
+
+.fluid-edit-ai[data-fluid-ai-closing="true"] {
+    animation: fluid-edit-ai-in 0.15s ease-in forwards;
+}
+
+@keyframes fluid-edit-ai-out {
+    from { opacity: 0; transform: translateY(16px) scale(0.96); }
+}
+
+@keyframes fluid-edit-ai-in {
+    to { opacity: 0; transform: translateY(16px) scale(0.96); }
 }
 
 .fluid-edit-ai-bar[hidden], .fluid-edit-ai[hidden] {

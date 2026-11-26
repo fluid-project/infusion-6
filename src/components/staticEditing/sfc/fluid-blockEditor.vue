@@ -128,6 +128,8 @@ fluid.blockEditor.apply = function (that, container, blocks, on) {
             cursor += count;
             const element = own.length === 1 && own[0].nodeType === 1 ? own[0] : null;
             if (element) {
+                // What the page shows of a block is the rendering of its source, and nothing else - see sweepUnrendered
+                fluid.blockEditor.sweepUnrendered(element, block);
                 const editable = block.startLine !== null && fluid.markdownSerializer.roundTrips(element, render);
                 element.setAttribute("data-fluid-block", editable ? "editable" : block.kind === "island" ? "island" : "source");
                 element.setAttribute("data-fluid-block-index", String(index));
@@ -153,6 +155,41 @@ fluid.blockEditor.apply = function (that, container, blocks, on) {
     } else {
         fluid.blockEditor.selectIsland(record, null);
         fluid.blockEditor.toolbar.hide();
+    }
+};
+
+/**
+ * Hold a block's element to the invariant that what it shows is the rendering of its source alone. Infusion's
+ * rendering leaves in place any node it did not make, as it must for those which others add, e.g. a widget loader -
+ * but within a block, a node the editor or the browser made, e.g. the element wrapping text made a link, or one typed
+ * into before the source was committed, would otherwise survive the rendering of the edit beside the rendering's own
+ * nodes for it, as a ghost, and be read back into the source, duplicating it on every edit. Once the source is
+ * rendered, each such node is removed. Should the element then differ from the rendering of its block nonetheless, it
+ * is reported, since the source would no longer be what is shown
+ * @param {Element} element - The block's element, as rendered
+ * @param {Object} block - Its block, with the `html` its source renders to
+ */
+fluid.blockEditor.sweepUnrendered = function (element, block) {
+    if (element.flOwned) {
+        const strays = [];
+        const walk = node => [...node.childNodes].forEach(child => {
+            // A widget's element renders itself, as its own component's
+            if (!child.flOwned) {
+                strays.push(child);
+            } else if (!(child.nodeType === 1 && child.hasAttribute("fluid-layers"))) {
+                walk(child);
+            }
+        });
+        walk(element);
+        strays.forEach(node => node.remove());
+        if (strays.length > 0 && block.kind !== "island") {
+            const holder = document.createElement("template");
+            holder.innerHTML = block.html;
+            const rendered = holder.content.firstElementChild;
+            if (rendered && rendered.innerHTML.replace(/\s+/g, " ").trim() !== element.innerHTML.replace(/\s+/g, " ").trim()) {
+                console.warn("Edit in Infusion: a block differs from the rendering of its source", element, block.html);
+            }
+        }
     }
 };
 
@@ -532,6 +569,9 @@ fluid.blockEditor.splice = function (record, first, last, markdown, focus) {
     const text = lines.join("\n");
     clearTimeout(record.liveTimer);
     record.source = text;
+    // The blocks are those of the source as now spliced, at once - a further splice before it is rendered, e.g. the
+    // commit of a block left after its live commit, must replace the lines its block now holds, not those it held
+    record.blocks = fluid.blockEditor.segment(text, record.renderer);
     record.before = null;
     record.focus = focus || null;
     document.dispatchEvent(new CustomEvent("fluid-block-edit-source", {detail: JSON.stringify({text})}));

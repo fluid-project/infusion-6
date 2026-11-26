@@ -66,8 +66,10 @@ harness.scenario("Writing a new post from the list, and browsing with the editor
 
     // 4. Commit
     await list.click(".fluid-edit-commit");
-    await list.waitForFunction(() => document.querySelector(".fluid-edit-panel").getAttribute("data-fluid-claim-state") === "committed", {timeout: 15000});
-    expect(mock.commits.length === 1 && slugged.test(mock.commits[0].path), "One commit, creating the new post");
+    // Committed, its tab is closed - the list's head shows it committed
+    await list.waitForFunction(() => document.querySelector(".fluid-edit-pending")?.getAttribute("data-fluid-claim-state") === "committed" &&
+        document.querySelectorAll(".fluid-edit-tab").length === 0, {timeout: 15000});
+    expect(mock.commits.length === 1 && slugged.test(mock.commits[0].path), "One commit, creating the new post, whose tab is closed");
     await mock.idle();
     expect(mock.runs.length === 1 && mock.runs[0].conclusion === "success", "The Action rebuilt the site: " +
         JSON.stringify(mock.runs.map(run => [run.conclusion, run.error && run.error.substring(0, 300)])));

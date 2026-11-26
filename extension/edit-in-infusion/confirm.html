@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Confirm commit - Edit in Infusion</title>
+    <title>Review commit - Edit in Infusion</title>
     <style>
         :root { --accent: #2b6cb0; --muted: #555; --line: #dde3ea; }
         body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 16px; color: #1a202c; background: #fff; }
@@ -24,26 +24,28 @@
         #approve:disabled { background: #a0aec0; cursor: not-allowed; }
         #decline { border: 1px solid var(--line); background: #fff; }
         .note { color: var(--muted); font-size: 12.5px; }
+        .claim { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 0 0 12px; }
+        .claim > label { display: flex; gap: 8px; align-items: baseline; font-weight: 600; cursor: pointer; }
+        .claim .claim-path { font-family: ui-monospace, monospace; word-break: break-all; }
+        .claim .claim-page { color: var(--muted); font-size: 12.5px; margin: 2px 0 6px 24px; }
+        .claim ul { margin: 0 0 6px 24px; }
+        .claim .diff { max-height: 260px; margin: 0; }
+        .claim.unchosen .diff, .claim.unchosen ul { opacity: 0.45; }
     </style>
 </head>
 <body>
-    <h1><img src="icons/icon-32.png" alt="" width="24" height="24"> Confirm commit</h1>
-    <p>A page you are editing asks to commit this, as you, to GitHub. Commit it only if it is the edit you made.</p>
+    <h1><img src="icons/icon-32.png" alt="" width="24" height="24"> Review commit</h1>
+    <p>A page you are editing asks to commit, as you, to GitHub. Every edit held in this browser for the same branch is
+        listed - commit those you choose, together as one commit, and only if they are the edits you made.</p>
     <dl>
         <dt>Repository</dt><dd id="repo"></dd>
         <dt>Branch</dt><dd id="branch"></dd>
-        <dt>File</dt><dd id="path"></dd>
-        <dt>From page</dt><dd id="page"></dd>
+        <dt>Files</dt><dd id="path"></dd>
     </dl>
-    <div id="further" hidden>
-        <p>With these further files:</p>
-        <ul id="files"></ul>
-    </div>
-    <p class="note">The change to the file:</p>
-    <div class="diff" id="diff"></div>
+    <div id="claims"></div>
     <p class="status" id="status" role="status"></p>
     <div class="buttons">
-        <button id="approve" disabled>Commit</button>
+        <button id="approve" disabled>Commit chosen</button>
         <button id="decline">Don't commit</button>
     </div>
     <script src="js/confirm.js"></script>

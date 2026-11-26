@@ -115,3 +115,37 @@ const listSites = async function () {
 };
 
 listSites();
+
+/**
+ * Offer the lasting access to a site asked for by the extension's panel, named in this page's URL as `grant` - the
+ * access is asked of Chrome as the user clicks, which Chrome counts as their request. Should it be held already, that
+ * is said instead
+ * @return {Promise} Resolves once offered
+ */
+const offerGrant = async function () {
+    const pattern = new URLSearchParams(location.search).get("grant");
+    if (pattern) {
+        const host = pattern.replace(/^[a-z]+:\/\//, "").replace(/\/\*$/, "");
+        const holder = document.getElementById("grant-holder");
+        const button = document.getElementById("grant");
+        const grantStatus = document.getElementById("grant-status");
+        const held = await chrome.permissions.contains({origins: [pattern]}).catch(() => false);
+        if (held) {
+            grantStatus.textContent = "Your edits already show on every page of " + host;
+        } else {
+            button.textContent = "Show my edits on every page of " + host;
+            holder.hidden = false;
+            button.addEventListener("click", async function () {
+                const granted = await chrome.permissions.request({origins: [pattern]}).catch(() => false);
+                holder.hidden = granted;
+                grantStatus.textContent = granted ? "Your edits will show on every page of " + host + " - you may close this tab" :
+                    "Access wasn't allowed - only pages you open the editor on will show your edits";
+                // The site is enlisted once access is granted - see chrome.permissions.onAdded in background.js
+                setTimeout(listSites, 500);
+            });
+            button.scrollIntoView({block: "center"});
+        }
+    }
+};
+
+offerGrant();

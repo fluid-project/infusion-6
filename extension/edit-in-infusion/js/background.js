@@ -8,41 +8,66 @@
 importScripts("claims.js", "github.js");
 
 /**
+ * Commit claims together, as one commit, moving each to "committed" - or, should any file of them have changed since
+ * its base, committing none, and moving those claims holding such a file to "conflict". A single claim of one file is
+ * written by the Contents API, and any more as a changeset
+ * @param {String[]} ids - The claims' keys - those not uncommitted, or gone, are passed over
+ * @return {Promise<Claim[]>} The claims as they now stand, in the order of `ids`, null for any gone
+ */
+const commitClaims = async function (ids) {
+    const found = await Promise.all(ids.map(id => fluidClaims.get(id)));
+    const claims = found.filter(claim => claim && claim.state === "uncommitted");
+    if (claims.length > 0) {
+        const first = claims[0];
+        const extraOf = claim => claim.files ? Object.entries(claim.files) : [];
+        const messageOf = claim => (claim.baseSha ? "Edit " + claim.path + " in place, from " : "Create " + claim.path + ", from ") + claim.page;
+        let message;
+        if (claims.length === 1) {
+            const extra = extraOf(first);
+            message = messageOf(first) + (extra.length ? ", with " + extra.map(([path]) => path).join(", ") : "");
+        } else {
+            message = "Edit " + claims.length + " sources in place\n\n" + claims.map(claim => " - " + messageOf(claim) +
+                (extraOf(claim).length ? ", with " + extraOf(claim).map(([path]) => path).join(", ") : "")).join("\n");
+        }
+        // Each path once - a further file shared by two claims, e.g. a widget's SFC, is written as the later holds it
+        const byPath = {};
+        claims.forEach(claim => {
+            byPath[claim.path] = {path: claim.path, content: fluidGitHub.encode(claim.text), baseSha: claim.baseSha};
+            extraOf(claim).forEach(([path, file]) => {
+                byPath[path] = {path, content: file.content, baseSha: file.baseSha};
+            });
+        });
+        const files = Object.values(byPath);
+        const result = claims.length === 1 && files.length === 1 ? await fluidGitHub.write({
+            repo: first.repo,
+            branch: first.branch,
+            path: first.path,
+            text: first.text,
+            baseSha: first.baseSha,
+            message
+        }) : await fluidGitHub.commitChangeset({repo: first.repo, branch: first.branch, message, files});
+        for (const claim of claims) {
+            const paths = [claim.path, ...extraOf(claim).map(([path]) => path)];
+            if (result.ok) {
+                await fluidClaims.put({...claim, state: "committed", commitSha: result.commitSha, message: undefined});
+            } else if (result.conflict && (!result.paths || result.paths.length === 0 || result.paths.some(path => paths.includes(path)))) {
+                await fluidClaims.put({...claim, state: "conflict", message: result.message, conflicts: result.paths});
+            } else if (result.conflict) {
+                await fluidClaims.put({...claim, message: "Not committed, since another edit committed with it is in conflict - " + result.message});
+            } else {
+                await fluidClaims.put({...claim, message: result.message});
+            }
+        }
+    }
+    return Promise.all(ids.map(id => fluidClaims.get(id)));
+};
+
+/**
  * Commit a claim, moving it to "committed", or to "conflict" if the file has changed since the claim's base
  * @param {String} id - The claim's key
  * @return {Promise<Claim>} The claim as it now stands
  */
-const commitClaim = async function (id) {
-    const claim = await fluidClaims.get(id);
-    let togo = claim;
-    const extra = claim && claim.files ? Object.entries(claim.files) : [];
-    if (claim && claim.state === "uncommitted") {
-        const message = (claim.baseSha ? "Edit " + claim.path + " in place, from " : "Create " + claim.path + ", from ") + claim.page;
-        // A claim of one file is written by the Contents API, and one with further files as a changeset, in one commit
-        const result = extra.length > 0 ? await fluidGitHub.commitChangeset({
-            repo: claim.repo,
-            branch: claim.branch,
-            message: message + (extra.length ? ", with " + extra.map(([path]) => path).join(", ") : ""),
-            files: [{path: claim.path, content: fluidGitHub.encode(claim.text), baseSha: claim.baseSha},
-                ...extra.map(([path, file]) => ({path, content: file.content, baseSha: file.baseSha}))]
-        }) : await fluidGitHub.write({
-            repo: claim.repo,
-            branch: claim.branch,
-            path: claim.path,
-            text: claim.text,
-            baseSha: claim.baseSha,
-            message
-        });
-        if (result.ok) {
-            togo = await fluidClaims.put({...claim, state: "committed", commitSha: result.commitSha, message: undefined});
-        } else if (result.conflict) {
-            togo = await fluidClaims.put({...claim, state: "conflict", message: result.message, conflicts: result.paths});
-        } else {
-            togo = await fluidClaims.put({...claim, message: result.message});
-        }
-    }
-    return togo;
-};
+const commitClaim = async id => (await commitClaims([id]))[0];
 
 // The commits awaiting the user's confirmation, each in a window of the extension's own, confirm.html, which no script
 // of the page edited can reach - the panel which asks for a commit runs in the page's own world, as any of the page's
@@ -50,14 +75,17 @@ const commitClaim = async function (id) {
 const fluidConfirm = {pending: {}, requestCount: 0};
 
 /**
- * Ask the user to confirm the commit of a claim, in a window showing what would be committed
- * @param {Claim} claim - The claim
- * @return {Promise<Boolean>} Resolves `true` if the user confirms it, `false` if they decline, or close the window
+ * Ask the user to review the claims which may be committed, in a window showing what each would commit, and to choose
+ * which to commit - the one asked for first, and with it every other uncommitted claim on the same branch, e.g. one of
+ * the framing, or of another page, edited in the same session
+ * @param {Claim[]} claims - The claims, the one asked for first
+ * @return {Promise<String[]>} Resolves the keys of the claims the user chose to commit - none, should they decline,
+ * or close the window
  */
-fluidConfirm.ask = function (claim) {
+fluidConfirm.ask = function (claims) {
     const request = String(++fluidConfirm.requestCount) + "-" + Date.now();
     return new Promise(resolve => {
-        fluidConfirm.pending[request] = {claim, resolve, windowId: null};
+        fluidConfirm.pending[request] = {claims, resolve, windowId: null};
         chrome.windows.create({url: chrome.runtime.getURL("confirm.html?request=" + request), type: "popup", width: 640, height: 720},
             window => {
                 if (fluidConfirm.pending[request]) {
@@ -70,13 +98,14 @@ fluidConfirm.ask = function (claim) {
 /**
  * Settle a request for confirmation, closing its window
  * @param {String} request - The request's id
- * @param {Boolean} confirmed - Whether the user confirmed the commit
+ * @param {String[]} chosen - The keys of the claims the user chose to commit, none if they declined
  */
-fluidConfirm.settle = function (request, confirmed) {
+fluidConfirm.settle = function (request, chosen) {
     const pending = fluidConfirm.pending[request];
     if (pending) {
         delete fluidConfirm.pending[request];
-        pending.resolve(confirmed);
+        // Only claims offered may be chosen
+        pending.resolve(chosen.filter(id => pending.claims.some(claim => claim.id === id)));
         if (pending.windowId !== null) {
             chrome.windows.remove(pending.windowId, () => chrome.runtime.lastError);
         }
@@ -86,7 +115,7 @@ fluidConfirm.settle = function (request, confirmed) {
 // A window closed before the user decides declines the commit
 chrome.windows.onRemoved.addListener(windowId => {
     Object.entries(fluidConfirm.pending).filter(([, pending]) => pending.windowId === windowId)
-        .forEach(([request]) => fluidConfirm.settle(request, false));
+        .forEach(([request]) => fluidConfirm.settle(request, []));
 });
 
 /**
@@ -98,7 +127,8 @@ chrome.windows.onRemoved.addListener(windowId => {
 const fromExtensionPage = sender => sender.id === chrome.runtime.id && typeof(sender.url) === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
 
 /**
- * Commit a claim on the request of a page being edited, once the user has confirmed it
+ * Commit a claim on the request of a page being edited, once the user has reviewed it - with every other uncommitted
+ * claim on the same branch, which the user may choose to commit with it, as one commit
  * @param {String} id - The claim's key
  * @return {Promise<Claim>} The claim as it now stands
  */
@@ -106,10 +136,15 @@ const confirmAndCommit = async function (id) {
     const claim = await fluidClaims.get(id);
     let togo = claim;
     if (claim && claim.state === "uncommitted") {
-        if (await fluidConfirm.ask(claim)) {
-            togo = await commitClaim(id);
-        } else {
-            togo = await fluidClaims.put({...claim, message: "the commit was not confirmed"});
+        const others = (await fluidClaims.list()).filter(one => one.id !== id && one.state === "uncommitted" &&
+            one.repo === claim.repo && one.branch === claim.branch).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+        const chosen = await fluidConfirm.ask([claim, ...others]);
+        if (chosen.length > 0) {
+            await commitClaims(chosen);
+            togo = await fluidClaims.get(id);
+        }
+        if (!chosen.includes(id) && togo) {
+            togo = await fluidClaims.put({...togo, message: chosen.length > 0 ? "not chosen for the commit" : "the commit was not confirmed"});
         }
     }
     return togo;
@@ -125,23 +160,25 @@ const handlers = {
         return true;
     },
     "claim-commit": (message, sender) => fromExtensionPage(sender) ? commitClaim(message.id) : confirmAndCommit(message.id),
-    // What a request for confirmation would commit, for confirm.html - the claim, and the text it replaces
+    // What a request for confirmation may commit, for confirm.html - each claim, the one asked for first, with the text
+    // it replaces
     "confirm-review": async function (message, sender) {
         const pending = fromExtensionPage(sender) ? fluidConfirm.pending[message.request] : undefined;
         let togo = null;
         if (pending) {
-            const claim = pending.claim;
-            let baseText = claim.baseText;
-            if (baseText === undefined && claim.baseSha) {
-                baseText = (await fluidGitHub.read(claim.repo, claim.branch, claim.path)).text;
-            }
-            togo = {claim, baseText: baseText ?? ""};
+            togo = {claims: await Promise.all(pending.claims.map(async claim => {
+                let baseText = claim.baseText;
+                if (baseText === undefined && claim.baseSha) {
+                    baseText = (await fluidGitHub.read(claim.repo, claim.branch, claim.path)).text;
+                }
+                return {claim, baseText: baseText ?? ""};
+            }))};
         }
         return togo;
     },
     "confirm-decide": (message, sender) => {
         if (fromExtensionPage(sender)) {
-            fluidConfirm.settle(message.request, !!message.confirmed);
+            fluidConfirm.settle(message.request, message.confirmed && Array.isArray(message.ids) ? message.ids.map(String) : []);
         }
         return true;
     },

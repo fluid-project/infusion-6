@@ -415,7 +415,7 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
     }));
     const commitSha = mock.commits[0] && mock.commits[0].sha;
     expect(/\/blob\/main\/content\/post\/2025-03-20-ui-as-code\.md$/.test(updated.pathHref || ""), "The source's name links to it on GitHub: " + updated.pathHref);
-    expect(!updated.hidden && /^Last updated by reviewer at \d{1,2}(st|nd|rd|th) [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/.test(updated.text) &&
+    expect(!updated.hidden && /^content\/post\/2025-03-20-ui-as-code\.md - last updated by reviewer at \d{1,2}(st|nd|rd|th) [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/.test(updated.text) &&
         updated.by === "https://github.com/reviewer" && updated.at.endsWith("/commit/" + commitSha) &&
         updated.title.startsWith(commitSha.substring(0, 7) + " - "), "Who last changed the post and when, linked to their profile and the commit: " +
         JSON.stringify(updated));

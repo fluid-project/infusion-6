@@ -3,6 +3,8 @@
 // Scenario: editing through abstractions - a user edits the framing of a page, its footer, which every page of the
 // site renders from one SFC. Against a mock GitHub hosting the test site (packages/wend-test-site) - see mock-github.js:
 //  1. On a post, the user activates the extension, ticks "Also edit framing", and clicks the footer
+//  1a. They type into the footer's literal text in place, which is written into its SFC - what its template interpolates
+//      is marked as templated, and can't be typed into
 //  2. They edit the footer's source - the claim is held in IndexedDB, and the footer re-renders live, marked uncommitted
 //  3. They browse to another page, one with no source of its own - the edited footer is shown there too, marked alike,
 //     though the page as published is unchanged
@@ -42,8 +44,36 @@ harness.scenario("Editing the framing of a page shows on every page until publis
     await post.waitForFunction(() => document.querySelector(".fluid-edit-panel textarea").value.includes("beautifulWend.footer"), {timeout: 15000});
     expect(true, "The panel holds the footer's SFC, read from the repository");
 
+    // 1a. The footer is edited in place too - its literal text typed into, written into its SFC, and what its template
+    // interpolates set off as templated, not to be typed into
+    await post.waitForSelector("footer[data-fluid-framing-editable][contenteditable=\"true\"]", {timeout: 5000});
+    const templated = await post.$$eval("footer [data-fluid-templated]", nodes => nodes.map(node => ({editable: node.getAttribute("contenteditable"), title: node.title})));
+    expect(templated.length > 0 && templated.every(node => node.editable === "false" && node.title.includes("Ask Anything")),
+        "What the footer's template interpolates is marked as templated, not editable, its tooltip suggesting Ask Anything: " + JSON.stringify(templated));
+    await post.evaluate(() => {
+        const footer = document.querySelector("footer");
+        const walker = document.createTreeWalker(footer, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node && !node.nodeValue.includes("Boz")) {
+            node = walker.nextNode();
+        }
+        footer.focus();
+        const range = document.createRange();
+        range.setStart(node, node.nodeValue.indexOf("Boz") + 3);
+        range.collapse(true);
+        document.getSelection().removeAllRanges();
+        document.getSelection().addRange(range);
+    });
+    await post.keyboard.type(" and friends");
+    await post.waitForFunction(() => document.querySelector(".fluid-edit-panel textarea").value.includes("by Boz and friends"), {timeout: 15000});
+    expect(true, "Text typed into the footer in place is written into its SFC");
+    await post.waitForSelector(`footer[data-fluid-claim-state="uncommitted"]`, {timeout: 15000});
+    expect(await post.$eval("footer", node => node.textContent.split("and friends").length === 2), "The footer shows what was typed once, as its SFC renders it");
+
     // 2. Edit the footer
     await harness.editSource(post, text => text.replace("by Boz", "by Boz, " + marker));
+    // The footer was marked uncommitted already, by step 1a - so it is its text which shows the edit rendered
+    await post.waitForFunction(marker => document.querySelector("footer").textContent.includes(marker), {timeout: 15000}, marker);
     await post.waitForSelector(`footer[data-fluid-claim-state="uncommitted"]`, {timeout: 15000});
     const postFooter = await post.$eval("footer", node => node.textContent);
     expect(postFooter.includes(marker), "The post's footer renders the edit live");

@@ -161,7 +161,8 @@ harness.launch = async function (mock) {
             const page = await target.page();
             await page.waitForSelector("#approve:not([disabled])", {timeout: 15000});
             browser.confirmations.push(await page.evaluate(() => ({path: document.getElementById("path").textContent,
-                repo: document.getElementById("repo").textContent, diff: document.getElementById("diff").textContent})));
+                repo: document.getElementById("repo").textContent, diff: document.getElementById("claims").textContent,
+                paths: Array.from(document.querySelectorAll(".claim input")).map(box => box.dataset.path)})));
             await page.click(browser.confirmDecision ? "#approve" : "#decline");
         }
     });

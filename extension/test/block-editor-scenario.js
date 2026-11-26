@@ -5,6 +5,8 @@
 // folded away, and:
 //  1. types at the end of a paragraph, and leaves it - the source changes in that paragraph's lines alone
 //  2. selects a word of another paragraph and makes it bold with Ctrl+B
+//  2a. makes a word of it a link from the toolbar, and types at its end - the page shows what the source renders, the
+//      link and the text typed once each
 //  3. splits a paragraph with Enter - the new paragraph has the caret
 //  3a. presses Enter at the end of a paragraph - the new, empty paragraph is edited in place, and may be typed into
 //  4. makes a paragraph a subheading from the toolbar
@@ -165,6 +167,50 @@ harness.scenario("Editing a post in place, block by block", async function ({moc
     expect(afterBold.includes("**" + word + "**"), "Ctrl+B makes \"" + word + "\" bold in the source");
     expect(await post.evaluate(word => [...document.querySelectorAll("strong")].some(node => node.textContent === word), word),
         "The page renders it bold");
+
+    // 2a. Make a word of the same paragraph a link from the toolbar, then type at the paragraph's end - the page shows
+    // the paragraph as its source renders it, one link and the text typed once, never a ghost of the paragraph as it
+    // was edited
+    const linked = await post.evaluate(index => {
+        const element = document.querySelector(`[data-fluid-block-index="${index}"]`);
+        element.focus();
+        const text = [...element.childNodes].filter(node => node.nodeType === 3).pop();
+        const start = text.nodeValue.indexOf(" ", 10) + 1;
+        const end = text.nodeValue.indexOf(" ", start);
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, end);
+        document.getSelection().removeAllRanges();
+        document.getSelection().addRange(range);
+        return text.nodeValue.substring(start, end);
+    }, second);
+    await post.click(".fluid-block-toolbar [data-command=\"link\"]");
+    await post.keyboard.type("https://example.org/linked");
+    await post.click(".fluid-block-toolbar [data-command=\"link-apply\"]");
+    const afterLink = await sourceChange(post, afterBold);
+    await post.evaluate(index => {
+        const element = document.querySelector(`[data-fluid-block-index="${index}"]`);
+        element.focus();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        document.getSelection().removeAllRanges();
+        document.getSelection().addRange(range);
+    }, second);
+    await post.keyboard.type(" Typed after linking.");
+    const afterLinkTyping = await sourceChange(post, afterLink);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const linkShown = await post.evaluate(index => {
+        const element = document.querySelector(`[data-fluid-block-index="${index}"]`);
+        return {links: element.querySelectorAll("a[href=\"https://example.org/linked\"]").length, text: element.textContent};
+    }, second);
+    const finalSource = await sourceOf(post);
+    const count = (text, part) => text.split(part).length - 1;
+    expect(count(afterLink, "[" + linked + "](https://example.org/linked)") === 1, "The link is written into the source once");
+    expect(linkShown.links === 1 && count(linkShown.text, "Typed after linking.") === 1,
+        "The page shows the paragraph as its source renders it - one link, and the text typed once: " + JSON.stringify(linkShown));
+    expect(count(finalSource, "https://example.org/linked") === 1 && count(finalSource, "Typed after linking.") === 1 && afterLinkTyping.length > 0,
+        "Typing after linking writes the text into the source once, and duplicates nothing");
 
     // 3. Split a paragraph with Enter
     const third = await plainParagraph(post, 2);

@@ -80,6 +80,9 @@ const render = async function () {
         const tabPattern = tab && tab.url && /^https?:/.test(tab.url) ? new URL(tab.url).protocol + "//" + new URL(tab.url).hostname + "/*" : null;
         panelGranted = tabPattern ? await chrome.permissions.contains({origins: [tabPattern]}).catch(() => false) : false;
         byId("keep-holder").hidden = !tabPattern || panelGranted;
+        // Whether access is held already is said, so that the user needn't wonder whether to ask for it again
+        byId("kept").hidden = !tabPattern || !panelGranted;
+        byId("kept").textContent = panelGranted ? "Your edits show on every page of " + new URL(tab.url).hostname : "";
         const editable = tab ? await ask({type: "tab-editable", tabId: tab.id}) : {editable: false, reason: "There is no page to edit"};
         byId("start").disabled = !editable.editable;
         // The tooltip is held by the button's wrapper too, since a disabled button may show none of its own
@@ -138,16 +141,14 @@ byId("start").addEventListener("click", async function () {
     }
 });
 
-// Lasting access to the site, asked for as the user clicks, so that Chrome counts the request as theirs. Once granted,
-// the service worker enlists the site - see chrome.permissions.onAdded in background.js
+// Lasting access to the site is asked for on the extension's options page, opened in a tab of its own for the site,
+// where the user grants it with a click of its own - Chrome anchors the prompt asking for access to the page asking,
+// and a prompt asked for by this panel may be lost as the panel closes, leaving the user nothing to answer. Once
+// granted, the service worker enlists the site - see chrome.permissions.onAdded in background.js
 byId("keep").addEventListener("click", async function () {
-    const tab = panelTab;
-    const pattern = new URL(tab.url).protocol + "//" + new URL(tab.url).hostname + "/*";
-    statusNode.textContent = "Chrome is asking you to allow access to " + new URL(tab.url).hostname + " - look for its prompt";
-    const granted = await chrome.permissions.request({origins: [pattern]}).catch(() => false);
-    panelGranted = granted;
-    byId("keep-holder").hidden = granted;
-    statusNode.textContent = granted ? "Your edits will show on every page of " + new URL(tab.url).hostname : "Access wasn't allowed - only pages you open the editor on will show your edits";
+    const pattern = new URL(panelTab.url).protocol + "//" + new URL(panelTab.url).hostname + "/*";
+    await chrome.tabs.create({url: chrome.runtime.getURL("options.html") + "?grant=" + encodeURIComponent(pattern)});
+    window.close();
 });
 
 // A failure in starting to edit is shown in the panel, rather than lost in the panel's own console

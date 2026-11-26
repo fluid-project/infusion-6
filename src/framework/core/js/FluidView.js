@@ -4022,6 +4022,11 @@ const fluidViewScope = function (fluid) {
         if (vnode.text !== undefined && !fluid.isSignal(vnode.text) && vnode.text !== element.nodeValue) {
             element.nodeValue = vnode.text;
         }
+        // A text node whose text interpolates values, e.g. "@{author.name}", is marked, so that an editor of what renders
+        // it can tell it from text written literally in the template - see fluid.staticEditing's in-place framing
+        if (vnode.text !== undefined) {
+            element.flBound = fluid.isSignal(vnode.text);
+        }
         if (vnode.attrs !== undefined || vnode.defaultAttrs !== undefined) {
             fluid.patchAttrs(vnode, element, isRoot);
         }

@@ -49,6 +49,9 @@
     <p>The extension does nothing on a site until you click its button there. Once you allow it access to a site, every
        page of the site shows the edits you have made but not yet seen published. Forgetting a site withdraws that
        access; the edits you hold for it are kept.</p>
+    <!-- Shown when the extension's panel asks for lasting access to a site - see "keep" in popup.js -->
+    <p id="grant-holder" hidden><button id="grant" class="primary"></button></p>
+    <p class="status" id="grant-status" role="status"></p>
     <ul id="sites"></ul>
     <p id="no-sites" hidden>No sites yet.</p>
     <script src="js/options.js"></script>
