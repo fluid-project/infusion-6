@@ -110,7 +110,7 @@ fluid.ai.isRenewable = model => fluid.ai.renewableProvider(model) !== null;
 // Unlike the proxy, it lists the models it offers, from which the user chooses.
 fluid.ai.localService = {
     name: "CAVI",
-    // Relative to the page, holding JSON of the form {"key": "<key>"}
+    // Relative to the page, holding JSON of the form {"key": "<key>"} - or null for a host offering no local service
     keyUrl: "cavi-key.json",
     endpoint: "https://ai.cavi.au.dk/v1/chat/completions",
     modelsUrl: "https://ai.cavi.au.dk/v1/models",
@@ -237,15 +237,18 @@ fluid.ai.deriveToken = async function (password) {
  */
 fluid.ai.fetchLocalKey = async function () {
     let togo = null;
-    try {
-        const response = await fetch(fluid.ai.localService.keyUrl, {cache: "no-store"});
-        if (response.ok) {
-            const parsed = await response.json();
-            togo = typeof(parsed?.key) === "string" && parsed.key.trim() ? parsed.key.trim() : null;
+    // A host offering no local service, e.g. a published site, which holds no key beside its pages, names no keyUrl
+    if (fluid.ai.localService.keyUrl) {
+        try {
+            const response = await fetch(fluid.ai.localService.keyUrl, {cache: "no-store"});
+            if (response.ok) {
+                const parsed = await response.json();
+                togo = typeof(parsed?.key) === "string" && parsed.key.trim() ? parsed.key.trim() : null;
+            }
+        } catch (e) {
+            // A missing key, or unparseable JSON, simply leaves the IFM proxy in use
+            togo = null;
         }
-    } catch (e) {
-        // A missing key, or unparseable JSON, simply leaves the IFM proxy in use
-        togo = null;
     }
     return togo;
 };

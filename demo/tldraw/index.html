@@ -34,6 +34,8 @@
     <fluid-import src="%infusion-6/src/components/askAnything/fluid-askAnything.vue" fluid-hydrated="%infusion-6"></fluid-import>
     <!-- The bar dividing the canvas from the panel - see fluid.tldraw.bindResizeBar -->
     <fluid-import src="%infusion-6/src/components/sfc/fluid-resizeBar.vue" fluid-hydrated="%infusion-6" eager></fluid-import>
+    <!-- The dropdown of widget layers of the "New shape" panel, shared with the editing panel of a wend site -->
+    <fluid-import src="%infusion-6/src/components/sfc/fluid-layerPicker.vue" fluid-hydrated="%infusion-6" eager></fluid-import>
 
     <!-- Stubs for the "#Agents" widget helpers used by the story time widget -->
     <script src="js/agents-stubs.js"></script>
@@ -119,65 +121,13 @@
             font-size: 12px;
             color: #616161;
         }
-        .layer-picker {
-            position: relative;
-        }
-        .layer-picker-button {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            max-width: 280px;
-        }
-        .layer-picker-choice {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .layer-picker-list {
-            position: absolute;
-            top: calc(100% + 4px);
+        /* The layer picker is Infusion's fluid.layerPicker, which brings its own style - shown here as tldraw's panels are */
+        .new-shape-panel .fluid-layer-picker-list {
+            left: auto;
             right: 0;
-            z-index: 10;
-            min-width: 100%;
-            max-height: 360px;
-            overflow-y: auto;
-            margin: 0;
-            padding: 4px 0;
-            list-style: none;
-            background: var(--color-panel, white);
+            border: 0;
             border-radius: 8px;
             box-shadow: var(--shadow-3, 0 2px 10px rgba(0, 0, 0, 0.25));
-        }
-        .layer-picker-option {
-            display: flex;
-            align-items: center;
-        }
-        .layer-picker-option:hover, .layer-picker-chosen {
-            background: rgba(0, 0, 0, 0.05);
-        }
-        .new-shape-panel .layer-picker-name {
-            flex: 1;
-            padding: 6px 10px;
-            text-align: left;
-            white-space: nowrap;
-            background: none;
-            border: none;
-        }
-        .new-shape-panel .layer-picker-delete {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            align-self: stretch;
-            padding: 0;
-            color: #C62828;
-            background: none;
-            border: none;
-            /* Revealed only as the pointer passes over the right of its row */
-            opacity: 0;
-        }
-        .new-shape-panel .layer-picker-delete:hover, .new-shape-panel .layer-picker-delete:focus-visible {
-            opacity: 1;
         }
         .new-shape-panel select, .new-shape-panel button {
             font: inherit;
@@ -195,6 +145,29 @@
             position: relative;
             width: 100%;
             height: 100%;
+        }
+        /* The grip by which a widget is dragged out of the arena onto another page - see DragGrip in tldraw-driver.js.
+           At the frame's upper left, since its upper right holds any list of the widget's problems */
+        .fl-tldraw-drag-grip {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 3;
+            padding: 0 3px;
+            border-bottom-right-radius: 4px;
+            background: rgba(255, 255, 255, 0.85);
+            color: #718096;
+            font: 12px/1.3 sans-serif;
+            letter-spacing: -2px;
+            cursor: grab;
+            opacity: 0.55;
+        }
+        .fl-tldraw-drag-grip::before {
+            content: "\2807\2807";
+        }
+        .tl-shape:hover .fl-tldraw-drag-grip {
+            opacity: 1;
+            color: #2b6cb0;
         }
         .infusion-problem-holder {
             position: absolute;

@@ -402,12 +402,19 @@ fluid.tldraw.isTextEditing = function (element) {
 };
 
 // Elements which handle pointer gestures natively, resize bars, and those whose widget handles them with listeners of
-// its own rather than through its template, which marks them with the class fl-tldraw-interactive
-fluid.tldraw.interactiveSelector = "button, input, select, textarea, a, .fl-resize-bar, .fl-tldraw-interactive";
+// its own rather than through its template, which marks them with the class fl-tldraw-interactive. Those editing text,
+// e.g. a code pane of CodeMirror, are among them, so that a double-click selecting a word in one never reaches tldraw,
+// which would take it as asking to edit the shape
+fluid.tldraw.interactiveSelector = "button, input, select, textarea, a, [contenteditable]:not([contenteditable=\"false\"]), .cm-editor, " +
+    ".fl-resize-bar, .fl-tldraw-interactive";
 
 // The events whose handlers, bound by a template onto any element of a widget, make it receive the pointer gestures
 // over it rather than tldraw - a click is only delivered to the element which saw the pointer pressed and released
 fluid.tldraw.pointerEvents = ["click", "dblclick", "contextmenu", "mousedown", "mouseup", "pointerdown", "pointerup"];
+
+// Within how many ms of a press on a widget a further press is taken as making a double-click, which is kept from tldraw
+// - longer than tldraw's own interval, so that none it would count escapes
+fluid.tldraw.doubleClickInterval = 600;
 
 /**
  * Determine whether a pointer gesture beginning at an element within a widget's host should be received by the widget

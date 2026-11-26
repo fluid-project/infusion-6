@@ -10,19 +10,19 @@
     ],
     "steps": [{
         "description": "Open the layer picker beside the \"New shape\" button",
-        "action": {"type": "click", "target": {"selector": "button.layer-picker-button"}},
+        "action": {"type": "click", "target": {"selector": "button.fluid-layer-picker-button"}},
         "expect": [{
             "description": "The top-level widget layers should be listed, including the counter",
-            "target": {"selector": ".layer-picker-option", "text": "fluid.demos.counter"},
+            "target": {"selector": ".fluid-layer-picker-option", "text": "fluid.demos.counter"},
             "count": {"equals": 1},
             "visible": true
         }]
     }, {
         "description": "Choose fluid.demos.counter from the layer picker",
-        "action": {"type": "click", "target": {"selector": ".layer-picker-name", "exactText": "fluid.demos.counter"}},
+        "action": {"type": "click", "target": {"selector": ".fluid-layer-picker-name", "exactText": "fluid.demos.counter"}},
         "expect": [{
             "description": "The counter should become the chosen layer",
-            "target": {"selector": ".layer-picker-choice"},
+            "target": {"selector": ".fluid-layer-picker-choice"},
             "text": {"equals": "fluid.demos.counter"}
         }]
     }, {

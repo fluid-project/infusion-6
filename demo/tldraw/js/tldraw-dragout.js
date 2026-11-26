@@ -1,4 +1,4 @@
-import {contentToPTF} from "./tldraw-clipboard.js";
+import {contentToParts, ptfPreamble} from "./tldraw-clipboard.js";
 
 // Dragging a widget out of the arena, onto another page or application, as the PTF document a copy of it would put on
 // the clipboard - see a-scratch/reports/dragging-widgets-out.md. A shape's ordinary gestures are tldraw's, which drives
@@ -15,15 +15,20 @@ export const ptfDragType = "application/x-ptf";
 
 /**
  * Find the shape of the arena's widget over which a pointer gesture begins, and its element, if the gesture is to drag
- * the widget out - the primary button is pressed with Shift held, and the gesture is not one which belongs to the
+ * the widget out - the primary button is pressed on the widget's grip (see DragGrip in tldraw-driver.js), or with Shift
+ * held, and the gesture is not one which belongs to the
  * widget, e.g. editing text within it, or pressing one of its buttons
  * @param {PointerEvent} event - The pointerdown
- * @return {Object|null} `{shapeId, element, draggable}` - the id of the widget's shape, its element, made draggable, and
- * the value its `draggable` attribute had - or `null`
+ * @return {Object|null} `{shapeId, element, draggable, grip}` - the id of the widget's shape, its element, made
+ * draggable, the value its `draggable` attribute had, and `true` if it is the widget's grip - or `null`
  */
 fluid.tldraw.dragOutTarget = function (event) {
     let togo = null;
-    if (event.shiftKey && event.button === 0 && event.target instanceof Element) {
+    const grip = event.target instanceof Element ? event.target.closest(".fl-tldraw-drag-grip") : null;
+    if (grip && event.button === 0) {
+        const shapeElement = grip.closest(".tl-shape[data-shape-type='infusion']");
+        togo = shapeElement ? {shapeId: shapeElement.getAttribute("data-shape-id"), element: grip, draggable: grip.getAttribute("draggable"), grip: true} : null;
+    } else if (event.shiftKey && event.button === 0 && event.target instanceof Element) {
         const shapeElement = event.target.closest(".tl-shape[data-shape-type='infusion']");
         // The element pressed is itself made draggable, since what forbids its text being selected must be lifted from
         // it too - see onPointerDown in bindDragOut
@@ -33,6 +38,18 @@ fluid.tldraw.dragOutTarget = function (event) {
         }
     }
     return togo;
+};
+
+/**
+ * Encode a widget dragged out of the arena as PTF, as its copy would be, but without where its shape stood in the
+ * arena, which means nothing where it is dropped
+ * @param {TLContent} content - The content of the widget's shape
+ * @return {String} The text of the PTF document
+ */
+fluid.tldraw.dragOutPTF = function (content) {
+    const parts = contentToParts(content).map(part => part.kind === "component" && part.parts ?
+        {...part, parts: fluid.tldraw.writeShapeConfig(part.parts, null, null)} : part);
+    return fluid.ptf.encode(parts, ptfPreamble);
 };
 
 /**
@@ -87,7 +104,10 @@ export const bindDragOut = function (editor) {
     const onPointerUp = event => {
         if (pending) {
             event.stopPropagation();
-            if (!pending.dragging) {
+            // A press on the grip which drags nothing selects the widget, as a click on it would
+            if (!pending.dragging && pending.grip) {
+                editor.select(pending.shapeId);
+            } else if (!pending.dragging) {
                 fluid.tldraw.toggleSelected(editor, pending.shapeId);
             }
         }
@@ -110,7 +130,7 @@ export const bindDragOut = function (editor) {
             const content = editor.getContentFromCurrentPage([pending.shapeId]);
             if (content) {
                 pending.dragging = true;
-                event.dataTransfer.setData(ptfDragType, contentToPTF(content));
+                event.dataTransfer.setData(ptfDragType, fluid.tldraw.dragOutPTF(content));
                 event.dataTransfer.effectAllowed = "copy";
                 // What is dragged is pictured as the whole of the widget's shape, from the point at which it was pressed
                 const frame = pending.element.closest(".tl-html-container") || pending.element;

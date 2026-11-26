@@ -383,6 +383,9 @@ wend.trace.make = function ({model, sources, template, infusionVersion, commit, 
         return [page.relPermalink, {
             // What an editing client offers in completing a link to the page - see Infusion's fluid-sourceView.vue
             title: page.title,
+            // The layers of the widgets the page holds, as its document renders them, by which an editing client tells
+            // which of the site's widgets are unused - see `widgets` below, and fluid.staticEditing.unusedLayers
+            layers: output ? wend.trace.layersOf(fs.readFileSync(file, "utf8")) : [],
             kind: page.kind,
             // The headings of its content, by the ids the pipeline gave them, for completing links to them
             headings: wend.trace.headingsOf(page.content || ""),
@@ -401,6 +404,9 @@ wend.trace.make = function ({model, sources, template, infusionVersion, commit, 
         // The site's own static files which may be linked to, e.g. images, by their paths from the root of the site
         assets: assets || [],
         staticFiles: staticFiles || {},
+        // The SFCs of the site's widgets, by their layers, each with the layers of the other widgets it names, which it
+        // may make or build on, so that one which is used keeps them in use
+        widgets: wend.trace.widgetUses(),
         // The site's bases held as git repositories, each with the commit it is built at - by which an editing client
         // tells when a base has moved on since, and offers to rebuild the site from it - see fetchBases.js
         bases: wendSite.gitBases()
@@ -493,12 +499,13 @@ wend.trace.infusionReferences = function () {
 };
 
 // Infusion's components which an editing client, e.g. the "Edit in Infusion" extension, loads into a page from the
-// site's own copy of Infusion - the resize bar setting off its panel, and Infusion's static editing: the mixin making a
+// site's own copy of Infusion - the resize bar setting off its panel, the picker of its widgets, and Infusion's static editing: the mixin making a
 // block editable, the block editor, its serialiser of markdown, its reader of widgets dropped as ZIP files, the editing
-// panel, its logic and its source view, and the bundle of CodeMirror 6 which the source view uses - published whether
-// or not content refers to them
+// panel, its logic and its source view, its "Ask me anything" panel, and the bundle of CodeMirror 6 which the source
+// view uses - published whether or not content refers to them
 wend.trace.editingFiles = [
     "src/components/sfc/fluid-resizeBar.vue",
+    "src/components/sfc/fluid-layerPicker.vue",
     "src/components/staticEditing/js/fluid-withEditing.js",
     "src/components/staticEditing/js/fluid-markdownSerializer.js",
     "src/components/staticEditing/js/fluid-zip.js",
@@ -506,6 +513,13 @@ wend.trace.editingFiles = [
     "src/components/staticEditing/js/fluid-staticEditing.js",
     "src/components/staticEditing/sfc/fluid-staticEditor.vue",
     "src/components/staticEditing/sfc/fluid-sourceView.vue",
+    "src/components/staticEditing/sfc/fluid-editAskAnything.vue",
+    "src/components/askAnything/fluid-askAnything.vue",
+    "src/components/askAnything/fluid-askAnythingEntry.vue",
+    "src/components/askAnything/fluid-markdownBlock.vue",
+    "src/components/askAnything/fluid-ai.js",
+    "src/components/askAnything/fluid-ai-arena.js",
+    "src/lib/snarkdown/snarkdown.umd.js",
     "src/lib/fluid-lint/fluid-lint.js"
 ];
 
@@ -553,6 +567,38 @@ wend.trace.imageDir = "img";
  * @return {String} The layer, e.g. "fluid.demos.counter"
  */
 wend.trace.layerOfFile = file => path.basename(file).replace(/\.(vue|js)$/, "").replace(/-/g, ".");
+
+/**
+ * List the layers of the widgets which markup holds, as the values of their elements' `fluid-layers` attributes, each
+ * naming its layers separated by spaces
+ * @param {String} html - The markup
+ * @return {String[]} The layers, sorted, each once
+ */
+wend.trace.layersOf = function (html) {
+    const found = new Set();
+    [...html.matchAll(/\sfluid-layers\s*=\s*"([^"]*)"/g)].forEach(match => match[1].split(/\s+/).filter(layer => layer).forEach(layer => found.add(layer)));
+    return [...found].sort();
+};
+
+/**
+ * Record, for each of the site's widgets, its SFC's path and the layers of the site's other widgets which it names
+ * @return {Object<String, Object>} `{path, inherited, uses}` for each widget's layer - `path` in the repository,
+ * `inherited` if a base of the site holds it rather than the site, and `uses` the layers it names
+ */
+wend.trace.widgetUses = function () {
+    const widgets = wend.trace.widgetFiles();
+    const layers = widgets.map(widget => widget.layer);
+    return Object.fromEntries(widgets.map(widget => {
+        const text = fs.readFileSync(wendSite.resolve("static/" + wend.trace.widgetDir + "/" + widget.file), "utf8");
+        const file = "static/" + wend.trace.widgetDir + "/" + widget.file;
+        return [widget.layer, {
+            path: file,
+            // A widget a base of the site holds is not the site's own to delete
+            inherited: !!wendSite.inheritedFrom(file),
+            uses: layers.filter(layer => layer !== widget.layer && text.includes("\"" + layer + "\""))
+        }];
+    }));
+};
 
 /**
  * List the SFCs of widgets the site holds in static/sfc - its own, and its bases'

@@ -166,7 +166,7 @@ export const reportPasteProblem = function (problem, detail) {
     }
 };
 
-const ptfPreamble = "This is a Potentia Transmission Format (PTF) document holding tldraw shapes together with the " +
+export const ptfPreamble = "This is a Potentia Transmission Format (PTF) document holding tldraw shapes together with the " +
     "layers and potentia of the Infusion components they host.";
 
 /**

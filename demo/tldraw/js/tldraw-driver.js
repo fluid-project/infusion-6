@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {Tldraw, BaseBoxShapeUtil, HTMLContainer, T, createShapeId, useEditor, react, useValue, DefaultContextMenu,
     TldrawUiMenuGroup, TldrawUiMenuSubmenu, TldrawUiMenuActionItem, ToggleTransparentBgMenuItem, EditMenuSubmenu,
     ArrangeMenuSubmenu, ReorderMenuSubmenu, MoveToPageMenu, ClipboardMenuGroup, SelectAllMenuItem, CursorChatItem,
-    useActions, useShowCollaborationUi, atom} from "tldraw";
+    useActions, useShowCollaborationUi, atom, Rectangle2d} from "tldraw";
 import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboardOptions, guardClipboardEvents,
     copySelectionAsPTF, exportSelectionAsPTF,
     isWidgetAvailable} from "./tldraw-clipboard.js";
@@ -295,6 +295,8 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
     const hostRef = React.useRef(null);
     const containerRef = React.useRef(null);
     const badgeRef = React.useRef(null);
+    // When the widget was last pressed, so that a double-click within it is kept from tldraw
+    const lastPressRef = React.useRef(-Infinity);
     React.useEffect(() => {
         let that = null;
         let unmounted = false;
@@ -397,18 +399,26 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
         onPointerDown: e => {
             // Let interactive elements within the component, including any bound to pointer events by its template, and
             // the badge's buttons, receive their events rather than tldraw selecting the shape - the rest of the badge,
-            // e.g. its list of problems, drags the shape as the component itself does
-            if (fluid.tldraw.isInteractiveTarget(e.target, e.currentTarget)) {
+            // e.g. its list of problems, drags the shape as the component itself does. A press following another soon
+            // after is kept from tldraw too, which would take the pair as a double-click, making a text shape over the
+            // widget or editing it - see fluid.tldraw.doubleClickInterval
+            const now = e.timeStamp;
+            const doubled = now - lastPressRef.current < fluid.tldraw.doubleClickInterval;
+            lastPressRef.current = now;
+            if (doubled || fluid.tldraw.isInteractiveTarget(e.target, e.currentTarget)) {
                 e.stopPropagation();
             }
-        }
+        },
+        // A double-click within the widget is its own, whatever it lands on - tldraw would take it as asking to edit
+        // the shape, or to make a text shape over it
+        onDoubleClick: e => e.stopPropagation()
     }, h("div", {ref: containerRef}), h("div", {ref: badgeRef, className: "infusion-problem-holder"}));
 };
 
 /**
- * The outline of a shape marked as the target of a tool, e.g. of an inspector, by `fluid.tldraw.markShape` - drawn as
- * tldraw draws the indicator of a hovered shape, in its colour and width, and when it would - whilst the select tool is
- * idle. It is drawn within the shape rather than on tldraw's overlay of indicators, which lies above every shape, so
+ * The outline of a widget's shape, drawn in place of tldraw's indicator while it is selected or hovered, and while it is
+ * marked as the target of a tool, e.g. of an inspector, by `fluid.tldraw.markShape` - in tldraw's colour and width,
+ * and when tldraw would draw it. It is drawn within the shape rather than on tldraw's overlay of indicators, which lies above every shape, so
  * that it lies in the shape's own place in the stacking order, beneath any shape lying above it, e.g. the inspector.
  * @param {Object} props - The React props
  * @param {String} props.shapeId - The id of the shape
@@ -416,8 +426,10 @@ const InfusionHost = function ({layerName, shapeId, shape, ptfToken}) {
  */
 const MarkedOutline = function ({shapeId}) {
     const editor = useEditor();
-    const shown = useValue("shape is marked", () => markedShapes.get().has(shapeId)
-        && editor.isInAny("select.idle", "select.editing_shape") && !editor.getInstanceState().isChangingStyle, [editor, shapeId]);
+    // Drawn as tldraw would draw the shape's indicator - while it is selected, other than while its style is changed,
+    // and while it is hovered, marked or edited whilst the select tool is idle
+    const shown = useValue("shape is outlined", () => !editor.getInstanceState().isChangingStyle && (editor.getSelectedShapeIds().includes(shapeId) ||
+        (markedShapes.get().has(shapeId) || editor.getHoveredShapeId() === shapeId) && editor.isInAny("select.idle", "select.editing_shape")), [editor, shapeId]);
     const zoom = useValue("zoom level", () => editor.getEfficientZoomLevel(), [editor]);
     // As wide on screen as tldraw's indicator, whatever the zoom - see ShapeIndicatorOverlayUtil's lineWidth
     const width = 1.5 / zoom;
@@ -426,6 +438,20 @@ const MarkedOutline = function ({shapeId}) {
         style: {position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2,
             boxShadow: `inset 0 0 0 ${width}px var(--tl-color-selection-stroke)`}
     }) : null;
+};
+
+/**
+ * The grip by which a widget is dragged out of the arena, onto another page, as it is by a Shift-drag - see
+ * tldraw-dragout.js. Shown at its frame's upper left, its dots drawn by its style, so that they are no part of the
+ * widget's text
+ * @return {ReactElement} The grip
+ */
+const DragGrip = function () {
+    return h("div", {
+        className: "fl-tldraw-drag-grip",
+        title: "Drag this widget onto another page - or Shift-drag it from anywhere",
+        "aria-hidden": "true"
+    });
 };
 
 const defaultShapeWidth = 260;
@@ -533,18 +559,45 @@ class InfusionShapeUtil extends BaseBoxShapeUtil {
             shapeId: shape.id,
             shape,
             ptfToken: shape.meta.ptfToken
-        }), h(MarkedOutline, {shapeId: shape.id}));
+        }), h(MarkedOutline, {shapeId: shape.id}), h(DragGrip));
     }
 
     /**
-     * Compute the shape's selection indicator, which tldraw strokes onto its canvas overlay layer
-     * @param {Object} shape - The shape to be rendered
-     * @return {Path2D} The indicator path
+     * Compute the shape's indicator, which tldraw strokes onto its overlay of indicators, lying above every shape - and
+     * so above any widget lying above this one. None is given, since the indicator is drawn within the shape instead,
+     * in its own place in the stacking order - see MarkedOutline
+     * @return {Path2D} An empty path
      */
-    getIndicatorPath(shape) {
-        const path = new Path2D();
-        path.rect(0, 0, shape.props.w, shape.props.h);
-        return path;
+    getIndicatorPath() {
+        return new Path2D();
+    }
+
+    /**
+     * The shape's geometry - a filled rectangle, so that tldraw takes a press anywhere within it as one on the shape,
+     * rather than on the canvas beneath - where a double-click would make a fresh text shape over the widget
+     * @param {Object} shape - The shape
+     * @return {Rectangle2d} Its geometry
+     */
+    getGeometry(shape) {
+        return new Rectangle2d({width: shape.props.w, height: shape.props.h, isFilled: true});
+    }
+
+    /**
+     * A widget's shape holds no text of tldraw's, so that a double-click on it never begins tldraw's editing of a shape's
+     * text - what the widget renders is its own
+     * @return {Boolean} `false`
+     */
+    canEdit() {
+        return false;
+    }
+
+    /**
+     * Hide the outline of the bounds of the selection, when it is of this shape alone, which tldraw draws above every
+     * shape - its handles remain. The shape's outline is drawn within it instead - see MarkedOutline
+     * @return {Boolean} `true`
+     */
+    hideSelectionBoundsFg() {
+        return true;
     }
 }
 
@@ -610,14 +663,10 @@ const deleteWidgetLayer = function (editor, layerName) {
     return confirmed;
 };
 
-// A small trash can, drawn in the current colour
-const trashIcon = h("svg", {width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2,
-    strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true},
-h("path", {d: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"}));
-
 /**
- * A dropdown listing widget layers, each of which may be chosen, or deleted through a trash can at its right, which
- * appears as the pointer passes over it. This stands in for a native select, whose options cannot hold buttons.
+ * The dropdown listing widget layers, each of which may be chosen, or deleted through a trash can at its right -
+ * Infusion's own fluid.layerPicker (src/components/sfc/fluid-layerPicker.vue), as the editing panel of a wend site
+ * shows it too, hosted here in React. The layers and the choice are given to it as cells, which are set as they change
  * @param {Object} props - The React props
  * @param {String[]} props.layers - The names of the layers listed
  * @param {String} props.choice - The name of the chosen layer
@@ -626,49 +675,33 @@ h("path", {d: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"}));
  * @return {ReactElement} The rendered dropdown
  */
 const LayerPicker = function ({layers, choice, onChoose, onDelete}) {
-    const [open, setOpen] = React.useState(false);
-    const rootRef = React.useRef(null);
-    // The list is closed by a press anywhere outside it
+    const containerRef = React.useRef(null);
+    const cellsRef = React.useRef(null);
+    // The handlers as last rendered, which the picker's events reach
+    const handlersRef = React.useRef({onChoose, onDelete});
+    handlersRef.current = {onChoose, onDelete};
     React.useEffect(() => {
-        let togo;
-        if (open) {
-            const close = e => {
-                if (!rootRef.current?.contains(e.target)) {
-                    setOpen(false);
-                }
-            };
-            document.addEventListener("pointerdown", close, true);
-            togo = () => document.removeEventListener("pointerdown", close, true);
-        }
-        return togo;
-    }, [open]);
-    return h("div", {className: "layer-picker", ref: rootRef},
-        h("button", {
-            className: "layer-picker-button",
-            disabled: layers.length === 0,
-            title: "Top-level widget layers",
-            "aria-haspopup": "listbox",
-            "aria-expanded": open,
-            onClick: () => setOpen(!open)
-        }, h("span", {className: "layer-picker-choice"}, choice || "No widget layers"), h("span", {"aria-hidden": true}, "\u25be")),
-        open && h("ul", {className: "layer-picker-list", role: "listbox"}, layers.map(layerName =>
-            h("li", {key: layerName, className: "layer-picker-option" + (layerName === choice ? " layer-picker-chosen" : ""),
-                role: "option", "aria-selected": layerName === choice},
-            h("button", {
-                className: "layer-picker-name",
-                onClick: () => {
-                    onChoose(layerName);
-                    setOpen(false);
-                }
-            }, layerName),
-            h("button", {
-                className: "layer-picker-delete",
-                title: `Delete the layer ${layerName}`,
-                "aria-label": `Delete the layer ${layerName}`,
-                onClick: () => onDelete(layerName)
-            }, trashIcon)
-            )))
-    );
+        const container = containerRef.current;
+        const cells = {layers: fluid.cell([], {name: "Layers listed by the layer picker"}), choice: fluid.cell("", {name: "Layer chosen in the layer picker"})};
+        cellsRef.current = cells;
+        const that = fluid.initFreeComponent("fluid.layerPicker", {container, layers: cells.layers, choice: cells.choice,
+            title: "Top-level widget layers"});
+        const chosen = e => handlersRef.current.onChoose(e.detail.layer);
+        const deleted = e => handlersRef.current.onDelete(e.detail.layer);
+        container.addEventListener("fluidlayerchoose", chosen);
+        container.addEventListener("fluidlayerdelete", deleted);
+        return () => {
+            container.removeEventListener("fluidlayerchoose", chosen);
+            container.removeEventListener("fluidlayerdelete", deleted);
+            that.destroy();
+            cellsRef.current = null;
+        };
+    }, []);
+    React.useEffect(() => {
+        cellsRef.current?.layers.set(layers.map(layer => ({layer})));
+        cellsRef.current?.choice.set(choice);
+    }, [layers, choice]);
+    return h("div", {ref: containerRef, className: "new-shape-picker"});
 };
 
 /**

@@ -8,17 +8,17 @@
     ],
     "steps": [{
         "description": "Open the layer picker beside the \"New shape\" button",
-        "action": {"type": "click", "target": {"selector": "button.layer-picker-button"}},
+        "action": {"type": "click", "target": {"selector": "button.fluid-layer-picker-button"}},
         "expect": [{
-            "target": {"selector": ".layer-picker-option", "text": "fluid.demos.inspector"},
+            "target": {"selector": ".fluid-layer-picker-option", "text": "fluid.demos.inspector"},
             "count": {"equals": 1},
             "visible": true
         }]
     }, {
         "description": "Choose fluid.demos.inspector from the layer picker",
-        "action": {"type": "click", "target": {"selector": ".layer-picker-name", "exactText": "fluid.demos.inspector"}},
+        "action": {"type": "click", "target": {"selector": ".fluid-layer-picker-name", "exactText": "fluid.demos.inspector"}},
         "expect": [{
-            "target": {"selector": ".layer-picker-choice"},
+            "target": {"selector": ".fluid-layer-picker-choice"},
             "text": {"equals": "fluid.demos.inspector"}
         }]
     }, {

@@ -46,3 +46,4 @@ packages/
 scripts/
 # Zips of the extension, for its GitHub release and the Chrome Web Store - see scripts/zipExtension.js
 dist/extension/
+dist/release/

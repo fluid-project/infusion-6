@@ -169,6 +169,31 @@ fluid.sourceView.linkCompletions = function (getSite) {
 };
 
 /**
+ * Make the source of completions of the layers of widgets, as one is typed into the `fluid-layers` attribute of a
+ * widget's element - those of the site's widgets which may be inserted, whether published or held in the browser
+ * @param {Function} getSite - Returns what is known of the site, as for `linkCompletions` - its `widgetLayers`, as
+ * `{layer, note}`, are offered
+ * @return {Function} The completion source, for CodeMirror's autocompletion
+ */
+fluid.sourceView.layerCompletions = function (getSite) {
+    return function (context) {
+        // Within the attribute's quotes, after any layers already named - the name being typed is completed
+        const match = context.matchBefore(/\sfluid-layers\s*=\s*"[^"\n]*$/);
+        const site = match ? getSite() : null;
+        let togo = null;
+        if (match && site && site.widgetLayers) {
+            const typed = match.text.substring(match.text.lastIndexOf("\"") + 1).split(/\s+/).pop();
+            togo = {
+                from: context.pos - typed.length,
+                options: site.widgetLayers.map(({layer, note}) => ({label: layer, detail: note || "widget", type: "class"})),
+                validFor: /^[\w.$-]*$/
+            };
+        }
+        return togo;
+    };
+};
+
+/**
  * Make the source view in its rendered container - a CodeMirror 6 editor, and a hidden <textarea> mirroring its text.
  * What happens in it is announced as DOM events on the container, which bubble: "fluidsourcechange" {text} on each
  * edit; "fluidsourcecursor" {line} as the cursor moves to another line; "fluidsourcepaste" {text} and
@@ -213,7 +238,7 @@ fluid.sourceView.bind = function (parent) {
                 fluid.sourceView.CM.highlightSelectionMatches(),
                 fluid.sourceView.CM.syntaxHighlighting(fluid.sourceView.CM.defaultHighlightStyle, {fallback: true}),
                 fluid.sourceView.CM.EditorView.lineWrapping,
-                fluid.sourceView.CM.autocompletion({override: [fluid.sourceView.linkCompletions(getSite)], icons: false}),
+                fluid.sourceView.CM.autocompletion({override: [fluid.sourceView.linkCompletions(getSite), fluid.sourceView.layerCompletions(getSite)], icons: false}),
                 fluid.sourceView.CM.keymap.of([...fluid.sourceView.CM.completionKeymap, ...fluid.sourceView.CM.defaultKeymap, ...fluid.sourceView.CM.historyKeymap, ...fluid.sourceView.CM.searchKeymap, fluid.sourceView.CM.indentWithTab]),
                 language.of(fluid.sourceView.CM.markdown()),
                 fluid.sourceView.blockLinesField,

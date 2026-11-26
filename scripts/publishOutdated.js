@@ -1,24 +1,32 @@
 "use strict";
 
 // Releases whatever of this repository is out of date:
-//  - Each package whose version in its package.json is not yet in the npm registry is published there: Infusion
-//    itself, the root package, and then each workspace named in the root's package.json, in the order listed there - so
-//    that wend precedes wend-theme-beautiful, which depends on it. Private packages are skipped.
+//  - Each package whose release has no tag on origin is packed with `npm pack`, and its tarball attached to a GitHub
+//    release of it, from which the sites depending on it install it by URL - see releaseAssets.js, and
+//    scripts/useRelease.js, which points a site at the releases. The packages are Infusion itself, the root package,
+//    and then each workspace named in the root's package.json, in the order listed there - so that wend precedes
+//    wend-theme-beautiful, which depends on it. Private packages are skipped.
+//  - With --npm, held in reserve for special cases, each package whose version is not yet in the npm registry is
+//    published there instead, as releases were made before, its GitHub release then carrying no tarball.
 //  - The extension "Edit in Infusion", if the version of its manifest.json has no tag on origin, is zipped - see
 //    scripts/zipExtension.js.
 // Each is then tagged at HEAD - Infusion by its bare version, e.g. "6.6.0", as its releases always have been, a
-// workspace by name and version, e.g. "wend@1.0.0", as lerna names them, and the extension as
+// workspace by name and version, e.g. "@fluid-project/wend@1.0.0", as lerna names them, and the extension as
 // "edit-in-infusion@<version>" - the tag pushed to origin, and a GitHub release made of it. The extension's release
 // carries the zip as its asset edit-in-infusion.zip, and is marked the repository's latest, the others not - so that
 // https://github.com/fluid-project/infusion-6/releases/latest/download/edit-in-infusion.zip is always the latest
 // extension, and .../releases/download/edit-in-infusion@<version>/edit-in-infusion.zip a given one. Since a tag must
-// name the commit that was released, the working tree must be clean unless tagging is skipped.
+// name the commit that was released, the working tree must be clean unless tagging is skipped. A release's tarball is
+// never replaced once attached, since the lockfiles of sites record its integrity - a fix is a fresh version.
 //
-// Run with: npm run release [-- options], where the options are
-//    --dry-run     passed to npm publish, which then uploads nothing; nothing is tagged, pushed or released
-//    --no-github   tag locally alone, pushing nothing and making no GitHub release - the command to push is printed
-//    --no-tag      publish to npm alone, without tagging, e.g. to retry a publish already tagged; the extension is
-//                  then left alone
+// Run with: npm run release [-- options], or npm run npm-release [-- options] for --npm, where the options are
+//    --dry-run     pack the tarballs alone, into dist/release - nothing is tagged, pushed, published or released; with
+//                  --npm, passed to npm publish, which then uploads nothing (npm run npm-release:dry-run)
+//    --no-github   tag locally alone, pushing nothing and making no GitHub release - the commands to push and release
+//                  are printed
+//    --npm         publish to the npm registry, rather than attaching tarballs to the GitHub releases
+//    --no-tag      with --npm, publish to npm alone, without tagging, e.g. to retry a publish already tagged; the
+//                  extension is then left alone
 // and any others are passed to each npm publish, e.g. --otp=123456. The GitHub release is made by the gh command, as
 // the account it is signed in to.
 //
@@ -29,14 +37,16 @@ const fs = require("fs");
 const path = require("path");
 const {execFileSync} = require("child_process");
 const {zipExtension, readManifest} = require("./zipExtension.js");
+const releaseAssets = require("./releaseAssets.js");
 
 const root = path.resolve(__dirname, "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
-const tagging = !dryRun && !args.includes("--no-tag");
+const toNpm = args.includes("--npm");
+const tagging = !dryRun && !(toNpm && args.includes("--no-tag"));
 const github = tagging && !args.includes("--no-github");
-const ownOptions = ["--no-tag", "--no-github"];
+const ownOptions = ["--no-tag", "--no-github", "--npm"];
 const publishArgs = args.filter(arg => !ownOptions.includes(arg));
 
 /**
@@ -146,32 +156,23 @@ if (syncFluidVersion()) {
         throw new Error(message);
     }
 }
-const candidates = [".", ...(rootPackage.workspaces || [])];
-const outdated = candidates.map(dir => ({dir, pkg: readPackage(dir)}))
-    .filter(({pkg}) => !pkg.private)
+// A package is out of date if its version is not in the registry, with --npm, and otherwise if its release has no tag
+const outdated = releaseAssets.packageDirs().map(dir => ({dir, pkg: readPackage(dir)}))
     .filter(({dir, pkg}) => {
-        const published = isPublished(pkg.name, pkg.version);
-        console.log((published ? "up to date: " : "to publish: ") + pkg.name + "@" + pkg.version + " (" + dir + ")");
-        return !published;
+        const released = toNpm ? isPublished(pkg.name, pkg.version) : remoteTagExists(releaseAssets.tagOf(dir, pkg));
+        console.log((released ? "up to date: " : "to release: ") + pkg.name + "@" + pkg.version + " (" + dir + ")");
+        return !released;
     });
 const extensionVersion = readManifest().version;
 const extensionTag = "edit-in-infusion@" + extensionVersion;
 // Released only when tagging, since its release is its tag - a dry run says whether it would be
-const extensionUntagged = !args.includes("--no-tag") && !remoteTagExists(extensionTag);
+const extensionUntagged = !(toNpm && args.includes("--no-tag")) && !remoteTagExists(extensionTag);
 const extensionOutdated = tagging && extensionUntagged;
-if (!args.includes("--no-tag")) {
+if (!(toNpm && args.includes("--no-tag"))) {
     console.log((extensionUntagged ? "to release: " : "up to date: ") + "extension " + extensionTag);
 }
 
-/**
- * The tag naming a release of a package of this repository
- * @param {String} dir - The package's directory, relative to the root
- * @param {Object} pkg - Its package.json
- * @return {String} The tag
- */
-const tagOf = function (dir, pkg) {
-    return dir === "." ? pkg.version : pkg.name + "@" + pkg.version;
-};
+const tagOf = releaseAssets.tagOf;
 
 if (outdated.length === 0 && !extensionOutdated) {
     console.log("Nothing to release");
@@ -190,14 +191,29 @@ if (outdated.length === 0 && !extensionOutdated) {
     }
     const tagged = [];
     outdated.forEach(({dir, pkg}) => {
-        console.log("Publishing " + pkg.name + "@" + pkg.version);
-        const commandArgs = dir === "." ? ["publish", ...publishArgs] : ["publish", "-w", dir, ...publishArgs];
-        execFileSync(npm, commandArgs, {cwd: root, stdio: "inherit"});
-        if (tagging) {
-            const tag = tagOf(dir, pkg);
-            tagAndRelease({tag, title: pkg.name + " " + pkg.version, latest: false, assets: [],
-                notes: "Published to npm as https://www.npmjs.com/package/" + pkg.name + "/v/" + pkg.version});
-            tagged.push(tag);
+        const tag = tagOf(dir, pkg);
+        if (toNpm) {
+            console.log("Publishing " + pkg.name + "@" + pkg.version + " to npm");
+            const commandArgs = dir === "." ? ["publish", ...publishArgs] : ["publish", "-w", dir, ...publishArgs];
+            execFileSync(npm, commandArgs, {cwd: root, stdio: "inherit"});
+            if (tagging) {
+                tagAndRelease({tag, title: pkg.name + " " + pkg.version, latest: false, assets: [],
+                    notes: "Published to npm as https://www.npmjs.com/package/" + pkg.name + "/v/" + pkg.version});
+                tagged.push(tag);
+            }
+        } else {
+            const tarball = releaseAssets.pack(dir);
+            console.log("Packed " + pkg.name + "@" + pkg.version + " as " + path.relative(root, tarball));
+            if (tagging) {
+                const url = releaseAssets.urlOf(tag, path.basename(tarball));
+                tagAndRelease({tag, title: pkg.name + " " + pkg.version, latest: false, assets: [tarball],
+                    notes: "Install by URL, as a dependency in package.json:\n\n    \"" + pkg.name + "\": \"" + url + "\"\n\n" +
+                        "or point a site at this release and its fellows with Infusion's scripts/useRelease.js"});
+                tagged.push(tag);
+                if (!github) {
+                    console.log("To release it: gh release create " + tag + " --verify-tag --latest=false " + path.relative(root, tarball));
+                }
+            }
         }
     });
     if (extensionOutdated) {

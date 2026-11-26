@@ -302,6 +302,17 @@ fluid.blockEditor.listen = function (container) {
             fluid.blockEditor.selectIsland(record, null);
         }
     });
+    // A widget selected is deleted by Delete or Backspace, as text is - unless a field of the widget's own is being
+    // typed into. Bound on the document, since a widget pressed on needn't take the focus
+    document.addEventListener("keydown", event => {
+        const island = record.selectedIsland;
+        if (island && island.isConnected && (event.key === "Delete" || event.key === "Backspace") &&
+            !event.ctrlKey && !event.metaKey && !event.altKey && !fluid.blockEditor.isTypingInto(document.activeElement)) {
+            event.preventDefault();
+            fluid.blockEditor.selectIsland(record, null);
+            fluid.blockEditor.removeIsland(record, island);
+        }
+    });
     return record;
 };
 
@@ -659,6 +670,15 @@ fluid.blockEditor.saveIsland = function (record, island) {
     }
 };
 
+/**
+ * Determine whether an element takes typed text, so that Delete and Backspace are its own rather than deleting a widget
+ * @param {Element|null} element - The element, e.g. the document's active element
+ * @return {Boolean} `true` if it takes typed text
+ */
+fluid.blockEditor.isTypingInto = function (element) {
+    return !!element && (["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) || element.isContentEditable === true);
+};
+
 // The attribute marking the widget selected, e.g. to be copied - never written into the source, since a widget is
 // written from its layers, id and potentia alone. It is marked afresh on the widget's element as the blocks render
 // afresh, and removed once they cease to be edited - see fluid.blockEditor.apply
@@ -986,6 +1006,28 @@ fluid.blockEditor.layerFiles = function (layerParts) {
 };
 
 /**
+ * Remove from a widget's potentia where a host such as a tldraw arena placed it - the position and size of its shape,
+ * written at its view (see fluid.tldraw.writeShapeConfig) - which mean nothing in a page, together with any records
+ * thereby left empty
+ * @param {Object} potentia - The widget's potentia, as by `fluid.ptf.islandFromParts`, which is modified
+ * @return {Object} The potentia
+ */
+fluid.blockEditor.stripPlacement = function (potentia) {
+    const view = potentia.view && potentia.view.$component;
+    if (fluid.isPlainObject(view, true)) {
+        delete view.shape;
+        delete view.shapeId;
+        if (Object.keys(view).length === 0) {
+            delete potentia.view.$component;
+        }
+        if (Object.keys(potentia.view).length === 0) {
+            delete potentia.view;
+        }
+    }
+    return potentia;
+};
+
+/**
  * Make a pasted widget ready to insert - its layers registered, unless the page defines them already, in which case
  * the extension asks whether to replace them, and its element written
  * @param {PTFPart[]} documentParts - The parts of its PTF document, perhaps wrapping it - see `fluid.ptf.componentParts`
@@ -996,6 +1038,7 @@ fluid.blockEditor.widgetFromParts = function (documentParts, source) {
     // A widget copied out of a tldraw arena arrives wrapped as the one component of its document
     const parts = fluid.ptf.componentParts(documentParts);
     const island = fluid.ptf.islandFromParts(parts);
+    fluid.blockEditor.stripPlacement(island.potentia);
     const files = fluid.blockEditor.layerFiles(island.layerParts);
     fluid.ptf.registerLayerParts(parts);
     if (!fluid.blockEditor.widgets.some(widget => widget.layer === island.layers[0])) {

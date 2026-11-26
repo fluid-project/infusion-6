@@ -118,28 +118,76 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Mark each block with the claim's state, and label it
+     * Mark each block with the claim's state, and label it. Beside the label of an edit not yet committed are its
+     * Commit and Discard edits buttons, as in the panel, so that it may be committed or discarded from the page itself
      * @param {Object} edit - The controller
      * @param {String|null} state - The state, or null to clear the marking
      * @param {String} [text] - The label's text
      */
     fluid.staticEditing.markBlocks = function (edit, state, text) {
         edit.blocks.forEach(block => {
-            const label = block.previousElementSibling && block.previousElementSibling.classList.contains("fluid-edit-label") ?
+            const row = block.previousElementSibling && block.previousElementSibling.classList.contains("fluid-edit-label-row") ?
                 block.previousElementSibling : null;
             if (state) {
                 block.setAttribute("data-fluid-claim-state", state);
-                const labelNode = label || block.parentNode.insertBefore(document.createElement("div"), block);
+                const rowNode = row || fluid.staticEditing.makeLabelRow(edit, block);
+                const labelNode = rowNode.querySelector(".fluid-edit-label");
                 labelNode.className = "fluid-edit-label fluid-edit-label-" + state;
-                labelNode.setAttribute("data-fluid-edit-ui", "");
                 labelNode.textContent = text;
+                rowNode.querySelector(".fluid-edit-label-commit").hidden = state !== "uncommitted";
+                rowNode.querySelector(".fluid-edit-label-discard").hidden = state !== "uncommitted" && state !== "conflict";
             } else {
                 block.removeAttribute("data-fluid-claim-state");
-                if (label) {
-                    label.remove();
+                if (row) {
+                    row.remove();
                 }
             }
         });
+    };
+
+    /**
+     * Make the row labelling a block with its claim's state, before the block - the label, and the buttons committing
+     * and discarding the edit, which act as the panel's do
+     * @param {Object} edit - The controller
+     * @param {Element} block - The block
+     * @return {Element} The row
+     */
+    fluid.staticEditing.makeLabelRow = function (edit, block) {
+        const row = document.createElement("div");
+        row.className = "fluid-edit-label-row";
+        row.setAttribute("data-fluid-edit-ui", "");
+        const label = document.createElement("span");
+        label.className = "fluid-edit-label";
+        row.appendChild(label);
+        const button = (className, text, action) => {
+            const node = document.createElement("button");
+            node.type = "button";
+            node.className = "fluid-edit-label-button " + className;
+            node.textContent = text;
+            node.addEventListener("click", () => action(edit));
+            row.appendChild(node);
+        };
+        button("fluid-edit-label-commit", "Commit", edit => fluid.staticEditing.actOnPageClaim(edit, fluid.staticEditing.commit));
+        button("fluid-edit-label-discard", "Discard edits", edit => fluid.staticEditing.actOnPageClaim(edit, fluid.staticEditing.discard));
+        return block.parentNode.insertBefore(row, block);
+    };
+
+    /**
+     * Commit or discard the edit of the page's own content, from the buttons beside its label - the panel is turned to
+     * that content first, should it be editing another source, e.g. the page's footer
+     * @param {Object} edit - The controller
+     * @param {Function} action - `fluid.staticEditing.commit` or `fluid.staticEditing.discard`, acting on the source the
+     * panel edits
+     * @return {Promise} Resolves once it has acted
+     */
+    fluid.staticEditing.actOnPageClaim = async function (edit, action) {
+        const path = edit.claim && edit.claim.path;
+        if (path && path !== edit.targetPath) {
+            await fluid.staticEditing.switchTarget(edit, path);
+        }
+        if (path) {
+            await action(edit);
+        }
     };
 
     // The label shown on blocks in each state
@@ -769,11 +817,298 @@ const fluidStaticEditingScope = function (fluid) {
                     // The hashes of the site's static files, so that a pasted widget's layers already held are not written
                     staticFiles: trace.staticFiles || {},
                     // The site's sources, so that a new post is given a path no other source holds
-                    sources: Object.keys(trace.sources || {})
+                    sources: Object.keys(trace.sources || {}),
+                    // The site's widgets, `{path, inherited, uses}` by layer, and the layers its pages hold, for telling
+                    // which are unused - see unusedLayers. A site built before they were traced records neither
+                    widgets: trace.widgets || null,
+                    pageLayers: [...new Set(Object.values(trace.pages).flatMap(record => record.layers || []))]
                 };
             }
         });
         return edit.sitePromise;
+    };
+
+    /**
+     * @typedef {Object} WidgetLayer
+     * @property {String} layer - The name of its layer
+     * @property {String} path - The path of its SFC in the repository, e.g. "static/sfc/fluid-demos-counter.vue"
+     * @property {Boolean} held - `true` if it is held in this browser, by a claim, rather than published by the site
+     * @property {Boolean} inherited - `true` if a base of the site holds it, so that it is not the site's own to delete
+     * @property {String[]} uses - The layers of the other widgets it names, which it may make or build on
+     * @property {Claim} [claim] - For one held, the claim holding it
+     */
+
+    /**
+     * Find the path of a widget's SFC in the repository from its layer, as wend names them
+     * @param {Object} edit - The controller
+     * @param {String} layer - The layer, e.g. "fluid.demos.counter"
+     * @return {String|null} The path, e.g. "static/sfc/fluid-demos-counter.vue", or null if the site holds no widgets
+     */
+    fluid.staticEditing.widgetPath = (edit, layer) => edit.provenance.widgets ? edit.provenance.widgets.dir + "/" + layer.replace(/\./g, "-") + ".vue" : null;
+
+    /**
+     * List the layers of the widgets which markup or source holds, as their elements' `fluid-layers` attributes name them
+     * @param {String} text - The markup or source
+     * @return {String[]} The layers, each once
+     */
+    fluid.staticEditing.layersOf = function (text) {
+        const found = new Set();
+        [...(text || "").matchAll(/\sfluid-layers\s*=\s*"([^"]*)"/g)].forEach(match => match[1].split(/\s+/).filter(layer => layer).forEach(layer => found.add(layer)));
+        return [...found];
+    };
+
+    /**
+     * List the widgets of the site as this browser sees it - those it publishes, less any whose deletion is held, and
+     * those held in claims, not yet committed - from the site's trace, and every claim held on its repository
+     * @param {Object} edit - The controller
+     * @param {Claim[]} claims - Every claim held on the site's repository
+     * @return {WidgetLayer[]} The widgets, sorted by layer
+     */
+    fluid.staticEditing.siteWidgets = function (edit, claims) {
+        const dir = edit.provenance.widgets ? edit.provenance.widgets.dir + "/" : null;
+        const published = edit.site && edit.site.widgets ? edit.site.widgets :
+            Object.fromEntries(((edit.provenance.widgets || {}).layers || []).map(widget => [widget.layer, {path: fluid.staticEditing.widgetPath(edit, widget.layer), inherited: false, uses: []}]));
+        const files = {};
+        // What is pending, not yet in a claim, is the newest of all
+        [...claims, {files: edit.pendingFiles, pending: true}].forEach(claim => Object.entries(claim.files || {}).forEach(([path, file]) => {
+            if (dir && path.startsWith(dir) && path.endsWith(".vue")) {
+                files[path] = {file, claim};
+            }
+        }));
+        const widgets = new Map(Object.entries(published).map(([layer, record]) => [layer, {layer, path: record.path, held: false, inherited: !!record.inherited, uses: record.uses || []}]));
+        Object.entries(files).forEach(([path, {file, claim}]) => {
+            const layer = path.substring(dir.length).replace(/\.vue$/, "").replace(/-/g, ".");
+            if (file.content === null) {
+                widgets.delete(layer);
+            } else {
+                widgets.set(layer, {layer, path, held: true, inherited: false, uses: [], claim: claim.pending ? null : claim,
+                    text: new TextDecoder().decode(fluid.staticEditing.decodeBase64(edit, file.content))});
+            }
+        });
+        // What those held name is read from their text, against every layer known
+        const layers = [...widgets.keys()];
+        widgets.forEach(widget => {
+            if (widget.text !== undefined) {
+                widget.uses = layers.filter(layer => layer !== widget.layer && widget.text.includes("\"" + layer + "\""));
+            }
+        });
+        return [...widgets.values()].sort((a, b) => a.layer.localeCompare(b.layer));
+    };
+
+    /**
+     * Determine which of the site's widgets are used nowhere - neither on any page the site publishes, nor in any edit
+     * held in this browser, nor by any widget which is used, which may make or build on it - and so may be deleted.
+     * One held by a base of the site is not the site's own to delete, and is never listed
+     * @param {Object} edit - The controller
+     * @param {WidgetLayer[]} widgets - The site's widgets, as by `siteWidgets`
+     * @param {Claim[]} claims - Every claim held on the site's repository
+     * @return {WidgetLayer[]} Those unused
+     */
+    fluid.staticEditing.unusedLayers = function (edit, widgets, claims) {
+        const byLayer = new Map(widgets.map(widget => [widget.layer, widget]));
+        const roots = [...(edit.site ? edit.site.pageLayers : []), ...claims.flatMap(claim => fluid.staticEditing.layersOf(claim.text)),
+            ...fluid.staticEditing.layersOf(edit.source ? edit.source.getText() : "")];
+        const used = new Set();
+        const reach = layer => {
+            if (!used.has(layer)) {
+                used.add(layer);
+                (byLayer.get(layer) ? byLayer.get(layer).uses : []).forEach(reach);
+            }
+        };
+        roots.forEach(reach);
+        return widgets.filter(widget => !used.has(widget.layer) && !widget.inherited);
+    };
+
+    /**
+     * Bring the panel's list of widget layers up to date - those of the site's widgets which are top-level, and so may
+     * be inserted, whether published or held in this browser
+     * @param {Object} edit - The controller
+     * @return {Promise<WidgetLayer[]>} The site's widgets, as by `siteWidgets`
+     */
+    fluid.staticEditing.refreshWidgets = async function (edit) {
+        await fluid.staticEditing.learnSite(edit);
+        const claims = await fluid.staticEditing.send(edit, {type: "claim-list", repo: edit.provenance.repo, prefix: ""}).catch(() => []);
+        const widgets = fluid.staticEditing.siteWidgets(edit, claims || []);
+        const topLevel = widgets.filter(widget => {
+            const ancestors = fluid.ptf && fluid.ptf.layerAncestors ? fluid.ptf.layerAncestors(widget.layer) : null;
+            return !ancestors || ancestors.size === 0 || ancestors.has("fluid.topLevelWidget");
+        });
+        edit.widgets = widgets;
+        edit.widgetClaims = claims || [];
+        edit.state.widgetLayers = topLevel.map(widget => ({layer: widget.layer, note: widget.held ? "held in this browser" : widget.inherited ? "from a base" : ""}));
+        // Offered too in completing the `fluid-layers` of a widget's element typed into the source - see fluid-sourceView.vue
+        if (edit.site) {
+            edit.site.widgetLayers = edit.state.widgetLayers;
+        }
+        if (!topLevel.some(widget => widget.layer === edit.state.widgetChoice)) {
+            edit.state.widgetChoice = topLevel.length > 0 ? topLevel[0].layer : "";
+        }
+        edit.state.widgetsHidden = !edit.provenance.widgets;
+        edit.state.cleanupDisabled = fluid.staticEditing.unusedLayers(edit, widgets, edit.widgetClaims).length === 0;
+        return widgets;
+    };
+
+    /**
+     * Respond to a layer chosen in the panel's list of widgets
+     * @param {Object} edit - The controller
+     * @param {CustomEvent} event - The picker's "fluidlayerchoose", whose `detail` holds the `layer`
+     */
+    fluid.staticEditing.widgetChosen = function (edit, event) {
+        edit.state.widgetChoice = event.detail.layer;
+    };
+
+    /**
+     * Insert a widget of the layer chosen in the panel's list into the source the panel edits, at its cursor, as a block
+     * of its own - as one pasted there is
+     * @param {Object} edit - The controller
+     */
+    fluid.staticEditing.insertWidget = function (edit) {
+        const layer = edit.state.widgetChoice;
+        const target = fluid.staticEditing.target(edit);
+        if (layer && target && !target.framing) {
+            const source = edit.source.getText();
+            const id = fluid.blockEditor && fluid.blockEditor.allocateId ? fluid.blockEditor.allocateId(source, layer) : layer.substring(layer.lastIndexOf(".") + 1) + "-1";
+            edit.source.insertBlock(fluid.ptf.islandMarkup({layers: [layer], id}));
+        }
+    };
+
+    /**
+     * Remove widgets' SFCs from the site, or from this browser - one held in a claim, not yet committed, is dropped from
+     * it; one the site publishes is deleted from the repository with the next commit of the source the panel edits,
+     * its deletion held as a further file of its claim. Their layers cease to be defined in the page
+     * @param {Object} edit - The controller
+     * @param {WidgetLayer[]} doomed - The widgets
+     * @return {Promise} Resolves once they are removed
+     */
+    fluid.staticEditing.removeWidgets = async function (edit, doomed) {
+        for (const widget of doomed) {
+            if (widget.held && widget.claim) {
+                const files = {...widget.claim.files};
+                delete files[widget.path];
+                await fluid.staticEditing.putClaim(edit, {...widget.claim, files: Object.keys(files).length > 0 ? files : undefined});
+            } else if (widget.held) {
+                delete edit.pendingFiles[widget.path];
+            } else {
+                const read = await fluid.staticEditing.send(edit, {type: "source-read", repo: edit.provenance.repo, branch: edit.provenance.branch, path: widget.path});
+                edit.pendingFiles[widget.path] = {content: null, baseSha: read.sha, hash: null};
+            }
+            if (fluid.deleteLayer) {
+                fluid.deleteLayer(widget.layer);
+            }
+        }
+        if (doomed.some(widget => !widget.held)) {
+            // The deletions are held in the claim on the source the panel edits, as its next edit would hold them
+            await fluid.staticEditing.onInput(edit, edit.source.getText());
+        }
+        await fluid.staticEditing.refreshWidgets(edit);
+    };
+
+    /**
+     * Respond to the deletion of a layer asked for in the panel's list of widgets - after the user confirms it, naming
+     * where it is used, since what uses it will no longer work
+     * @param {Object} edit - The controller
+     * @param {CustomEvent} event - The picker's "fluidlayerdelete", whose `detail` holds the `layer`
+     * @return {Promise} Resolves once it is deleted, or not
+     */
+    fluid.staticEditing.widgetDelete = async function (edit, event) {
+        const widgets = await fluid.staticEditing.refreshWidgets(edit);
+        const widget = widgets.find(one => one.layer === event.detail.layer);
+        const target = fluid.staticEditing.target(edit);
+        if (!widget) {
+            fluid.staticEditing.setError(edit, "The site holds no widget " + event.detail.layer);
+        } else if (widget.inherited) {
+            fluid.staticEditing.setError(edit, widget.layer + " is held by a base of the site, and can't be deleted from it");
+        } else if (!widget.held && (!target || target.framing)) {
+            fluid.staticEditing.setError(edit, "A widget is deleted from the site with the page's own content - choose it to edit first");
+        } else {
+            const unused = fluid.staticEditing.unusedLayers(edit, widgets, edit.widgetClaims).some(one => one.layer === widget.layer);
+            // eslint-disable-next-line no-alert
+            const confirmed = window.confirm("Delete the widget " + widget.layer + (widget.held ? ", held in this browser" : " from the site, with your next commit") +
+                "?" + (unused ? "" : " It is still used - where it is used, it will no longer work."));
+            if (confirmed) {
+                await fluid.staticEditing.removeWidgets(edit, [widget]);
+                fluid.staticEditing.setStatus(edit, "Deleted the widget " + widget.layer + (widget.held ? "" : " - commit to delete it from the site"));
+            }
+        }
+    };
+
+    /**
+     * Delete every widget of the site which is used nowhere - on no page it publishes, in no edit held in this browser,
+     * and by no widget which is used - after the user confirms it
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once they are deleted, or not
+     */
+    fluid.staticEditing.cleanUpLayers = async function (edit) {
+        const widgets = await fluid.staticEditing.refreshWidgets(edit);
+        const target = fluid.staticEditing.target(edit);
+        const committable = !!target && !target.framing;
+        const unused = fluid.staticEditing.unusedLayers(edit, widgets, edit.widgetClaims).filter(widget => widget.held || committable);
+        if (unused.length === 0) {
+            fluid.staticEditing.setStatus(edit, "Every widget of the site is used" + (committable ? "" : " - or is deleted only with the page's own content"));
+        } else {
+            // eslint-disable-next-line no-alert
+            const confirmed = window.confirm("Delete these widgets, used nowhere on the site nor in any edit held in this browser?\n\n" +
+                unused.map(widget => widget.layer + (widget.held ? " (held in this browser)" : "")).join("\n"));
+            if (confirmed) {
+                await fluid.staticEditing.removeWidgets(edit, unused);
+                fluid.staticEditing.setStatus(edit, "Deleted " + unused.length + " unused widget" + (unused.length === 1 ? "" : "s") +
+                    (unused.some(widget => !widget.held) ? " - commit to delete them from the site" : ""));
+            }
+        }
+    };
+
+    /**
+     * Disclose the "Ask me anything" panel at the foot of the editing panel, or fold it away. On first being disclosed
+     * it is loaded from the site's copy of Infusion, with its assistant, which converses about the page edited - see
+     * fluid-editAskAnything.vue - and the bar sharing the panel's height between it and what is above it is bound, as
+     * Infusion's fluid.resizeBar
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once it is disclosed, or folded
+     */
+    fluid.staticEditing.toggleAI = async function (edit) {
+        const open = !edit.state.aiOpen;
+        edit.state.aiOpen = open;
+        edit.state.aiHidden = !open;
+        const panel = document.querySelector(".fluid-edit-panel");
+        const source = panel.querySelector(".fluid-edit-source");
+        if (open && !edit.ai) {
+            try {
+                edit.ai = (async function () {
+                    const sfcDir = fluid.staticEditing.sfcDir;
+                    fluid.loadImportMap({
+                        "fluid.staticEditing.askAnything": {path: sfcDir + "fluid-editAskAnything.vue"},
+                        "fluid.resizeBar": {path: new URL("../../sfc/fluid-resizeBar.vue", sfcDir).href}
+                    }, document);
+                    await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.staticEditing.askAnything", document));
+                    // The panel itself, which it imports, brings the machinery of conversing - fluid-ai.js and fluid-ai-arena.js
+                    await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.askAnything", document));
+                    await fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.resizeBar", document));
+                    // A published site holds no key of a local service beside its pages, which is not looked for
+                    fluid.ai.localService.keyUrl = null;
+                    fluid.staticEditing.ai.assistant = fluid.staticEditing.ai.makeAssistant(edit);
+                    const component = fluid.initFreeComponent("fluid.staticEditing.askAnything", {container: panel.querySelector(".fluid-edit-ai")});
+                    const bar = fluid.resizeBar({
+                        before: source,
+                        after: panel.querySelector(".fluid-edit-ai"),
+                        axis: "vertical",
+                        minBefore: 120,
+                        minAfter: 160,
+                        view: {$component: {container: panel.querySelector(".fluid-edit-ai-bar"), elideParent: true}}
+                    });
+                    await fluid.cell.settle();
+                    return {component, bar};
+                })();
+                await edit.ai;
+            } catch (error) {
+                edit.ai = null;
+                fluid.staticEditing.setError(edit, error, "Ask me anything can't be opened, since ");
+            }
+        }
+        // Folded, the source takes the panel's height as before
+        if (!open) {
+            source.style.removeProperty("flex-basis");
+            source.style.removeProperty("flex-grow");
+        }
     };
 
     /**
@@ -1420,6 +1755,9 @@ const fluidStaticEditingScope = function (fluid) {
             fluid.staticEditing.setStatus(edit, claim.message);
         }
         fluid.staticEditing.showListHead(edit);
+        // What claims hold may have changed, and with it the site's widgets
+        clearTimeout(edit.widgetsTimer);
+        edit.widgetsTimer = setTimeout(() => fluid.staticEditing.refreshWidgets(edit).catch(error => console.error("Edit in Infusion: the site's widgets can't be listed", error)), 200);
     };
 
     /**
@@ -1757,6 +2095,7 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.unbind = function (edit) {
         clearTimeout(edit.pollTimer);
+        clearTimeout(edit.widgetsTimer);
         Object.entries(edit.listeners || {}).forEach(([type, listener]) => document.removeEventListener(type, listener));
         document.removeEventListener("click", edit.onFramingClick, true);
         edit.attachObserver.disconnect();
@@ -1766,4 +2105,13 @@ const fluidStaticEditingScope = function (fluid) {
 
 if (typeof(fluid) !== "undefined") {
     fluidStaticEditingScope(fluid);
+    // The panel's shared components, which an editing client need not know of, are found beside this script, as the
+    // site publishes Infusion - see wend's trace.js
+    const script = typeof(document) !== "undefined" && document.currentScript;
+    if (script && script.src && fluid.loadImportMap) {
+        // The directory of the static editor's own SFCs, e.g. the host of "Ask me anything" - see toggleAI
+        fluid.staticEditing.sfcDir = new URL("../sfc/", script.src).href;
+        fluid.loadImportMap({"fluid.layerPicker": {path: new URL("../../sfc/fluid-layerPicker.vue", script.src).href}}, document);
+        fluid.subscribeDocToInjections("fluid.layerPicker", document);
+    }
 }

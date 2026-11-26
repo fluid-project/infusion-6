@@ -160,7 +160,8 @@ const handlers = {
     // is held on it - see fluidEditBackground.markPage
     "fluid-provenance-found": async function (message, sender) {
         if (sender.tab) {
-            chrome.action.setTitle({tabId: sender.tab.id, title: "Edit in Infusion - edit " + message.sourcePath});
+            const meaning = fluidEditBackground.markMeaning(message.claimState, message.open);
+            chrome.action.setTitle({tabId: sender.tab.id, title: "Edit in Infusion - edit " + message.sourcePath + (meaning ? "\n" + meaning : "")});
             // A failure to mark the icon, e.g. of a tab since closed, is no concern of the page
             await fluidEditBackground.markPage(sender.tab.id, message.claimState ? "held" : message.open ? "editing" : null).catch(() => null);
         }
@@ -473,6 +474,21 @@ fluidEditBackground.drawPencilIcon = async function (size, colour) {
 fluidEditBackground.pencilColours = {
     editing: "#2b6cb0",
     held: "#c77800"
+};
+
+/**
+ * Explain the pencil marking the extension's icon, as the second line of its tooltip - see fluidEditBackground.markPage
+ * @param {String|null} claimState - The state of the first claim held on a source the page renders, e.g. "uncommitted"
+ * or "committed", or `null` if none is held
+ * @param {Boolean} open - `true` if the page's editor is open
+ * @return {String} The explanation, or "" if the icon bears no pencil
+ */
+fluidEditBackground.markMeaning = function (claimState, open) {
+    const panel = open ? " - the edit panel is open" : "";
+    return claimState === "committed" ? "Amber pencil: your edits are committed, and wait for the site to be rebuilt" + panel :
+        claimState === "conflict" ? "Amber pencil: your edits conflict with a change made meanwhile in the repository" + panel :
+            claimState ? "Amber pencil: you have edits held in this browser, not yet committed" + panel :
+                open ? "Blue pencil: the edit panel is open, with no edits held" : "";
 };
 
 /**

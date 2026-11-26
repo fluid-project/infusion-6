@@ -45,7 +45,24 @@ fluid.def("fluid.staticEditor", {
             newHidden: true,
             framing: false,
             sourceHidden: true,
-            sourceOpen: false
+            sourceOpen: false,
+            // The site's widgets which may be inserted, as `{layer, note}`, whether published or held in this browser,
+            // the one chosen, and whether any are unused - see fluid.staticEditing.refreshWidgets
+            widgetLayers: [],
+            widgetChoice: "",
+            widgetsHidden: true,
+            cleanupDisabled: true,
+            // Whether the "Ask me anything" panel is disclosed at the panel's foot - see fluid.staticEditing.toggleAI
+            aiHidden: true,
+            aiOpen: false
+        }
+    },
+    layerPicker: {
+        $component: {
+            $layers: "fluid.layerPicker",
+            layers: "{staticEditor}.state.widgetLayers",
+            choice: "{staticEditor}.state.widgetChoice",
+            title: "The site's widgets - choose one to insert, or delete one"
         }
     },
     sourceView: {
@@ -77,6 +94,36 @@ fluid.def("fluid.staticEditor", {
     discard: {
         $method: {
             func: "fluid.staticEditing.discard",
+            args: ["{self}.controller"]
+        }
+    },
+    widgetChosen: {
+        $method: {
+            func: "fluid.staticEditing.widgetChosen",
+            args: ["{self}.controller", "{0}:event"]
+        }
+    },
+    widgetDelete: {
+        $method: {
+            func: "fluid.staticEditing.widgetDelete",
+            args: ["{self}.controller", "{0}:event"]
+        }
+    },
+    insertWidget: {
+        $method: {
+            func: "fluid.staticEditing.insertWidget",
+            args: ["{self}.controller"]
+        }
+    },
+    toggleAI: {
+        $method: {
+            func: "fluid.staticEditing.toggleAI",
+            args: ["{self}.controller"]
+        }
+    },
+    cleanUpLayers: {
+        $method: {
+            func: "fluid.staticEditing.cleanUpLayers",
             args: ["{self}.controller"]
         }
     },
@@ -143,6 +190,9 @@ fluid.def("fluid.staticEditor", {
          data-fluid-claim-state="@{state.claimState}">
         <header><strong>Edit in Infusion</strong> <a class="fluid-edit-path" href="@{state.pathHref}" target="_blank"
             rel="noopener" title="Show this source on GitHub">@{state.path}</a>
+            <button class="fluid-edit-ai-toggle" title="Ask me anything - converse with an AI about this page and its widgets"
+                    aria-label="Ask me anything" aria-expanded="@{state.aiOpen}" @onclick="{self}.toggleAI()"><svg width="16" height="16"
+                    viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9zM5 15l.7 1.8 1.8.7-1.8.7L5 20l-.7-1.8-1.8-.7 1.8-.7z"></path></svg></button>
             <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
         <div class="fluid-edit-updated" hidden="@{state.updatedHidden}">Last updated by <a class="fluid-edit-updated-by"
             href="@{state.updatedByHref}" target="_blank" rel="noopener">@{state.updatedBy}</a> at <a class="fluid-edit-updated-at"
@@ -156,6 +206,12 @@ fluid.def("fluid.staticEditor", {
                           @onchange="{self}.framingChanged({0})"> Also edit framing</label>
             <button class="fluid-edit-config" hidden="@{state.configHidden}" title="Edit the site's configuration"
                     @onclick="{self}.editConfig()">Site configuration</button>
+            <!-- The site's widgets, whether published or held in this browser - see fluid.staticEditing.refreshWidgets -->
+            <span class="fluid-edit-widgets" hidden="@{state.widgetsHidden}" @onfluidlayerchoose="{self}.widgetChosen({0})"
+                  @onfluidlayerdelete="{self}.widgetDelete({0})"><span @id="layerPicker"></span><button
+                  class="fluid-edit-widget-insert" title="Insert the widget at the source's cursor" @onclick="{self}.insertWidget()">Insert</button><button
+                  class="fluid-edit-cleanup" disabled="@{state.cleanupDisabled}" title="Delete every widget used nowhere on the site, nor in any edit held in this browser"
+                  @onclick="{self}.cleanUpLayers()">Clean up unused layers</button></span>
         </div>
         <div class="fluid-edit-new" hidden="@{state.newHidden}">
             <label>Title <input type="text" class="fluid-edit-new-title" placeholder="The title of the new post"
@@ -178,6 +234,10 @@ fluid.def("fluid.staticEditor", {
             <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()">Commit</button>
             <button class="fluid-edit-discard" disabled="@{state.discardDisabled}" @onclick="{self}.discard()">Discard edits</button>
         </div>
+        <!-- The "Ask me anything" panel, disclosed by the sparkles of the header, set off from what is above it by a bar
+             sharing the panel's height between them - see fluid.staticEditing.toggleAI -->
+        <div class="fluid-edit-ai-bar" hidden="@{state.aiHidden}"></div>
+        <div class="fluid-edit-ai" hidden="@{state.aiHidden}"></div>
     </div>
 </template>
 
@@ -219,13 +279,41 @@ fluid.def("fluid.staticEditor", {
     50% { outline-color: color-mix(in srgb, var(--fluid-edit-committed) 35%, transparent); }
 }
 
+/* The row labelling the page's blocks with their claim's state - the label, and beside it, of the same height, the
+   buttons committing and discarding the edit, as the panel's do */
+.fluid-edit-label-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 6px;
+    margin-bottom: 10px;
+    font: 600 12px/1.6 system-ui, sans-serif;
+}
+
 .fluid-edit-label {
     display: inline-block;
-    margin-bottom: 10px;
     padding: 2px 8px;
     border-radius: 3px;
-    font: 600 12px/1.6 system-ui, sans-serif;
     color: #fff;
+}
+
+.fluid-edit-label-button {
+    margin: 0;
+    padding: 0 10px;
+    border: 1px solid #a0aec0;
+    border-radius: 3px;
+    background: #fff;
+    color: #1a202c;
+    font: inherit;
+    cursor: pointer;
+}
+
+.fluid-edit-label-button:hover {
+    background: #edf2f7;
+}
+
+.fluid-edit-label-button[hidden] {
+    display: none;
 }
 
 .fluid-edit-label-uncommitted { background: var(--fluid-edit-uncommitted); }
@@ -312,9 +400,20 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
 
 .fluid-edit-framing-row {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     align-items: center;
     justify-content: space-between;
+}
+
+.fluid-edit-widgets {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.fluid-edit-widgets[hidden] {
+    display: none;
 }
 
 .fluid-edit-new input {
@@ -509,6 +608,51 @@ a.fluid-edit-path {
 
 .fluid-edit-source textarea {
     min-height: 200px;
+}
+
+/* The sparkles disclosing the "Ask me anything" panel, beside the close button */
+.fluid-edit-ai-toggle {
+    margin-left: auto;
+    padding: 2px 4px;
+    border: 0;
+    background: none;
+    color: #6b46c1;
+    cursor: pointer;
+}
+
+.fluid-edit-ai-toggle[aria-expanded="true"] {
+    color: #fff;
+    background: #6b46c1;
+    border-radius: 3px;
+}
+
+/* Whilst it is disclosed, the panel holds its height, which its bar shares between the "Ask me anything" panel and what
+   is above it, the source taking what the bar leaves it */
+.fluid-edit-panel:has(> .fluid-edit-ai:not([hidden])) {
+    overflow-y: hidden;
+}
+
+.fluid-edit-panel:has(> .fluid-edit-ai:not([hidden])) > .fluid-edit-source[open] {
+    min-height: 120px;
+    overflow: auto;
+}
+
+.fluid-edit-ai-bar {
+    flex: none;
+    height: 6px;
+    margin: 0 -12px;
+    background: #e2e8f0;
+    cursor: row-resize;
+}
+
+.fluid-edit-ai {
+    flex: 0 0 40%;
+    min-height: 160px;
+    overflow: hidden;
+}
+
+.fluid-edit-ai-bar[hidden], .fluid-edit-ai[hidden] {
+    display: none;
 }
 
 /* Whilst the source is folded away, as whilst the page's blocks are edited in place, the panel is a narrow column */

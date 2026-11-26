@@ -13,6 +13,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {execFileSync} = require("child_process");
+const releaseAssets = require("./releaseAssets.js");
 
 const root = path.resolve(__dirname, "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -33,16 +34,11 @@ const runNpm = function (args, cwd, env = {}) {
 };
 
 /**
- * Pack the packages a release would publish
+ * Pack the packages a release would publish, as it packs them - see releaseAssets.js
  * @return {Object<String, String>} The path of each package's tarball, keyed by its name
  */
 const pack = function () {
-    fs.mkdirSync(tgzDir, {recursive: true});
-    const packed = JSON.parse(execFileSync(npm, ["pack", "--json", "--pack-destination", tgzDir],
-        {cwd: root, encoding: "utf8"}));
-    const workspaces = JSON.parse(execFileSync(npm, ["pack", "--json", "--pack-destination", tgzDir,
-        "-w", "packages/wend", "-w", "packages/wend-theme-beautiful"], {cwd: root, encoding: "utf8"}));
-    return Object.fromEntries([...packed, ...workspaces].map(record => [record.name, path.join(tgzDir, record.filename)]));
+    return Object.fromEntries(releaseAssets.packageDirs().map(dir => [releaseAssets.readPackage(dir).name, releaseAssets.pack(dir, tgzDir)]));
 };
 
 try {
