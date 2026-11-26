@@ -227,9 +227,11 @@ fluid.sourceView.bind = function (parent) {
                         }
                         return taken;
                     },
-                    // Files dragged over the source show where they would land - see fluid.sourceView.showDropCaret
+                    // Files, or a widget dragged out of another page as PTF, show where they would land over the source -
+                    // see fluid.sourceView.showDropCaret
                     dragover: (event, dropView) => {
-                        const carries = !!event.dataTransfer && [...event.dataTransfer.types].includes("Files");
+                        const types = event.dataTransfer ? [...event.dataTransfer.types] : [];
+                        const carries = types.includes("Files") || types.includes(fluid.sourceView.ptfDragType);
                         const pos = carries ? dropView.posAtCoords({x: event.clientX, y: event.clientY}) : null;
                         fluid.sourceView.showDropCaret(pos === null ? null : dropView.coordsAtPos(pos));
                         return false;
@@ -240,17 +242,19 @@ fluid.sourceView.bind = function (parent) {
                         }
                         return false;
                     },
-                    // A drop of files may be taken by the extension, e.g. a widget as a ZIP file, or an image
+                    // A drop of files may be taken by the extension, e.g. a widget as a ZIP file, or an image - and a widget
+                    // dragged as PTF is taken as its paste would be
                     drop: (event, dropView) => {
                         fluid.sourceView.showDropCaret(null);
                         const files = event.dataTransfer ? [...event.dataTransfer.files] : [];
+                        const ptf = event.dataTransfer && files.length === 0 ? event.dataTransfer.getData(fluid.sourceView.ptfDragType) : "";
                         let taken = false;
-                        if (files.length > 0) {
+                        if (files.length > 0 || ptf) {
                             const pos = dropView.posAtCoords({x: event.clientX, y: event.clientY});
                             if (pos !== null) {
                                 dropView.dispatch({selection: {anchor: pos}});
                             }
-                            taken = !!onDrop(files);
+                            taken = files.length > 0 ? !!onDrop(files) : !!onPaste(ptf);
                         }
                         if (taken) {
                             event.preventDefault();
@@ -373,6 +377,9 @@ fluid.sourceView.showDropCaret = function (coords) {
 // A drag ended anywhere leaves no caret behind
 document.addEventListener("dragend", () => fluid.sourceView.showDropCaret(null));
 document.addEventListener("drop", () => fluid.sourceView.showDropCaret(null));
+
+// The type under which a widget dragged out of another page is carried as PTF - as fluid.blockEditor.ptfDragType
+fluid.sourceView.ptfDragType = "application/x-ptf";
 
 fluid.sourceView.islandOpening = /^\s*<[a-zA-Z][\w-]*\s[^>]*\bfluid-layers\s*=/;
 

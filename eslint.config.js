@@ -63,6 +63,7 @@ module.exports = [{
         "demo/tldraw/js/tldraw-ai.js",
         "demo/tldraw/js/tldraw-arena.js",
         "demo/tldraw/js/tldraw-clipboard.js",
+        "demo/tldraw/js/tldraw-dragout.js",
         "demo/tldraw/js/tldraw-credentials*.js",
         // fluid-lint is a package of ES modules
         "packages/fluid-lint/**/*.js"

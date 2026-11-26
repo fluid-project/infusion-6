@@ -678,6 +678,19 @@ const fluidPTFScope = function (fluid) {
     };
 
     /**
+     * Find the parts of the one component a PTF document transmits. A host such as tldraw wraps each component it
+     * transmits in a nested document of kind "component" - see widgetToPart in tldraw-clipboard.js - so a document
+     * with no root potentia of its own, holding exactly one such component, is read as that component.
+     * @param {PTFPart[]} parts - The decoded parts of the PTF document
+     * @return {PTFPart[]} The parts of the component it transmits - those of its single nested component if it is
+     * wrapped, or else the parts themselves
+     */
+    fluid.ptf.componentParts = function (parts) {
+        const nested = parts.filter(part => part.kind === "component" && part.parts);
+        return !parts.some(fluid.ptf.isRootPotentiaPart) && nested.length === 1 ? nested[0].parts : parts;
+    };
+
+    /**
      * Apply the potentia of subcomponents and the live layer contents held in the parts of a PTF document to an
      * existing component and its subcomponents. Any potentia for the root component itself is ignored, since this
      * determines how the component is created rather than anything which can be applied to it. The live layer contents

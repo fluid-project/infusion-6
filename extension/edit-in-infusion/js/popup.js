@@ -125,7 +125,9 @@ byId("start").addEventListener("click", async function () {
         const pattern = url.protocol + "//" + url.hostname + "/*";
         // No access to the site is asked for here - the editor opens through the access which opening the panel grants
         // to the tab in hand. Lasting access is asked for only if the user chooses it - see "keep" below
-        statusNode.textContent = "Opening the editor...";
+        // No note of progress is shown, since the panel closes as soon as the editor opens, and would only flash it in
+        // the colour of an error
+        statusNode.textContent = "";
         await ask({type: "panel-edit-intent", tabId: tab.id, pattern});
         const activated = await ask({type: "panel-edit", tabId: tab.id, granted: panelGranted});
         if (activated) {
