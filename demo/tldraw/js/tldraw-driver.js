@@ -8,6 +8,7 @@ import {infusionInstances, lookupPendingParts, notifyInstantiation, makeClipboar
     copySelectionAsPTF, exportSelectionAsPTF,
     isWidgetAvailable} from "./tldraw-clipboard.js";
 import {makeAIBridge} from "./tldraw-ai.js";
+import {bindDragOut} from "./tldraw-dragout.js";
 import {restoreArena, persistArena, bindHistoryKeys, bindWidgetHistory, recordWidgetCreation} from "./tldraw-arena.js";
 
 const h = React.createElement;
@@ -943,6 +944,8 @@ const onMount = function (editor) {
     const unguard = guardClipboardEvents(document.getElementById("ai-root"));
     const unbindKeys = bindHistoryKeys();
     const unbindWidgetHistory = bindWidgetHistory(editor);
+    // Lets the user drag a widget out of the arena with Shift held, onto another page
+    const unbindDragOut = bindDragOut(editor);
     let unmounted = false;
     let stopPersisting = null;
     restoreArena(editor, fluid.persistenceAdapter.load()).catch(error => {
@@ -964,6 +967,7 @@ const onMount = function (editor) {
     return () => {
         unmounted = true;
         stopPersisting?.();
+        unbindDragOut();
         unbindWidgetHistory();
         unbindKeys();
         unguard();

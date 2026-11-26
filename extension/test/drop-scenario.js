@@ -198,6 +198,26 @@ harness.scenario("Cutting, pasting and dropping widgets and images into a post",
     await post.waitForFunction(() => document.querySelector("[fluid-layers=\"fluid.demos.counter\"]")?.textContent.includes("Clicked 1"), {timeout: 15000});
     expect(dialogs.length === 0, "Pasting a widget whose layers the site holds alike asks nothing: " + JSON.stringify(dialogs));
 
+    // 2a. Drop it again, as a tldraw arena drags a widget out - wrapped as the one component of its document, carried
+    // under a type of its own - onto a later paragraph
+    const draggedIn = await post.evaluate(ptf => {
+        const wrapped = fluid.ptf.encode([{kind: "component", filename: "shape:dragged", parts: fluid.ptf.decode(ptf)}]);
+        const element = [...document.querySelectorAll("p[data-fluid-block=\"editable\"]")].filter(p => p.textContent.trim().split(/\s+/).length > 8)[3];
+        element.scrollIntoView({block: "center"});
+        const rect = element.getBoundingClientRect();
+        const transfer = new DataTransfer();
+        transfer.setData("application/x-ptf", wrapped);
+        const init = {dataTransfer: transfer, bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2};
+        element.dispatchEvent(new DragEvent("dragover", init));
+        const caret = document.querySelector(".fluid-block-drop-caret");
+        const caretShown = !!caret && !caret.hidden;
+        element.dispatchEvent(new DragEvent("drop", init));
+        return {caretShown, wrapped: !fluid.ptf.decode(wrapped).some(fluid.ptf.isRootPotentiaPart)};
+    }, cutPTF);
+    expect(draggedIn.wrapped && draggedIn.caretShown, "A widget dragged in as PTF, wrapped as tldraw wraps it, shows the drop caret: " + JSON.stringify(draggedIn));
+    const twice = await sourceSatisfying(post, source => source.split("fluid-layers=\"fluid.demos.counter\"").length === 3);
+    expect(twice.includes("fluid-id=\"counter-2\""), "The dropped counter is inserted into the source beside the pasted one, with an id of its own");
+
     // 3. Drop a widget as a ZIP file, bringing an image, and the counter's layer defined otherwise
     const otherCounter = fs.readFileSync(counterSFC, "utf8").replace(/Clicked/g, "Pressed");
     const zip = makeZip({
