@@ -1,6 +1,6 @@
 # wend-theme-beautiful
 
-A theme for wend sites: the page furniture of [Beautiful Hugo](https://github.com/halogenica/beautifulhugo), as
+A theme for [wend](https://ponder.org.uk/docs/wend/) sites: the page furniture of [Beautiful Hugo](https://github.com/halogenica/beautifulhugo), as
 Infusion 6 layers. Published to npm as `@fluid-project/wend-theme-beautiful`, from Infusion 6's repository,
 independently of Infusion itself. It needs Infusion 6.6.0 or later.
 
