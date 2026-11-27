@@ -462,6 +462,40 @@ pre code {
     }
 }
 
+/* A browser without popovers, e.g. Chrome before 114, would show the menu always, since it knows no `popover` to hide
+ * it by. There it is hidden, and shown while the button has the focus, which a click on it gives it, and then while
+ * the pointer is over it or one of its own links has the focus, so that a click on a link follows it - a click
+ * elsewhere takes the focus, and closes it. These
+ * rules are kept apart from those naming :popover-open, which such a browser would discard whole */
+@supports not selector(:popover-open) {
+    @media (max-width: 767px) {
+        .navbar-collapse {
+            display: none;
+        }
+
+        .navbar-toggle:focus ~ .navbar-collapse, .navbar-collapse:focus-within, .navbar-collapse:hover {
+            position: fixed;
+            top: 72px;
+            right: 0;
+            left: 0;
+            display: block;
+            max-height: calc(100vh - 72px);
+            padding: 7.5px 15px;
+            overflow-y: auto;
+            background: #f5f5f5;
+            border-bottom: 1px solid #eaeaea;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+        }
+    }
+
+    @media (max-width: 767px) and (prefers-color-scheme: dark) {
+        .navbar-toggle:focus ~ .navbar-collapse, .navbar-collapse:focus-within, .navbar-collapse:hover {
+            background: #505050;
+            border-bottom-color: #aaa;
+        }
+    }
+}
+
 @media (min-width: 768px) {
     .navbar-collapse, .navbar-collapse[popover] {
         position: static;
