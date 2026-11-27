@@ -655,8 +655,26 @@ handlers["tab-editable"] = async function (message) {
 handlers["sites-list"] = () => fluidEditBackground.enlisted();
 handlers["site-forget"] = message => fluidEditBackground.forget(message.pattern);
 
+/**
+ * Inject the content scripts afresh into every open tab of an enlisted site, as the extension is updated or reloaded -
+ * each tab's own is then orphaned, its chrome APIs gone, so that a panel open in it could no longer reach the service
+ * worker. The fresh content script tells the orphan to stand aside, and adopts the panel as it stands - see `start` in
+ * edit.js - so that editing goes on without a reload. A tab Chrome won't let the extension into is left as it is, its
+ * panel telling the user to reload it
+ * @return {Promise} Resolves once every tab has been tried
+ */
+fluidEditBackground.reinjectAll = async function () {
+    const patterns = await fluidEditBackground.enlisted();
+    const tabs = patterns.length > 0 ? await chrome.tabs.query({url: patterns}).catch(() => []) : [];
+    await Promise.all(tabs.map(tab => chrome.scripting.executeScript({target: {tabId: tab.id}, files: fluidEditBackground.scripts})
+        .catch(() => null)));
+};
+
 // The menu item is created once, when the extension is installed or updated, and persists thereafter
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(details => {
+    if (details.reason === "update") {
+        fluidEditBackground.reinjectAll();
+    }
     chrome.contextMenus.create({id: fluidSignIn.menuId, title: "Sign out of GitHub", contexts: ["action"], visible: false},
         () => fluidSignIn.refreshPopup().catch(() => null));
     // The registrations of sites enlisted by an earlier version are brought into line with this one's content scripts -

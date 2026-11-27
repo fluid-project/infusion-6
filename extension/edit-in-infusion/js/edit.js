@@ -34,12 +34,34 @@
         relayed: ["claim-get", "claim-put", "claim-remove", "claim-list", "claim-commit", "source-read", "source-history", "base-read", "base-heads", "bases-rebuild", "fluid-provenance-found", "prefs-set"]
     };
 
+    // Why a content script orphaned by the extension's reload or update, and not superseded by a fresh one, answers
+    // nothing - see `start`
+    edit.orphanedMessage = "Edit in Infusion has been reloaded or updated since this page was opened - copy any edit not "
+        + "yet held, then reload the page to go on editing";
+
+    /**
+     * Determine whether this content script belongs to the extension as it now runs - one orphaned by the extension's
+     * reload or update keeps running, and its listeners stay in the page, but its chrome APIs are gone for good
+     * @return {Boolean} `true` if it can still reach the service worker
+     */
+    edit.isLive = () => !!(chrome.runtime && chrome.runtime.id);
+
+    /**
+     * Determine whether the page's editing is already booted - by a content script of an earlier instance of the
+     * extension, since orphaned by its update, whose panel this one adopts rather than booting another - see `start`
+     * @return {Boolean} `true` if the page holds the editing panel
+     */
+    edit.isBooted = () => !!document.querySelector(".fluid-edit-panel[data-fluid-edit-ui]");
+
     /**
      * Send a message to the service worker, unwrapping its reply
      * @param {Object} message - The message
      * @return {Promise<Any>} The result of handling it
      */
     edit.send = async function (message) {
+        if (!edit.isLive()) {
+            throw new Error(edit.orphanedMessage);
+        }
         const reply = await chrome.runtime.sendMessage(message);
         if (!reply || !reply.ok) {
             throw new Error(reply ? reply.error : "No reply from the extension");
@@ -120,10 +142,9 @@
      */
     edit.relay = async function (message) {
         let togo;
-        if (!chrome.runtime || !chrome.runtime.id) {
+        if (!edit.isLive()) {
             // Orphaned by the extension's reload or update, and not superseded by a fresh content script
-            togo = Promise.reject(new Error("Edit in Infusion has been reloaded or updated since this page was opened - "
-                + "copy any edit not yet held, then reload the page to go on editing"));
+            togo = Promise.reject(new Error(edit.orphanedMessage));
         } else if (!edit.relayed.includes(message.type) || !edit.isOwnRepo(message)) {
             togo = Promise.reject(new Error("The extension does not answer a request " + message.type + " of this page"));
         } else if (message.type === "prefs-set") {
@@ -253,9 +274,15 @@
                 }
             }
         });
+        // Only a report, for the extension's icon - its failure is no concern of the page
         edit.send({type: "fluid-provenance-found", sourcePath: edit.provenance.source ? edit.provenance.source.path : edit.provenance.page,
-            claimState: null});
-        if (await edit.wanted()) {
+            claimState: null}).catch(() => null);
+        if (edit.isBooted()) {
+            // Injected beside an orphan whose panel is running, e.g. as the extension was updated - the panel, which
+            // runs in the page's own world, is adopted as it stands, its requests now relayed by this content script
+            edit.bridgePromise = Promise.resolve();
+            edit.bootPromise = Promise.resolve();
+        } else if (await edit.wanted()) {
             await edit.boot();
         }
     };
