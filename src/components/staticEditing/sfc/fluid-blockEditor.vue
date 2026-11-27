@@ -215,6 +215,15 @@ fluid.blockEditor.listen = function (container) {
             fluid.blockEditor.announceFocus(record, element);
         }
     });
+    // A block which is not edited in place, e.g. one of markup, or a widget, takes no focus - a click on it shows its
+    // lines in the source as focusing an editable block does
+    container.addEventListener("click", event => {
+        const target = event.target && (event.target.nodeType === 1 ? event.target : event.target.parentElement);
+        const element = target ? target.closest("[data-fluid-block]") : null;
+        if (element && container.contains(element) && element.getAttribute("data-fluid-block") !== "editable") {
+            fluid.blockEditor.announceFocus(record, element);
+        }
+    });
     const islandOf = target => {
         const element = target && (target.nodeType === 1 ? target : target.parentElement)?.closest("[fluid-layers][fluid-id]");
         return element && container.contains(element) ? element : null;

@@ -404,13 +404,19 @@ fluid.sourceView.bind = function (parent) {
         mirror.value = text;
     };
     that.setLanguage = path => view.dispatch({effects: language.reconfigure(fluid.sourceView.languageOf(path))});
+    // Show the lines of the block in hand in the page, highlighted and scrolled into view, with the cursor moved to their
+    // start - announced as any move of the cursor is, so that the page marks the block as the one the cursor is in -
+    // but without taking the focus from the page
     that.showBlock = function (range) {
         const doc = view.state.doc;
         const effects = [fluid.sourceView.setBlockLines.of(range)];
+        const transaction = {effects};
         if (range && range.startLine < doc.lines) {
-            effects.push(fluid.sourceView.CM.EditorView.scrollIntoView(doc.line(range.startLine + 1).from, {y: "center"}));
+            const start = doc.line(range.startLine + 1).from;
+            effects.push(fluid.sourceView.CM.EditorView.scrollIntoView(start, {y: "center"}));
+            transaction.selection = {anchor: start};
         }
-        view.dispatch({effects});
+        view.dispatch(transaction);
     };
     that.focus = () => view.focus();
     // Move the cursor to a position, scrolled into view, as the user's selection elsewhere moves it - announcing no move

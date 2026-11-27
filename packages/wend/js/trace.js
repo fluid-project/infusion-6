@@ -37,6 +37,9 @@ wend.trace.rendererScripts = [
     {packageName: "markdown-it-deflist", file: "dist/markdown-it-deflist.min.js"},
     // The theme's, found amongst the site's static files - see site.js
     {staticFile: "js/highlight.min.js", name: "highlight"},
+    // The theme's KaTeX, if it has one, with which maths is typeset - see `maths` in markdown.js. Its stylesheet and fonts
+    // are published beside it, for the editing client to show maths on a page which held none as it was built
+    {staticFile: "js/katex.min.js", name: "katex", optional: true, stylesheet: "css/katex.min.css", fonts: "css/fonts", fontPrefix: "KaTeX_"},
     {local: "markdown.js"}
 ];
 
@@ -64,6 +67,26 @@ wend.trace.packageDir = function (packageName, siteDir) {
 };
 
 /**
+ * List the files directly within a directory of the site's static files - those of the site's complement when it is
+ * built from one, or else those of the last of its static directories holding the directory, as `wendSite.staticFile`
+ * finds a file
+ * @param {String} dir - The directory, relative to the static files, e.g. "css/fonts"
+ * @return {Object[]} Each file, `{name, file}` - its name, and its absolute path
+ */
+wend.trace.staticFilesIn = function (dir) {
+    let togo;
+    if (wendSite.files) {
+        togo = wendSite.list("static/" + dir).filter(name => !name.includes("/"))
+            .map(name => ({name, file: wendSite.resolve("static/" + dir + "/" + name)}));
+    } else {
+        const found = wendSite.staticFile(dir);
+        togo = found ? fs.readdirSync(found, {withFileTypes: true}).filter(entry => entry.isFile())
+            .map(entry => ({name: entry.name, file: path.join(found, entry.name)})) : [];
+    }
+    return togo;
+};
+
+/**
  * Copy the markdown pipeline into the published site, so that the editing client renders with the build's own code
  * @param {String} siteDir - The directory holding the site
  * @param {String} outDir - The publish directory
@@ -72,7 +95,12 @@ wend.trace.packageDir = function (packageName, siteDir) {
 wend.trace.publishRenderer = function (siteDir, outDir) {
     const targetDir = path.join(outDir, wend.trace.rendererDir);
     fs.mkdirSync(targetDir, {recursive: true});
-    const published = wend.trace.rendererScripts.map(script => {
+    // A script which the site may lack, e.g. KaTeX, is published only if it has it
+    const scripts = wend.trace.rendererScripts.filter(script => !script.optional || wendSite.staticFile(script.staticFile));
+    // The further files published beside the scripts, e.g. KaTeX's stylesheet, and its fonts
+    const extras = new Set();
+    const fontNames = new Set();
+    const published = scripts.map(script => {
         let source, name;
         if (script.staticFile) {
             source = wendSite.staticFile(script.staticFile);
@@ -93,11 +121,30 @@ wend.trace.publishRenderer = function (siteDir, outDir) {
             name = script.packageName + "-" + version + ".js";
         }
         fs.copyFileSync(source, path.join(targetDir, name));
+        const stylesheet = script.stylesheet ? wendSite.staticFile(script.stylesheet) : null;
+        if (stylesheet) {
+            // Named as the script is, so that the client finds it beside it - see bridge.js in the extension
+            const sheetName = name.replace(/\.js$/, ".css");
+            fs.copyFileSync(stylesheet, path.join(targetDir, sheetName));
+            extras.add(sheetName);
+            const fonts = wend.trace.staticFilesIn(script.fonts).filter(({name}) => name.startsWith(script.fontPrefix));
+            if (fonts.length > 0) {
+                fs.mkdirSync(path.join(targetDir, "fonts"), {recursive: true});
+                fonts.forEach(({name: font, file}) => {
+                    fs.copyFileSync(file, path.join(targetDir, "fonts", font));
+                    fontNames.add(font);
+                });
+                extras.add("fonts");
+            }
+        }
         return wend.trace.rendererDir + "/" + name;
     });
     // Versions published by earlier builds are removed, as no page now refers to them
-    const names = new Set(published.map(script => path.basename(script)));
-    fs.readdirSync(targetDir).filter(name => !names.has(name)).forEach(name => fs.rmSync(path.join(targetDir, name)));
+    const names = new Set([...published.map(script => path.basename(script)), ...extras]);
+    fs.readdirSync(targetDir).filter(name => !names.has(name)).forEach(name => fs.rmSync(path.join(targetDir, name), {recursive: true}));
+    if (fs.existsSync(path.join(targetDir, "fonts"))) {
+        fs.readdirSync(path.join(targetDir, "fonts")).filter(font => !fontNames.has(font)).forEach(font => fs.rmSync(path.join(targetDir, "fonts", font)));
+    }
     return published;
 };
 

@@ -148,6 +148,27 @@
             return bridge.editorBooted;
         };
 
+        // The scripts of the markdown pipeline which have a stylesheet published beside them, of the same name, by the
+        // pattern of their names - KaTeX's, which shows the maths the pipeline typesets - see trace.js in wend
+        bridge.rendererStylesheets = [{script: /\/katex-[0-9a-f]+\.js$/, present: "link[rel=stylesheet][href*=\"katex\"]"}];
+
+        /**
+         * Link the stylesheets of the scripts of the markdown pipeline which have them, unless the page already links
+         * one - so that, e.g., maths typed into a page which held none as it was built is shown as it will be published
+         * @param {String[]} scripts - The URLs of the pipeline's scripts
+         */
+        bridge.linkRendererStylesheets = function (scripts) {
+            bridge.rendererStylesheets.forEach(({script, present}) => {
+                const src = scripts.find(one => script.test(one));
+                if (src && !document.querySelector(present)) {
+                    const link = document.createElement("link");
+                    link.rel = "stylesheet";
+                    link.href = src.replace(/\.js$/, ".css");
+                    document.head.appendChild(link);
+                }
+            });
+        };
+
         bridge.loadScript = function (src) {
             if (!bridge.loaded[src]) {
                 bridge.loaded[src] = new Promise((resolve, reject) => {
@@ -168,6 +189,7 @@
                 for (const src of request.scripts) {
                     await bridge.loadScript(src);
                 }
+                bridge.linkRendererStylesheets(request.scripts);
                 return true;
             },
             render: async function (request) {

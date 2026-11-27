@@ -269,6 +269,23 @@ harness.scenario("Editing a post in place, block by block", async function ({moc
     await post.waitForFunction(words => [...document.querySelectorAll(".fluid-source-block-line")].some(line => line.textContent.includes(words)),
         {timeout: 5000}, fifthWords).then(() => expect(true, "Focusing a block highlights its lines in the source view"),
         () => expect(false, "Focusing a block highlights its lines in the source view"));
+    // 6a. ... and moves the source view's cursor to them, which the page shows by marking the block as the cursor's
+    await post.waitForFunction(index => document.querySelector(`[data-fluid-block-index="${index}"]`).hasAttribute("data-fluid-block-current"),
+        {timeout: 5000}, fifth).then(() => expect(true, "Focusing a block moves the source view's cursor to it"),
+        () => expect(false, "Focusing a block moves the source view's cursor to it"));
+    // 6b. A block not edited in place, e.g. one of code, takes no focus - clicking it shows its lines likewise
+    const code = await post.$("[data-fluid-block=\"source\"] code");
+    const codeIndex = await code.evaluate(node => node.closest("[data-fluid-block]").getAttribute("data-fluid-block-index"));
+    const codeWords = await code.evaluate(node => node.textContent.trim().split("\n")[0].trim().split(/\s+/).slice(0, 3).join(" "));
+    await code.click();
+    await post.waitForFunction((index, words) => [...document.querySelectorAll(".fluid-source-block-line")].some(line => line.textContent.includes(words)) &&
+        document.querySelector(`[data-fluid-block-index="${index}"]`).hasAttribute("data-fluid-block-current"),
+    {timeout: 5000}, codeIndex, codeWords).then(() => expect(true, "Clicking a block of code highlights its lines, and moves the cursor to it"),
+        () => expect(false, "Clicking a block of code highlights its lines, and moves the cursor to it: " + codeWords));
+    // Back to the paragraph, whose lines the source view then shows again
+    await placeCaret(post, fifth, "end");
+    await post.waitForFunction(words => [...document.querySelectorAll(".fluid-source-block-line")].some(line => line.textContent.includes(words)),
+        {timeout: 5000}, fifthWords);
 
     // 7. Placing the cursor in the source marks the block in the page, and typing there renders in the page
     const beforeSource = await sourceOf(post);

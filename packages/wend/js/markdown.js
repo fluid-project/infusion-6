@@ -324,6 +324,52 @@
         return blocks;
     };
 
+    // The delimiters of maths, as written in markdown - `\\( ... \\)` inline, and `\\[ ... \\]` displayed - each pair of
+    // backslashes being what markdown would otherwise have rendered as the one backslash of the delimiter which
+    // KaTeX's auto-render script, formerly run as each page loaded, looked for
+    wendMarkdown.mathsDelimiters = {"\\\\(": {close: "\\\\)", display: false}, "\\\\[": {close: "\\\\]", display: true}};
+
+    /**
+     * Make the plugin rendering maths with KaTeX as the markdown is rendered, so that a page holds its maths typeset,
+     * needing KaTeX's stylesheet but none of its scripts. The text between the delimiters is taken as written, but for
+     * markdown's backslash escapes, which are undone as markdown would have undone them, e.g. `\\\\` is TeX's `\\`
+     * @param {Object|null} katex - KaTeX, the theme's static/js/katex.min.js, or null, if the site has none, to leave
+     * the maths as the text which KaTeX's auto-render script would have found
+     * @return {Function} The plugin
+     */
+    wendMarkdown.maths = function (katex) {
+        const unescape = text => text.replace(/\\([!-/:-@[-`{-~])/g, "$1");
+        return function (md) {
+            md.inline.ruler.before("escape", "wend_maths", function (state, silent) {
+                const open = Object.keys(wendMarkdown.mathsDelimiters).find(delimiter => state.src.startsWith(delimiter, state.pos));
+                const delimiters = open ? wendMarkdown.mathsDelimiters[open] : null;
+                const end = delimiters ? state.src.indexOf(delimiters.close, state.pos + open.length) : -1;
+                let togo = false;
+                if (end >= 0) {
+                    if (!silent) {
+                        const token = state.push("wend_maths", "", 0);
+                        token.content = unescape(state.src.substring(state.pos + open.length, end));
+                        token.meta = {display: delimiters.display};
+                    }
+                    state.pos = end + delimiters.close.length;
+                    togo = true;
+                }
+                return togo;
+            });
+            md.renderer.rules.wend_maths = function (tokens, index) {
+                const token = tokens[index];
+                let togo;
+                if (katex) {
+                    togo = katex.renderToString(token.content, {displayMode: token.meta.display, throwOnError: false});
+                } else {
+                    const [open, close] = token.meta.display ? ["\\[", "\\]"] : ["\\(", "\\)"];
+                    togo = md.utils.escapeHtml(open + token.content + close);
+                }
+                return togo;
+            };
+        };
+    };
+
     /**
      * Make the site's markdown renderer: goldmark's options as Hugo configures them - `unsafe = true`, block attributes
      * `{.class}`, and its default extensions, typographer, linkify, footnotes, definition lists and heading ids
@@ -333,12 +379,13 @@
      * @param {Function} libs.footnote - markdown-it-footnote
      * @param {Function} libs.deflist - markdown-it-deflist
      * @param {Object} libs.hljs - highlight.js, the theme's static/js/highlight.min.js
+     * @param {Object|null} [libs.katex] - KaTeX, the theme's static/js/katex.min.js, if it has one - see `maths`
      * @param {Document} libs.dokkument - A document in which code blocks are highlighted - see `highlightFences`
      * @return {Object} The markdown-it instance
      */
-    wendMarkdown.make = function ({markdownIt, attrs, footnote, deflist, hljs, dokkument}) {
+    wendMarkdown.make = function ({markdownIt, attrs, footnote, deflist, hljs, katex, dokkument}) {
         return markdownIt({html: true, typographer: true, linkify: true})
-            .use(attrs).use(footnote).use(deflist).use(wendMarkdown.headingIds).use(wendMarkdown.stripFenceOptions)
+            .use(wendMarkdown.maths(katex || null)).use(attrs).use(footnote).use(deflist).use(wendMarkdown.headingIds).use(wendMarkdown.stripFenceOptions)
             .use(wendMarkdown.highlightFences(hljs, dokkument)).use(wendMarkdown.liveFences);
     };
 
@@ -349,7 +396,7 @@
      */
     wendMarkdown.browserLibs = function (scope) {
         return {markdownIt: scope.markdownit, attrs: scope.markdownItAttrs, footnote: scope.markdownitFootnote, deflist: scope.markdownitDeflist,
-            hljs: scope.hljs, dokkument: scope.document};
+            hljs: scope.hljs, katex: scope.katex || null, dokkument: scope.document};
     };
 
     /**

@@ -21,27 +21,33 @@ const {parseHTML} = require("linkedom");
 const wend = {siteModel: {}};
 
 /**
- * Load the theme's highlight.js as a browser would - its languages register themselves through a global `hljs`, so
- * that it can't be required as a module. It is evaluated in a context of its own whose global object is its `window`
- * @param {String} file - The path of highlight.js
- * @return {Object} highlight.js
+ * Load a browser build of a library as a browser would, e.g. the theme's highlight.js, whose languages register
+ * themselves through a global `hljs`, so that it can't be required as a module. It is evaluated in a context of its own
+ * whose global object is its `window`
+ * @param {String} file - The path of the library
+ * @param {String} name - The global it defines, e.g. "hljs"
+ * @return {Object} The library
  */
-wend.siteModel.loadHljs = function (file) {
+wend.siteModel.loadGlobal = function (file, name) {
     const sandbox = {};
     sandbox.window = sandbox;
+    sandbox.self = sandbox;
     vm.createContext(sandbox);
     vm.runInContext(fs.readFileSync(file, "utf8"), sandbox, {filename: file});
-    return sandbox.hljs;
+    return sandbox[name];
 };
 
 // The theme's highlight.js, which pages formerly loaded to highlight their code once loaded, and which the build
 // publishes for the editing client with the rest of the pipeline - see trace.js
 const wendSite = require("./site.js");
 wend.siteModel.hljsFile = wendSite.staticFile("js/highlight.min.js");
+// The theme's KaTeX, if it has one, with which maths is typeset as the markdown is rendered - see `maths` in markdown.js
+wend.siteModel.katexFile = wendSite.staticFile("js/katex.min.js");
 
 // The site's markdown pipeline, shared with the editing client - see markdown.js
 const markdown = wendMarkdown.make({markdownIt, attrs: markdownItAttrs, footnote: markdownItFootnote, deflist: markdownItDeflist,
-    hljs: wend.siteModel.loadHljs(wend.siteModel.hljsFile),
+    hljs: wend.siteModel.loadGlobal(wend.siteModel.hljsFile, "hljs"),
+    katex: wend.siteModel.katexFile ? wend.siteModel.loadGlobal(wend.siteModel.katexFile, "katex") : null,
     dokkument: parseHTML("<!DOCTYPE html><html><body></body></html>").document});
 
 /**
@@ -140,6 +146,11 @@ wend.siteModel.plainText = function (html) {
     const visit = node => {
         if (node.nodeType === 3) {
             parts.push(node.nodeValue);
+        } else if (node.nodeType === 1 && node.classList.contains("katex")) {
+            // Maths typeset by KaTeX holds its formula twice, as MathML and as HTML drawing it - its text is the TeX it
+            // was written in, which the MathML carries
+            const tex = node.querySelector("annotation[encoding=\"application/x-tex\"]");
+            parts.push(" " + (tex ? tex.textContent : "") + " ");
         } else if (node.nodeType === 1 && !["script", "style"].includes(node.tagName.toLowerCase())) {
             parts.push(" ");
             [...node.childNodes].forEach(visit);

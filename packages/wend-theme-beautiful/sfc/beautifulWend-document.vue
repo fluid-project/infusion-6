@@ -10,7 +10,7 @@ fluid.def("beautifulWend.document", {
     pageLayers: "$compute:beautifulWend.document.pageLayers({self}.page.kind, {self}.page.type, {self}.features)",
     // The switches of the features which a page may have of its own - the site's `features`, overridden by any in the
     // page's front matter, e.g. `features: {katex: true}` - see beautifulWend.document.pageFeatures
-    features: "$compute:beautifulWend.document.features({site}.features, {self}.page.params)",
+    features: "$compute:beautifulWend.document.features({site}.features, {self}.page, {site}.mathsPermalinks)",
 
     // Renders into an output document of its own, whose documentElement is the container. Its
     // location is the page's URL, so that on the client, which renders into its own document only, the view renders
@@ -41,11 +41,10 @@ fluid.def("beautifulWend.document", {
     // anchors of content's headings are rendered by its markdown pipeline (packages/wend/js/markdown.js)
     headScripts: {},
     footerScripts: {},
-    // The URLs of KaTeX's assets, which beautifulWend.document.katex adds while the site's `features.katex` is set
+    // The URL of KaTeX's stylesheet, which beautifulWend.document.katex adds to a page showing maths - see
+    // beautifulWend.document.features
     katexAssets: {
-        css: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.css",
-        js: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.js",
-        autoRender: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/contrib/auto-render.min.js"
+        css: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.css"
     },
 
     head: {
@@ -92,18 +91,26 @@ fluid.def("beautifulWend.document", {
 beautifulWend.document.pageFeatures = ["katex", "hljs"];
 
 /**
- * Compute the switches of a page's features - the site's, overridden by those of the page's front matter
+ * Compute the switches of a page's features - the site's, overridden by those of the page's front matter, and else
+ * by what it shows - KaTeX's stylesheet by the maths it shows - see beautifulWend.site.holdsMaths. A list page shows maths if it lists a page holding
+ * it, whose content it may show whole
  * @param {Object} siteFeatures - The site's `features`, from wend.json
- * @param {Object} params - The page's front matter, whose `features`, if any, override the site's
+ * @param {Object} page - The page's record, whose `params.features`, if any, override the site's
+ * @param {String[]} mathsPermalinks - The permalinks of the pages holding maths - see beautifulWend.site.mathsPermalinks
  * @return {Object<String, Boolean>} Whether each of beautifulWend.document.pageFeatures is switched on for the page
  */
-beautifulWend.document.features = function (siteFeatures, params) {
-    const pageFeatures = params.features ?? {};
+beautifulWend.document.features = function (siteFeatures, page, mathsPermalinks) {
+    const pageFeatures = page.params.features ?? {};
     // A switch is set only by a Boolean - one missing from the page's front matter, or from the site's features, which
-    // are a reactive root, leaves the feature to the site's switch, or off
+    // are a reactive root, leaves the feature to the site's switch, or to what the page shows, or off
     const switched = (switches, feature) => typeof(switches?.[feature]) === "boolean" ? switches[feature] : undefined;
+    const shows = {
+        katex: () => beautifulWend.site.holdsMaths(page.content) ||
+            (page.paginator?.pages ?? []).some(permalink => mathsPermalinks.includes(permalink))
+    };
+    const byContent = feature => shows[feature]?.() ?? false;
     return Object.fromEntries(beautifulWend.document.pageFeatures.map(feature =>
-        [feature, (switched(pageFeatures, feature) ?? switched(siteFeatures, feature)) === true]));
+        [feature, (switched(pageFeatures, feature) ?? switched(siteFeatures, feature) ?? byContent(feature)) === true]));
 };
 
 /**

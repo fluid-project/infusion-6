@@ -24,6 +24,9 @@ fluid.def("beautifulWend.site", {
     // What beautifulWend.relatedPosts needs of every page - read by each single page in place of all the pages, so that the
     // trace of a page depends on this summary, and not on the whole of every page - see beautifulWend.site.relatedIndex
     relatedIndex: "$compute:beautifulWend.site.relatedIndex({self}.pages)",
+    // The permalinks of the pages whose content holds maths - read by each list page, which may show them, in place of
+    // all the pages - see beautifulWend.document.features
+    mathsPermalinks: "$compute:beautifulWend.site.mathsPermalinks({self}.pages)",
 
     i18n: {
         $component: {
@@ -144,6 +147,26 @@ beautifulWend.site.buildMenu = function (entries) {
  */
 beautifulWend.site.indexPages = function (pages) {
     return Object.fromEntries(pages.map(page => [page.relPermalink, page]));
+};
+
+/**
+ * Determine whether the HTML of content holds maths, which the markdown pipeline typesets with KaTeX, marking it by
+ * KaTeX's class - see `maths` in wend's js/markdown.js
+ * @param {String} [content] - The HTML
+ * @return {Boolean} `true` if it holds maths
+ */
+beautifulWend.site.holdsMaths = function (content) {
+    return typeof(content) === "string" && content.includes("class=\"katex");
+};
+
+/**
+ * List the permalinks of the pages whose content holds maths, typeset by the markdown pipeline - a computation shared
+ * by every list page, so that its build trace records this list rather than every page whole
+ * @param {Object[]} pages - All of the site's page records
+ * @return {String[]} The `relPermalink` of each page holding maths
+ */
+beautifulWend.site.mathsPermalinks = function (pages) {
+    return pages.filter(page => !page.paginator && beautifulWend.site.holdsMaths(page.content)).map(page => page.relPermalink);
 };
 
 /**

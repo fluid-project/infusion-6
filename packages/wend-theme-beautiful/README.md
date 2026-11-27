@@ -23,12 +23,13 @@ Beautiful Hugo, or a switch in the `features` of `wend.json`, where Beautiful Hu
 | `staticman` | `params.staticman` | Staticman comments |
 | `disclaimer` | `params.disclaimerText` | A disclaimer in the footer |
 | `multilingual` | more than one of `languages` | The language menu and links to translations |
-| `katex` | `features.katex`, for the site or a page | KaTeX's rendering of maths, e.g. `\\( O(n^2) \\)` - Beautiful Hugo includes it on every page |
+| `katex` | a page's content holding maths, or `features.katex`, for the site or a page | KaTeX's stylesheet, for maths typeset as the markdown is rendered, e.g. `\\( O(n^2) \\)` inline or `\\[ \\sum_i x_i \\]` displayed - Beautiful Hugo includes KaTeX's scripts on every page |
 | `hljs` | `features.hljs`, for the site or a page | highlight.js's stylesheet for code, highlighted as it is built |
 | `selfHosted` | `features.selfHosted` | The theme's own copies of KaTeX and Font Awesome, in place of their CDNs' |
 
 A feature switched "for the site or a page" may be switched for one page by `features` in its front matter, which
-overrides the site's - e.g. a site whose `wend.json` leaves KaTeX off renders the maths of a page beginning
+overrides the site's. KaTeX needs no switch, since a page holding maths has its stylesheet - but it may be switched, e.g.
+on for a page beginning
 
 ```yaml
 ---
