@@ -19,14 +19,13 @@ Beautiful Hugo, or a switch in the `features` of `wend.json`, where Beautiful Hu
 
 | Adaptation | Switched on by | Adds |
 |---|---|---|
-| `gcse` | `params.gcse` | Google custom search in the navigation bar |
 | `piwik` | `params.piwik` - `{"server", "id"}` | The Piwik/Matomo tracker |
 | `staticman` | `params.staticman` | Staticman comments |
 | `disclaimer` | `params.disclaimerText` | A disclaimer in the footer |
 | `multilingual` | more than one of `languages` | The language menu and links to translations |
 | `katex` | `features.katex`, for the site or a page | KaTeX's rendering of maths, e.g. `\\( O(n^2) \\)` - Beautiful Hugo includes it on every page |
 | `hljs` | `features.hljs`, for the site or a page | highlight.js's stylesheet for code, highlighted as it is built |
-| `selfHosted` | `features.selfHosted` | The theme's own copies of KaTeX, Font Awesome and Bootstrap, in place of their CDNs' |
+| `selfHosted` | `features.selfHosted` | The theme's own copies of KaTeX and Font Awesome, in place of their CDNs' |
 
 A feature switched "for the site or a page" may be switched for one page by `features` in its front matter, which
 overrides the site's - e.g. a site whose `wend.json` leaves KaTeX off renders the maths of a page beginning
@@ -54,7 +53,7 @@ extension makes that fork on the first edit of the footer, say - see `framing` i
 ```
 beautifulWend.site                         (fluid.resolveRoot: {site} visible everywhere)
 ├─ i18n          [beautifulWend.i18n, beautifulWend.i18n.<lang>]
-├─ gcse, piwik, selfHosted, ...     $if on a site parameter; each holds a $linkage
+├─ piwik, selfHosted, ...           $if on a site parameter; each holds a $linkage
 └─ documents     $for page in pages
    └─ beautifulWend.document  + dynamic [beautifulWend.type.<type>, beautifulWend.kind.<kind>]
       ├─ head      beautifulWend.head      (stylesheetTags, scriptTags: $for over keyed asset records)
@@ -80,7 +79,7 @@ How the constructs of Hugo's templates, as Beautiful Hugo uses them, are written
 | `{{ range }}` | `$component` with `$for` |
 | `{{ if }}` around markup that belongs to the component | `$component` with `$if` and a self-template (`@id` element) |
 | `{{ if eq .Type "post" }}` inside a partial | A variant layer (`beautifulWend.header.post`) applied by the type layer |
-| `{{ if .Site.Params.gcse }}` and other environmental cascades | A holder under `beautifulWend.site` with `$if`, whose `$linkage` broadcasts adaptation layers |
+| `{{ if .Site.Params.piwik }}` and other environmental cascades | A holder under `beautifulWend.site` with `$if`, whose `$linkage` broadcasts adaptation layers |
 | `{{ if .Site.Params.selfHosted }} A {{ else }} B {{ end }}` | Keyed data records (`stylesheets.katex.href`) overridden by an adaptation layer |
 | `$.Scratch` | Computed members |
 | `i18n "key"` | `{i18n}.strings.key`, from a per-language layer |

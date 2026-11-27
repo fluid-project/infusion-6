@@ -1,9 +1,11 @@
 <script>
 // The site navigation bar - Hugo's partials/nav.html.
 // Menu items render from the site's menu tree, plus `extraItems`, a keyed record to which adaptations contribute
-// further entries as data - e.g. the search entry of beautifulWend.navbar.gcse and the language switcher of
-// beautifulWend.navbar.multilingual. The {{ if isset .Site.Params "gcse" }} and {{ if .Site.IsMultiLingual }} blocks of the
-// Hugo partial therefore have no counterpart here.
+// further entries as data - e.g. the language switcher of beautifulWend.navbar.multilingual. The
+// {{ if .Site.IsMultiLingual }} block of the Hugo partial therefore has no counterpart here.
+// On a narrow screen the menu is a popover, which the toggle button opens and closes with no script of its own - the
+// browser closes it too on Escape, or on a click elsewhere. On a wide screen it is shown in the bar - see
+// beautifulWend-base.css
 fluid.def("beautifulWend.navbar", {
     extraItems: {},
     allItems: "$compute:beautifulWend.navbar.allItems({site}.menu, {self}.extraItems)",
@@ -55,7 +57,7 @@ beautifulWend.navbar.variantLayer = function (item) {
     <div class="container-fluid">
         <div class="navbar-ponder">
             <a class="navbar-ponder-brand" href="/">@{{site}.config.title}</a>
-            <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#main-navbar">
+            <button type="button" class="navbar-toggle" popovertarget="main-navbar" aria-controls="main-navbar">
                 <span class="sr-only">@{{i18n}.strings.toggleNavigation}</span>
                 <svg width="36" height="36" viewBox="0 0 24 24" stroke="#888" xmlns="http://www.w3.org/2000/svg">
                     <path d="M20 7L4 7" stroke-width="1.5" stroke-linecap="round"/>
@@ -63,7 +65,7 @@ beautifulWend.navbar.variantLayer = function (item) {
                     <path d="M20 17L4 17" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
             </button>
-            <div class="collapse navbar-collapse" id="main-navbar">
+            <div class="navbar-collapse" id="main-navbar" popover>
                 <ul @id="items" class="nav navbar-nav navbar-right"></ul>
             </div>
         </div>

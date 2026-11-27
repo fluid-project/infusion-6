@@ -59,12 +59,6 @@ fluid.def("beautifulWend.site", {
     // layers onto the theme's layers. Cf. fluid.demos.assigneeControl in the todo-list-assign demo.
     // A $linkage entry may bear $if itself, but a holder per feature is kept, as it groups the
     // feature's linkages in its own layer within packages/wend-theme-beautiful/adapt/
-    gcse: {
-        $component: {
-            $if: "{site}.config.params.gcse",
-            $layers: "beautifulWend.feature.gcse"
-        }
-    },
     piwik: {
         $component: {
             $if: "{site}.config.params.piwik",

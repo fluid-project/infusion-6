@@ -29,7 +29,8 @@ fluid.def("beautifulWend.document", {
     // Each $for over them orders them by `priority`, higher first, as Infusion's priorities do
     stylesheets: {
         fontawesome: {priority: 980, href: "https://use.fontawesome.com/releases/v5.5.0/css/all.css"},
-        bootstrap: {priority: 970, href: "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css"},
+        // In place of Bootstrap 3, on which Beautiful Hugo was built - just what the theme's markup uses of it
+        base: {priority: 970, href: "/css/beautifulWend-base.css"},
         main: {priority: 960, href: "/css/main.css"},
         syntax: {priority: 940, href: "/css/syntax.css"},
         codeblock: {priority: 930, href: "/css/codeblock.css"},

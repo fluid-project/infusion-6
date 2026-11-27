@@ -1252,12 +1252,23 @@ QUnit.test("Markup claimed in order despite a node inserted before its first ren
     prepended.setAttribute("rel", "stylesheet");
     prepended.setAttribute("href", "/widget.css");
     host.prepend(prepended);
+    // and an extension's style, appended
+    const appended = document.createElement("style");
+    appended.className = "extension";
+    host.appendChild(appended);
     const that = fluid.tests.headLike({container: host});
     fluid.cell.stabilize();
-    const rendered = [...host.children].filter(node => node !== prepended);
-    assert.deepEqual(rendered, staticNodes, "Every node of the static markup claimed by the vnode which rendered it");
-    assert.deepEqual(fluid.tests.headSummary(host).filter(summary => summary !== "link:/widget.css"),
-        ["meta:first", "link:/a.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last"], "No node rewritten");
+    assert.deepEqual([...host.children], [prepended, ...staticNodes, appended],
+        "Every node of the static markup claimed by the vnode which rendered it, and nodes inserted by others left in place");
+    assert.deepEqual(fluid.tests.headSummary(host),
+        ["link:/widget.css", "meta:first", "link:/a.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last", "style:extension"],
+        "No node rewritten");
+
+    that.sheets.b = {priority: "after:a", href: "/b.css"};
+    fluid.cell.stabilize();
+    assert.deepEqual(fluid.tests.headSummary(host),
+        ["link:/widget.css", "meta:first", "link:/a.css", "link:/b.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last", "style:extension"],
+        "Nodes inserted by others are left alone as the rendering changes");
     that.destroy();
     host.remove();
 });

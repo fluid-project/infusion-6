@@ -1,6 +1,6 @@
 <script>
 // The page footer - Hugo's partials/footer.html, less its trailing scripts, which are rendered by the document from
-// its `footerScripts` record, and less the disclaimer, gcse and piwik blocks, which are contributed by adaptations.
+// its `footerScripts` record, and less the disclaimer and piwik blocks, which are contributed by adaptations.
 fluid.def("beautifulWend.footer", {
     author: "{site}.config.author"
 });
