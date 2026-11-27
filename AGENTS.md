@@ -55,6 +55,13 @@ When something updates, re-renders or turns over unexpectedly, ask the graph why
    system outside this machine (other hosted services, APIs, databases, package registries, deployments, messaging) without
    an explicit instruction to do so. An ambiguous request is not an instruction - ask first
 
+## Bumping versions
+ - When bumping Infusion's version, update it in all of these together: `version` in package.json, the two entries for
+   infusion-6 itself at the head of package-lock.json, and the version held in source, `fluid.version` in
+   src/framework/core/js/FluidCore.js, e.g. `fluid.version = "Infusion 6.7.10";`
+ - The versions of the packages beneath packages/, e.g. wend and wend-theme-beautiful, are each bumped in its own
+   package.json and in its entry in the root package-lock.json, and the extension's in extension/edit-in-infusion/manifest.json
+
 ## Commit messages
  - Name each issue resolved by its FLUID ID in the title, e.g. FLUID-7003, and close it with a closing keyword placed immediately before its GitHub reference, e.g. Resolves #3 or Resolves fluid-project/infusion-6#3. The FLUID ID is 7000 plus the GitHub issue number
  - GitHub closes an issue only when a keyword - close, closes, closed, fix, fixes, fixed, resolve, resolves or resolved - directly precedes its reference. A bare reference, e.g. FLUID-7003 (fluid-project/infusion-6#3), only links the commit to the issue, as does one separated from its keyword, e.g. Resolves FLUID-7003 (fluid-project/infusion-6#3)
