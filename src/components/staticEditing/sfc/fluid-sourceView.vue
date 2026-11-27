@@ -124,6 +124,25 @@ fluid.sourceView.headingOptions = function (site, pathPart) {
     }));
 };
 
+// The nodes of the source's syntax tree within which nothing is completed - code, whether markdown's or an SFC's scripts
+// and styles, which only quotes what a link, a widget's element or a template's reference would be elsewhere
+fluid.sourceView.codeNodes = new Set(["FencedCode", "CodeBlock", "InlineCode", "CodeText", "ScriptText", "StyleText", "Script", "Style", "StyleSheet"]);
+
+/**
+ * Determine whether the position completed stands within code, as the source's syntax tree parses it
+ * @param {Object} context - CodeMirror's completion context
+ * @return {Boolean} `true` if it does
+ */
+fluid.sourceView.inCode = function (context) {
+    let node = fluid.sourceView.CM.syntaxTree(context.state).resolveInner(context.pos, -1);
+    let togo = false;
+    while (node && !togo) {
+        togo = fluid.sourceView.codeNodes.has(node.name);
+        node = node.parent;
+    }
+    return togo;
+};
+
 /**
  * Make the source of completions for the destinations of markdown links and images - `[text](` offers the site's
  * pages, by title, and `![alt](` its images; after a "#", e.g. `[text](#` or `[text](/post/x/#`, the headings of
@@ -136,7 +155,7 @@ fluid.sourceView.headingOptions = function (site, pathPart) {
  */
 fluid.sourceView.linkCompletions = function (getSite) {
     return function (context) {
-        const match = context.matchBefore(/(!?)\[[^\]\n]*\]\(([^)\s]*)$/);
+        const match = fluid.sourceView.inCode(context) ? null : context.matchBefore(/(!?)\[[^\]\n]*\]\(([^)\s]*)$/);
         const site = getSite();
         let togo = null;
         if (match && site) {
@@ -178,7 +197,7 @@ fluid.sourceView.linkCompletions = function (getSite) {
 fluid.sourceView.layerCompletions = function (getSite) {
     return function (context) {
         // Within the attribute's quotes, after any layers already named - the name being typed is completed
-        const match = context.matchBefore(/\sfluid-layers\s*=\s*"[^"\n]*$/);
+        const match = fluid.sourceView.inCode(context) ? null : context.matchBefore(/\sfluid-layers\s*=\s*"[^"\n]*$/);
         const site = match ? getSite() : null;
         let togo = null;
         if (match && site && site.widgetLayers) {
@@ -204,7 +223,7 @@ fluid.sourceView.layerCompletions = function (getSite) {
  */
 fluid.sourceView.templateCompletions = function (getScope) {
     return function (context) {
-        const match = context.matchBefore(/@\{(?:\{[\w.$-]*\}?\.?)?[\w.$-]*$/);
+        const match = fluid.sourceView.inCode(context) ? null : context.matchBefore(/@\{(?:\{[\w.$-]*\}?\.?)?[\w.$-]*$/);
         const scope = match ? getScope() : null;
         let togo = null;
         if (match && scope) {
@@ -537,7 +556,7 @@ fluid.sourceView.unbind = function (that) {
    with its other controls, the editor scrolling within what it is left */
 .fluid-edit-source-view {
     flex: 1 1 0;
-    min-height: 80px;
+    min-height: 36px;
     display: flex;
     border: 1px solid #ccc;
     border-radius: 4px;
@@ -545,8 +564,10 @@ fluid.sourceView.unbind = function (that) {
     overflow: hidden;
 }
 
+/* Shrunk with the view, scrolling within it, rather than holding the height of its content */
 .fluid-edit-source-view .cm-editor {
     flex: 1;
+    min-height: 0;
     height: 100%;
     font-size: 13px;
 }

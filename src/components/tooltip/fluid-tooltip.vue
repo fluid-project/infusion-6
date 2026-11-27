@@ -1,3 +1,6 @@
+<!-- Tooltips which follow the pointer, placed by Popper lite. Popper is loaded as a global, as its UMD build defines it -->
+<script src="../../lib/popper/popper-lite.min.js" data-fl-scope="global"></script>
+<script>
 /*
 Copyright 2017-2026 Antranig Basman
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
@@ -74,7 +77,9 @@ fluid.tooltip.make = function (dokkument, global, className) {
     node.className = "fl-tooltip-holder" + (className ? " " + className : "");
     node.setAttribute("role", "tooltip");
     node.hidden = true;
-    (dokkument.body || dokkument.documentElement).appendChild(node);
+    // Held by the root element rather than the body, which may contain its paint, e.g. while a panel is docked beside it
+    // (see FluidEdit.css), and so clip, and place, a fixed element within its own box rather than the window
+    dokkument.documentElement.appendChild(node);
     const anchor = {
         pos: {x: 0, y: 0},
         getBoundingClientRect: () => {
@@ -111,9 +116,10 @@ fluid.tooltip.show = function (tooltip, text, pos) {
         if (node.textContent !== text) {
             node.textContent = text;
         }
-        // Kept beside the page's last element, e.g. one appended after it was made, so that it is drawn over it
-        if (node.nextSibling) {
-            node.parentNode.appendChild(node);
+        // Restored should the page have removed it, e.g. as its tree booted over the root element, and kept after the
+        // root's last element, e.g. a panel appended after it was made, so that it is drawn over it
+        if (!node.isConnected || node.nextElementSibling) {
+            node.ownerDocument.documentElement.appendChild(node);
         }
         node.hidden = false;
         tooltip.anchor.pos = pos;
@@ -189,7 +195,8 @@ fluid.titleTooltips.bind = function (dokkument, scope, options = {}) {
     const record = {dokkument, tooltip, current: null, pos: null, timer: null, shown: false};
     const show = () => {
         record.shown = true;
-        fluid.tooltip.show(tooltip, record.current ? record.current.getAttribute("data-fl-title") : null, record.pos);
+        // Taken afresh, should the element have been rendered again since it was hovered, its title written back
+        fluid.tooltip.show(tooltip, record.current ? fluid.titleTooltips.take(record.current) : null, record.pos);
     };
     const leave = () => {
         clearTimeout(record.timer);
@@ -248,3 +255,59 @@ fluid.titleTooltips.unbind = function (record) {
     record.dokkument.removeEventListener("mousedown", record.leave, true);
     fluid.tooltip.destroy(record.tooltip);
 };
+</script>
+
+<script>
+// Shows the titles of the elements hovered within `titleScope` as tooltips placed by Popper, in place of the browser's -
+// see fluid.titleTooltips.bind. Those who manage their own lifecycle may call fluid.titleTooltips.bind directly
+fluid.def("fluid.titleTooltips", {
+    $layers: "fluid.component",
+    // Selector for the elements within which titles are shown as tooltips
+    titleScope: "body",
+    // A further class for the tooltip's element
+    tooltipClass: "",
+    tooltips: {
+        $bindable: {
+            bind: "fluid.titleTooltips.bindComponent({global}.document, {self}.titleScope, {self}.tooltipClass, {global})",
+            unbind: "fluid.titleTooltips.unbind({boundValue})"
+        }
+    }
+});
+
+/**
+ * Bind the tooltips of a fluid.titleTooltips component
+ * @param {Document} dokkument - The document
+ * @param {String} scope - Selector for the elements within which titles are shown
+ * @param {String} className - A further class for the tooltip's element
+ * @param {Object} global - The global object, supplying Popper
+ * @return {Object} A record of the listeners, as by `fluid.titleTooltips.bind`
+ */
+fluid.titleTooltips.bindComponent = (dokkument, scope, className, global) => fluid.titleTooltips.bind(dokkument, scope, {className, global});
+</script>
+
+<style>
+/* The element of a tooltip, placed by Popper at the pointer - it is held by the root element, outside the body, and drawn
+   over everything, panels docked beside the body included */
+.fl-tooltip-holder {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 2147483000;
+    max-width: 320px;
+    padding: 5px 8px;
+    background: #fff;
+    color: #222;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    font: 13px/1.35 system-ui, sans-serif;
+    /* A title may be broken over lines */
+    white-space: pre-line;
+    /* The tooltip follows the pointer, so must not intercept the events which drive it */
+    pointer-events: none;
+}
+
+.fl-tooltip-holder[hidden] {
+    display: none;
+}
+</style>

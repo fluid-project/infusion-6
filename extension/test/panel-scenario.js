@@ -83,8 +83,15 @@ harness.scenario("The editing panel's tabs, and Ask me anything", async function
     await post.evaluate(() => {
         document.querySelector(".fluid-edit-ai").setAttribute("data-test-made", "once");
     });
+    // Closed just after its bar was dragged, it slides closed downwards, what edits the page growing as it slides
+    const mainOf = () => post.$eval(".fluid-edit-main", node => node.getBoundingClientRect().height);
+    const mainBefore = await mainOf();
     await post.click(".fluid-edit-ai-toggle");
+    await new Promise(resolve => setTimeout(resolve, 110));
+    const mainSliding = await mainOf();
     await post.waitForFunction(() => document.querySelector(".fluid-edit-ai").hidden, {timeout: 5000});
+    expect(mainSliding > mainBefore + 20, "As it slides closed after its bar was dragged, what edits the page grows into its place: " +
+        mainBefore + " -> " + mainSliding);
     expect(true, "The sparkles withdraw it");
     const mainHeight = await post.$eval(".fluid-edit-main", node => node.getBoundingClientRect().height);
     const panelHeight = await post.$eval(".fluid-edit-panel", node => node.getBoundingClientRect().height);
@@ -126,9 +133,11 @@ harness.scenario("The editing panel's tabs, and Ask me anything", async function
     const buttonsInView = () => post.evaluate(() => {
         const button = document.querySelector(".fluid-edit-commit").getBoundingClientRect();
         const main = document.querySelector(".fluid-edit-main").getBoundingClientRect();
-        return button.height > 0 && button.top >= main.top && button.bottom <= main.bottom + 1;
+        const editor = document.querySelector(".fluid-edit-source-view").getBoundingClientRect();
+        // In view, and beneath the editor rather than over it
+        return button.height > 0 && button.top >= main.top && button.bottom <= main.bottom + 1 && button.top >= editor.bottom - 1;
     });
-    expect(await buttonsInView(), "The Commit button is in view");
+    expect(await buttonsInView(), "The Commit button is in view, beneath the editor");
     // The bar dragged far up shrinks the editor, never hiding the Commit button
     const high = await post.$eval(".fluid-edit-ai-bar", node => {
         const rect = node.getBoundingClientRect();

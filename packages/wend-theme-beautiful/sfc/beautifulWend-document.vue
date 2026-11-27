@@ -7,7 +7,10 @@
 // Each such layer re-targets the slots below (header, main, footer, ...) - see packages/wend-theme-beautiful/sfc/kinds/.
 fluid.def("beautifulWend.document", {
     $layers: ["fluid.component", "{self}.pageLayers"],
-    pageLayers: "$compute:beautifulWend.document.pageLayers({self}.page.kind, {self}.page.type)",
+    pageLayers: "$compute:beautifulWend.document.pageLayers({self}.page.kind, {self}.page.type, {self}.features)",
+    // The switches of the features which a page may have of its own - the site's `features`, overridden by any in the
+    // page's front matter, e.g. `features: {katex: true}` - see beautifulWend.document.pageFeatures
+    features: "$compute:beautifulWend.document.features({site}.features, {self}.page.params)",
 
     // Renders into an output document of its own, whose documentElement is the container. Its
     // location is the page's URL, so that on the client, which renders into its own document only, the view renders
@@ -25,7 +28,6 @@ fluid.def("beautifulWend.document", {
     // by the ordinary merge rules - see beautifulWend.document.selfHosted and beautifulWend.document.hljs.
     // Each $for over them orders them by `priority`, higher first, as Infusion's priorities do
     stylesheets: {
-        katex: {priority: 990, href: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.css"},
         fontawesome: {priority: 980, href: "https://use.fontawesome.com/releases/v5.5.0/css/all.css"},
         bootstrap: {priority: 970, href: "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css"},
         main: {priority: 960, href: "/css/main.css"},
@@ -37,14 +39,12 @@ fluid.def("beautifulWend.document", {
     // The site's former /js/ponder.js, which added an anchor to each heading once the page had loaded, is gone - the
     // anchors of content's headings are rendered by its markdown pipeline (packages/wend/js/markdown.js)
     headScripts: {},
-    footerScripts: {
-        katex: {priority: 990, src: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.js", defer: true},
-        katexAutoRender: {
-            priority: 980,
-            src: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/contrib/auto-render.min.js",
-            defer: true,
-            onload: "renderMathInElement(document.body);"
-        }
+    footerScripts: {},
+    // The URLs of KaTeX's assets, which beautifulWend.document.katex adds while the site's `features.katex` is set
+    katexAssets: {
+        css: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.css",
+        js: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/katex.min.js",
+        autoRender: "https://cdn.jsdelivr.net/npm/katex@0.16.7/dist/contrib/auto-render.min.js"
     },
 
     head: {
@@ -86,15 +86,36 @@ fluid.def("beautifulWend.document", {
     }
 });
 
+// The features which a page may switch for itself, each by the adaptation layer beautifulWend.document.<feature>. Other
+// features, e.g. selfHosted, are the whole site's, each switched by a holder of beautifulWend.site
+beautifulWend.document.pageFeatures = ["katex", "hljs"];
+
 /**
- * Compute the dynamic layers for a page from its kind and type - the analogue of Hugo's template lookup order. Of the
- * candidates, those which are defined are applied. A type layer applies only to a single page.
+ * Compute the switches of a page's features - the site's, overridden by those of the page's front matter
+ * @param {Object} siteFeatures - The site's `features`, from wend.json
+ * @param {Object} params - The page's front matter, whose `features`, if any, override the site's
+ * @return {Object<String, Boolean>} Whether each of beautifulWend.document.pageFeatures is switched on for the page
+ */
+beautifulWend.document.features = function (siteFeatures, params) {
+    const pageFeatures = params.features ?? {};
+    // A switch is set only by a Boolean - one missing from the page's front matter, or from the site's features, which
+    // are a reactive root, leaves the feature to the site's switch, or off
+    const switched = (switches, feature) => typeof(switches?.[feature]) === "boolean" ? switches[feature] : undefined;
+    return Object.fromEntries(beautifulWend.document.pageFeatures.map(feature =>
+        [feature, (switched(pageFeatures, feature) ?? switched(siteFeatures, feature)) === true]));
+};
+
+/**
+ * Compute the dynamic layers for a page from its features, kind and type - the last two the analogue of Hugo's template
+ * lookup order. Of the candidates, those which are defined are applied. A type layer applies only to a single page.
  * @param {String} kind - Hugo's page kind - "home", "section", "page", "taxonomy", "term" or "404"
  * @param {String} type - The page's content type, e.g. "post", "page", "wip", "infusion-docs"
+ * @param {Object<String, Boolean>} features - The page's features, as computed by beautifulWend.document.features
  * @return {String[]} The names of the dynamic layers to apply, most specific, and hence strongest, last
  */
-beautifulWend.document.pageLayers = function (kind, type) {
-    return fluid.definedLayers("beautifulWend.kind." + kind, kind === "page" ? "beautifulWend.type." + type : []);
+beautifulWend.document.pageLayers = function (kind, type, features) {
+    const featureLayers = Object.keys(features).filter(feature => features[feature]).map(feature => "beautifulWend.document." + feature);
+    return fluid.definedLayers(featureLayers, "beautifulWend.kind." + kind, kind === "page" ? "beautifulWend.type." + type : []);
 };
 
 </script>

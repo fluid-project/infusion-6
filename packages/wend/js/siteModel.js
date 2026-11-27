@@ -127,16 +127,31 @@ wend.siteModel.summarise = function (html) {
 };
 
 /**
- * Strip markup from HTML
+ * Strip markup from HTML - its text, as parsed, less that of any script or style element, with a space wherever an
+ * element begins or ends, so that the words of adjacent blocks are not run together
  * @param {String} html - Some HTML
- * @return {String} Its text, with runs of whitespace collapsed
+ * @return {String} Its text, with runs of whitespace collapsed - text, not markup, its character references decoded by
+ * parsing, so that wherever it is written, e.g. into an attribute, it is escaped once, as the browser escapes it
  */
 wend.siteModel.plainText = function (html) {
-    const text = html.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    // Text, not markup - its entities are decoded, so that wherever it is written, e.g. into an attribute, it is
-    // escaped once, as the browser escapes it on the client
-    return wend.siteModel.decodeEntities(text);
+    const holder = wend.siteModel.textDocument.createElement("div");
+    holder.innerHTML = html;
+    const parts = [];
+    const visit = node => {
+        if (node.nodeType === 3) {
+            parts.push(node.nodeValue);
+        } else if (node.nodeType === 1 && !["script", "style"].includes(node.tagName.toLowerCase())) {
+            parts.push(" ");
+            [...node.childNodes].forEach(visit);
+            parts.push(" ");
+        }
+    };
+    [...holder.childNodes].forEach(visit);
+    return parts.join("").replace(/\s+/g, " ").trim();
 };
+
+// The document in which HTML is parsed for its text
+wend.siteModel.textDocument = parseHTML("<!DOCTYPE html><html><body></body></html>").document;
 
 /**
  * Escape text for HTML
@@ -145,20 +160,6 @@ wend.siteModel.plainText = function (html) {
  */
 wend.siteModel.escapeHTML = function (text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-};
-
-// The named entities which the markdown pipeline writes
-wend.siteModel.namedEntities = {amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: "\u00a0"};
-
-/**
- * Decode the character references in text extracted from HTML
- * @param {String} text - The text
- * @return {String} The text with each `&name;`, `&#n;` and `&#xh;` replaced by its character
- */
-wend.siteModel.decodeEntities = function (text) {
-    return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, ref) => ref[0] === "#" ?
-        String.fromCodePoint(ref[1].toLowerCase() === "x" ? parseInt(ref.substring(2), 16) : +ref.substring(1)) :
-        wend.siteModel.namedEntities[ref.toLowerCase()] ?? match);
 };
 
 /**
@@ -312,8 +313,11 @@ wend.siteModel.load = function (siteDir) {
     const homeIndex = wend.siteModel.splitFrontMatter(fs.readFileSync(wendSite.resolve("content/_index.md"), "utf8"));
     const mainSections = config.mainSections ?? ["post"];
     const home = wend.siteModel.paginate(listPage("home", config.title, "/", {
-        content: markdown.render(homeIndex.body)
+        content: wendMarkdown.renderBody(markdown, homeIndex.body)
     }), regular.filter(page => mainSections.includes(page.type)), pagerSize);
+    // The first page of the home page shows its own content, content/_index.md, as a regular page shows its source, so
+    // that it may be edited in place - see `source` in trace.js's provenance record
+    home[0].sourcePath = "content/_index.md";
 
     const sectionLists = Object.entries(sections).filter(([section]) => section)
         .flatMap(([section, sectionPages]) =>

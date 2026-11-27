@@ -169,6 +169,8 @@ const fluidPTFScope = function (fluid) {
      * @property {PTFPart[]} [parts] - For a part which is itself a multipart entity, its nested parts. When encoding, these
      * are supplied in place of `body`
      * @property {Object<String, String>} [headers] - All headers of a decoded part, keyed by lower-cased header name
+     * @property {String} [target] - The part's `Target` header, naming what it acts on, e.g. "selection:s1" - written on
+     * encoding, and read on decoding
      */
 
     /**
@@ -402,6 +404,7 @@ const fluidPTFScope = function (fluid) {
             `Content-Type: ${encoded[i].contentType}\n` +
             `Content-Disposition: attachment; filename=${JSON.stringify(part.filename)}\n` +
             `Content-Description: ${part.kind}\n` +
+            (part.target ? `Target: ${part.target}\n` : "") +
             "\n" +
             // The line break preceding each delimiter belongs to the delimiter rather than the body
             encoded[i].body + "\n"
@@ -548,6 +551,9 @@ const fluidPTFScope = function (fluid) {
                 body: split.body,
                 headers: split.headers
             };
+            if (split.headers.target) {
+                part.target = split.headers.target.trim();
+            }
             if (contentType.value.startsWith("multipart/") && contentType.params.boundary) {
                 part.parts = fluid.ptf.decodeBody(split.body, contentType.params.boundary);
             }

@@ -56,8 +56,10 @@ fluid.registerNamespace("fluid.ai.arena");
  * @property {Object<String, Function>} [nestedParts] - Planners of the host's own kinds of part within a component
  * part, each accepting the part, the {WidgetChange} it belongs to, where it was found, and the problems
  * @property {Function} [initChange] - Initialises the host's members of a fresh {WidgetChange}
- * @property {Function} [planWorkspacePart] - Accepts a top-level part of a kind not otherwise known, and the plan, and
- * returns `true` if it has planned it, e.g. by rejecting it
+ * @property {Object<String, PartKind>} [kinds] - The host's own kinds of top-level part, by the Content-Description
+ * which names them, merged with Infusion's own `fluid.ai.arena.partKinds` - e.g. a refusal of a part it sends
+ * @property {Object<String, TargetScheme>} [targets] - The host's own schemes of target of `patch` and `replace`
+ * parts, merged with Infusion's own `fluid.ai.arena.targetSchemes` - e.g. the user's selection
  * @property {Function} [notWidget] - Accepts the quoted id of something which can't hold a widget, and describes it
  */
 
@@ -79,12 +81,17 @@ the user's selection.`;
 
 fluid.ai.arena.responseRules = `## How to respond
 
-Your response must take EXACTLY ONE of the following two forms, and never mix them:
+Your response must take ONE of the following two forms:
 
 1. **Text addressed to the user**, for answering a question, explaining something, or asking for clarification if \
 their direction is ambiguous. Plain text or light markdown, containing no PTF document.
 2. **A single PTF document altering the workspace.** Your entire response is then the document, beginning with the \
-line \`MIME-Version: 1.0\` - write nothing before or after it, no commentary and no code fences.
+line \`MIME-Version: 1.0\` - write nothing before or after it, no commentary and no code fences. Anything you want \
+to say to the user alongside your changes goes in \`text\` parts of the document - see below.
+
+The outermost boundary of your document must be the one given with the user's direction, which changes with each \
+direction - a document with any other is refused. The boundary "outer-1" of the examples below stands in its place. \
+Nested documents choose their own boundaries, as before.
 
 A PTF document altering the workspace has the same form as the workspace document at the end of this prompt. Its top-level parts may be:
 
@@ -107,6 +114,23 @@ is created in the workspace. Its nested document must hold a potentia part for "
 construct, e.g. \`{"$layers": ["fluid.demos.counter"]}\`, and the layer must have \`fluid.topLevelWidget\` amongst \
 its layers, directly or through a parent layer.
 * \`delete\` parts, each with an empty body, whose filename is the id of a widget to be removed.
+* \`patch\` parts, each changing a text shown in the workspace without sending the whole of it - e.g. the \
+definition of a layer. Its \`Target\` header, following its Content-Description, names the text, e.g. \
+\`Target: layer:fluid.demos.counter\` - see the schemes of target listed below - its filename is any name, its \
+Content-Type \`text/plain; charset=utf-8\`, and its body one or more blocks of the form
+
+<<<<<<< SEARCH
+text copied exactly from the layer's definition as shown
+=======
+the text to stand in its place
+>>>>>>> REPLACE
+
+  each SEARCH text occurring exactly once in the text, with enough lines around what changes to make it so. \
+Prefer a patch to resending a long layer for a small change, and a \`layer\` part where most of it changes.
+* \`replace\` parts, whose body stands in place of the whole of the text their \`Target\` header names, for those \
+schemes of target which admit it.
+* \`text\` parts, Content-Type \`text/markdown; charset=utf-8\`, any filename, holding markdown addressed to the \
+user - e.g. a short account of what you changed and why, or a question. It is shown to the user beside your changes.
 
 In the workspace document, the \`component\` part of a widget in which problems have been found also holds a \
 \`problems\` part listing them - e.g. a reference which does not resolve, a template which cannot be rendered, or a \
@@ -249,7 +273,8 @@ A layer in the workspace may record the model, prompt and date from which it was
 block - in an SFC, as a block of its own, and in a \`text/javascript\` layer, in line comments at its end. The \
 workspace maintains these records itself - never write one, and leave any you find unchanged.
 
-If your document cannot be decoded or applied, you will be told what went wrong and asked to send a corrected one.`;
+If your document cannot be decoded or applied, you will be told what was applied, what went wrong, and asked to send \
+a corrected document holding only what is still required.`;
 
 fluid.ai.arena.strategyHints = `## Strategy hints
 
@@ -387,8 +412,9 @@ fluid.ai.arena.systemPrompt.compose = function (prompt, docs, workspace, host = 
     const library = libraryLayers.length === 0 ? "" :
         "\n\nThe following further widget layers are available to be instantiated, but are not currently in the workspace:\n\n"
             + fluid.ai.arena.layersToPTF(libraryLayers);
+    const stanzas = {...prompt.stanzas, partKinds: {order: 31, text: fluid.ai.arena.kindsStanza(host)}};
     return [
-        fluid.ai.arena.systemPrompt.assemble(prompt.stanzas, docs),
+        fluid.ai.arena.systemPrompt.assemble(stanzas, docs),
         fluid.ai.arena.workspaceHeading + "\n\n" + prompt.workspaceCaption + "\n\n" + fluid.ai.arena.workspaceToPTF(workspace, host) + library,
         "# The user's selection\n\n" + fluid.ai.arena.describeSelection(workspace, host)
     ].join("\n\n");
@@ -452,6 +478,25 @@ fluid.ai.arena.workspaceToPTF = function (workspace, host = fluid.ai.arena.defau
 };
 
 /**
+ * The layer parts which the system prompt shows the AI - those of the workspace's widgets, followed by those of the
+ * further layers available to be instantiated - which it may patch
+ * @param {Workspace} workspace - The workspace
+ * @param {ArenaHost} [host] - What the arena's host contributes to the document
+ * @return {Map<String, PTFPart>} The layer parts, by layer name
+ */
+fluid.ai.arena.shownLayerParts = function (workspace, host = fluid.ai.arena.defaultHost) {
+    const layerParts = new Map();
+    workspace.widgets.filter(widget => widget.component).forEach(widget => {
+        (host.componentParts || fluid.ai.arena.defaultHost.componentParts)(widget).filter(part => part.kind === "layer")
+            .forEach(part => layerParts.set(part.filename, part));
+    });
+    (workspace.availableLayers || []).filter(layerName => !layerParts.has(layerName)).forEach(layerName => {
+        layerParts.set(layerName, fluid.ptf.layerToPart(layerName));
+    });
+    return layerParts;
+};
+
+/**
  * Describe the user's current selection in terms of the widgets of the workspace, and whatever else its host holds
  * @param {Workspace} workspace - The workspace
  * @param {ArenaHost} [host] - What the arena's host contributes - its noun for what may be selected, and the
@@ -501,17 +546,51 @@ fluid.ai.arena.workspaceHeading = "# The workspace";
 
 
 /**
- * Assemble the message reporting back to the AI that its response could not be applied
+ * Assemble the message reporting back to the AI that its response could not be fully applied - what of it was applied,
+ * and what went wrong
  * @param {String[]} problems - Descriptions of what went wrong
+ * @param {String[]} [results] - Descriptions of the changes which were applied
+ * @param {String} [boundary] - The boundary which the corrected document must use
  * @return {ChatMessage} The message to be sent
  */
-fluid.ai.arena.repairMessage = function (problems) {
+fluid.ai.arena.repairMessage = function (problems, results = [], boundary) {
+    const applied = results.length === 0 ? "Nothing of your response was applied to the workspace." :
+        "These changes of your response were applied to the workspace, and have been kept:\n\n" + results.map(result => "* " + result).join("\n");
     return {
         role: "user",
-        content: "Your response could not be fully applied to the workspace:\n\n" + problems.map(problem => "* " + problem).join("\n")
-            + "\n\nPlease respond again with a corrected PTF document, following the same rules. The changes which "
-            + "were applied have been kept, so send only what is still required."
+        content: applied + "\n\nBut these problems were found:\n\n" + problems.map(problem => "* " + problem).join("\n")
+            + "\n\nPlease respond again with a corrected PTF document, following the same rules, holding only what is "
+            + "still required." + (boundary ? " " + fluid.ai.arena.boundaryAdvice(boundary) : "")
     };
+};
+
+/**
+ * Allocate the boundary which the document of a response must use - a fresh one for each direction, so that no
+ * document quoted in the workspace, or in an earlier response, can be taken for the response
+ * @return {String} The boundary
+ */
+fluid.ai.arena.issueBoundary = function () {
+    return "reply-" + Math.random().toString(36).substring(2, 10);
+};
+
+/**
+ * Tell the AI the boundary its document must use
+ * @param {String} boundary - The boundary
+ * @return {String} The advice
+ */
+fluid.ai.arena.boundaryAdvice = function (boundary) {
+    return `If you respond with a PTF document, its outermost boundary must be "${boundary}", i.e. its Content-Type `
+        + `header is \`multipart/mixed; boundary="${boundary}"\`.`;
+};
+
+/**
+ * The boundary declared by a document's Content-Type
+ * @param {String} text - Text beginning with a PTF document, with LF line endings
+ * @return {String|undefined} The boundary, if one is declared
+ */
+fluid.ai.arena.documentBoundary = function (text) {
+    const {headers} = fluid.ptf.splitHeaders(text);
+    return fluid.ptf.parseHeaderValue(headers["content-type"]).params.boundary;
 };
 
 // Matches the line beginning a PTF document anywhere in a response
@@ -520,20 +599,26 @@ const ptfStartRE = /^[ \t]*MIME-Version:/im;
 /**
  * Interpret a response from the AI. A response is taken to be a PTF document if any line of it begins with
  * `MIME-Version:`, in which case any text before that line and after the document's close delimiter, such as code
- * fences or commentary in violation of the rules, is discarded.
+ * fences or commentary in violation of the rules, is discarded. Should a boundary have been issued for the response,
+ * a document with any other is refused.
  * @param {String} raw - The content of the AI's response
+ * @param {String} [boundary] - The boundary issued for the response, which its document must use
  * @return {AIResponse} The interpreted response
  */
-fluid.ai.arena.parseResponse = function (raw) {
+fluid.ai.arena.parseResponse = function (raw, boundary) {
     const text = fluid.ai.stripReasoning(raw);
     const match = ptfStartRE.exec(text);
     let togo;
     if (match) {
         const documentText = fluid.ai.arena.trimDocument(text.substring(match.index).replace(/\r\n/g, "\n"));
         const parts = fluid.ptf.decode(documentText);
+        const declared = fluid.isUnavailable(parts) ? undefined : fluid.ai.arena.documentBoundary(documentText);
         if (fluid.isUnavailable(parts)) {
             togo = {type: "invalid", text, error: "Your response begins a MIME document but is not a valid PTF document - "
                 + "check that its Content-Type header is multipart/mixed and declares a boundary"};
+        } else if (boundary && declared !== boundary) {
+            togo = {type: "invalid", text, error: `Your PTF document's outermost boundary is ${JSON.stringify(declared)} `
+                + "rather than the one given with the direction, so it was refused. " + fluid.ai.arena.boundaryAdvice(boundary)};
         } else if (parts.length === 0) {
             togo = {type: "invalid", text, error: "Your PTF document has no parts - check that each part begins with a "
                 + "delimiter line consisting of two hyphens followed by the boundary declared in the Content-Type header"};
@@ -585,6 +670,7 @@ fluid.ai.arena.trimDocument = function (text) {
  * @property {WidgetChange[]} updates - Changes to existing widgets
  * @property {WidgetChange[]} creations - Fresh widgets to be created
  * @property {String[]} deletions - The ids of the widgets, or other items of the workspace, to be deleted
+ * @property {String[]} texts - The bodies of the text parts, addressed to the user
  * @property {String[]} problems - Descriptions of any parts which were rejected
  */
 
@@ -677,49 +763,303 @@ fluid.ai.arena.hasTemplateConflict = function (part) {
 };
 
 /**
+ * What is known in planning the parts of a document sent by the AI
+ * @typedef {Object} PlanContext
+ * @property {String[]} widgetIds - The ids of the widgets currently in the workspace
+ * @property {String[]} otherIds - The ids of anything else in the workspace which may be deleted
+ * @property {ArenaHost} host - The arena's host
+ * @property {String} noun - The host's noun for what may be selected and deleted
+ * @property {Map<String, PTFPart>} layerParts - The layer parts shown to the AI, by layer name, which it may patch
+ */
+
+/**
+ * A kind of top-level part of a document sent by the AI, named by its Content-Description
+ * @typedef {Object} PartKind
+ * @property {String} [rule] - A line describing the kind, listed in the system prompt amongst those which may be sent
+ * @property {Function} [plan] - Accepts the part, the {ChangePlan} and the {PlanContext}, and plans the part, reporting
+ * any problems in the plan's
+ * @property {String} [refusal] - In place of `plan` and `rule`, for a kind which the AI is shown but may not send,
+ * the problem reported should it send one
+ */
+
+/**
+ * A scheme of the targets which `patch` and `replace` parts name in their `Target` header, e.g. `layer:my.layer`
+ * @typedef {Object} TargetScheme
+ * @property {String} rule - What the scheme's ids name, listed in the system prompt
+ * @property {Object<String, Function>} ops - The planner of each operation the scheme's targets admit, "patch" or
+ * "replace", accepting the target's id, the part, the {ChangePlan} and the {PlanContext}
+ */
+
+// The schemes of target known to every arena. A host adds its own - see `targets` of ArenaHost
+fluid.ai.arena.targetSchemes = {
+    layer: {
+        rule: "the definition of a layer shown in the workspace, by its name - to send a fresh definition whole, use a `layer` part",
+        ops: {
+            patch: (id, part, plan, context) => fluid.ai.arena.planLayerPatch(id, part, plan, context)
+        }
+    }
+};
+
+/**
+ * The schemes of target known to an arena - Infusion's own, with its host's
+ * @param {ArenaHost} [host] - The arena's host
+ * @return {Object<String, TargetScheme>} The schemes, by name
+ */
+fluid.ai.arena.targetsOf = function (host = fluid.ai.arena.defaultHost) {
+    return {...fluid.ai.arena.targetSchemes, ...host.targets};
+};
+
+/**
+ * Plan a `patch` or `replace` part, by the scheme of the target its `Target` header names
+ * @param {String} op - The operation, "patch" or "replace"
+ * @param {PTFPart} part - The part
+ * @param {ChangePlan} plan - The plan
+ * @param {PlanContext} context - What is known in planning
+ */
+fluid.ai.arena.planTargeted = function (op, part, plan, context) {
+    const schemes = fluid.ai.arena.targetsOf(context.host);
+    const target = part.target || "";
+    const colon = target.indexOf(":");
+    const schemeName = colon === -1 ? target : target.substring(0, colon);
+    const scheme = Object.hasOwn(schemes, schemeName) ? schemes[schemeName] : null;
+    const examples = Object.keys(schemes).map(name => name + ":...").join(", ");
+    if (!target) {
+        plan.problems.push(`The ${op} part with filename ${JSON.stringify(part.filename)} has no Target header naming what it `
+            + `changes - one of ${examples}`);
+    } else if (!scheme || colon === -1) {
+        plan.problems.push(`The ${op} part's Target ${JSON.stringify(target)} is not of a known scheme - expected one of ${examples}`);
+    } else if (!scheme.ops[op]) {
+        plan.problems.push(`A ${schemeName} target cannot be changed by a ${op} part - only by `
+            + Object.keys(scheme.ops).join(" or ") + ` - see the rule for ${schemeName} targets`);
+    } else {
+        scheme.ops[op](target.substring(colon + 1), part, plan, context);
+    }
+};
+
+// The kinds of top-level part which the AI may send to any arena, by their Content-Description, in the order in
+// which they are listed in the prompt. A host adds its own - see `kinds` of ArenaHost
+fluid.ai.arena.partKinds = {
+    layer: {
+        rule: "a layer's whole definition, replacing any existing one",
+        plan: (part, plan) => {
+            if (fluid.ai.arena.checkLayerPart(part, "at the top level", plan.problems)) {
+                plan.layers.push(part);
+            }
+        }
+    },
+    patch: {
+        rule: "search/replace blocks changing the text its `Target` header names",
+        plan: (part, plan, context) => fluid.ai.arena.planTargeted("patch", part, plan, context)
+    },
+    replace: {
+        rule: "the text to stand in place of the whole of what its `Target` header names",
+        plan: (part, plan, context) => fluid.ai.arena.planTargeted("replace", part, plan, context)
+    },
+    component: {
+        rule: "a nested document creating, replacing or changing a widget",
+        plan: (part, plan, context) => {
+            const change = fluid.ai.arena.planWidgetChange(part, context.widgetIds, context.otherIds, plan.problems, context.host);
+            if (change && context.widgetIds.includes(part.filename)) {
+                plan.updates.push(change);
+            } else if (change) {
+                plan.creations.push(change);
+            }
+        }
+    },
+    delete: {
+        rule: "the removal of the item whose id is its filename",
+        plan: (part, plan, context) => {
+            if (context.widgetIds.includes(part.filename) || context.otherIds.includes(part.filename)) {
+                plan.deletions.push(part.filename);
+            } else {
+                plan.problems.push(`The delete part with filename ${JSON.stringify(part.filename)} does not name a ${context.noun} in the workspace`);
+            }
+        }
+    },
+    text: {
+        rule: "markdown addressed to the user, shown beside your changes",
+        plan: (part, plan) => {
+            plan.texts.push(part.body);
+        }
+    },
+    problems: {
+        refusal: "A problems part cannot be sent - it is how the workspace reports the problems it finds in a widget"
+    }
+};
+
+/**
+ * The kinds of top-level part known to an arena - Infusion's own, with its host's
+ * @param {ArenaHost} [host] - The arena's host
+ * @return {Object<String, PartKind>} The kinds, by Content-Description
+ */
+fluid.ai.arena.kindsOf = function (host = fluid.ai.arena.defaultHost) {
+    return {...fluid.ai.arena.partKinds, ...host.kinds};
+};
+
+/**
+ * The stanza of the system prompt listing the kinds of top-level part which may be sent, as the arena's planning
+ * knows them, so that the prompt can't disagree with what is accepted
+ * @param {ArenaHost} [host] - The arena's host
+ * @return {String} The stanza's text
+ */
+fluid.ai.arena.kindsStanza = function (host) {
+    const kinds = fluid.ai.arena.kindsOf(host);
+    const sendable = Object.keys(kinds).filter(name => !kinds[name].refusal);
+    const schemes = fluid.ai.arena.targetsOf(host);
+    return "## The kinds of top-level part\n\nThe Content-Description of each top-level part of your document must be one of:\n\n"
+        + sendable.map(name => `* \`${name}\` - ${kinds[name].rule}`).join("\n")
+        + "\n\nThe `Target` header of a `patch` or `replace` part, following its Content-Description, is a scheme and an id, "
+        + "e.g. `Target: layer:fluid.demos.counter`. The schemes are:\n\n"
+        + Object.keys(schemes).map(name => `* \`${name}:\` - ${schemes[name].rule} - by ${Object.keys(schemes[name].ops).join(" or ")}`).join("\n");
+};
+
+/**
  * Plan the changes to the workspace described by a PTF document sent by the AI, checking each of its parts. Parts
  * which fail their checks are omitted from the plan and their problems reported, so that the remainder can be applied.
+ * Each part is planned by its kind, as `fluid.ai.arena.kindsOf` gives them.
  * @param {PTFPart[]} parts - The decoded parts of the document
  * @param {String[]} widgetIds - The ids of the widgets currently in the workspace
  * @param {String[]} [otherIds] - The ids of anything else in the workspace which may be deleted, e.g. the native shapes
  * of a canvas, which can't hold a widget
  * @param {ArenaHost} [host] - What the arena's host contributes to planning - its own kinds of part
+ * @param {Map<String, PTFPart>} [layerParts] - The layer parts shown to the AI, by layer name, which it may patch
  * @return {ChangePlan} The planned changes
  */
-fluid.ai.arena.planChanges = function (parts, widgetIds, otherIds = [], host = fluid.ai.arena.defaultHost) {
-    const plan = {layers: [], updates: [], creations: [], deletions: [], problems: []};
-    const problems = plan.problems;
-    const noun = host.itemNoun || fluid.ai.arena.defaultHost.itemNoun;
+fluid.ai.arena.planChanges = function (parts, widgetIds, otherIds = [], host = fluid.ai.arena.defaultHost, layerParts = new Map()) {
+    const plan = {layers: [], updates: [], creations: [], deletions: [], texts: [], problems: []};
+    const kinds = fluid.ai.arena.kindsOf(host);
+    const context = {widgetIds, otherIds, host, layerParts, noun: host.itemNoun || fluid.ai.arena.defaultHost.itemNoun};
+    const sendable = Object.keys(kinds).filter(name => !kinds[name].refusal);
     parts.forEach(part => {
-        const name = JSON.stringify(part.filename);
-        if (part.kind === "layer") {
-            if (fluid.ai.arena.checkLayerPart(part, "at the top level", problems)) {
-                plan.layers.push(part);
-            }
-        } else if (part.kind === "delete") {
-            if (widgetIds.includes(part.filename) || otherIds.includes(part.filename)) {
-                plan.deletions.push(part.filename);
-            } else {
-                problems.push(`The delete part with filename ${name} does not name a ${noun} in the workspace`);
-            }
-        } else if (part.kind === "component") {
-            const change = fluid.ai.arena.planWidgetChange(part, widgetIds, otherIds, problems, host);
-            if (change && widgetIds.includes(part.filename)) {
-                plan.updates.push(change);
-            } else if (change) {
-                plan.creations.push(change);
-            }
-        } else if (host.planWorkspacePart && host.planWorkspacePart(part, plan)) {
-            // Planned by the host, e.g. a part describing a canvas
+        const kind = Object.hasOwn(kinds, part.kind) ? kinds[part.kind] : null;
+        if (kind && kind.refusal) {
+            plan.problems.push(kind.refusal);
+        } else if (kind) {
+            kind.plan(part, plan, context);
         } else if (fluid.ai.arena.isHeaderlessPart(part)) {
-            problems.push("Your document holds a part with no headers. " + fluid.ai.arena.headerlessPartAdvice);
+            plan.problems.push("Your document holds a part with no headers. " + fluid.ai.arena.headerlessPartAdvice);
         } else {
-            problems.push(`The part with filename ${name} has unrecognised kind ${JSON.stringify(part.kind)} in its `
-                + "Content-Description - expected layer, component or delete");
+            plan.problems.push(`The part with filename ${JSON.stringify(part.filename)} has unrecognised kind ${JSON.stringify(part.kind)} in its `
+                + "Content-Description - expected one of " + sendable.join(", "));
         }
     });
     fluid.ai.arena.checkTopLevelWidget(parts, plan);
     return plan;
+};
+
+/**
+ * Determine whether a document sent by the AI changes anything, rather than only holding text for the user
+ * @param {PTFPart[]} parts - The document's parts
+ * @return {Boolean} `true` if any part is of a kind other than `text`
+ */
+fluid.ai.arena.isActing = function (parts) {
+    return parts.some(part => part.kind !== "text");
+};
+
+// The lines delimiting a block of a patch part
+fluid.ai.arena.patchMarkers = ["<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"];
+
+/**
+ * Read the blocks of a patch part's body
+ * @param {String} body - The body, one or more blocks each of a SEARCH text and its replacement - see patchMarkers
+ * @return {Object[]|null} The blocks, each `{search, replace}`, or null if the body is not a sequence of whole blocks
+ */
+fluid.ai.arena.parsePatch = function (body) {
+    const [open, divider, close] = fluid.ai.arena.patchMarkers;
+    const blocks = [];
+    let block = null, state = "outside", malformed = false;
+    body.replace(/\r\n/g, "\n").split("\n").forEach(line => {
+        const trimmed = line.trim();
+        if (state === "outside") {
+            if (trimmed === open) {
+                block = {search: [], replace: []};
+                state = "search";
+            } else if (trimmed !== "") {
+                malformed = true;
+            }
+        } else if (state === "search") {
+            if (trimmed === divider) {
+                state = "replace";
+            } else {
+                block.search.push(line);
+            }
+        } else if (trimmed === close) {
+            blocks.push({search: block.search.join("\n"), replace: block.replace.join("\n")});
+            state = "outside";
+        } else {
+            block.replace.push(line);
+        }
+    });
+    return state === "outside" && !malformed && blocks.length > 0 ? blocks : null;
+};
+
+/**
+ * Apply the blocks of a patch to a text, each in turn. Each SEARCH text must occur exactly once in the text as it then
+ * stands, and is replaced there.
+ * @param {String} text - The text to be patched
+ * @param {Object[]} blocks - The blocks, as read by `fluid.ai.arena.parsePatch`
+ * @param {String} name - The quoted name of what is patched, for any problem reported
+ * @param {String[]} problems - Accumulates descriptions of any blocks which could not be applied
+ * @return {String|undefined} The patched text, or `undefined` if any block could not be applied
+ */
+fluid.ai.arena.applyPatch = function (text, blocks, name, problems) {
+    const initialCount = problems.length;
+    let patched = text.replace(/\r\n/g, "\n");
+    blocks.forEach((block, i) => {
+        const where = `Block ${i + 1} of the patch of ${name}`;
+        const first = block.search === "" ? -1 : patched.indexOf(block.search);
+        if (block.search === "") {
+            problems.push(`${where} has an empty SEARCH text`);
+        } else if (first === -1) {
+            problems.push(`${where} has a SEARCH text which does not occur in it - copy it exactly, `
+                + "including its indentation, from the text as shown in the workspace");
+        } else if (patched.indexOf(block.search, first + 1) !== -1) {
+            problems.push(`${where} has a SEARCH text which occurs more than once in it - include enough `
+                + "of the lines around it to make it unique");
+        } else {
+            patched = patched.substring(0, first) + block.replace + patched.substring(first + block.search.length);
+        }
+    });
+    return problems.length === initialCount ? patched : undefined;
+};
+
+/**
+ * Read the blocks of a patch part, reporting a body which is not made of them
+ * @param {PTFPart} part - The patch part
+ * @param {String} name - The quoted name of its target, for any problem reported
+ * @param {String[]} problems - Accumulates a description of the problem, if any
+ * @return {Object[]|null} The blocks, as by `fluid.ai.arena.parsePatch`, or null
+ */
+fluid.ai.arena.patchBlocks = function (part, name, problems) {
+    const blocks = fluid.ai.arena.parsePatch(part.body || "");
+    if (!blocks) {
+        problems.push(`The body of the patch part for ${name} is not a sequence of whole blocks, each a line `
+            + fluid.ai.arena.patchMarkers.join(", a SEARCH text, a line ") + ", with nothing between them but blank lines");
+    }
+    return blocks;
+};
+
+/**
+ * Plan a patch of a layer - as shown to the AI, patched, and checked as a layer part sent whole would be
+ * @param {String} layerName - The layer's name, the id of its target
+ * @param {PTFPart} part - The patch part
+ * @param {ChangePlan} plan - The plan, to whose layers the patched layer is added
+ * @param {PlanContext} context - What is known in planning
+ */
+fluid.ai.arena.planLayerPatch = function (layerName, part, plan, context) {
+    const name = JSON.stringify(layerName);
+    const shown = context.layerParts.get(layerName);
+    const blocks = shown ? fluid.ai.arena.patchBlocks(part, name, plan.problems) : null;
+    if (!shown) {
+        plan.problems.push(`The patch part's Target names the layer ${name}, whose definition is not shown in the `
+            + "workspace - send its whole definition in a layer part instead");
+    } else if (blocks) {
+        const patched = fluid.ai.arena.applyPatch(shown.body, blocks, name, plan.problems);
+        const layerPart = patched === undefined ? null : {...shown, body: patched};
+        if (layerPart && fluid.ai.arena.checkLayerPart(layerPart, "as patched", plan.problems)) {
+            plan.layers.push(layerPart);
+        }
+    }
 };
 
 /**
@@ -1246,13 +1586,9 @@ fluid.ai.arena.bindDiagnosis = function (component, onProblems, timeout) {
     };
 };
 
-// What precedes each of the user's directions, reminding the AI of the two forms its response may take
-fluid.ai.arena.directionPreamble = "The user's direction follows. Attend to it carefully, and respond in exactly one of the "
-    + "two forms described above.";
-
-
-// What precedes each of the user's directions, reminding the AI of the two forms its response may take
-fluid.ai.arena.directionPreamble = "The user's direction follows. Attend to it carefully, and respond in exactly one of the "
+// What precedes each of the user's directions, reminding the AI of the forms its response may take - followed by the
+// boundary its document must use, as `fluid.ai.arena.boundaryAdvice` gives it
+fluid.ai.arena.directionPreamble = "The user's direction follows. Attend to it carefully, and respond in one of the "
     + "two forms described above.";
 
 /**
@@ -1271,8 +1607,9 @@ fluid.ai.arena.directionPreamble = "The user's direction follows. Attend to it c
 /**
  * Make the assistant through which the "Ask me anything" panel reflects on and alters an arena - see AIAssistant in
  * fluid-ai.js. Its system prompt holds the prompt's stanzas, with the documentation, and the workspace as it stands. A
- * reply in text is shown to the user, and one holding a PTF document is applied to the workspace through the bridge,
- * any problems in decoding or applying it being reported back to the AI for it to correct.
+ * reply in text is shown to the user, and one holding a PTF document - whose boundary must be the one issued with
+ * the direction - is applied to the workspace through the bridge, its text parts being shown to the user, and any
+ * problems in decoding or applying it reported back to the AI for it to correct, with what of it was applied.
  * @param {ArenaBridge} bridge - The bridge to the arena
  * @param {Object} [options] - Options
  * @param {String} [options.promptLayer] - The layer of the system prompt, a fluid.ai.arena.systemPrompt or one derived
@@ -1288,36 +1625,47 @@ fluid.ai.arena.makeAssistant = function (bridge, {promptLayer = "fluid.ai.arena.
     const promptComponent = fluid.initFreeComponent(promptLayer);
     const prompt = fluid.ai.arena.systemPrompt.read(promptComponent);
     promptComponent.destroy();
+    // The boundary issued with the direction being responded to - see fluid.ai.arena.issueBoundary
+    let boundary = null;
     return {
         prompt,
-        directionPreamble: fluid.ai.arena.directionPreamble,
+        directionPreamble: () => {
+            boundary = fluid.ai.arena.issueBoundary();
+            return fluid.ai.arena.directionPreamble + " " + fluid.ai.arena.boundaryAdvice(boundary);
+        },
         cachePrefixMarker: fluid.ai.arena.workspaceHeading,
-        repairMessage: fluid.ai.arena.repairMessage,
+        repairMessage: (problems, results) => fluid.ai.arena.repairMessage(problems, results, boundary),
         isReady: () => !bridge.isReady || bridge.isReady(),
         systemPrompt: async () => fluid.ai.arena.systemPrompt.compose(prompt, await getDocs(prompt.docUrls), bridge.gatherWorkspace(), host),
         describeOutcome: content => fluid.ai.arena.parseResponse(content).type === "text" ? "text" : "PTF document",
         interpret: async function (content, {model, direction}) {
-            const response = fluid.ai.arena.parseResponse(content);
+            const response = fluid.ai.arena.parseResponse(content, boundary);
             let togo;
             if (response.type === "text") {
-                togo = {entries: [{kind: "assistant", text: response.text}], problems: []};
+                togo = {entries: [{kind: "assistant", text: response.text}], problems: [], results: []};
             } else if (response.type === "invalid") {
-                togo = {entries: [], problems: [response.error]};
+                togo = {entries: [], problems: [response.error], results: []};
             } else {
                 const workspace = bridge.gatherWorkspace();
                 const widgetIds = workspace.widgets.map(widget => widget.id);
                 const otherIds = host.otherIds ? host.otherIds(workspace) : [];
-                const plan = fluid.ai.arena.planChanges(response.parts, widgetIds, otherIds, host);
-                fluid.ai.arena.stampProvenance(plan, {model, prompt: direction, datestamp: new Date().toISOString()});
-                const applied = await bridge.applyPlan(plan);
-                togo = {
-                    entries: [{
-                        kind: "change",
-                        text: applied.summary.length > 0 ? applied.summary.join("\n") : "No changes were made to the workspace",
-                        detail: response.text
-                    }],
-                    problems: [...plan.problems, ...applied.problems]
-                };
+                const plan = fluid.ai.arena.planChanges(response.parts, widgetIds, otherIds, host, fluid.ai.arena.shownLayerParts(workspace, host));
+                const texts = plan.texts.map(text => ({kind: "assistant", text}));
+                if (fluid.ai.arena.isActing(response.parts)) {
+                    fluid.ai.arena.stampProvenance(plan, {model, prompt: direction, datestamp: new Date().toISOString()});
+                    const applied = await bridge.applyPlan(plan);
+                    togo = {
+                        entries: [...texts, {
+                            kind: "change",
+                            text: applied.summary.length > 0 ? applied.summary.join("\n") : "No changes were made to the workspace",
+                            detail: response.text
+                        }],
+                        problems: [...plan.problems, ...applied.problems],
+                        results: applied.summary
+                    };
+                } else {
+                    togo = {entries: texts, problems: plan.problems, results: []};
+                }
             }
             return togo;
         }

@@ -14,6 +14,31 @@ Beautiful Hugo's own parameters:
 - `giscus` - for the comments layer `beautifulWend.comments.giscus`, chosen by `commentsLayer`, the discussions
   giscus.app gives for the site's repository: `{"repo", "repoId", "category", "categoryId"}`
 
+Its optional adaptations, in `adapt/`, are each switched on by the site's configuration - a `params` member, as in
+Beautiful Hugo, or a switch in the `features` of `wend.json`, where Beautiful Hugo has none of its own:
+
+| Adaptation | Switched on by | Adds |
+|---|---|---|
+| `gcse` | `params.gcse` | Google custom search in the navigation bar |
+| `piwik` | `params.piwik` - `{"server", "id"}` | The Piwik/Matomo tracker |
+| `staticman` | `params.staticman` | Staticman comments |
+| `disclaimer` | `params.disclaimerText` | A disclaimer in the footer |
+| `multilingual` | more than one of `languages` | The language menu and links to translations |
+| `katex` | `features.katex`, for the site or a page | KaTeX's rendering of maths, e.g. `\\( O(n^2) \\)` - Beautiful Hugo includes it on every page |
+| `hljs` | `features.hljs`, for the site or a page | highlight.js's stylesheet for code, highlighted as it is built |
+| `selfHosted` | `features.selfHosted` | The theme's own copies of KaTeX, Font Awesome and Bootstrap, in place of their CDNs' |
+
+A feature switched "for the site or a page" may be switched for one page by `features` in its front matter, which
+overrides the site's - e.g. a site whose `wend.json` leaves KaTeX off renders the maths of a page beginning
+
+```yaml
+---
+title: A page with maths
+features:
+  katex: true
+---
+```
+
 - `sfc/` - the document and its head, headers, navigation bar, footer, the main block of each kind of page, previews,
   pagers, tags, share links, related posts, comments and translated strings.
 - `adapt/` - optional adaptations, each switched on by the site's configuration (`wend.json`), e.g. highlighting code,

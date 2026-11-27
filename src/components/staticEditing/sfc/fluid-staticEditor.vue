@@ -55,6 +55,8 @@ fluid.def("fluid.staticEditor", {
             // Naming the layers it would delete - see fluid.staticEditing.cleanupTitle
             cleanupTitle: "Clean up unused layers",
             // Whether the "Ask me anything" panel is disclosed at the panel's foot - see fluid.staticEditing.toggleAI
+            // The logo of the header, beside the editor's own SFCs - see fluid.staticEditing.bind
+            logoSrc: "",
             aiHidden: true,
             aiOpen: false,
             // Whether the tabs of the sources opened are shown, and the kind of the one shown - see fluid.staticEditing.renderTabs
@@ -195,8 +197,8 @@ fluid.def("fluid.staticEditor", {
     <!-- The editing client's own, which it keeps out of the page while the page's component tree is first booted -->
     <div class="fluid-edit-panel" data-fluid-edit-ui="" hidden="@{state.hidden}" data-fluid-edit-ready="@{state.ready}"
          data-fluid-claim-state="@{state.claimState}">
-        <header><strong>Edit in Infusion</strong>
-            <button class="fluid-edit-close" title="Close the editor" @onclick="{self}.close()">×</button></header>
+        <header><img class="fluid-edit-logo" src="@{state.logoSrc}" width="24" height="24" alt=""><strong>Edit in Infusion</strong>
+            <button class="fluid-edit-close" title="Close the editor" aria-label="Close the editor" @onclick="{self}.close()">×</button></header>
         <!-- What edits the page, scrolling within the share of the panel's height which "Ask me anything" leaves it, so
              that a long source never pushes that panel out of view -->
         <div class="fluid-edit-main">
@@ -423,18 +425,19 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     display: none !important;
 }
 
+/* "Also edit framing" with the site's configuration beside it, then, after a small fixed gap, the site's widgets */
 .fluid-edit-framing-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 12px;
+    gap: 8px 6px;
     align-items: center;
-    justify-content: space-between;
 }
 
 .fluid-edit-widgets {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    margin-left: 18px;
 }
 
 .fluid-edit-widgets[hidden] {
@@ -454,16 +457,43 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
 .fluid-edit-panel header {
     display: flex;
     gap: 8px;
-    align-items: baseline;
-    justify-content: space-between;
+    align-items: center;
+}
+
+.fluid-edit-panel header strong {
+    flex: 1;
+    font-size: 16px;
+}
+
+.fluid-edit-logo {
+    flex: none;
+    display: block;
+}
+
+.fluid-edit-logo:not([src]), .fluid-edit-logo[src=""] {
+    visibility: hidden;
+}
+
+.fluid-edit-panel .fluid-edit-close {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: none;
+    color: #555;
+    font: 18px/1 system-ui, sans-serif;
+    cursor: pointer;
+}
+
+.fluid-edit-panel .fluid-edit-close:hover {
+    background: #e2e8f0;
+    color: #1a202c;
 }
 
 .fluid-edit-path {
     font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
-}
-
-a.fluid-edit-path {
-    color: inherit;
 }
 
 .fluid-edit-updated {
@@ -471,12 +501,13 @@ a.fluid-edit-path {
     opacity: 0.85;
 }
 
-.fluid-edit-panel textarea {
+/* The source's own <textarea>, shown should the source view be unavailable - not Ask Anything's, which holds free text */
+.fluid-edit-source textarea {
     flex: 1;
     width: 100%;
     box-sizing: border-box;
     resize: none;
-    font: 13px/1.5 ui-monospace, monospace;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
     padding: 8px;
 }
 
@@ -526,7 +557,10 @@ a.fluid-edit-path {
 
 /* The framing of a page - e.g. its footer, rendered by an SFC shared by every page - marked by attributes alone, since
    the page's live tree renders it, and a label inserted amongst its nodes would be removed as it renders afresh */
-[data-fluid-framing] {
+/* Its label is placed against it - an element the page positions statically is positioned relatively for it, but one the
+   page positions itself, e.g. a navbar fixed at the top, is left as it is, lest its layout be lost - see
+   fluid.staticEditing.anchorFraming */
+[data-fluid-framing][data-fluid-framing-anchor] {
     position: relative;
 }
 
@@ -593,16 +627,18 @@ a.fluid-edit-path {
    buttons beneath it, e.g. in a short window, or with a status long enough to wrap - but the panel scrolls instead */
 /* Unfolded, the source takes what the panel's other controls leave, its editor shrinking first, to show a scrollbar of
    its own, so that the buttons beneath it stay in view */
+/* Each shrinks no further than what it holds at its least - the editor's least height, its tabs and its fold - so that
+   only the editor gives up room, and nothing overflows onto the buttons beneath */
 .fluid-edit-source[open] {
     flex: 1 1 auto;
-    min-height: 0;
+    min-height: auto;
     display: flex;
     flex-direction: column;
 }
 
 .fluid-edit-source[open]::details-content {
     flex: 1 1 0;
-    min-height: 0;
+    min-height: auto;
     display: flex;
     flex-direction: column;
 }
@@ -613,18 +649,14 @@ a.fluid-edit-path {
 
 .fluid-edit-source-host {
     flex: 1 1 0;
-    min-height: 80px;
+    min-height: 36px;
     display: flex;
     flex-direction: column;
 }
 
-/* Kept in view at the foot of what edits the page, should even the editor be shrunk as far as it may */
+/* Beneath the editor, never shrunk - the editor shrinks to leave room for them */
 .fluid-edit-buttons {
-    position: sticky;
-    bottom: 0;
     flex: none;
-    padding-top: 4px;
-    background: #fbfbfa;
 }
 
 .fluid-edit-source[hidden] {
@@ -672,6 +704,15 @@ a.fluid-edit-path {
     border-radius: 2px;
     background: rgba(66, 153, 225, 0.18);
     cursor: help;
+}
+
+/* Material of the page another source supplies through its templates - another page, or the site's configuration -
+   shift-clicked to go there - see fluid.staticEditing.markSourced */
+[data-fluid-sourced] {
+    outline: 1.5px dashed #2b6cb0;
+    outline-offset: 1px;
+    border-radius: 2px;
+    background-color: rgba(66, 153, 225, 0.12);
 }
 
 /* The text of the framing rendered from where the source view's cursor stands - see
@@ -768,7 +809,7 @@ a.fluid-edit-path {
 
 .fluid-edit-tab-body {
     flex: 1 1 auto;
-    min-height: 0;
+    min-height: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -794,25 +835,6 @@ a.fluid-edit-path {
 .fluid-edit-icon-button:disabled {
     color: #a0aec0;
     cursor: default;
-}
-
-/* The tooltips of the panel's controls and the page's marks, placed by Popper - see fluid-tooltip.js */
-.fl-tooltip-holder.fluid-edit-tooltip {
-    z-index: 2147483000;
-    max-width: 320px;
-    padding: 5px 8px;
-    background: #fff;
-    color: #222;
-    border: 1px solid #aaa;
-    border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-    font: 13px/1.35 system-ui, sans-serif;
-    white-space: pre-line;
-    pointer-events: none;
-}
-
-.fl-tooltip-holder[hidden] {
-    display: none;
 }
 
 /* The foot of the panel, from which the sparkles pop out "Ask me anything" */
@@ -855,8 +877,9 @@ a.fluid-edit-path {
 }
 
 /* Slid open from the sparkles beneath it, and closed into them, by its basis - see fluid.staticEditing.toggleAI */
+/* It gives up room too, to its least height, should what edits the page need more than its share leaves it */
 .fluid-edit-ai {
-    flex: 0 0 40%;
+    flex: 0 1 40%;
     min-height: 160px;
     overflow: hidden;
 }

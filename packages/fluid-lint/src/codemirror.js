@@ -166,7 +166,7 @@ export {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLin
 export {EditorState, StateEffect, StateField, Compartment, RangeSet, RangeSetBuilder, Transaction} from "@codemirror/state";
 export {defaultKeymap, history, historyKeymap, indentWithTab} from "@codemirror/commands";
 export {searchKeymap, highlightSelectionMatches} from "@codemirror/search";
-export {syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldKeymap} from "@codemirror/language";
+export {syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldKeymap, syntaxTree} from "@codemirror/language";
 export {markdown} from "@codemirror/lang-markdown";
 export {json, jsonParseLinter} from "@codemirror/lang-json";
 export {lintGutter, linter, forEachDiagnostic, setDiagnostics} from "@codemirror/lint";

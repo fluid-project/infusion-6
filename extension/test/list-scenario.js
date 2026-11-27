@@ -15,7 +15,8 @@ const fs = require("fs"),
 const harness = require("./harness.js");
 
 const listPath = "post/";
-const title = "A post written in place";
+// Holding a colon and quotes, which its front matter must write, and read back, as YAML
+const title = "A post: written \"in place\"";
 
 harness.scenario("Writing a new post from the list, and browsing with the editor open", async function ({mock, browser, worker, expect}) {
     await worker.evaluate(() => chrome.storage.local.set({pollInterval: 1000}));
@@ -49,7 +50,7 @@ harness.scenario("Writing a new post from the list, and browsing with the editor
         await new Promise(resolve => setTimeout(resolve, 200));
         claims = await harness.claims(worker);
     }
-    expect(claims.length === 1 && slugged.test(claims[0].path) && !claims[0].baseSha && claims[0].text.includes("title: \"" + title + "\"") &&
+    expect(claims.length === 1 && slugged.test(claims[0].path) && !claims[0].baseSha && claims[0].text.includes("title: " + JSON.stringify(title)) &&
         claims[0].text.includes("Its first paragraph."), "One claim, on the new post's path, titled: " + JSON.stringify(claims.map(claim => claim.path)));
     expect(await list.evaluate(() => !document.querySelector(".fluid-edit-source").hidden && document.querySelector(".fluid-edit-source").open),
         "A new post is edited as source");

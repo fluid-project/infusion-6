@@ -9,7 +9,9 @@ fluid.def("beautifulWend.main.home", {
 <template>
     <div role="main" class="ponder-front-page">
         <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
-            <div class="ponder-content" @id="content" @if="{document}.page.content"></div>
+            <!-- The home page's own content, content/_index.md, edited in place as a page's own source is - its element is
+                 the container of its component, as a single page's is, the condition standing on the element about it -->
+            <div class="ponder-content" @if="{document}.page.content"><div @id="content" data-fluid-block="markdown"></div></div>
             <div @id="previews" class="posts-list"></div>
             <ul @id="listPager" @if="beautifulWend.main.hasPager({document}.page.paginator)"></ul>
         </div>

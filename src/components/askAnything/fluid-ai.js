@@ -509,8 +509,10 @@ output tokens, before it was complete. Reason more briefly, and send only the pa
  * each request of an exchange, so that it may reflect changes already made
  * @property {Function} interpret - Accepts the content of a reply and `{model, direction}`, and returns a
  * {Promise<AIInterpretation>} for what it is to the user, and any problems to be reported back to the AI
- * @property {String} [directionPreamble] - Text preceding each direction of the user's
- * @property {Function} [repairMessage] - Accepts the {String[]} problems found in a reply, and returns the
+ * @property {String|Function} [directionPreamble] - Text preceding each direction of the user's, or a function returning
+ * it, called once for each direction
+ * @property {Function} [repairMessage] - Accepts the {String[]} problems found in a reply, and the {String[]} results of
+ * what of it was acted on, and returns the
  * {ChatMessage} reporting them back to the AI - by default, `fluid.ai.repairMessage`
  * @property {String} [cachePrefixMarker] - The text of the system prompt at which its part common to every request
  * ends - see `fluid.ai.cachedTokens`
@@ -524,6 +526,7 @@ output tokens, before it was complete. Reason more briefly, and send only the pa
  * @typedef {Object} AIInterpretation
  * @property {ChatEntry[]} entries - What is to be shown to the user of the reply
  * @property {String[]} problems - Problems found in the reply, to be reported back to the AI for repair
+ * @property {String[]} [results] - Descriptions of what of the reply was acted on, reported back with any problems
  */
 
 /**
@@ -570,7 +573,8 @@ fluid.ai.plainAssistant = function (systemPrompt = "You are a helpful assistant.
  * a request fails
  */
 fluid.ai.converse = async function ({direction, history, model, assistant, call, report}) {
-    const messages = fluid.ai.buildMessages("", history, direction, assistant.directionPreamble);
+    const preamble = typeof(assistant.directionPreamble) === "function" ? assistant.directionPreamble() : assistant.directionPreamble;
+    const messages = fluid.ai.buildMessages("", history, direction, preamble);
     // The messages of this exchange begin with the direction, following the system prompt and earlier exchanges
     const exchangeStart = messages.length - 1;
     const repairMessage = assistant.repairMessage || fluid.ai.repairMessage;
@@ -587,7 +591,7 @@ fluid.ai.converse = async function ({direction, history, model, assistant, call,
         messages.push({role: "assistant", ...reply});
         // A reply which was cut off is neither a complete answer nor a complete document, and may hold nothing but the
         // AI's reasoning, so it is never shown to the user as an answer
-        const {entries, problems} = truncated ? {entries: [], problems: [fluid.ai.truncationProblem]} :
+        const {entries, problems, results = []} = truncated ? {entries: [], problems: [fluid.ai.truncationProblem]} :
             await assistant.interpret(reply.content, {model, direction});
         entries.forEach(report);
         if (problems.length === 0) {
@@ -596,7 +600,7 @@ fluid.ai.converse = async function ({direction, history, model, assistant, call,
             ++repairs;
             report({kind: "problem", text: `Asking the AI to correct its response (attempt ${repairs} of ${fluid.ai.maxRepairs}):\n`
                 + fluid.ai.listProblems(problems)});
-            messages.push(repairMessage(problems));
+            messages.push(repairMessage(problems, results));
         } else {
             report({kind: "error", text: "The AI's response could not be fully applied:\n" + fluid.ai.listProblems(problems)});
             done = true;

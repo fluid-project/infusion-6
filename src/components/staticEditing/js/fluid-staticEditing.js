@@ -274,16 +274,33 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.markFraming = function (edit, framing) {
         const claim = edit.framingClaims[framing.path];
-        const state = claim ? claim.state : !edit.framingMode ? null : edit.targetPath === framing.path ? "editing" : "editable";
+        // Whilst the panel is closed, the framing is marked only with a claim held on it
+        const state = claim ? claim.state : !edit.framingMode || edit.state.hidden ? null : edit.targetPath === framing.path ? "editing" : "editable";
         const label = claim ? framing.label + ": " + fluid.staticEditing.stateLabels[claim.state] + (claim.message ? " - " + claim.message : "") :
             framing.label + (state === "editing" ? " - editing, shared by every page" : " - shared by every page, click to edit");
         // The configuration renders nowhere of its own - its claim is shown in the panel, and on the elements it changes
         // only as they change
         return framing.layer ? fluid.staticEditing.ask(edit, {op: "markLayer", layer: framing.layer, path: framing.path, state, label}).then(count => {
+            fluid.staticEditing.anchorFraming();
             // The framing edited is edited in place too, its literal text, beside its source
-            fluid.staticEditing.framingInPlace(edit, framing, edit.framingMode && edit.targetPath === framing.path);
+            fluid.staticEditing.framingInPlace(edit, framing, edit.framingMode && !edit.state.hidden && edit.targetPath === framing.path);
             return count;
         }) : Promise.resolve(0);
+    };
+
+    /**
+     * Position relatively, as the anchor of its label, each element marked as rendering framing which the page positions
+     * statically - one the page positions itself, e.g. a navbar fixed at the top of the window, keeps its own position,
+     * which a relative one would lose, collapsing it into the flow of the page. Elements no longer marked cease to be
+     * anchors
+     */
+    fluid.staticEditing.anchorFraming = function () {
+        document.querySelectorAll("[data-fluid-framing-anchor]:not([data-fluid-framing])").forEach(element => element.removeAttribute("data-fluid-framing-anchor"));
+        document.querySelectorAll("[data-fluid-framing]:not([data-fluid-framing-anchor])").forEach(element => {
+            if (getComputedStyle(element).position === "static") {
+                element.setAttribute("data-fluid-framing-anchor", "");
+            }
+        });
     };
 
     // The tooltip of text of the framing which its template interpolates, rather than writes, and so is not edited in place
@@ -332,14 +349,17 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * The template of an SFC - the text between its <template> and </template>
+     * The template of an SFC - its top-level `<template>` block, as Infusion parses the SFC (see `fluid.sfcBlocks`),
+     * from its opening tag to its closing tag, which may bear attributes, and which no `<template>` written within a
+     * script or a string is taken for
      * @param {String} source - The SFC's text
      * @return {Object|null} `{from, text}` - where it begins in the source, and its text - or null if it has none
      */
     fluid.staticEditing.templateOf = function (source) {
-        const open = source.indexOf("<template>");
-        const close = source.lastIndexOf("</template>");
-        return open >= 0 && close > open ? {from: open, text: source.substring(open, close)} : null;
+        const block = fluid.sfcBlocks(fluid.parseHTMLToTree(source), "template")[0];
+        // The block's end is that of its closing tag - its content ends where that tag opens
+        const close = block ? source.lastIndexOf("</", block.end) : -1;
+        return block && close >= block.start ? {from: block.start, text: source.substring(block.start, close)} : null;
     };
 
     /**
@@ -1095,6 +1115,7 @@ const fluidStaticEditingScope = function (fluid) {
         edit.state.newHidden = !(target && target.creating);
         fluid.staticEditing.updateSourceOpen(edit);
         await Promise.all((edit.provenance.framing || []).map(framing => fluid.staticEditing.markFraming(edit, framing)));
+        fluid.staticEditing.markSourced(edit).catch(error => console.error("Edit in Infusion: what other sources supply can't be marked", error));
         if (!target) {
             fluid.staticEditing.setStatus(edit, (fluid.staticEditing.section(edit) ? "Choose + at the head of the list to write a new post, or click a post to edit it. " : "") +
                 ((edit.provenance.framing || []).length ? "Tick \"Also edit framing\" to edit what every page shares." : ""));
@@ -1127,6 +1148,7 @@ const fluidStaticEditingScope = function (fluid) {
         await fluid.cell.settle();
         edit.state.ready = true;
         await fluid.cell.settle();
+        fluid.staticEditing.holdRoom(edit);
         if (target && !target.framing) {
             fluid.staticEditing.learnSite(edit).then(() => fluid.staticEditing.learnHeadings(edit, edit.source.getText()));
         }
@@ -1220,7 +1242,7 @@ const fluidStaticEditingScope = function (fluid) {
                 edit.site = {
                     page: edit.provenance.page,
                     pages: Object.entries(trace.pages).filter(([path]) => !/\/page\/\d+\/$/.test(path))
-                        .map(([path, record]) => ({path, title: record.title, kind: record.kind, headings: record.headings || []})),
+                        .map(([path, record]) => ({path, title: record.title, kind: record.kind, source: record.source || null, headings: record.headings || []})),
                     // The headings of the page's own source as edited, once learned - see learnHeadings
                     ownHeadings: null,
                     assets: trace.assets || [],
@@ -1257,13 +1279,26 @@ const fluidStaticEditingScope = function (fluid) {
     fluid.staticEditing.widgetPath = (edit, layer) => edit.provenance.widgets ? edit.provenance.widgets.dir + "/" + layer.replace(/\./g, "-") + ".vue" : null;
 
     /**
-     * List the layers of the widgets which markup or source holds, as their elements' `fluid-layers` attributes name them
-     * @param {String} text - The markup or source
+     * List the layers of the widgets which a source holds, as their elements' `fluid-layers` attributes name them - the
+     * islands of markdown, as it parses, or the elements of other markup, e.g. an SFC's template, as the browser parses
+     * it - so that what is merely written in text, e.g. in a code block, is not taken for a widget
+     * @param {String} text - The source
+     * @param {String} [path] - The path of its file, by whose extension it is told for markdown - by default it is
+     * @param {String} [rendererName] - The global name of the markdown pipeline - by default "wendMarkdown"
      * @return {String[]} The layers, each once
      */
-    fluid.staticEditing.layersOf = function (text) {
+    fluid.staticEditing.layersOf = function (text, path, rendererName) {
         const found = new Set();
-        [...(text || "").matchAll(/\sfluid-layers\s*=\s*"([^"]*)"/g)].forEach(match => match[1].split(/\s+/).filter(layer => layer).forEach(layer => found.add(layer)));
+        const renderer = rendererName || "wendMarkdown";
+        // Markdown is parsed as its pipeline parses it, once loaded - until then, as markup, as which its islands parse
+        if (text && (!path || /\.md$/.test(path)) && window[renderer] && fluid.blockEditor) {
+            fluid.blockEditor.islandsOf(text, renderer).forEach(island => island.layers.forEach(layer => found.add(layer)));
+        } else if (text) {
+            const holder = document.createElement("template");
+            holder.innerHTML = text;
+            holder.content.querySelectorAll("[fluid-layers]").forEach(element => element.getAttribute("fluid-layers").split(/\s+/)
+                .filter(layer => layer).forEach(layer => found.add(layer)));
+        }
         return [...found];
     };
 
@@ -1316,8 +1351,8 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.unusedLayers = function (edit, widgets, claims) {
         const byLayer = new Map(widgets.map(widget => [widget.layer, widget]));
-        const roots = [...(edit.site ? edit.site.pageLayers : []), ...claims.flatMap(claim => fluid.staticEditing.layersOf(claim.text)),
-            ...fluid.staticEditing.layersOf(edit.source ? edit.source.getText() : "")];
+        const roots = [...(edit.site ? edit.site.pageLayers : []), ...claims.flatMap(claim => fluid.staticEditing.layersOf(claim.text, claim.path)),
+            ...fluid.staticEditing.layersOf(edit.source ? edit.source.getText() : "", edit.targetPath)];
         const used = new Set();
         const reach = layer => {
             if (!used.has(layer)) {
@@ -1505,6 +1540,7 @@ const fluidStaticEditingScope = function (fluid) {
             main.style.removeProperty("flex-basis");
             main.style.removeProperty("flex-grow");
             edit.state.aiHidden = false;
+            fluid.staticEditing.holdMainRoom(main);
             await fluid.staticEditing.slideAI(edit, ai, "0px", basis);
             if (!edit.ai) {
                 edit.ai = fluid.staticEditing.makeAI(edit, panel, main, ai);
@@ -1519,13 +1555,48 @@ const fluidStaticEditingScope = function (fluid) {
             }
         } else {
             fluid.staticEditing.rememberAISplit(edit, main, ai);
+            // What edits the page gives up the share the bar last wrote it, so that it grows into what is left as
+            // "Ask me anything" slides closed, rather than holding its height until it is hidden
+            main.style.removeProperty("flex-basis");
+            main.style.removeProperty("flex-grow");
             await fluid.staticEditing.slideAI(edit, ai, ai.style.flexBasis || fluid.staticEditing.aiBasis, "0px");
             // Unless opened again as it slid
             if (!edit.state.aiOpen) {
                 edit.state.aiHidden = true;
-                main.style.removeProperty("flex-basis");
-                main.style.removeProperty("flex-grow");
             }
+        }
+    };
+
+    // The least height of the source's editor, as its styles give it
+    fluid.staticEditing.editorLeast = 36;
+
+    /**
+     * Keep what edits the page from being shrunk, by "Ask me anything" or its bar, beneath the room its controls need -
+     * its editor may shrink to its least height, showing a scrollbar, but no further, so that the Commit and Discard
+     * buttons beneath it stay in view. Measured afresh each time the bar is taken, or the panel opened, since what the
+     * controls need varies with what is edited
+     * @param {Element} main - What edits the page
+     */
+    fluid.staticEditing.holdMainRoom = function (main) {
+        const host = main.querySelector(".fluid-edit-source[open] .fluid-edit-source-host");
+        const shrinkable = host ? Math.max(0, host.getBoundingClientRect().height - fluid.staticEditing.editorLeast) : 0;
+        // The foot of what it shows - its buttons, or else its last control shown - beneath its top, as laid out now
+        const shown = [...main.querySelectorAll(".fluid-edit-main > :not(.fluid-edit-tab-body), .fluid-edit-tab-body > *")]
+            .map(element => element.getBoundingClientRect()).filter(rect => rect.height > 0);
+        const foot = shown.length > 0 ? Math.max(...shown.map(rect => rect.bottom)) : main.getBoundingClientRect().top;
+        main.style.minHeight = Math.ceil(foot - main.getBoundingClientRect().top + main.scrollTop - shrinkable + 2) + "px";
+    };
+
+    /**
+     * Keep the room the controls of what edits the page need, should what they show have changed, e.g. the source edited,
+     * whilst "Ask me anything" shares the panel's height - see holdMainRoom
+     * @param {Object} edit - The controller
+     */
+    fluid.staticEditing.holdRoom = function (edit) {
+        const main = edit.panel && edit.panel.querySelector(".fluid-edit-main");
+        if (main && edit.state.aiOpen) {
+            main.style.removeProperty("min-height");
+            fluid.staticEditing.holdMainRoom(main);
         }
     };
 
@@ -1605,8 +1676,10 @@ const fluidStaticEditingScope = function (fluid) {
             minAfter: 160,
             view: {$component: {container: panel.querySelector(".fluid-edit-ai-bar"), elideParent: true}}
         });
-        // Each drag, or nudge, of the bar is remembered as it ends
+        // Each drag, or nudge, of the bar is remembered as it ends, and begins with what edits the page holding the room
+        // its controls need
         const barElement = panel.querySelector(".fluid-edit-ai-bar");
+        ["pointerdown", "keydown"].forEach(type => barElement.addEventListener(type, () => fluid.staticEditing.holdMainRoom(main), true));
         ["pointerup", "keyup"].forEach(type => barElement.addEventListener(type, () => fluid.staticEditing.rememberAISplit(edit, main, ai)));
         await fluid.cell.settle();
         return {component, bar};
@@ -1798,6 +1871,7 @@ const fluidStaticEditingScope = function (fluid) {
         }
         fluid.staticEditing.renderTabs(edit);
         fluid.staticEditing.rememberSession(edit);
+        fluid.staticEditing.markSourced(edit).catch(error => console.error("Edit in Infusion: what other sources supply can't be marked", error));
         if (on) {
             await Promise.all((edit.provenance.framing || []).map(framing => fluid.staticEditing.markFraming(edit, framing)));
         } else if (fluid.staticEditing.target(edit) && fluid.staticEditing.target(edit).framing) {
@@ -1808,18 +1882,547 @@ const fluidStaticEditingScope = function (fluid) {
     };
 
     /**
-     * Respond to a click in the page while the framing is edited - one on a marked element of the framing not yet
+     * Respond to a click in the page while the framing is edited - a shift-click on material marked as supplied by
+     * another source goes to that source (see markSourced), and a click on a marked element of the framing not yet
      * edited switches the panel to its source, rather than following a link it holds
      * @param {Object} edit - The controller
      * @param {Event} event - The click
      */
     fluid.staticEditing.onFramingClick = function (edit, event) {
-        const framed = edit.framingMode && !edit.state.hidden && event.target.closest ? event.target.closest("[data-fluid-framing]") : null;
-        if (framed && framed.getAttribute("data-fluid-framing") !== edit.targetPath) {
+        const editing = edit.framingMode && !edit.state.hidden && event.target.closest;
+        const sourced = editing && event.shiftKey ? event.target.closest("[data-fluid-sourced]") : null;
+        const framed = editing ? event.target.closest("[data-fluid-framing]") : null;
+        if (sourced && sourced.flOrigin) {
+            // Shift-click on material another source supplies goes to that source
+            event.preventDefault();
+            event.stopPropagation();
+            fluid.staticEditing.goToOrigin(edit, sourced.flOrigin);
+        } else if (framed && framed.getAttribute("data-fluid-framing") !== edit.targetPath) {
             event.preventDefault();
             event.stopPropagation();
             fluid.staticEditing.switchTarget(edit, framed.getAttribute("data-fluid-framing"));
         }
+    };
+
+    /**
+     * Find the page of the site which material of this page is taken from - the page an element holding it links to,
+     * or which the item of a list holding it links to, e.g. a post's title and summary in a list of posts - should that
+     * page have a source of its own, and be another than this one
+     * @param {Object} edit - The controller
+     * @param {Element} element - The element holding the material
+     * @return {Object|null} The page, `{path, title, source}`, as `edit.site` lists them - or null
+     */
+    fluid.staticEditing.linkedPage = function (edit, element) {
+        const item = element.closest("a[href]") || element.closest("article, li");
+        const links = item ? (item.matches("a[href]") ? [item] : [...item.querySelectorAll("a[href]")]) : [];
+        const pages = edit.site ? edit.site.pages : [];
+        const found = links.map(link => {
+            const url = new URL(link.getAttribute("href"), location.href);
+            const sitePath = url.origin === location.origin ? fluid.staticEditing.sitePath(edit, url) : null;
+            return sitePath ? pages.find(page => page.source && page.path === sitePath) : null;
+        }).filter(page => page && page.path !== edit.provenance.page);
+        // Only an item linking to one page is taken from it - a list of several, e.g. a menu, is not
+        return new Set(found.map(page => page.path)).size === 1 ? found[0] : null;
+    };
+
+    /**
+     * Find the path within the site of the page a URL of it names - the URL's path less the path of the site's root,
+     * which a site published beneath a path of its host, e.g. on GitHub Pages, begins with
+     * @param {Object} edit - The controller
+     * @param {URL} url - The URL
+     * @return {String} The page's path, e.g. "/post/x/"
+     */
+    fluid.staticEditing.sitePath = function (edit, url) {
+        const root = new URL(fluid.staticEditing.siteRoot(edit), location.href).pathname;
+        const within = url.pathname.startsWith(root) ? url.pathname.substring(root.length) : url.pathname.replace(/^\//, "");
+        return "/" + within.replace(/index\.html$/, "").replace(/([^/])$/, "$1/");
+    };
+
+    /**
+     * The values a text node interpolates, each with the site holding it - the live references its template's text
+     * resolved to, recorded with it by the renderer (see `flTemplateTokens` in FluidView.js), each traced upstream to the
+     * site whose value it renders, e.g. `{site}.config.title` for "@{title}" of a header which takes its title from there
+     * @param {Text} node - The text node, bound
+     * @return {Object[]} `{value, site}` for each reference, `site` being `{shadow, segs}`, or null if it is held by none
+     */
+    fluid.staticEditing.boundSites = function (node) {
+        return (node.flTemplateTokens || []).map(token => ({value: fluid.deSignal(token), site: fluid.terminalSiteOf(token)}));
+    };
+
+    // How many steps - references, iterations and computations - a site is followed back through towards the configuration
+    fluid.staticEditing.computeDepth = 4;
+
+    /**
+     * Find where in the site's configuration a site of the component tree draws its value from. The configuration is a
+     * patch of the members of the root of the tree (see wend.siteModel), so a site of the root beneath one of its members
+     * stands at the same path in it. A site within a computed member is drawn from what the computation reads: should
+     * one of its arguments be drawn from the configuration, the site is held within that part of it, at a path which the
+     * computation does not tell - e.g. an item of the site's menu, sorted and nested by beautifulWend.site.buildMenu from
+     * `config.menu.main`
+     * @param {Site} site - The site, `{shadow, segs}`
+     * @param {Shadow} rootShadow - The shadow of the root of the site's component tree
+     * @param {Set<String>} members - The members of the root which the configuration patches
+     * @param {Number} [depth] - How many further computations may be followed
+     * @return {Object|null} `{segs, within}` - the path in the configuration, and the path of the site beneath it which
+     * the computation reorganised, empty if the path is exact - or null if the site is not drawn from the configuration
+     */
+    fluid.staticEditing.configPath = function (site, rootShadow, members, depth = fluid.staticEditing.computeDepth) {
+        let togo = null;
+        if (site.shadow === rootShadow && members.has(site.segs[0]) && !fluid.staticEditing.computedPrefix(site)) {
+            togo = {segs: site.segs, within: []};
+        } else if (depth > 0 && (fluid.staticEditing.iteratedSite(site) || fluid.staticEditing.referredSite(site))) {
+            const upstream = fluid.staticEditing.iteratedSite(site) || fluid.staticEditing.referredSite(site);
+            togo = fluid.staticEditing.configPath(upstream, rootShadow, members, depth - 1);
+        } else if (depth > 0) {
+            const prefix = fluid.staticEditing.computedPrefix(site);
+            const args = prefix ? fluid.makeArray(prefix.record.args).filter(arg => fluid.isILReference(arg)) : [];
+            args.some(arg => {
+                const argSite = fluid.terminalSiteOf(fluid.fetchContextReference(arg, site.shadow)) ||
+                    fluid.staticEditing.directSite(arg, site.shadow);
+                const found = argSite ? fluid.staticEditing.configPath(argSite, rootShadow, members, depth - 1) : null;
+                if (found) {
+                    togo = {segs: found.segs, within: [...found.within, ...site.segs.slice(prefix.length)]};
+                }
+                return !!togo;
+            });
+        }
+        return togo;
+    };
+
+    /**
+     * The site within the source of an iteration of what an iteration variable holds - for a site beneath the variable
+     * named by `valueAs` of the `$for` record of the list holding the component, the site beneath the element of the
+     * source for which the component was made, e.g. `{navbar}.allItems.1.name` for `{self}.item.name`
+     * @param {Site} site - The site
+     * @return {Site|null} The site within the source, or null should the site not be beneath an iteration variable, or
+     * the source be held at no site
+     */
+    fluid.staticEditing.iteratedSite = function (site) {
+        const list = site.shadow.parentShadow;
+        const forRecord = list && list.forRecord;
+        const sourceSite = forRecord && forRecord.valueAs === site.segs[0] ? fluid.terminalSiteOf(list.forSource) : null;
+        return sourceSite ? {shadow: sourceSite.shadow, segs: [...sourceSite.segs, site.shadow.memberName, ...site.segs.slice(1)]} : null;
+    };
+
+    /**
+     * The site a reference written in a component's definition designates, should it designate a member of a component
+     * directly rather than through further references
+     * @param {String} ref - The reference, e.g. "{self}.config.menu.main"
+     * @param {Shadow} shadow - The shadow of the component holding it
+     * @return {Site|null} The site, or null if its context does not resolve to a component
+     */
+    fluid.staticEditing.directSite = function (ref, shadow) {
+        const parsed = fluid.parseContextReference(ref);
+        const context = fluid.deSignal(fluid.resolveContext(parsed.context, shadow));
+        const target = context && fluid.isComponent(context) ? context[fluid.metadataSymbol] : null;
+        return target ? {shadow: target, segs: fluid.pathToSegs(parsed.path)} : null;
+    };
+
+    /**
+     * Find the shortest path beneath which a site is computed - by a member, or a part of one, held by a record such as
+     * `$compute`. A computation shared by the site's pages may be supplied to the page by its value, as computed when the
+     * site was built (see `shared` in wend's pageBoot.js), and is then found by the record its layers define it by
+     * @param {Site} site - The site
+     * @return {Object|null} `{length, record}` - the length of the computed path, and the record computing it - or null
+     */
+    fluid.staticEditing.computedPrefix = function (site) {
+        let togo = null;
+        for (let i = 1; i <= site.segs.length && !togo; ++i) {
+            const segs = site.segs.slice(0, i);
+            const rec = fluid.get(site.shadow.shadowMap, [...segs, fluid.metadataSymbol]);
+            const record = rec && rec.signalRecord && rec.signalRecord.args !== undefined ? rec.signalRecord :
+                fluid.staticEditing.definedCompute(site.shadow, segs);
+            if (record) {
+                togo = {length: i, record};
+            }
+        }
+        return togo;
+    };
+
+    /**
+     * The definition of a path of a component, as the strongest of its layers defining it writes it
+     * @param {Shadow} shadow - The component's shadow
+     * @param {String[]} segs - The path
+     * @return {any} The definition, or undefined if none of its layers defines the path
+     */
+    fluid.staticEditing.definedMember = function (shadow, segs) {
+        const layers = shadow.that && Array.isArray(shadow.that.$layers) ? [...shadow.that.$layers].reverse() : [];
+        const store = fluid.layerStore.get(true);
+        let togo;
+        layers.some(layerName => {
+            togo = store[layerName] ? fluid.get(fluid.def(layerName), segs) : undefined;
+            return togo !== undefined;
+        });
+        return togo;
+    };
+
+    /**
+     * The record by which a component's layers compute a path of it, if they do
+     * @param {Shadow} shadow - The component's shadow
+     * @param {String[]} segs - The path
+     * @return {Object|null} The record, e.g. `{func, args}` for "$compute:f({self}.a)", or null if the path is not computed
+     */
+    fluid.staticEditing.definedCompute = function (shadow, segs) {
+        const member = fluid.staticEditing.definedMember(shadow, segs);
+        const expanded = typeof(member) === "string" && member.startsWith("$compute:") ? fluid.expandCompactElement(member) :
+            fluid.isPlainObject(member, true) ? member : null;
+        return expanded && expanded.$compute && expanded.$compute.args !== undefined ? expanded.$compute : null;
+    };
+
+    /**
+     * The site which a site of a component is drawn from by a reference its layers define a member holding it by, e.g.
+     * `{site}.config.author.name` for `author.name` of a component defining `author: "{site}.config.author"`
+     * @param {Site} site - The site
+     * @return {Site|null} The site referred to, or null should the site not be beneath a member defined by a reference
+     */
+    fluid.staticEditing.referredSite = function (site) {
+        let togo = null;
+        for (let i = 1; i <= site.segs.length && !togo; ++i) {
+            const member = fluid.staticEditing.definedMember(site.shadow, site.segs.slice(0, i));
+            const referred = fluid.isILReference(member) ? fluid.staticEditing.directSite(member, site.shadow) : null;
+            togo = referred ? {shadow: referred.shadow, segs: [...referred.segs, ...site.segs.slice(i)]} : null;
+        }
+        return togo;
+    };
+
+    /**
+     * Find where material of the page is supplied from - the site's configuration, should a value it interpolates be
+     * drawn from there, or else another page of the site which it links to
+     * @param {Object} edit - The controller
+     * @param {Text} node - A text node of the material, bound
+     * @param {Object|null} config - The site's configuration, as edited, `{text, tree, rootShadow, members}` - its text,
+     * parsed as by `fluid.staticEditing.parseJSON`, the shadow of the root of the tree it patches, and the root's
+     * members it patches - or null if it has none
+     * @return {Object|null} `{kind: "page", page}` or `{kind: "config", from, to}` - the range of the value in the
+     * configuration - or null should it be found in neither
+     */
+    fluid.staticEditing.originOf = function (edit, node, config) {
+        let togo = null;
+        // A value drawn from the configuration is its, even should it link to a page, e.g. an item of the site's menu
+        if (config) {
+            fluid.staticEditing.boundSites(node).some(({value, site}) => {
+                const path = site ? fluid.staticEditing.configPath(site, config.rootShadow, config.members) : null;
+                const at = path ? fluid.staticEditing.jsonNodeAt(config.tree, path.segs) : null;
+                const found = at && path.within.length > 0 ? fluid.staticEditing.jsonFindWithin(at, path.within, value) : at;
+                // Only a value written as it is rendered - a computation may read the configuration to yield another,
+                // e.g. a date formatted as the configuration directs
+                if (found && fluid.staticEditing.isJSONPrimitive(found) && String(found.value) === String(value)) {
+                    const quoted = found.type === "string" ? 1 : 0;
+                    togo = {kind: "config", from: found.from + quoted, to: found.to - quoted};
+                }
+                return !!togo;
+            });
+        }
+        const page = togo ? null : fluid.staticEditing.linkedPage(edit, node.parentElement);
+        return page ? {kind: "page", page} : togo;
+    };
+
+    /**
+     * A value of a JSON text, parsed, with the range of the text it is written in
+     * @typedef {Object} JSONNode
+     * @property {String} type - "object", "array", "string", "number", "boolean" or "null"
+     * @property {Number} from - The offset in the text at which it begins
+     * @property {Number} to - The offset in the text at which it ends
+     * @property {any} [value] - For a primitive, its value
+     * @property {Object[]} [members] - For an object, `{key, node}` for each member, in order
+     * @property {JSONNode[]} [items] - For an array, its elements
+     */
+
+    /**
+     * Parse a JSON text, keeping the range of the text in which each value is written, so that a value may be found
+     * where it is written by its path - which `JSON.parse` does not tell
+     * @param {String} text - The text
+     * @return {JSONNode} Its value
+     * @throws {SyntaxError} Should the text not be JSON
+     */
+    fluid.staticEditing.parseJSON = function (text) {
+        let pos = 0;
+        const fail = expected => {
+            throw new SyntaxError("Expected " + expected + " at offset " + pos + " of JSON text");
+        };
+        const space = () => {
+            while (pos < text.length && " \t\r\n".includes(text.charAt(pos))) {
+                ++pos;
+            }
+        };
+        const sticky = (pattern) => {
+            pattern.lastIndex = pos;
+            return pattern.exec(text);
+        };
+        const string = () => {
+            const from = pos;
+            const match = sticky(/"(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/y);
+            if (match) {
+                pos += match[0].length;
+            } else {
+                fail("a string");
+            }
+            return {type: "string", from, to: pos, value: JSON.parse(match[0])};
+        };
+        const value = () => {
+            space();
+            const from = pos;
+            const char = text.charAt(pos);
+            let togo;
+            if (char === "{") {
+                ++pos;
+                const members = [];
+                space();
+                if (text.charAt(pos) === "}") {
+                    ++pos;
+                } else {
+                    let more = true;
+                    while (more) {
+                        space();
+                        const key = string();
+                        space();
+                        if (text.charAt(pos) === ":") {
+                            ++pos;
+                        } else {
+                            fail("\":\"");
+                        }
+                        members.push({key: key.value, node: value()});
+                        space();
+                        more = text.charAt(pos) === ",";
+                        if (more || text.charAt(pos) === "}") {
+                            ++pos;
+                        } else {
+                            fail("\",\" or \"}\"");
+                        }
+                    }
+                }
+                togo = {type: "object", from, to: pos, members};
+            } else if (char === "[") {
+                ++pos;
+                const items = [];
+                space();
+                if (text.charAt(pos) === "]") {
+                    ++pos;
+                } else {
+                    let more = true;
+                    while (more) {
+                        items.push(value());
+                        space();
+                        more = text.charAt(pos) === ",";
+                        if (more || text.charAt(pos) === "]") {
+                            ++pos;
+                        } else {
+                            fail("\",\" or \"]\"");
+                        }
+                    }
+                }
+                togo = {type: "array", from, to: pos, items};
+            } else if (char === "\"") {
+                togo = string();
+            } else {
+                const match = sticky(/(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)/y);
+                if (match) {
+                    pos += match[0].length;
+                } else {
+                    fail("a value");
+                }
+                const parsed = JSON.parse(match[0]);
+                togo = {type: parsed === null ? "null" : typeof(parsed), from, to: pos, value: parsed};
+            }
+            return togo;
+        };
+        const togo = value();
+        space();
+        if (pos < text.length) {
+            fail("the end of the text");
+        }
+        return togo;
+    };
+
+    /**
+     * Determine whether a node of parsed JSON holds a primitive value
+     * @param {JSONNode} node - The node
+     * @return {Boolean} `true` if it is neither an object nor an array
+     */
+    fluid.staticEditing.isJSONPrimitive = function (node) {
+        return node.type !== "object" && node.type !== "array";
+    };
+
+    /**
+     * The nodes of parsed JSON directly beneath a node, each with its key - an object's members, or an array's elements
+     * by index
+     * @param {JSONNode} node - The node
+     * @return {Object[]} `{key, node}` for each
+     */
+    fluid.staticEditing.jsonChildren = function (node) {
+        return node.type === "object" ? node.members : node.type === "array" ? node.items.map((item, i) => ({key: String(i), node: item})) : [];
+    };
+
+    /**
+     * Find the node of parsed JSON at a path - of an object's member written more than once, the last, as `JSON.parse`
+     * takes it
+     * @param {JSONNode} node - The node at which the path begins
+     * @param {String[]} segs - The path
+     * @return {JSONNode|null} The node, or null if there is none at the path
+     */
+    fluid.staticEditing.jsonNodeAt = function (node, segs) {
+        return segs.reduce((at, seg) => {
+            const found = at ? fluid.staticEditing.jsonChildren(at).filter(child => child.key === String(seg)).pop() : null;
+            return found ? found.node : null;
+        }, node);
+    };
+
+    /**
+     * Find, beneath a node of parsed JSON, the value which a computation reorganising it yielded at a path - the value
+     * held, at any depth, by a member of the same name as the path ends with, should exactly one be equal to the value
+     * yielded, e.g. the name of an item of the site's menu, sorted and nested from those of `config.menu.main`
+     * @param {JSONNode} node - The node the computation read
+     * @param {String[]} within - The path of the value within what the computation yielded
+     * @param {any} value - The value it yielded there
+     * @return {JSONNode|null} The node holding the value, or null if there is not exactly one
+     */
+    fluid.staticEditing.jsonFindWithin = function (node, within, value) {
+        const name = [...within].reverse().find(seg => !/^\d+$/.test(seg));
+        const found = [];
+        const visit = at => fluid.staticEditing.jsonChildren(at).forEach(child => {
+            if (child.key === name && fluid.staticEditing.isJSONPrimitive(child.node) && child.node.value === value) {
+                found.push(child.node);
+            }
+            visit(child.node);
+        });
+        if (name !== undefined) {
+            visit(node);
+        }
+        return found.length === 1 ? found[0] : null;
+    };
+
+    /**
+     * The text of the site's configuration, as edited - its claim's, or as read from the repository
+     * @param {Object} edit - The controller
+     * @return {Promise<Object|null>} `{path, text}`, or null if the site has no configuration, or it can't be read
+     */
+    fluid.staticEditing.configText = async function (edit) {
+        const config = (edit.provenance.framing || []).find(framing => framing.kind === "patch");
+        let togo = null;
+        if (config) {
+            const claim = edit.framingClaims[config.path];
+            let text = claim ? claim.text : edit.bases[config.path] ? edit.bases[config.path].text : undefined;
+            if (text === undefined) {
+                const read = await fluid.staticEditing.send(edit, {type: "source-read", repo: edit.provenance.repo,
+                    branch: edit.provenance.branch, path: config.path}).catch(() => null);
+                text = read ? read.text : undefined;
+            }
+            togo = text === undefined ? null : {path: config.path, text};
+        }
+        return togo;
+    };
+
+    /**
+     * The site's configuration, parsed, with the root of the component tree it patches - see `originOf`
+     * @param {Object} edit - The controller
+     * @param {Object|null} config - The configuration's `{path, text}`, as by `configText`, or null
+     * @return {Object|null} `{text, tree, rootShadow, members}`, or null should there be no configuration, should it not
+     * parse, e.g. as it is being edited, or should the page render no root of the layer it patches
+     */
+    fluid.staticEditing.parsedConfig = function (edit, config) {
+        const layer = edit.provenance.migration && edit.provenance.migration.root;
+        const root = fluid.globalInstantiator && fluid.globalInstantiator.rootComponent;
+        const component = config && layer && root ? fluid.queryILSelector(root, layer).find(one => !fluid.isUnavailable(one)) : null;
+        let tree = null;
+        if (component) {
+            try {
+                tree = fluid.staticEditing.parseJSON(config.text);
+            } catch (error) {
+                tree = null;
+            }
+        }
+        return tree && tree.type === "object" ? {text: config.text, tree, rootShadow: component[fluid.metadataSymbol],
+            members: new Set(tree.members.map(member => member.key))} : null;
+    };
+
+    // The tooltips of material supplied by another source, by the kind of its origin
+    fluid.staticEditing.sourcedTitles = {
+        page: page => "From the page \"" + (page.title || page.path) + "\" - shift-click to edit it there",
+        config: () => "From the site configuration - shift-click to edit it there"
+    };
+
+    /**
+     * Mark, while the framing is edited, the material of the page which another source supplies through its templates -
+     * outside the page's own blocks and the panel, each element holding text its template interpolates, whose value is
+     * found to come from another page of the site, or from the site's configuration - with a halo, and a tooltip saying
+     * where it comes from, a shift-click on it going there - see goToOrigin. Elements of the framing edited in place are
+     * marked as templated already, and are given an origin as well
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once marked
+     */
+    fluid.staticEditing.markSourced = async function (edit) {
+        const on = edit.framingMode && !edit.state.hidden;
+        document.querySelectorAll("[data-fluid-sourced]").forEach(element => {
+            element.removeAttribute("data-fluid-sourced");
+            // Its own title, if it had one, is restored - whether held by the tooltips while it is hovered, or not
+            const titleAttr = element.hasAttribute("data-fl-title") ? "data-fl-title" : "title";
+            if (element.flOriginTitle !== undefined && element.getAttribute(titleAttr) === element.flOriginTitle) {
+                if (element.flPriorTitle === null) {
+                    element.removeAttribute(titleAttr);
+                } else {
+                    element.setAttribute(titleAttr, element.flPriorTitle);
+                }
+            }
+            delete element.flOrigin;
+            delete element.flOriginTitle;
+            delete element.flPriorTitle;
+        });
+        // A later marking supersedes one still reading what it needs
+        const marking = edit.sourcedMarking = (edit.sourcedMarking || 0) + 1;
+        if (on) {
+            await fluid.staticEditing.learnSite(edit);
+            const config = fluid.staticEditing.parsedConfig(edit, await fluid.staticEditing.configText(edit));
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            for (let node = marking === edit.sourcedMarking ? walker.nextNode() : null; node; node = walker.nextNode()) {
+                const element = node.parentElement;
+                if (node.flBound && element && !element.flOrigin && !element.closest("[data-fluid-block], [data-fluid-edit-ui]")) {
+                    const origin = fluid.staticEditing.originOf(edit, node, config);
+                    if (origin) {
+                        element.flOrigin = origin;
+                        element.setAttribute("data-fluid-sourced", origin.kind);
+                        // Said in its tooltip, after any title of its own, e.g. that of a templated element of the framing
+                        const titleAttr = element.hasAttribute("data-fl-title") ? "data-fl-title" : "title";
+                        const prior = element.getAttribute(titleAttr);
+                        const said = fluid.staticEditing.sourcedTitles[origin.kind](origin.page);
+                        element.flPriorTitle = prior;
+                        element.flOriginTitle = prior ? prior + "\n" + said : said;
+                        element.setAttribute(titleAttr, element.flOriginTitle);
+                    }
+                }
+            }
+        }
+    };
+
+    /**
+     * Go to the source supplying material of the page - another page of the site, which is opened with its source
+     * shown, the editor staying open as the tab navigates; or the site's configuration, shown in its tab with the value
+     * selected
+     * @param {Object} edit - The controller
+     * @param {Object} origin - Its origin, as by `originOf`
+     * @return {Promise} Resolves once there, or once the tab begins to navigate
+     */
+    fluid.staticEditing.goToOrigin = async function (edit, origin) {
+        if (origin.kind === "page") {
+            fluid.staticEditing.setPref(edit, "sourceOpen", true);
+            fluid.staticEditing.rememberSession(edit);
+            location.href = new URL(origin.page.path.replace(/^\//, ""), new URL(fluid.staticEditing.siteRoot(edit), location.href)).href;
+        } else {
+            await fluid.staticEditing.editConfig(edit);
+            const view = edit.source.view;
+            view.dispatch({selection: {anchor: origin.from, head: origin.to},
+                effects: fluid.sourceView.CM.EditorView.scrollIntoView(origin.from, {y: "center"})});
+            view.focus();
+        }
+    };
+
+    /**
+     * The URL of the root of the site, relative to this page - from the page's path within the site
+     * @param {Object} edit - The controller
+     * @return {String} The URL, e.g. "../../"
+     */
+    fluid.staticEditing.siteRoot = function (edit) {
+        const depth = edit.provenance.page.split("/").filter(segment => segment).length;
+        return "../".repeat(depth) || "./";
     };
 
     /**
@@ -1864,7 +2467,7 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.beginNewPost = async function (edit, claim) {
         await fluid.staticEditing.learnSite(edit);
-        const title = claim ? (/^title:\s*(.*)$/m.exec(claim.text) || [])[1] || "" : "";
+        const title = claim ? fluid.staticEditing.frontMatterValue(claim.text, "title") || "" : "";
         const path = claim ? claim.path : fluid.staticEditing.newPostPath(edit, "");
         edit.creating = {path};
         edit.bases[path] = edit.bases[path] || {text: "", sha: undefined, hash: null};
@@ -1875,8 +2478,104 @@ const fluidStaticEditingScope = function (fluid) {
         await fluid.staticEditing.switchTarget(edit, path);
         await fluid.cell.settle();
         const input = edit.panel.querySelector(".fluid-edit-new-title");
-        input.value = title.replace(/^"(.*)"$/, "$1");
+        input.value = title;
         input.focus();
+    };
+
+    /**
+     * An entry of a content file's front matter - a key at the top level of its YAML mapping, holding a scalar
+     * @typedef {Object} FrontMatterEntry
+     * @property {String} key - The key
+     * @property {String|null} value - The scalar's value, or null if it is not a scalar written on the key's line
+     * @property {Number} from - The offset in the text at which the value as written begins
+     * @property {Number} to - The offset at which it ends
+     */
+
+    /**
+     * Read the entries at the top level of a content file's front matter - the YAML between its opening `---` line and
+     * the next, as wend splits it (see wendMarkdown.splitFrontMatter) - each with the range of its value. Only what the
+     * editor itself writes and reads is understood: keys holding a scalar on their own line, plain, double-quoted, as
+     * JSON writes it, or single-quoted. A key whose value is a block, e.g. a list of tags, is listed with no value. The
+     * whole of YAML is parsed by the site's build, whose parser is not shipped to the browser
+     * @param {String} text - The file's text
+     * @return {FrontMatterEntry[]|null} The entries, or null if the file has no front matter
+     */
+    fluid.staticEditing.frontMatter = function (text) {
+        const lines = text.split("\n");
+        let togo = null;
+        if (lines[0].replace(/\r$/, "") === "---") {
+            const close = lines.findIndex((line, i) => i > 0 && line.replace(/\r$/, "") === "---");
+            togo = [];
+            let at = lines[0].length + 1;
+            for (let i = 1; i < close; ++i) {
+                const line = lines[i].replace(/\r$/, "");
+                const entry = /^([^\s#:][^:]*):(?:[ \t]+|$)/.exec(line);
+                if (entry) {
+                    const written = line.substring(entry[0].length).replace(/[ \t]+#.*$/, "").trimEnd();
+                    togo.push({key: entry[1].trim(), value: fluid.staticEditing.yamlScalar(written),
+                        from: at + entry[0].length, to: at + entry[0].length + written.length});
+                } else if (/^\s/.test(line) && togo.length > 0 && line.trim() !== "") {
+                    // A line continuing the entry before, e.g. an element of its list - that entry holds no scalar
+                    togo[togo.length - 1].value = null;
+                }
+                at += lines[i].length + 1;
+            }
+            togo = close > 0 ? togo : null;
+        }
+        return togo;
+    };
+
+    /**
+     * Read a YAML scalar written on one line - plain, double-quoted or single-quoted
+     * @param {String} written - The scalar as written
+     * @return {String|null} Its value, or null if it is empty or does not stand alone on the line, e.g. a block's indicator
+     */
+    fluid.staticEditing.yamlScalar = function (written) {
+        let togo = null;
+        if (written.startsWith("\"")) {
+            try {
+                togo = JSON.parse(written);
+            } catch (error) {
+                togo = null;
+            }
+        } else if (written.startsWith("'")) {
+            togo = written.length > 1 && written.endsWith("'") ? written.slice(1, -1).replace(/''/g, "'") : null;
+        } else if (written !== "" && !/^[|>[{&*!-]/.test(written)) {
+            togo = written;
+        }
+        return togo;
+    };
+
+    /**
+     * The value of an entry at the top level of a content file's front matter
+     * @param {String} text - The file's text
+     * @param {String} key - The entry's key
+     * @return {String|null} Its value, or null if it has no such entry holding a scalar
+     */
+    fluid.staticEditing.frontMatterValue = function (text, key) {
+        const entry = (fluid.staticEditing.frontMatter(text) || []).filter(one => one.key === key).pop();
+        return entry ? entry.value : null;
+    };
+
+    /**
+     * Write the value of an entry at the top level of a content file's front matter, as a double-quoted scalar - in
+     * place of the entry's value, or as a new entry at the front matter's head should it have none
+     * @param {String} text - The file's text
+     * @param {String} key - The entry's key
+     * @param {String} value - Its value
+     * @return {String} The text, so written - unchanged should it have no front matter
+     */
+    fluid.staticEditing.withFrontMatterValue = function (text, key, value) {
+        const entries = fluid.staticEditing.frontMatter(text);
+        const entry = entries ? entries.filter(one => one.key === key).pop() : null;
+        let togo = text;
+        if (entry) {
+            togo = text.substring(0, entry.from) + JSON.stringify(value) + text.substring(entry.to);
+        } else if (entries) {
+            const head = text.indexOf("\n") + 1;
+            togo = text.substring(0, head) + key + ": " + JSON.stringify(value) + "\n" + text.substring(head);
+        }
+        return togo;
     };
 
     /**
@@ -1887,7 +2586,7 @@ const fluidStaticEditingScope = function (fluid) {
      * @return {Promise} Resolves once the claim is stored
      */
     fluid.staticEditing.retitleNewPost = async function (edit, title) {
-        const text = edit.source.getText().replace(/^title:.*$/m, "title: " + JSON.stringify(title));
+        const text = fluid.staticEditing.withFrontMatterValue(edit.source.getText(), "title", title);
         const path = fluid.staticEditing.newPostPath(edit, title);
         if (path !== edit.targetPath) {
             const old = edit.newClaims[edit.targetPath];
@@ -1937,7 +2636,7 @@ const fluidStaticEditingScope = function (fluid) {
                 item.className = "fluid-edit-pending";
                 item.href = "#";
                 item.setAttribute("data-fluid-claim-state", claim.state);
-                const title = (/^title:\s*"?(.*?)"?\s*$/m.exec(claim.text) || [])[1] || "Untitled";
+                const title = fluid.staticEditing.frontMatterValue(claim.text, "title") || "Untitled";
                 item.textContent = title + " - a new post, " + fluid.staticEditing.stateLabels[claim.state].toLowerCase();
                 item.addEventListener("click", event => {
                     event.preventDefault();
@@ -2425,6 +3124,19 @@ const fluidStaticEditingScope = function (fluid) {
         } else {
             window.scrollTo(0, top);
         }
+        // Closed, the page is left as it is shown - its blocks no longer marked as editable, nor its framing, which are
+        // marked again as the panel reopens - see showTarget
+        if (!on) {
+            if (edit.blockEditing) {
+                fluid.staticEditing.setBlockEditing(edit, false).catch(error => console.error("Edit in Infusion: the page's blocks can't cease to be edited", error));
+            }
+            Promise.all((edit.provenance.framing || []).map(framing => fluid.staticEditing.markFraming(edit, framing)))
+                .catch(error => console.error("Edit in Infusion: the framing can't be unmarked", error));
+            fluid.staticEditing.markSourced(edit).catch(error => console.error("Edit in Infusion: what other sources supply can't be unmarked", error));
+            if (typeof(CSS) !== "undefined" && CSS.highlights) {
+                CSS.highlights.delete("fluid-framing-cursor");
+            }
+        }
         if (on && !edit.resizeBarBound) {
             edit.resizeBarBound = true;
             fluid.staticEditing.ask(edit, {op: "bindResizeBar", bar: ".fluid-edit-resize-bar", panel: ".fluid-edit-panel"})
@@ -2627,6 +3339,7 @@ const fluidStaticEditingScope = function (fluid) {
         if (open) {
             edit.source.view.requestMeasure();
         }
+        fluid.staticEditing.holdRoom(edit);
     };
 
     /**
@@ -2696,10 +3409,14 @@ const fluidStaticEditingScope = function (fluid) {
             [fluid.staticEditing.claimRemovedEvent]: event => edit.started.then(() => fluid.staticEditing.claimRemoved(edit, JSON.parse(event.detail)))
         };
         Object.entries(edit.listeners).forEach(([type, listener]) => document.addEventListener(type, listener));
+        // The logo, published beside the editor's own SFCs
+        if (fluid.staticEditing.sfcDir) {
+            edit.state.logoSrc = new URL("../images/edit-in-infusion-48.png", fluid.staticEditing.sfcDir).href;
+        }
         // The titles of the panel's controls, and of the marks it makes in the page, are shown as tooltips placed by
         // Popper - once loaded, from the site's copy of Infusion - see the foot of this file
         fluid.staticEditing.tooltipsLoaded.then(() => {
-            if (fluid.titleTooltips && !edit.unbound) {
+            if (fluid.titleTooltips && fluid.titleTooltips.bind && !edit.unbound) {
                 edit.titleTooltips = fluid.titleTooltips.bind(document, fluid.staticEditing.tooltipScope, {className: "fluid-edit-tooltip", global: window});
                 // Kept, as the panel is, while the page's tree boots - see bridge.js
                 edit.titleTooltips.tooltip.node.setAttribute("data-fluid-edit-ui", "");
@@ -2816,24 +3533,12 @@ if (typeof(fluid) !== "undefined") {
     const script = typeof(document) !== "undefined" && document.currentScript;
     // Where the titles of the panel's controls and of its marks in the page are shown as tooltips
     fluid.staticEditing.tooltipScope = "[data-fluid-edit-ui], [data-fluid-framing-editable], .fluid-edit-list-head";
-    /**
-     * Load a script of the site's copy of Infusion into the page
-     * @param {String} src - Its URL
-     * @return {Promise} Resolves once it has run, or rejects should it fail to load
-     */
-    const loadScript = src => new Promise((resolve, reject) => {
-        const element = document.createElement("script");
-        element.src = src;
-        element.setAttribute("data-fluid-edit-ui", "");
-        element.onload = resolve;
-        element.onerror = () => reject(new Error("Failed to load " + src));
-        document.head.appendChild(element);
-    });
-    // The tooltips, and Popper placing them - a site whose Infusion holds neither shows the browser's own
-    fluid.staticEditing.tooltipsLoaded = script && script.src && !fluid.titleTooltips ? (async function () {
-        await loadScript(new URL("../../../lib/popper/popper-lite.min.js", script.src).href).catch(() => null);
-        await loadScript(new URL("../../tooltip/fluid-tooltip.js", script.src).href);
-    })().catch(error => console.warn("Edit in Infusion: tooltips are shown by the browser, since " + error.message)) : Promise.resolve();
+    // The tooltips, and Popper placing them, from the site's copy of Infusion - see fluid-tooltip.vue. A site whose
+    // Infusion holds neither, never announcing them, shows the browser's own
+    fluid.staticEditing.tooltipsLoaded = script && script.src && fluid.loadImportMap ? (function () {
+        fluid.loadImportMap({"fluid.titleTooltips": {path: new URL("../../tooltip/fluid-tooltip.vue", script.src).href}}, document);
+        return fluid.cell.waitFor(fluid.subscribeDocToInjections("fluid.titleTooltips", document));
+    })() : Promise.resolve();
     if (script && script.src && fluid.loadImportMap) {
         // The directory of the static editor's own SFCs, e.g. the host of "Ask me anything" - see toggleAI
         fluid.staticEditing.sfcDir = new URL("../sfc/", script.src).href;

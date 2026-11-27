@@ -48,6 +48,19 @@ fluid.tests.tldrawAI.makeCounter = function (container, shapeId, clicks) {
  * @param {String[]} [selectedIds] - The ids of the selected shapes
  * @return {Workspace} The workspace
  */
+/**
+ * A canned reply of the AI, its document - if it holds one - using the boundary issued with the direction, as the
+ * assistant requires, and as the last message sent gives it
+ * @param {ChatMessage[]} messages - The messages sent
+ * @param {String} reply - The reply, whose document may use any boundary
+ * @return {String} The reply, its document's outermost boundary being the one issued
+ */
+fluid.tests.tldrawAI.answer = function (messages, reply) {
+    const issued = /boundary="(reply-[a-z0-9]+)"/.exec(fluid.peek(messages).content);
+    const declared = reply.startsWith("MIME-Version:") ? fluid.ai.arena.documentBoundary(reply) : undefined;
+    return issued && declared ? reply.split(declared).join(issued[1]) : reply;
+};
+
 fluid.tests.tldrawAI.makeWorkspace = function (widgets, selectedIds = []) {
     return {
         widgets,
@@ -224,7 +237,7 @@ QUnit.test("Provenance recorded in layers sent by the AI", async function (asser
         history: [],
         model: "conversing-model",
         bridge,
-        call: () => Promise.resolve(fluid.ptf.encode([parts[0]])),
+        call: messages => Promise.resolve(fluid.tests.tldrawAI.answer(messages, fluid.ptf.encode([parts[0]]))),
         report: () => {},
         getDocs: () => Promise.resolve([])
     });
@@ -277,7 +290,7 @@ QUnit.test("Synthesized widgets must name fluid.topLevelWidget", async function 
         bridge,
         call: messages => {
             sent.push(fluid.peek(messages).content);
-            return Promise.resolve(responses[sent.length - 1]);
+            return Promise.resolve(fluid.tests.tldrawAI.answer(messages, responses[sent.length - 1]));
         },
         report: () => {},
         getDocs: () => Promise.resolve([])
@@ -346,6 +359,80 @@ fluid.tests.tldrawAI.makeFakeBridge = function (workspace, problemScript) {
     };
 };
 
+// The kinds of part which may be sent are those which planning knows, Infusion's with the host's, and the prompt lists them
+QUnit.test("Kinds of part, patches and text sent by the AI", async function (assert) {
+    const stanza = fluid.ai.arena.kindsStanza(fluid.tldraw.ai.host);
+    ["layer", "patch", "replace", "component", "delete", "text"].forEach(kind => assert.ok(stanza.includes("* `" + kind + "` - "), "Prompt lists kind " + kind));
+    assert.notOk(stanza.includes("`canvas`") || stanza.includes("`problems`"), "Kinds which may not be sent are not listed");
+    assert.ok(stanza.includes("* `layer:` - ") && stanza.includes("- by patch"), "Prompt lists the schemes of target, with their operations");
+    const prompt = fluid.tldraw.ai.systemPrompt.compose([], fluid.tests.tldrawAI.makeWorkspace([]));
+    assert.ok(prompt.indexOf("## The kinds of top-level part") < prompt.indexOf(fluid.ai.arena.workspaceHeading), "Listed in the prompt before the workspace");
+
+    const layerName = "fluid.tests.tldrawAI.patched";
+    const original = `fluid.def("${layerName}", {\n    $layers: "fluid.topLevelWidget",\n    label: "one",\n    other: "one"\n});\n`;
+    const shown = new Map([[layerName, {kind: "layer", contentType: "text/javascript", filename: layerName, body: original}]]);
+    const patchPart = (layer, body) => ({kind: "patch", contentType: "text/plain", filename: "p", target: "layer:" + layer, body});
+    const block = (search, replace) => `<<<<<<< SEARCH\n${search}\n=======\n${replace}\n>>>>>>> REPLACE\n`;
+    // Each document passes through the codec, as the Target header must
+    const plan = parts => fluid.ai.arena.planChanges(fluid.ptf.decode(fluid.ptf.encode(parts)), [], [], fluid.tldraw.ai.host, shown);
+
+    const patched = plan([patchPart(layerName, block("    label: \"one\",", "    label: \"two\",") + "\n" + block("    other: \"one\"", "    other: \"two\",\n    more: 3"))]);
+    assert.deepEqual(patched.problems, [], "Patch planned without problems");
+    assert.equal(patched.layers[0].body, original.replace("label: \"one\"", "label: \"two\"").replace("    other: \"one\"", "    other: \"two\",\n    more: 3"),
+        "Each block applied to the layer as shown");
+    assert.equal(patched.layers[0].contentType, "text/javascript", "Patched layer keeps its Content-Type");
+    assert.equal(shown.get(layerName).body, original, "Layer as shown unchanged");
+
+    const fragments = [
+        [patchPart(layerName, block("\"one\"", "\"two\"")), "occurs more than once"],
+        [patchPart(layerName, block("label: \"three\"", "x")), "does not occur in it"],
+        [patchPart(layerName, "label: \"two\""), "is not a sequence of whole blocks"],
+        [patchPart(layerName, block("    label: \"one\",", "    label: \"two\"")), "has a syntax error"],
+        [patchPart("fluid.tests.tldrawAI.unseen", block("a", "b")), "whose definition is not shown"],
+        [{...patchPart(layerName, block("a", "b")), target: undefined}, "has no Target header"],
+        [{...patchPart(layerName, block("a", "b")), target: "shape:x"}, "is not of a known scheme - expected one of layer:..."],
+        [{kind: "replace", contentType: "text/plain", filename: "r", target: "layer:" + layerName, body: "x"}, "cannot be changed by a replace part"],
+        [{kind: "canvas", contentType: "application/json", filename: "canvas", body: "[]"}, "native tldraw shapes cannot be altered"],
+        [{kind: "problems", contentType: "text/plain", filename: "problems", body: ""}, "A problems part cannot be sent"],
+        [{kind: "mystery", contentType: "text/plain", filename: "m", body: ""}, "expected one of layer, patch, replace, component, delete, text"]
+    ];
+    fragments.forEach(([part, fragment]) => {
+        const refused = plan([part]);
+        assert.ok(refused.problems.length === 1 && refused.problems[0].includes(fragment) && refused.layers.length === 0, "Refused: " + fragment);
+    });
+
+    // A document's text parts are shown to the user, and one holding nothing else changes nothing
+    const workspace = fluid.tests.tldrawAI.makeWorkspace([]);
+    const bridge = fluid.tests.tldrawAI.makeFakeBridge(workspace, []);
+    const assistant = fluid.tldraw.ai.makeAssistant(bridge, () => Promise.resolve([]));
+    const textPart = text => ({kind: "text", contentType: "text/markdown", filename: "note", body: text});
+    const textOnly = await assistant.interpret(fluid.ptf.encode([textPart("Just saying")]), {model: "m", direction: "d"});
+    assert.deepEqual([textOnly.entries, textOnly.problems, bridge.plans.length], [[{kind: "assistant", text: "Just saying"}], [], 0],
+        "Text alone shown, and nothing applied");
+    const mixed = await assistant.interpret(fluid.ptf.encode([textPart("Removing the note"),
+        {kind: "delete", contentType: "text/plain", filename: "shape:note1", body: ""}]), {model: "m", direction: "d"});
+    assert.deepEqual(mixed.entries.map(entry => entry.kind), ["assistant", "change"], "Text shown beside the change");
+    assert.deepEqual(mixed.results, ["Applied plan 1"], "What was applied returned as results");
+
+    // Once a boundary is issued with a direction, a document using any other is refused
+    const preamble = assistant.directionPreamble();
+    const issued = /boundary="(reply-[a-z0-9]+)"/.exec(preamble)[1];
+    const deleteDoc = fluid.ptf.encode([{kind: "delete", contentType: "text/plain", filename: "shape:note1", body: ""}]);
+    const refused = await assistant.interpret(deleteDoc, {model: "m", direction: "d"});
+    assert.ok(refused.problems[0].includes("rather than the one given with the direction") && refused.problems[0].includes(issued),
+        "Document with another boundary refused, and the issued one given");
+    assert.equal(bridge.plans.length, 1, "And nothing of it applied");
+    const accepted = await assistant.interpret(fluid.tests.tldrawAI.answer([{content: preamble}], deleteDoc), {model: "m", direction: "d"});
+    assert.deepEqual(accepted.problems, [], "Document with the issued boundary accepted");
+    assert.notEqual(/boundary="(reply-[a-z0-9]+)"/.exec(assistant.directionPreamble())[1], issued, "A fresh boundary issued with each direction");
+
+    // The repair message reports what was applied as well as what went wrong
+    const repair = assistant.repairMessage(["It broke"], ["Deleted shape shape:note1"]).content;
+    assert.ok(repair.includes("* Deleted shape shape:note1") && repair.includes("* It broke") && repair.includes("boundary=\"reply-"),
+        "Repair message holds the results, the problems and the boundary");
+    assert.ok(fluid.ai.arena.repairMessage(["It broke"]).content.startsWith("Nothing of your response was applied"), "Or that nothing was applied");
+});
+
 QUnit.test("Exchanges with the AI, including repair of failed responses", async function (assert) {
     const workspace = fluid.tests.tldrawAI.makeWorkspace([{shapeId: "shape:a", layerName: "fluid.demos.counter", bounds: {x: 0, y: 0, w: 1, h: 1}}]);
     const getDocs = () => Promise.resolve(["DOCS"]);
@@ -375,7 +462,7 @@ QUnit.test("Exchanges with the AI, including repair of failed responses", async 
         bridge,
         call: messages => {
             calls.push(fluid.copy(messages));
-            return Promise.resolve(responses[calls.length - 1]);
+            return Promise.resolve(fluid.tests.tldrawAI.answer(messages, responses[calls.length - 1]));
         },
         report: entry => entries.push(entry),
         getDocs
@@ -398,7 +485,7 @@ QUnit.test("Exchanges with the AI, including repair of failed responses", async 
         direction: "Remove the note",
         history: [],
         bridge: failingBridge,
-        call: () => Promise.resolve(deleteDoc),
+        call: messages => Promise.resolve(fluid.tests.tldrawAI.answer(messages, deleteDoc)),
         report: entry => failingEntries.push(entry),
         getDocs
     });

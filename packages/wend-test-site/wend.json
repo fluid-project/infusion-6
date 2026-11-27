@@ -36,6 +36,7 @@
         }
     },
     "features": {
-        "selfHosted": true
+        "selfHosted": true,
+        "katex": true
     }
 }

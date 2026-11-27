@@ -24,8 +24,9 @@ fluid.def("fluid.staticEditing.askAnything", {
 // markup rather than as text to be repeated, and which can't be mistaken for anything the source holds
 fluid.staticEditing.ai.cursorMarker = "<fluid-infusion-cursor/>";
 
-// The markers of the text the user has selected in the source sent to the AI, in place of the cursor's - see markedSource
-fluid.staticEditing.ai.selectionMarkers = ["<fluid-infusion-selection>", "</fluid-infusion-selection>"];
+// The markers of the text the user has selected in the source sent to the AI, in place of the cursor's, the first
+// bearing the id issued for the selection - see markedSource
+fluid.staticEditing.ai.selectionMarkers = [id => `<fluid-infusion-selection id="${id}">`, () => "</fluid-infusion-selection>"];
 
 fluid.staticEditing.ai.introduction = `You are an assistant embedded in the editor of a page of a website built with wend, a \
 static site generator built on Fluid Infusion 6, a framework in which an application is made of named layers of \
@@ -43,24 +44,26 @@ The workspace ends with a \`markdown\` part holding the page's markdown source a
 is marked by the element ${fluid.staticEditing.ai.cursorMarker}. A fresh widget is pasted into the markdown where the \
 cursor stands, as a block of its own - several fresh widgets one after another - so that "put a widget here" means at \
 the cursor. The cursor never stands within a widget's element. The marker is not part of the page: never write it \
-yourself. Never send a \`markdown\` part - the markdown is changed only by your changes to widgets: a fresh widget is \
-inserted, a widget deleted by a \`delete\` part naming its id is removed from it, and a widget altered is written back \
-into it. Text of the page other than its widgets is altered only by replacing the user's selection - see below - so \
-if the user asks for other text to change, reply with what they should write, in text.`;
+yourself. Never send a \`markdown\` part. Your changes to widgets are written into the markdown for you: a fresh widget \
+is inserted, a widget deleted by a \`delete\` part naming its id is removed from it, and a widget altered is written \
+back into it - so never patch a widget's element. To change any other text of the page, send a \`patch\` part whose \
+\`Target\` is \`file:\` followed by the markdown part's filename, e.g. \`Target: file:content/post/first.md\`. Copy \
+each SEARCH text from the markdown as shown, which may include the cursor's or the selection's markers - these are \
+not part of the page, and are dropped from whatever you write.`;
 
 fluid.staticEditing.ai.selectionRules = `## The user's selection
 
 Should the user have selected text in the source, the workspace's source part encloses it between \
-${fluid.staticEditing.ai.selectionMarkers[0]} and ${fluid.staticEditing.ai.selectionMarkers[1]}, in place of the \
-cursor's marker - "the selection", "the selected markup", "this" and the like refer to it. The source may be the \
+${fluid.staticEditing.ai.selectionMarkers[0]("s1")} and ${fluid.staticEditing.ai.selectionMarkers[1]()}, in place of \
+the cursor's marker, its \`id\` naming the selection - "the selection", "the selected markup", "this" and the like \
+refer to it. The source may be the \
 page's markdown, or another source of the site the user edits, e.g. an SFC of its framing, named by the part's \
 filename. To replace the selected text, e.g. to convert selected HTML markup to its equivalent in markdown, to reword \
-it, or to correct it, reply with a PTF document holding a single part with Content-Description \
-\`selection\`, Content-Type \`text/plain; charset=utf-8\`, any filename, and as its body exactly the text which is to \
-stand in place of the selection - nothing of the text around it, and never the markers. An empty body deletes the \
-selected text. The replacement is applied directly to the source, as the user's own edit, which they can see and \
-undo. Only the selected text can be replaced in this way - if nothing is selected, ask the user to select what they \
-want changed.`;
+it, or to correct it, reply with a PTF document holding a \`replace\` part with \`Target: selection:\` followed by \
+the selection's id, e.g. \`Target: selection:s1\`, Content-Type \`text/plain; charset=utf-8\`, any filename, and as \
+its body exactly the text which is to stand in place of the selection - nothing of the text around it, and never the \
+markers. An empty body deletes the selected text. Every change to the source is applied directly to it, as the \
+user's own edit, which they can see and undo - unless the source has changed since it was sent, when it is refused.`;
 
 fluid.staticEditing.ai.pageHints = `* A widget is a fluid.topLevelWidget, sized by the page's layout rather than by any \
 \`preferredSize\`. It is saved into the page with its live state, and published with the site once the user commits.`;
@@ -101,15 +104,16 @@ fluid.staticEditing.ai.pastePosition = function (source, pos) {
  * The source as sent to the AI, marked with the user's selection, should they have selected text, or else with their
  * cursor - see fluid.staticEditing.ai.selectionMarkers and fluid.staticEditing.ai.cursorMarker
  * @param {Object} source - The source view
+ * @param {String} [selectionId] - The id issued for the selection, should text be selected
  * @return {String} The marked source
  */
-fluid.staticEditing.ai.markedSource = function (source) {
+fluid.staticEditing.ai.markedSource = function (source, selectionId = "s1") {
     const text = source.getText();
     const {from, to} = source.view.state.selection.main;
     let togo;
     if (to > from) {
         const [open, close] = fluid.staticEditing.ai.selectionMarkers;
-        togo = text.substring(0, from) + open + text.substring(from, to) + close + text.substring(to);
+        togo = text.substring(0, from) + open(selectionId) + text.substring(from, to) + close() + text.substring(to);
     } else {
         const pos = fluid.staticEditing.ai.pastePosition(source, source.view.state.selection.main.head);
         togo = text.substring(0, pos) + fluid.staticEditing.ai.cursorMarker + text.substring(pos);
@@ -118,17 +122,149 @@ fluid.staticEditing.ai.markedSource = function (source) {
 };
 
 /**
- * Replace the text the user has selected in the source with what the AI sent, as the user's own edit of it, leaving the
- * replacement selected - as the selection stands when the reply is applied
- * @param {Object} source - The source view
- * @param {String} text - The replacement
- * @return {Boolean} `true` if text was selected, and so replaced
+ * The source as it was last sent to the AI, by which the changes a reply makes to it are planned and checked
+ * @typedef {Object} SentSource
+ * @property {Object} source - The source view it was taken from
+ * @property {String} path - Its path, as the workspace's part names it, e.g. "content/post/first.md"
+ * @property {String} text - Its text, unmarked
+ * @property {Number} from - The start of the selection, or the cursor's position should no text be selected
+ * @property {Number} to - The end of the selection, or the cursor's position
+ * @property {String|null} selectionId - The id issued for the selection, e.g. "s1", or null if no text was selected
  */
-fluid.staticEditing.ai.replaceSelection = function (source, text) {
-    const {from, to} = source.view.state.selection.main;
-    const togo = to > from;
+
+// The record of the sources sent to the AI from each editing panel, by the panel's controller
+fluid.staticEditing.ai.sentRecords = new WeakMap();
+
+/**
+ * The record of the sources sent to the AI from the panel, made on first use - see `makeSentRecord`
+ * @param {Object} edit - The controller of the editing panel
+ * @return {Object} The record, `{mark, sent}`
+ */
+fluid.staticEditing.ai.sentRecordOf = function (edit) {
+    if (!fluid.staticEditing.ai.sentRecords.has(edit)) {
+        fluid.staticEditing.ai.sentRecords.set(edit, fluid.staticEditing.ai.makeSentRecord(edit));
+    }
+    return fluid.staticEditing.ai.sentRecords.get(edit);
+};
+
+/**
+ * Make the record of the sources sent to the AI from the source the panel edits. A fresh id is issued for the
+ * selection whenever it differs from the last sent, in its source, range or text
+ * @param {Object} edit - The controller of the editing panel
+ * @return {Object} `{mark, sent}` - `mark` returns the source marked for sending, recording it, and `sent` returns the
+ * {SentSource} last sent, or null if none has been
+ */
+fluid.staticEditing.ai.makeSentRecord = function (edit) {
+    let sent = null, count = 0;
+    const mark = function () {
+        const source = edit.source;
+        const text = source.getText();
+        const {from, to, head} = source.view.state.selection.main;
+        const selected = text.substring(from, to);
+        const previous = sent && sent.selectionId && sent.source === source && sent.from === from && sent.to === to
+            && sent.text.substring(from, to) === selected ? sent.selectionId : null;
+        const selectionId = to > from ? previous || "s" + (++count) : null;
+        const at = to > from ? from : fluid.staticEditing.ai.pastePosition(source, head);
+        sent = {source, path: edit.targetPath || "page.md", text, from: at, to: to > from ? to : at, selectionId};
+        return fluid.staticEditing.ai.markedSource(source, selectionId || undefined);
+    };
+    return {mark, sent: () => sent};
+};
+
+// Characters standing for the markers of the source sent to the AI in the working copy of it which a reply's changes
+// are applied to, so that a SEARCH text copied from the marked source matches, and the selection can be found after
+// patches - from Unicode's private use area, which the source can't be expected to hold
+fluid.staticEditing.ai.sentinels = {open: "\uE000", close: "\uE001", cursor: "\uE002"};
+
+/**
+ * Put the sentinels in place of any markers in a text of the AI's, written against the marked source
+ * @param {String} text - The text, e.g. a SEARCH text of a patch
+ * @return {String} The text with sentinels for markers
+ */
+fluid.staticEditing.ai.toSentinels = function (text) {
+    const {open, close, cursor} = fluid.staticEditing.ai.sentinels;
+    return text.replace(/<fluid-infusion-selection(\s[^>]*)?>/g, open).split("</fluid-infusion-selection>").join(close)
+        .split(fluid.staticEditing.ai.cursorMarker).join(cursor);
+};
+
+/**
+ * Remove the sentinels from a working copy of the source
+ * @param {String} text - The working copy
+ * @return {String} The text without them
+ */
+fluid.staticEditing.ai.stripSentinels = function (text) {
+    return text.replace(/[\uE000-\uE002]/g, "");
+};
+
+/**
+ * Apply the changes a reply makes to the source sent - its patches of the source, and its replacement of the selection,
+ * in order - to a working copy of it marked with sentinels
+ * @param {SentSource} sent - The source as sent
+ * @param {Object[]} edits - The changes, each `{op: "patch", blocks}` or `{op: "replaceSelection", text}`
+ * @param {String[]} problems - Accumulates descriptions of any changes which could not be made
+ * @return {Object|null} `{text, selection}` - the changed text, and the range `{from, to}` of the selection's
+ * replacement, if any - or null if any change could not be made, when none is
+ */
+fluid.staticEditing.ai.applySourceEdits = function (sent, edits, problems) {
+    const {open, close, cursor} = fluid.staticEditing.ai.sentinels;
+    const name = JSON.stringify("file:" + sent.path);
+    const initialCount = problems.length;
+    let working = sent.text.substring(0, sent.from) + (sent.selectionId ? open + sent.text.substring(sent.from, sent.to) + close : cursor)
+        + sent.text.substring(sent.to);
+    let replaced = false;
+    edits.forEach(edit => {
+        if (problems.length > initialCount) {
+            // An earlier change failed, so none is made
+        } else if (edit.op === "patch") {
+            const blocks = edit.blocks.map(block => ({search: fluid.staticEditing.ai.toSentinels(block.search),
+                replace: fluid.staticEditing.ai.toSentinels(block.replace)}));
+            working = fluid.ai.arena.applyPatch(working, blocks, name, problems) ?? working;
+        } else {
+            const start = working.indexOf(open), end = working.indexOf(close);
+            if (start !== -1 && end > start) {
+                working = working.substring(0, start + 1) + edit.text + working.substring(end);
+                replaced = true;
+            } else {
+                problems.push(`The selection ${sent.selectionId} could not be replaced, since a patch you sent before it removed its markers`);
+            }
+        }
+    });
+    let togo = null;
+    if (problems.length === initialCount) {
+        const start = working.indexOf(open), end = working.indexOf(close);
+        const selection = replaced && start !== -1 && end > start ? {
+            from: fluid.staticEditing.ai.stripSentinels(working.substring(0, start)).length,
+            to: fluid.staticEditing.ai.stripSentinels(working.substring(0, end)).length
+        } : null;
+        togo = {text: fluid.staticEditing.ai.stripSentinels(working), selection};
+    }
+    return togo;
+};
+
+/**
+ * Write the changed source into the source view, as the user's own edit of it - as one change spanning what differs,
+ * so that it is undone at once - provided the source is still as it was sent
+ * @param {SentSource} sent - The source as sent
+ * @param {Object} changed - The changed text and selection, as by `applySourceEdits`
+ * @return {Boolean} `true` if the source was as sent, and so changed
+ */
+fluid.staticEditing.ai.writeSource = function (sent, changed) {
+    const source = sent.source;
+    const togo = source.getText() === sent.text;
     if (togo) {
-        source.view.dispatch({changes: {from, to, insert: text}, selection: {anchor: from, head: from + text.length}});
+        const old = sent.text, text = changed.text;
+        let prefix = 0;
+        while (prefix < old.length && prefix < text.length && old[prefix] === text[prefix]) {
+            ++prefix;
+        }
+        let suffix = 0;
+        while (suffix < old.length - prefix && suffix < text.length - prefix && old[old.length - 1 - suffix] === text[text.length - 1 - suffix]) {
+            ++suffix;
+        }
+        source.view.dispatch({
+            changes: {from: prefix, to: old.length - suffix, insert: text.substring(prefix, text.length - suffix)},
+            ...(changed.selection ? {selection: {anchor: changed.selection.from, head: changed.selection.to}} : {})
+        });
     }
     return togo;
 };
@@ -153,51 +289,95 @@ fluid.staticEditing.ai.pageWidgets = function (edit) {
 
 /**
  * Make the host of the arena the page's widgets form - see ArenaHost in fluid-ai-arena.js - which sends the page's
- * marked source after the widgets
+ * marked source after the widgets, and plans the replacement of the selection it was sent with
  * @param {Object} edit - The controller of the editing panel
+ * @param {Object} [sentRecord] - The record of the sources sent - by default the panel's, as by `sentRecordOf`
  * @return {ArenaHost} The host
  */
-fluid.staticEditing.ai.makeHost = function (edit) {
+fluid.staticEditing.ai.makeHost = function (edit, sentRecord = fluid.staticEditing.ai.sentRecordOf(edit)) {
     const isMarkdown = () => !edit.targetPath || /\.md$/.test(edit.targetPath);
+    const sourceRefusal = "The source part cannot be sent - change the source with a `patch` part whose Target is "
+        + "`file:` and its path, or replace the user's selection with a `replace` part whose Target is `selection:` and its id";
+    const sourceEdit = (plan, edit) => {
+        plan.sourceEdits = [...plan.sourceEdits || [], edit];
+    };
     return {
         itemNoun: "widget",
         workspaceParts: () => [{
             kind: isMarkdown() ? "markdown" : "source",
             contentType: isMarkdown() ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8",
             filename: edit.targetPath || "page.md",
-            body: fluid.staticEditing.ai.markedSource(edit.source)
+            body: sentRecord.mark()
         }],
-        planWorkspacePart: (part, plan) => {
-            let handled = true;
-            if (part.kind === "selection") {
-                plan.selection = part.body;
-            } else if (part.kind === "markdown" || part.kind === "source") {
-                plan.problems.push("The source part cannot be sent - the source is changed only by changing its widgets, or by replacing the user's selection with a `selection` part");
-            } else {
-                handled = false;
+        kinds: {
+            markdown: {refusal: sourceRefusal},
+            source: {refusal: sourceRefusal}
+        },
+        targets: {
+            selection: {
+                rule: "the text the user has selected in the source, by the id its marker bears",
+                ops: {
+                    replace: (id, part, plan) => {
+                        const sent = sentRecord.sent();
+                        if (!sent || !sent.selectionId) {
+                            plan.problems.push("No text was selected in the source sent to you, so there is no selection to "
+                                + "replace - ask the user to select the text they want changed, or patch the source instead");
+                        } else if (id === sent.selectionId) {
+                            sourceEdit(plan, {op: "replaceSelection", text: part.body});
+                        } else {
+                            plan.problems.push(`The replace part's Target names the selection ${JSON.stringify(id)}, which is not `
+                                + `the user's selection, ${JSON.stringify(sent.selectionId)}`);
+                        }
+                    }
+                }
+            },
+            file: {
+                rule: "the source the user edits, as the workspace's last part holds it, by the path which is its filename",
+                ops: {
+                    patch: (id, part, plan) => {
+                        const sent = sentRecord.sent();
+                        const blocks = sent && id === sent.path ? fluid.ai.arena.patchBlocks(part, JSON.stringify("file:" + id), plan.problems) : null;
+                        if (!sent || id !== sent.path) {
+                            plan.problems.push(`The patch part's Target names the file ${JSON.stringify(id)}, which is not the `
+                                + `source sent to you${sent ? ", " + JSON.stringify(sent.path) : ""}`);
+                        } else if (blocks) {
+                            sourceEdit(plan, {op: "patch", blocks});
+                        }
+                    }
+                }
             }
-            return handled;
         }
     };
 };
 
 /**
  * Replace the element of a widget in the source, or remove it, as the user's edit of the source
- * @param {Object} source - The source view
+ * @param {Object} edit - The controller of the editing panel
  * @param {String} id - The widget's `fluid-id`
  * @param {String} markup - The element to replace it, or "" to remove it, with the blank line following it
  * @return {Boolean} `true` if the widget's element was found
  */
-fluid.staticEditing.ai.replaceIsland = function (source, id, markup) {
+fluid.staticEditing.ai.replaceIsland = function (edit, id, markup) {
+    const source = edit.source;
     const doc = source.view.state.doc;
-    const at = doc.toString().indexOf(`fluid-id="${id}"`);
-    const island = at >= 0 ? fluid.sourceView.islandBlockAt(doc, doc.lineAt(at).number) : null;
+    const found = fluid.blockEditor.islandsOf(doc.toString(), fluid.staticEditing.ai.rendererOf(edit)).find(one => one.id === id);
+    const island = found ? {from: doc.line(found.startLine + 1).from, to: doc.line(Math.max(found.startLine + 1, found.endLine)).to} : null;
     if (island) {
         const following = markup === "" && island.to < doc.length ? doc.lineAt(Math.min(island.to + 1, doc.length)) : null;
         const to = following && following.text.trim() === "" ? following.to : island.to;
         source.view.dispatch({changes: {from: island.from, to, insert: markup}});
     }
     return !!island;
+};
+
+/**
+ * The global name of the markdown pipeline rendering the blocks the panel edits, as their block editor holds it
+ * @param {Object} edit - The controller of the editing panel
+ * @return {String} The name, e.g. "wendMarkdown"
+ */
+fluid.staticEditing.ai.rendererOf = function (edit) {
+    const record = edit.blocks.map(block => fluid.blockEditor.records.get(block)).find(one => one);
+    return record ? record.renderer : "wendMarkdown";
 };
 
 /**
@@ -219,9 +399,10 @@ fluid.staticEditing.ai.awaitWidgets = async function (edit, ids, timeout = 8000)
 /**
  * Make the bridge through which the panel reflects on and alters the page - see ArenaBridge in fluid-ai-arena.js
  * @param {Object} edit - The controller of the editing panel
+ * @param {Object} [sentRecord] - The record of the sources sent - by default the panel's, as by `sentRecordOf`
  * @return {ArenaBridge} The bridge
  */
-fluid.staticEditing.ai.makeBridge = function (edit) {
+fluid.staticEditing.ai.makeBridge = function (edit, sentRecord = fluid.staticEditing.ai.sentRecordOf(edit)) {
     const componentsOf = widgets => new Map([...widgets].filter(([, widget]) => widget.component).map(([id, widget]) => [id, widget.component]));
     const isAvailable = (widgets, id) => !!widgets.get(id) && !fluid.isUnavailable(fluid.ptf.componentToShadow(widgets.get(id)).availableInstance.get());
     const gatherWorkspace = function () {
@@ -238,11 +419,17 @@ fluid.staticEditing.ai.makeBridge = function (edit) {
         const target = fluid.staticEditing.target(edit);
         const widgetChanges = plan.layers.length + plan.deletions.length + plan.updates.length + plan.creations.length > 0;
         // The selected text is replaced in whichever source the panel edits, the framing's too
-        if (plan.selection !== undefined) {
-            if (fluid.staticEditing.ai.replaceSelection(edit.source, plan.selection)) {
-                summary.push(`Replaced the selected text of ${edit.targetPath || "the source"}`);
-            } else {
-                problems.push("Nothing is selected in the source, so your selection part could not be applied - the user must select the text to be replaced");
+        // The source is changed first, whichever the panel edits, the framing's too, as it was sent
+        if (plan.sourceEdits) {
+            const sent = sentRecord.sent();
+            const changed = fluid.staticEditing.ai.applySourceEdits(sent, plan.sourceEdits, problems);
+            if (changed && fluid.staticEditing.ai.writeSource(sent, changed)) {
+                plan.sourceEdits.forEach(sourceEdit => summary.push(sourceEdit.op === "patch" ?
+                    `Patched ${sent.path}, in ${sourceEdit.blocks.length} place${sourceEdit.blocks.length === 1 ? "" : "s"}` :
+                    `Replaced the selected text ${sent.selectionId} of ${sent.path}`));
+            } else if (changed) {
+                problems.push(`The source ${sent.path} has changed since it was sent to you, so your changes to it were not `
+                    + "made - tell the user, who may ask again");
             }
         }
         if (widgetChanges && (!target || target.framing)) {
@@ -255,7 +442,7 @@ fluid.staticEditing.ai.makeBridge = function (edit) {
             // The layers defined are held to be committed with the source, as those of a widget pasted are
             await fluid.staticEditing.addFiles(edit, fluid.blockEditor.layerFiles(plan.layers));
             plan.deletions.forEach(id => {
-                if (fluid.staticEditing.ai.replaceIsland(edit.source, id, "")) {
+                if (fluid.staticEditing.ai.replaceIsland(edit, id, "")) {
                     summary.push(`Deleted widget ${id}`);
                 } else {
                     problems.push(`The page holds no widget ${id} to be deleted`);
@@ -265,9 +452,9 @@ fluid.staticEditing.ai.makeBridge = function (edit) {
                 const widget = before.get(change.key);
                 if (change.rebuild) {
                     // Its element is written afresh from the parts, under its own id
-                    const {markup, files} = fluid.blockEditor.widgetFromParts(change.parts, edit.source.getText().replace(`fluid-id="${change.key}"`, ""));
+                    const {markup, files} = fluid.blockEditor.widgetFromParts(change.parts, edit.source.getText(), change.key);
                     await fluid.staticEditing.addFiles(edit, files);
-                    fluid.staticEditing.ai.replaceIsland(edit.source, change.key, markup.replace(/fluid-id="[^"]*"/, `fluid-id="${change.key}"`));
+                    fluid.staticEditing.ai.replaceIsland(edit, change.key, markup);
                     constructedIds.add(change.key);
                     summary.push(`Replaced widget ${change.key} with one constructed from layer ${change.layerName}`);
                 } else if (widget && widget.component) {
@@ -283,9 +470,8 @@ fluid.staticEditing.ai.makeBridge = function (edit) {
             let pos = fluid.staticEditing.ai.pastePosition(edit.source, edit.source.view.state.selection.main.head);
             for (const change of plan.creations) {
                 try {
-                    const {markup, files} = fluid.blockEditor.widgetFromParts(change.parts, edit.source.getText());
+                    const {markup, files, id} = fluid.blockEditor.widgetFromParts(change.parts, edit.source.getText());
                     await fluid.staticEditing.addFiles(edit, files);
-                    const id = markup.match(/fluid-id="([^"]*)"/)[1];
                     edit.source.insertBetween(markup, pos, edit.source.view.state.doc.lineAt(pos));
                     pos = fluid.staticEditing.ai.pastePosition(edit.source, edit.source.view.state.selection.main.head);
                     constructedIds.add(id);

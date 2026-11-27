@@ -120,28 +120,75 @@ harness.scenario("Asking an AI about a page, and receiving widgets from it", asy
     expect(markerAt > inWidget.indexOf(`fluid-id="${sentId}"`) && inWidget.substring(markerAt - 6, markerAt).includes(">"),
         "With the cursor within a widget's element, it is marked as standing after it");
 
-    // 5. A reply deleting the widget removes its element
+    // 5. A reply deleting the widget removes its element - though the source quotes it first, in a code block
+    const quoted = "```html\n<div fluid-layers=\"" + sentLayer + "\" fluid-id=\"" + sentId + "\"></div>\n```\n\n";
+    await post.evaluate(quoted => {
+        const edit = window.fluidEditBridge.editor.controller;
+        const text = edit.source.getText();
+        const at = text.indexOf("\n---\n", 3) + 5;
+        edit.source.view.dispatch({changes: {from: at, insert: "\n" + quoted}});
+    }, quoted);
     const deleted = await post.evaluate(id => fluid.staticEditing.ai.assistant.interpret(fluid.ptf.encode([
         {kind: "delete", contentType: fluid.layerMimeTypes.json, filename: id, body: ""}
     ]), {model: "test", direction: "Delete it"}), sentId);
-    const withoutSent = await sourceSatisfying(post, source => !source.includes(`fluid-id="${sentId}"`));
-    expect(!withoutSent.includes(`fluid-id="${sentId}"`), "A reply deleting the widget removes it from the source: " + JSON.stringify(deleted));
+    const withoutSent = await sourceSatisfying(post, source => source.split(`fluid-id="${sentId}"`).length === 2);
+    expect(withoutSent.includes(quoted) && withoutSent.split(`fluid-id="${sentId}"`).length === 2,
+        "A reply deleting the widget removes its element from the source, not the code block quoting it: " + JSON.stringify(deleted));
 
-    // 6. With text selected, the workspace marks it, and a reply's selection part replaces it
-    const selected = await post.evaluate(find => {
+    // 6. With text selected, the workspace marks it with an id, and a reply's selection part naming it replaces it
+    const markSelection = find => post.evaluate(find => {
         const edit = window.fluidEditBridge.editor.controller;
         const at = edit.source.getText().indexOf(find);
         edit.source.view.dispatch({selection: {anchor: at, head: at + find.length}});
         return fluid.staticEditing.ai.makeHost(edit).workspaceParts()[0].body;
-    }, mid);
-    expect(selected.includes("<fluid-infusion-selection>" + mid + "</fluid-infusion-selection>") && !selected.includes("<fluid-infusion-cursor/>"),
-        "Selected text is sent marked as the selection");
-    const replaced = await post.evaluate(() => fluid.staticEditing.ai.assistant.interpret(fluid.ptf.encode([
-        {kind: "selection", contentType: "text/plain; charset=utf-8", filename: "selection", body: "Replaced by the AI"}
-    ]), {model: "test", direction: "Reword the selection"}));
+    }, find);
+    const selected = await markSelection(mid);
+    const selectionId = (selected.match(/<fluid-infusion-selection id="(s\d+)">/) || [])[1];
+    expect(selectionId && selected.includes(`<fluid-infusion-selection id="${selectionId}">` + mid + "</fluid-infusion-selection>")
+        && !selected.includes("<fluid-infusion-cursor/>"), "Selected text is sent marked as the selection, with its id");
+    const send = parts => post.evaluate(parts => fluid.staticEditing.ai.assistant.interpret(fluid.ptf.encode(parts),
+        {model: "test", direction: "Change the source"}), parts);
+    const reply = (id, body) => send([{kind: "replace", contentType: "text/plain; charset=utf-8", filename: "r", target: "selection:" + id, body}]);
+    const misnamed = await reply("s999", "Misnamed");
+    expect(misnamed.problems.length === 1 && misnamed.problems[0].includes("which is not the user's selection"),
+        "A selection part naming another selection is refused: " + JSON.stringify(misnamed.problems));
+    const replaced = await reply(selectionId, "Replaced by the AI");
     const withReplacement = await sourceSatisfying(post, source => source.includes("Replaced by the AI"));
     expect(replaced.problems.length === 0 && withReplacement.includes("Replaced by the AI") && !withReplacement.includes(mid),
         "A reply's selection part replaces the selected text: " + JSON.stringify(replaced));
+
+    // 7. A reply's changes to a source which has changed since it was sent are not made
+    const staleId = (await markSelection("Replaced by the AI")).match(/<fluid-infusion-selection id="(s\d+)">/)[1];
+    await post.evaluate(() => {
+        const edit = window.fluidEditBridge.editor.controller;
+        const at = edit.source.getText().indexOf("Replaced by the AI");
+        edit.source.view.dispatch({changes: {from: at, to: at + 8, insert: "Altered"}});
+    });
+    const stale = await reply(staleId, "Should not appear");
+    const afterStale = await post.evaluate(() => window.fluidEditBridge.editor.controller.source.getText());
+    expect(stale.problems.length === 1 && stale.problems[0].includes("has changed since it was sent") && !afterStale.includes("Should not appear"),
+        "A selection changed since it was sent is not replaced: " + JSON.stringify(stale.problems));
+
+    // 8. A reply patching the page's source, whose SEARCH text spans the selection's marker, and replacing the selection
+    // too, changes both as one edit
+    const marked = await markSelection("Altered by the AI");
+    const id = marked.match(/<fluid-infusion-selection id="(s\d+)">/)[1];
+    const path = await post.evaluate(() => window.fluidEditBridge.editor.controller.targetPath);
+    const openAt = marked.indexOf(`<fluid-infusion-selection id="${id}">`);
+    const lineStart = marked.lastIndexOf("\n", openAt) + 1;
+    const search = marked.substring(lineStart, marked.indexOf("</fluid-infusion-selection>", openAt) + "</fluid-infusion-selection>".length);
+    const before = marked.substring(lineStart, openAt);
+    const block = `<<<<<<< SEARCH\n${search}\n=======\nPATCHED ${before}<fluid-infusion-selection id="${id}">Altered by the AI</fluid-infusion-selection>\n>>>>>>> REPLACE\n`;
+    const both = await send([
+        {kind: "patch", contentType: "text/plain; charset=utf-8", filename: "p", target: "file:" + path, body: block},
+        {kind: "replace", contentType: "text/plain; charset=utf-8", filename: "r", target: "selection:" + id, body: "Selection replaced too"}
+    ]);
+    const afterBoth = await sourceSatisfying(post, source => source.includes("Selection replaced too"));
+    expect(both.problems.length === 0 && afterBoth.includes("PATCHED " + before + "Selection replaced too") && !afterBoth.includes("fluid-infusion"),
+        "The patch and the replacement are both made, leaving no markers: " + JSON.stringify(both));
+    const misfiled = await send([{kind: "patch", contentType: "text/plain", filename: "p", target: "file:elsewhere.md", body: block}]);
+    expect(misfiled.problems.length === 1 && misfiled.problems[0].includes("which is not the source sent to you"),
+        "A patch of a file which was not sent is refused: " + JSON.stringify(misfiled.problems));
     expect(post.errors.length === 0, "No errors in the page: " + post.errors.join("; "));
 }, {
     prepareRepo: repoDir => {

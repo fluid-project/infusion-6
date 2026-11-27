@@ -160,14 +160,26 @@ wend.trace.stableJSON = function (value) {
 
 /**
  * Express the key of a trace input in terms which are the same from one build to the next whatever pages are added -
- * a page or alias is named by its permalink rather than its position, e.g. "model site.pages[/post/x/].title"
- * @param {String} key - The key, as `fluid.traceInputKey` forms it
+ * a page or alias is named by its permalink rather than its position, e.g. "model site.pages[/post/x/].title". The key
+ * of an input read at a path of the site's root component is composed afresh from that path, as `fluid.traceInputKey`
+ * composes it, with the element of the collection named so; any other is kept as it is
+ * @param {TraceInput} input - The input, bearing its `key`, as `fluid.traceInputKey` forms it
  * @param {Object} model - The site's model, as loaded by siteModel.load
+ * @param {Object} fluid - Infusion, as the build loads it
  * @return {String} The key, so expressed
  */
-wend.trace.siteKey = function (key, model) {
-    return key.replace(/ site\.(pages|aliases)\.(\d+)(?=\.|$| )/, (match, collection, index) =>
-        ` site.${collection}[${model[collection][+index]?.relPermalink ?? model[collection][+index]?.permalink ?? index}]`);
+wend.trace.siteKey = function (input, model, fluid) {
+    const segs = input.segs || [];
+    const collection = segs.length > 1 && (segs[0] === "pages" || segs[0] === "aliases") ? model[segs[0]] : null;
+    const atRoot = input.component !== undefined && input.layerName === undefined && input.argumentOf === undefined &&
+        fluid.stableComponentPath(input.component) === "site";
+    let togo = input.key;
+    if (atRoot && collection && /^\d+$/.test(segs[1])) {
+        const element = collection[+segs[1]];
+        const name = element?.relPermalink ?? element?.permalink ?? segs[1];
+        togo = input.kind + " " + ["site", segs[0] + "[" + name + "]", ...segs.slice(2)].join(".") + (input.shape ? " (keys)" : "");
+    }
+    return togo;
 };
 
 /**
@@ -213,7 +225,7 @@ wend.trace.formTraces = function (fluid, recorder, model, infusionVersion, build
         const inputs = {};
         const sources = new Set();
         trace.inputs.forEach(input => {
-            inputs[wend.trace.siteKey(input.key, model)] = wend.trace.inputHash(fluid, input, infusionVersion);
+            inputs[wend.trace.siteKey(input, model, fluid)] = wend.trace.inputHash(fluid, input, infusionVersion);
             const page = input.kind === "model" && input.segs[0] === "pages" && input.segs.length > 1 ? model.pages[+input.segs[1]] : null;
             if (page && page.sourcePath) {
                 sources.add(page.sourcePath);
@@ -387,6 +399,9 @@ wend.trace.make = function ({model, sources, template, infusionVersion, commit, 
             // which of the site's widgets are unused - see `widgets` below, and fluid.staticEditing.unusedLayers
             layers: output ? wend.trace.layersOf(fs.readFileSync(file, "utf8")) : [],
             kind: page.kind,
+            // Its own source, if it has one, so that an editing client may go to it from material of it another page
+            // shows, e.g. the title and summary of a post listed - see fluid.staticEditing.originOf
+            source: page.sourcePath || null,
             // The headings of its content, by the ids the pipeline gave them, for completing links to them
             headings: wend.trace.headingsOf(page.content || ""),
             outputPath: page.outputPath,
@@ -514,6 +529,7 @@ wend.trace.editingFiles = [
     "src/components/staticEditing/sfc/fluid-staticEditor.vue",
     "src/components/staticEditing/sfc/fluid-sourceView.vue",
     "src/components/staticEditing/sfc/fluid-editAskAnything.vue",
+    "src/components/staticEditing/images/edit-in-infusion-48.png",
     "src/components/askAnything/fluid-askAnything.vue",
     "src/components/askAnything/fluid-askAnythingEntry.vue",
     "src/components/askAnything/fluid-markdownBlock.vue",
@@ -521,7 +537,7 @@ wend.trace.editingFiles = [
     "src/components/askAnything/fluid-ai-arena.js",
     "src/lib/snarkdown/snarkdown.umd.js",
     "src/lib/popper/popper-lite.min.js",
-    "src/components/tooltip/fluid-tooltip.js",
+    "src/components/tooltip/fluid-tooltip.vue",
     "src/lib/fluid-lint/fluid-lint.js"
 ];
 
@@ -578,7 +594,15 @@ wend.trace.layerOfFile = file => path.basename(file).replace(/\.(vue|js)$/, "").
  */
 wend.trace.layersOf = function (html) {
     const found = new Set();
-    [...html.matchAll(/\sfluid-layers\s*=\s*"([^"]*)"/g)].forEach(match => match[1].split(/\s+/).filter(layer => layer).forEach(layer => found.add(layer)));
+    // The markup is parsed, so that an attribute is read only of an element - not of text quoting markup, e.g. in a code block
+    const visit = node => {
+        const layers = node.attrs && node.attrs["fluid-layers"];
+        if (typeof(layers) === "string") {
+            layers.split(/\s+/).filter(layer => layer).forEach(layer => found.add(layer));
+        }
+        (node.children || []).forEach(visit);
+    };
+    visit(fluid.parseHTMLToTree(html, {fragment: true, skipWhitespace: true}));
     return [...found].sort();
 };
 

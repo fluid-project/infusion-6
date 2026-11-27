@@ -1,4 +1,6 @@
 ---
+features:
+  katex: false
 title: A second post
 date: 2026-11-22
 tags: [testing]

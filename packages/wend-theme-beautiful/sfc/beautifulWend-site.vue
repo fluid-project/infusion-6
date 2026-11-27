@@ -71,16 +71,11 @@ fluid.def("beautifulWend.site", {
             $layers: "beautifulWend.feature.piwik"
         }
     },
+    // katex and hljs are switched for each page by its document's dynamic layers - see beautifulWend.document.pageFeatures
     selfHosted: {
         $component: {
             $if: "{site}.features.selfHosted",
             $layers: "beautifulWend.feature.selfHosted"
-        }
-    },
-    hljs: {
-        $component: {
-            $if: "{site}.features.hljs",
-            $layers: "beautifulWend.feature.hljs"
         }
     },
     staticman: {

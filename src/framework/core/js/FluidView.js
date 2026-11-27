@@ -4031,6 +4031,9 @@ const fluidViewScope = function (fluid) {
             element.flBound = fluid.isSignal(vnode.text);
             element.flTemplateText = element.flBound ? vnode.text.$source : vnode.text;
             element.flTemplateRange = vnode.start !== undefined && vnode.end !== undefined ? {start: vnode.start, end: vnode.end} : undefined;
+            // The live references the text interpolates, in order - each a signal which `fluid.terminalSiteOf` traces to
+            // the site holding its value, so that an editor may tell where the value is written
+            element.flTemplateTokens = element.flBound ? vnode.text.$tokens.filter(token => !fluid.isPrimitive(token)) : undefined;
         }
         if (vnode.attrs !== undefined || vnode.defaultAttrs !== undefined) {
             fluid.patchAttrs(vnode, element, isRoot);

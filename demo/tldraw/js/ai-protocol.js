@@ -167,12 +167,8 @@ fluid.tldraw.ai.host = {
             Object.assign(change.shape, fluid.tldraw.ai.roundBounds(fluid.ai.arena.parseJSONPart(part, where, problems)));
         }
     },
-    planWorkspacePart: (part, plan) => {
-        const handled = part.kind === "canvas";
-        if (handled) {
-            plan.problems.push("The canvas part cannot be sent - native tldraw shapes cannot be altered");
-        }
-        return handled;
+    kinds: {
+        canvas: {refusal: "The canvas part cannot be sent - native tldraw shapes cannot be altered"}
     },
     notWidget: name => `The component part ${name} names a native tldraw shape, which cannot hold a widget`
 };

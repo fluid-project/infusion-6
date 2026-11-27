@@ -186,7 +186,8 @@ fluid.blockEditor.sweepUnrendered = function (element, block) {
             const holder = document.createElement("template");
             holder.innerHTML = block.html;
             const rendered = holder.content.firstElementChild;
-            if (rendered && rendered.innerHTML.replace(/\s+/g, " ").trim() !== element.innerHTML.replace(/\s+/g, " ").trim()) {
+            // Compared as trees, canonically - attributes in any order, and the editor's own marks disregarded
+            if (rendered && fluid.markdownSerializer.canonicalChildren(rendered) !== fluid.markdownSerializer.canonicalChildren(element)) {
                 console.warn("Edit in Infusion: a block differs from the rendering of its source", element, block.html);
             }
         }
@@ -1068,13 +1069,32 @@ fluid.blockEditor.stripPlacement = function (potentia) {
 };
 
 /**
+ * List the widgets' elements of a source, as markdown parses it - each island block's element, with the lines it is
+ * written on, so that a widget may be found in the source by its id rather than by searching its text, which may
+ * appear elsewhere, e.g. in a code block or in prose quoting it
+ * @param {String} source - The source
+ * @param {String} rendererName - The global name of the markdown pipeline rendering it, e.g. "wendMarkdown"
+ * @return {Object[]} `{id, layers, startLine, endLine}` for each, the lines counting from 0, the last exclusive
+ */
+fluid.blockEditor.islandsOf = function (source, rendererName) {
+    return fluid.blockEditor.segment(source, rendererName).filter(block => block.kind === "island" && block.startLine !== null).map(block => {
+        const holder = document.createElement("template");
+        holder.innerHTML = block.html;
+        const island = holder.content.querySelector("[fluid-layers]");
+        return island ? {id: island.getAttribute("fluid-id"), layers: island.getAttribute("fluid-layers").split(/\s+/).filter(layer => layer),
+            startLine: block.startLine, endLine: block.endLine} : null;
+    }).filter(island => island);
+};
+
+/**
  * Make a pasted widget ready to insert - its layers registered, unless the page defines them already, in which case
  * the extension asks whether to replace them, and its element written
  * @param {PTFPart[]} documentParts - The parts of its PTF document, perhaps wrapping it - see `fluid.ptf.componentParts`
  * @param {String} source - The source into which it is to be inserted, so that its `fluid-id` is unused there
- * @return {Object} `{markup, files}` - its element, and the files of its layers, as by `layerFiles`
+ * @param {String} [id] - The `fluid-id` to give it, e.g. that of a widget it replaces - by default one unused in the source
+ * @return {Object} `{markup, files, id}` - its element, the files of its layers, as by `layerFiles`, and its id
  */
-fluid.blockEditor.widgetFromParts = function (documentParts, source) {
+fluid.blockEditor.widgetFromParts = function (documentParts, source, id) {
     // A widget copied out of a tldraw arena arrives wrapped as the one component of its document
     const parts = fluid.ptf.componentParts(documentParts);
     const island = fluid.ptf.islandFromParts(parts);
@@ -1084,10 +1104,11 @@ fluid.blockEditor.widgetFromParts = function (documentParts, source) {
     if (!fluid.blockEditor.widgets.some(widget => widget.layer === island.layers[0])) {
         fluid.blockEditor.widgets.push({layer: island.layers[0]});
     }
+    const islandId = id || fluid.blockEditor.allocateId(source, island.layers[0]);
     return {
-        markup: fluid.ptf.islandMarkup({layers: island.layers, potentia: island.potentia,
-            id: fluid.blockEditor.allocateId(source, island.layers[0])}),
-        files
+        markup: fluid.ptf.islandMarkup({layers: island.layers, potentia: island.potentia, id: islandId}),
+        files,
+        id: islandId
     };
 };
 

@@ -3078,6 +3078,10 @@ const $fluidILScope = function (fluid) {
             const listComputer = fluid.pushSubcomponentPotentia(shadow, key, [{expanded: listLayer, mergeRecordName: sourceLayer}]);
             // This gets read from the componentList computed scope above
             listShadow = listComputer.shadow;
+            // Recorded so that the site of what a member's iteration variable holds may be found within the source, even
+            // where the source is computed, and so lends its elements no site of their own - see fluid.staticEditing
+            listShadow.forRecord = forRecord;
+            listShadow.forSource = sourceSignal;
             const effectKey = "listComponent-" + segs.join(".");
             // Cod reactivity to keep component list in sync with source signal
             shadow.frameworkEffects[effectKey] = fluid.cell.effect( () => {

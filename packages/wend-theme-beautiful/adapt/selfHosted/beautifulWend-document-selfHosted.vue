@@ -4,13 +4,14 @@
 // Relies on a linkage's output layers being stronger than the layers that matched its input.
 fluid.def("beautifulWend.document.selfHosted", {
     stylesheets: {
-        katex: {href: "/css/katex.min.css"},
         fontawesome: {href: "/fontawesome/css/all.min.css"},
         bootstrap: {href: "/css/bootstrap.min.css"}
     },
-    footerScripts: {
-        katex: {src: "/js/katex.min.js"},
-        katexAutoRender: {src: "/js/auto-render.min.js"}
+    // Read by beautifulWend.document.katex, if KaTeX is in use
+    katexAssets: {
+        css: "/css/katex.min.css",
+        js: "/js/katex.min.js",
+        autoRender: "/js/auto-render.min.js"
     }
 });
 </script>
