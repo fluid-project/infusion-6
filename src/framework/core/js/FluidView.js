@@ -3911,12 +3911,47 @@ const fluidViewScope = function (fluid) {
     };
 
     /**
+     * Align the nodes an element holds with the vnodes which are to be its children, in order - the longest sequence
+     * of nodes, each matching its vnode, which keeps the order of both. Used on the first rendering of an element
+     * whose markup does not match the vnodes by position, e.g. since another has inserted a node amongst it.
+     * @param {Node[]} children - The nodes the element holds
+     * @param {VNode[]} vchildren - The vnodes which are to be its children
+     * @return {Array<Node|undefined>} For each vnode, the node aligned with it, or `undefined` if none is
+     */
+    fluid.alignChildNodes = function (children, vchildren) {
+        const rows = children.length + 1, cols = vchildren.length + 1;
+        // lengths[i * cols + j] - the length of the longest alignment of children from i with vchildren from j
+        const lengths = new Uint32Array(rows * cols);
+        for (let i = children.length - 1; i >= 0; --i) {
+            for (let j = vchildren.length - 1; j >= 0; --j) {
+                lengths[i * cols + j] = fluid.matchNodeToVNode(children[i], vchildren[j]) ? lengths[(i + 1) * cols + j + 1] + 1 :
+                    Math.max(lengths[(i + 1) * cols + j], lengths[i * cols + j + 1]);
+            }
+        }
+        const assigned = new Array(vchildren.length).fill(undefined);
+        let i = 0, j = 0;
+        while (i < children.length && j < vchildren.length) {
+            if (fluid.matchNodeToVNode(children[i], vchildren[j]) && lengths[i * cols + j] === lengths[(i + 1) * cols + j + 1] + 1) {
+                assigned[j] = children[i];
+                ++i;
+                ++j;
+            } else if (lengths[(i + 1) * cols + j] >= lengths[i * cols + j + 1]) {
+                ++i;
+            } else {
+                ++j;
+            }
+        }
+        return assigned;
+    };
+
+    /**
      * Match up the vnodes which are to be the children of an element with the nodes which it currently holds and which
      * may be reused for them, removing any others which this rendering owns. A rendering owns the nodes it created,
      * and, on the first rendering of an element which already has children, e.g. markup written by an earlier static
      * rendering, those which it claims from them. Any node which it does not own, e.g. one added by a widget loader or
      * browser extension, is left in place and alone. On the first rendering the children are claimed by position,
-     * since the markup is expected to have been rendered from the same template. Thereafter, owned nodes are matched to
+     * since the markup is expected to have been rendered from the same template - or, should they not match by
+     * position, e.g. since a node has been inserted amongst them, by aligning them in order. Thereafter, owned nodes are matched to
      * vnodes by key where they have one, so that a node is reused by the same list member or block however the list
      * is reordered or grows, and other nodes by position amongst the unkeyed ones.
      * @param {Element} element - The element whose children are being reconciled
@@ -3952,7 +3987,12 @@ const fluidViewScope = function (fluid) {
             });
         } else {
             owned = children;
-            assigned = vchildren.map((vchild, i) => children[i] && fluid.matchNodeToVNode(children[i], vchild) ? children[i] : undefined);
+            const byPosition = vchildren.map((vchild, i) => children[i] && fluid.matchNodeToVNode(children[i], vchild) ? children[i] : undefined);
+            // Should a node have been inserted amongst the markup before this first rendering, e.g. a stylesheet
+            // prepended to <head> by a widget's script, claiming by position would put every later node to the wrong
+            // vnode - each then rewritten, e.g. a <link> refetching its stylesheet under another href - so the markup
+            // is then aligned with the vnodes in order instead
+            assigned = byPosition.every(node => node) ? byPosition : fluid.alignChildNodes(children, vchildren);
         }
         const reused = new Set(assigned);
         owned.filter(node => !reused.has(node)).forEach(node => node.remove());

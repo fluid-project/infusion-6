@@ -1236,6 +1236,32 @@ QUnit.test("Rendering against markup from an earlier rendering claims its nodes"
     host.remove();
 });
 
+QUnit.test("Markup claimed in order despite a node inserted before its first rendering", function (assert) {
+    const container = qs(".container");
+    const first = fluid.tests.headLike({container});
+    fluid.cell.stabilize();
+    const markup = container.innerHTML;
+    first.destroy();
+
+    // As for a static page whose widget's script prepends its stylesheet to <head> before the page's tree boots
+    const host = document.createElement("div");
+    host.innerHTML = markup;
+    qs(".container").appendChild(host);
+    const staticNodes = [...host.children];
+    const prepended = document.createElement("link");
+    prepended.setAttribute("rel", "stylesheet");
+    prepended.setAttribute("href", "/widget.css");
+    host.prepend(prepended);
+    const that = fluid.tests.headLike({container: host});
+    fluid.cell.stabilize();
+    const rendered = [...host.children].filter(node => node !== prepended);
+    assert.deepEqual(rendered, staticNodes, "Every node of the static markup claimed by the vnode which rendered it");
+    assert.deepEqual(fluid.tests.headSummary(host).filter(summary => summary !== "link:/widget.css"),
+        ["meta:first", "link:/a.css", "link:/c.css", "script:/one.js", "script:/two.js", "meta:last"], "No node rewritten");
+    that.destroy();
+    host.remove();
+});
+
 // Cross-injection of views - FLUID-7020
 
 fluid.def("fluid.tests.crossInject.first", {
