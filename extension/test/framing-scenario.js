@@ -54,25 +54,25 @@ harness.scenario("Editing the framing of a page shows on every page until publis
         const footer = document.querySelector("footer");
         const walker = document.createTreeWalker(footer, NodeFilter.SHOW_TEXT);
         let node = walker.nextNode();
-        while (node && !node.nodeValue.includes("Boz")) {
+        while (node && !node.nodeValue.includes("Theme")) {
             node = walker.nextNode();
         }
         footer.focus();
         const range = document.createRange();
-        range.setStart(node, node.nodeValue.indexOf("Boz") + 3);
+        range.setStart(node, node.nodeValue.indexOf("Theme") + 5);
         range.collapse(true);
         document.getSelection().removeAllRanges();
         document.getSelection().addRange(range);
     });
     await post.keyboard.type(" and friends");
-    await post.waitForFunction(() => document.querySelector(".fluid-edit-panel textarea").value.includes("by Boz and friends"), {timeout: 15000});
-    expect(/by Boz and friends\n {20}<\/p>/.test(await post.$eval(".fluid-edit-panel textarea", node => node.value)),
+    await post.waitForFunction(() => document.querySelector(".fluid-edit-panel textarea").value.includes("Theme and friends"), {timeout: 15000});
+    expect(/Theme and friends <a href="https:\/\/github.com\/fluid-project\/infusion-6\/tree/.test(await post.$eval(".fluid-edit-panel textarea", node => node.value)),
         "Text typed into the footer in place is written into its SFC, keeping the template's layout about it");
     await post.waitForSelector(`footer[data-fluid-claim-state="uncommitted"]`, {timeout: 15000});
     expect(await post.$eval("footer", node => node.textContent.split("and friends").length === 2), "The footer shows what was typed once, as its SFC renders it");
 
     // 2. Edit the footer
-    await harness.editSource(post, text => text.replace("by Boz", "by Boz, " + marker));
+    await harness.editSource(post, text => text.replace("</a> powered", "</a> powered, " + marker));
     // The footer was marked uncommitted already, by step 1a - so it is its text which shows the edit rendered
     await post.waitForFunction(marker => document.querySelector("footer").textContent.includes(marker), {timeout: 15000}, marker);
     await post.waitForSelector(`footer[data-fluid-claim-state="uncommitted"]`, {timeout: 15000});

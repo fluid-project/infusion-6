@@ -27,7 +27,7 @@ harness.scenario("A page whose committed claim is published by another page relo
     await post.waitForSelector(`footer[data-fluid-claim-state="editable"]`, {timeout: 30000});
     await post.click("footer");
     await post.waitForFunction(() => document.querySelector(".fluid-edit-panel textarea").value.includes("beautifulWend.footer"), {timeout: 15000});
-    await harness.editSource(post, text => text.replace("by Boz", "by Boz, " + marker));
+    await harness.editSource(post, text => text.replace("</a> powered", "</a> powered, " + marker));
     await post.waitForSelector(`footer[data-fluid-claim-state="uncommitted"]`, {timeout: 15000});
     // The interval is read as a page's editing boots, so the post keeps polling every second
     await worker.evaluate(() => chrome.storage.local.set({pollInterval: 3600000}));

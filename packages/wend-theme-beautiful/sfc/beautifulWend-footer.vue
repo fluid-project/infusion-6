@@ -18,11 +18,10 @@ fluid.def("beautifulWend.footer", {
                         &nbsp;&copy;
                         @{{site}.buildYear}
                     </p>
-                    <p class="credits theme-by text-muted">
+                    <p class="credits theme-by text-muted">&nbsp;&bull;&nbsp;
                         <a href="https://github.com/fluid-project/infusion-6">Infusion 6</a> powered &nbsp;&bull;&nbsp;
-                        Theme <a href="https://github.com/halogenica/beautifulhugo">Beautiful Hugo</a> adapted from
+                        Theme <a href="https://github.com/fluid-project/infusion-6/tree/main/packages/wend-theme-beautiful">Beautiful Wend</a> adapted from <a href="https://github.com/halogenica/beautifulhugo">Beautiful Hugo</a> adapted from
                         <a href="https://deanattali.com/beautiful-jekyll/">Beautiful Jekyll</a> &nbsp;&bull;&nbsp;
-                        further <a href="/term/lithification">lithified</a> by Boz
                     </p>
                 </div>
             </div>
