@@ -39,7 +39,6 @@ fluid.def("fluid.staticEditor", {
             claimState: "none",
             commitDisabled: true,
             discardDisabled: true,
-            buttonsHidden: true,
             framingRowHidden: true,
             configHidden: true,
             newHidden: true,
@@ -222,7 +221,7 @@ fluid.def("fluid.staticEditor", {
                       @onclick="{self}.cleanUpLayers()"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"></path></svg></button></span>
             </div>
             <div class="fluid-edit-tab-body" data-fluid-tab-kind="@{state.tabKind}">
-                <div class="fluid-edit-updated" hidden="@{state.updatedHidden}"><a class="fluid-edit-path" href="@{state.pathHref}"
+                <div class="fluid-edit-updated" hidden="@{state.updatedHidden}"><a class="fluid-edit-path fl-monospace" href="@{state.pathHref}"
                     target="_blank" rel="noopener" title="Show this source on GitHub">@{state.path}</a> - last updated by <a class="fluid-edit-updated-by"
                     href="@{state.updatedByHref}" target="_blank" rel="noopener">@{state.updatedBy}</a> at <a class="fluid-edit-updated-at"
                     href="@{state.updatedHref}" title="@{state.updatedTitle}" target="_blank" rel="noopener">@{state.updatedDate}</a></div>
@@ -247,11 +246,16 @@ fluid.def("fluid.staticEditor", {
                     <div class="fluid-edit-tabs" role="tablist" hidden="@{state.tabsHidden}"></div>
                     <div class="fluid-edit-source-host" @id="sourceView"></div>
                 </details>
-                <div class="fluid-edit-buttons" hidden="@{state.buttonsHidden}">
-                    <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()">Commit</button>
-                    <button class="fluid-edit-discard" disabled="@{state.discardDisabled}" @onclick="{self}.discard()">Discard edits</button>
-                </div>
             </div>
+        </div>
+        <!-- Beneath what edits the page, never scrolled with it - directly above the bar of "Ask me anything", or the
+             panel's foot whilst it is closed. Shown on every page, since Commit reviews every edit held on the site,
+             whether or not the page has a source of its own; Discard discards this page's alone -->
+        <div class="fluid-edit-buttons">
+            <button class="fluid-edit-commit" disabled="@{state.commitDisabled}" @onclick="{self}.commit()"
+                    title="Review and commit the edits held on the site">Commit</button>
+            <button class="fluid-edit-discard" disabled="@{state.discardDisabled}" @onclick="{self}.discard()"
+                    title="Discard the edits of this source">Discard edits</button>
         </div>
         <!-- The "Ask me anything" panel, popped out from the sparkles at the panel's foot, set off from what is above it
              by a bar sharing the panel's height between them - made once, and thereafter only shown and hidden, keeping
@@ -273,6 +277,10 @@ fluid.def("fluid.staticEditor", {
    nothing here touches a page which is not being edited. */
 
 :root {
+    /* The monospaced face of paths, sources and code, wherever the editor shows them - its source view's too (see
+       fluid-sourceView.vue), and Infusion's other views of code, which fall back to the same face without it. The
+       extension's own pages declare it alike - see css/common.css of the extension */
+    --fl-monospace: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --fluid-edit-uncommitted: #c77800;
     --fluid-edit-committed: #2b6cb0;
     --fluid-edit-conflict: #c53030;
@@ -492,9 +500,11 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     color: #1a202c;
 }
 
-.fluid-edit-path {
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+/* Paths, names and code shown in the panel */
+.fl-monospace {
+    font-family: var(--fl-monospace);
 }
+
 
 .fluid-edit-updated {
     font-size: 12px;
@@ -507,7 +517,7 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     width: 100%;
     box-sizing: border-box;
     resize: none;
-    font: 13px/1.5 ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font: 13px/1.5 var(--fl-monospace);
     padding: 8px;
 }
 
@@ -623,12 +633,11 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
 
 /* The markdown source, folded away while the page's blocks are edited in place - the panel is then a narrow card, leaving
    the page to be edited; unfolded, it fills the panel beside the page */
-/* It is never shrunk below its content - the source view's height is fixed, so shrunk, it would overflow onto the
-   buttons beneath it, e.g. in a short window, or with a status long enough to wrap - but the panel scrolls instead */
-/* Unfolded, the source takes what the panel's other controls leave, its editor shrinking first, to show a scrollbar of
-   its own, so that the buttons beneath it stay in view */
-/* Each shrinks no further than what it holds at its least - the editor's least height, its tabs and its fold - so that
-   only the editor gives up room, and nothing overflows onto the buttons beneath */
+/* Unfolded, the source takes the height the panel's other controls leave it, above the Commit and Discard buttons, which
+   are outside what scrolls - its editor grows and shrinks with the panel, showing a scrollbar of its own. Each part of
+   it shrinks no further than what it holds at its least - the editor's least height, its tabs and its fold - so that
+   only the editor gives up room; in a window too short even for that, what edits the page scrolls, the buttons still
+   in view beneath it */
 .fluid-edit-source[open] {
     flex: 1 1 auto;
     min-height: auto;
@@ -654,9 +663,21 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     flex-direction: column;
 }
 
-/* Beneath the editor, never shrunk - the editor shrinks to leave room for them */
+/* Outside what edits the page, never shrunk nor scrolled away - the editor shrinks to leave room for them */
 .fluid-edit-buttons {
     flex: none;
+    display: flex;
+    gap: 8px;
+}
+
+.fluid-edit-buttons button {
+    cursor: pointer;
+}
+
+/* Plainly unavailable whilst there is nothing to commit or discard */
+.fluid-edit-buttons button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .fluid-edit-source[hidden] {
@@ -779,13 +800,17 @@ html[fl-docking-area-mode~="minimized"] > .fl-resize-bar {
     text-overflow: ellipsis;
 }
 
-/* The mark of a tab holding an edit not yet committed - a small spot in the colour of its text */
-.fluid-edit-tab-dirty {
+/* The mark of a tab holding an edit not yet committed - a small spot in the colour of its text, softened. Its claim's
+   state, which it bears too, draws no outline about it, as it does about a page's blocks */
+.fluid-edit-tab-dirty, .fluid-edit-tab-dirty[data-fluid-claim-state] {
     flex: none;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: currentColor;
+    opacity: 0.7;
+    outline: none;
+    animation: none;
 }
 
 .fluid-edit-panel .fluid-edit-tab-close {

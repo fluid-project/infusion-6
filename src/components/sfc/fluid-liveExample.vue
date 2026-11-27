@@ -389,7 +389,7 @@ fluid.liveExample.unbind = function (state) {
 /* The editor's font, which is also that of the code rendered statically */
 .fl-live-example-source pre,
 .fl-live-example-source .cm-editor .cm-scroller {
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font-family: var(--fl-monospace, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
 }
 
 .fl-live-example-source pre {
@@ -433,7 +433,7 @@ fluid.liveExample.unbind = function (state) {
     min-height: 1.6em;
     overflow: auto;
     padding: 0.2em 0.75em;
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font-family: var(--fl-monospace, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
 }
 
 .fl-live-example-console-lines:empty::before {

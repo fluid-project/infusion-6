@@ -132,12 +132,14 @@ harness.scenario("The editing panel's tabs, and Ask me anything", async function
     }), "The editor shrinks to show a scrollbar of its own instead");
     const buttonsInView = () => post.evaluate(() => {
         const button = document.querySelector(".fluid-edit-commit").getBoundingClientRect();
-        const main = document.querySelector(".fluid-edit-main").getBoundingClientRect();
+        const main = document.querySelector(".fluid-edit-main");
+        const bar = document.querySelector(".fluid-edit-ai-bar").getBoundingClientRect();
         const editor = document.querySelector(".fluid-edit-source-view").getBoundingClientRect();
-        // In view, and beneath the editor rather than over it
-        return button.height > 0 && button.top >= main.top && button.bottom <= main.bottom + 1 && button.top >= editor.bottom - 1;
+        // Beneath the editor and what scrolls, directly above the bar - within the gap between the panel's rows
+        return button.height > 0 && button.top >= editor.bottom - 1 && !main.contains(document.querySelector(".fluid-edit-commit"))
+            && button.bottom <= bar.top && bar.top - button.bottom <= 12;
     });
-    expect(await buttonsInView(), "The Commit button is in view, beneath the editor");
+    expect(await buttonsInView(), "The Commit button is in view, beneath the editor, directly above the bar");
     // The bar dragged far up shrinks the editor, never hiding the Commit button
     const high = await post.$eval(".fluid-edit-ai-bar", node => {
         const rect = node.getBoundingClientRect();
@@ -156,11 +158,19 @@ harness.scenario("The editing panel's tabs, and Ask me anything", async function
     await post.waitForFunction(() => document.querySelector(".fluid-edit-tab[aria-selected=true]")?.getAttribute("data-fluid-tab-kind") === "framing" &&
         document.querySelector(".fluid-edit-panel").getAttribute("data-fluid-edit-ready") === "true", {timeout: 15000});
     expect(!(await tabsOf(post)).some(tab => tab.dirty), "No tab is spotted before any edit");
+    const buttonLook = () => post.$eval(".fluid-edit-commit", node => ({disabled: node.disabled,
+        opacity: Number(getComputedStyle(node).opacity), cursor: getComputedStyle(node).cursor}));
+    const idle = await buttonLook();
+    expect(idle.disabled && idle.opacity < 0.5 && idle.cursor === "not-allowed",
+        "With nothing to commit, Commit is plainly disabled: " + JSON.stringify(idle));
     await harness.editSource(post, text => text.replace("</template>", "<!-- edited in its tab -->\n</template>"));
     await post.waitForFunction(() => !!document.querySelector(".fluid-edit-tab[aria-selected=true] .fluid-edit-tab-dirty"), {timeout: 15000});
     tabs = await tabsOf(post);
     expect(tabs.length === 3 && tabs.filter(tab => tab.dirty).length === 1 && tabs[2].kind === "framing" && tabs[2].dirty,
         "The footer's tab is spotted, holding its edit: " + JSON.stringify(tabs));
+    await post.waitForFunction(() => !document.querySelector(".fluid-edit-commit").disabled, {timeout: 15000});
+    const ready = await buttonLook();
+    expect(!ready.disabled && ready.opacity === 1 && ready.cursor === "pointer", "With an edit held, Commit is offered, with the hand: " + JSON.stringify(ready));
     // 3a. Navigating between the footer and its source
     const sourceText = () => post.$eval(".fluid-edit-panel textarea", node => node.value);
     const head = () => post.evaluate(() => window.fluidEditBridge.editor.controller.source.view.state.selection.main.head);

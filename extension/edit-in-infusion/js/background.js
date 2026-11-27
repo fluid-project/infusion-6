@@ -86,7 +86,7 @@ fluidConfirm.ask = function (claims) {
     const request = String(++fluidConfirm.requestCount) + "-" + Date.now();
     return new Promise(resolve => {
         fluidConfirm.pending[request] = {claims, resolve, windowId: null};
-        chrome.windows.create({url: chrome.runtime.getURL("confirm.html?request=" + request), type: "popup", width: 640, height: 720},
+        chrome.windows.create({url: chrome.runtime.getURL("confirm.html?request=" + request), type: "popup", width: 680, height: 860},
             window => {
                 if (fluidConfirm.pending[request]) {
                     fluidConfirm.pending[request].windowId = window ? window.id : null;
@@ -176,12 +176,17 @@ const handlers = {
         }
         return togo;
     },
+    // The user's decision - `true` if it was awaited, and so acted on
     "confirm-decide": (message, sender) => {
-        if (fromExtensionPage(sender)) {
+        const awaited = fromExtensionPage(sender) && !!fluidConfirm.pending[message.request];
+        if (awaited) {
             fluidConfirm.settle(message.request, message.confirmed && Array.isArray(message.ids) ? message.ids.map(String) : []);
         }
-        return true;
+        return awaited;
     },
+    // A window reviewing a commit is still open - the message itself keeps the service worker running while the user
+    // reviews, since an idle one is stopped after 30s, losing the request it awaits. `true` if it is still awaited
+    "confirm-alive": (message, sender) => fromExtensionPage(sender) && !!fluidConfirm.pending[message.request],
     // The claims held on the sources of a repository beneath a path, e.g. the new posts of a section
     "claim-list": async message => (await fluidClaims.list()).filter(claim => claim.repo === message.repo && claim.path.startsWith(message.prefix)),
     "source-read": message => fluidGitHub.read(message.repo, message.branch, message.path),

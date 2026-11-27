@@ -879,30 +879,40 @@ const fluidStaticEditingScope = function (fluid) {
         clearTimeout(edit.pollTimer);
         // Any claim held is polled - one shown here may have been committed from another page, e.g. one of the framing
         if (fluid.staticEditing.allClaims(edit).length > 0) {
-            edit.pollTimer = setTimeout(async function () {
-                let published = false;
-                // Each claim is read afresh, since another page may have committed, or discarded, it
-                for (const claim of fluid.staticEditing.allClaims(edit)) {
-                    const fresh = await fluid.staticEditing.send(edit, {type: "claim-get", repo: claim.repo, path: claim.path});
-                    if (!fresh && claim.state === "committed") {
-                        // Gone once committed - another page showing it found it published first, and dropped it. This
-                        // page is reloaded too, since shown without its claim it would revert to the page as it loaded,
-                        // from before the edit
-                        published = true;
-                    } else if (!fresh || fresh.state !== claim.state || fresh.hash !== claim.hash) {
-                        await fluid.staticEditing.showClaimOf(edit, claim.path, fresh || null);
-                    }
-                }
-                const trace = await fluid.staticEditing.fetchTrace(edit);
-                for (const claim of trace ? fluid.staticEditing.allClaims(edit).filter(one => one.state === "committed") : []) {
-                    published = await fluid.staticEditing.reconcile(edit, trace, claim) || published;
-                }
-                if (published) {
-                    fluid.staticEditing.reloadPublished(edit);
-                } else if (!edit.reloading) {
-                    fluid.staticEditing.poll(edit);
-                }
-            }, edit.pollInterval);
+            edit.pollTimer = setTimeout(() => fluid.staticEditing.pollOnce(edit).catch(error => {
+                // Reported, and polled again, should the relay recover
+                fluid.staticEditing.setError(edit, error, "The editor can't reach the extension: ");
+                fluid.staticEditing.poll(edit);
+            }), edit.pollInterval);
+        }
+    };
+
+    /**
+     * Read once each claim the page holds, and the published trace, as `poll` does each time it fires
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once read, and the next poll set, or the page reloaded should a claim be published
+     */
+    fluid.staticEditing.pollOnce = async function (edit) {
+        let published = false;
+        // Each claim is read afresh, since another page may have committed, or discarded, it
+        for (const claim of fluid.staticEditing.allClaims(edit)) {
+            const fresh = await fluid.staticEditing.send(edit, {type: "claim-get", repo: claim.repo, path: claim.path});
+            if (!fresh && claim.state === "committed") {
+                // Gone once committed - another page showing it found it published first, and dropped it. This page is
+                // reloaded too, since shown without its claim it would revert to the page as it loaded, from before the edit
+                published = true;
+            } else if (!fresh || fresh.state !== claim.state || fresh.hash !== claim.hash) {
+                await fluid.staticEditing.showClaimOf(edit, claim.path, fresh || null);
+            }
+        }
+        const trace = await fluid.staticEditing.fetchTrace(edit);
+        for (const claim of trace ? fluid.staticEditing.allClaims(edit).filter(one => one.state === "committed") : []) {
+            published = await fluid.staticEditing.reconcile(edit, trace, claim) || published;
+        }
+        if (published) {
+            fluid.staticEditing.reloadPublished(edit);
+        } else if (!edit.reloading) {
+            fluid.staticEditing.poll(edit);
         }
     };
 
@@ -1226,7 +1236,7 @@ const fluidStaticEditingScope = function (fluid) {
             // The newest edit in the page, which the page already shows - see showText
             edit.blockEditText = text;
             edit.source.setText(text);
-            fluid.staticEditing.onInput(edit, text);
+            fluid.staticEditing.onInput(edit, text).catch(error => fluid.staticEditing.setError(edit, error, "Your edit could not be held: "));
         }
     };
 
@@ -1572,8 +1582,9 @@ const fluidStaticEditingScope = function (fluid) {
 
     /**
      * Keep what edits the page from being shrunk, by "Ask me anything" or its bar, beneath the room its controls need -
-     * its editor may shrink to its least height, showing a scrollbar, but no further, so that the Commit and Discard
-     * buttons beneath it stay in view. Measured afresh each time the bar is taken, or the panel opened, since what the
+     * its editor may shrink to its least height, showing a scrollbar, but no further, so that its controls are not
+     * scrolled away. The Commit and Discard buttons are beneath it, outside what scrolls, so are always in view.
+     * Measured afresh each time the bar is taken, or the panel opened, since what the
      * controls need varies with what is edited
      * @param {Element} main - What edits the page
      */
@@ -1671,8 +1682,9 @@ const fluidStaticEditingScope = function (fluid) {
             before: main,
             after: ai,
             axis: "vertical",
-            // What edits the page keeps room for its controls and its buttons, its editor shrinking first
-            minBefore: 200,
+            // What edits the page keeps room for its controls, its editor shrinking first - the Commit and Discard
+            // buttons are beneath it, outside what the bar shares
+            minBefore: 160,
             minAfter: 160,
             view: {$component: {container: panel.querySelector(".fluid-edit-ai-bar"), elideParent: true}}
         });
@@ -3091,7 +3103,6 @@ const fluidStaticEditingScope = function (fluid) {
             // Any Commit reviews every uncommitted edit of the repository, so is offered while any is held
             commitDisabled: !fluid.staticEditing.commitCandidate(edit),
             discardDisabled: !state,
-            buttonsHidden: !edit.targetPath,
             stateText: !edit.targetPath ? "" : state ? fluid.staticEditing.stateLabels[state] : "No edits"
         });
         if (claim && claim.message) {
@@ -3188,7 +3199,19 @@ const fluidStaticEditingScope = function (fluid) {
         } catch (error) {
             fluid.staticEditing.setError(edit, error);
         }
+        await fluid.staticEditing.refreshClaims(edit);
         fluid.staticEditing.poll(edit);
+    };
+
+    /**
+     * List afresh the claims held on the site, and with them whether anything is left to commit - e.g. once a commit has
+     * been made from a page holding no claim of its own, whose claims are not otherwise read again
+     * @param {Object} edit - The controller
+     * @return {Promise} Resolves once listed, or once listing has failed, which is logged
+     */
+    fluid.staticEditing.refreshClaims = function (edit) {
+        clearTimeout(edit.widgetsTimer);
+        return fluid.staticEditing.refreshWidgets(edit).catch(error => console.error("Edit in Infusion: the site's claims can't be listed", error));
     };
 
     /**
@@ -3209,6 +3232,7 @@ const fluidStaticEditingScope = function (fluid) {
         } else {
             await fluid.staticEditing.activate(edit);
         }
+        await fluid.staticEditing.refreshClaims(edit);
     };
 
     /**
@@ -3245,7 +3269,8 @@ const fluidStaticEditingScope = function (fluid) {
      */
     fluid.staticEditing.titleInput = function (edit, event) {
         clearTimeout(edit.titleTimer);
-        edit.titleTimer = setTimeout(() => fluid.staticEditing.retitleNewPost(edit, event.target.value), 300);
+        edit.titleTimer = setTimeout(() => Promise.resolve(fluid.staticEditing.retitleNewPost(edit, event.target.value))
+            .catch(error => fluid.staticEditing.setError(edit, error, "The title could not be held: ")), 300);
     };
 
     /**
@@ -3257,7 +3282,9 @@ const fluidStaticEditingScope = function (fluid) {
     fluid.staticEditing.sourceChanged = function (edit, event) {
         clearTimeout(edit.inputTimer);
         edit.pendingInput = event.detail.text;
-        edit.inputTimer = setTimeout(() => fluid.staticEditing.flushInput(edit), 300);
+        // An edit which can't be held is reported, never dropped in silence - e.g. should the extension's relay fail
+        edit.inputTimer = setTimeout(() => fluid.staticEditing.flushInput(edit).catch(error =>
+            fluid.staticEditing.setError(edit, error, "Your edit could not be held: ")), 300);
     };
 
     /**

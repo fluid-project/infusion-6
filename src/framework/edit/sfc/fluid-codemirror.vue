@@ -212,7 +212,7 @@ fluid.codemirror.destroy = function (instance) {
     flex: 1;
     min-width: 0;
     height: 100%;
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font-family: var(--fl-monospace, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
     font-size: 12px;
 }
 

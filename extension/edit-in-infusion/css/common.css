@@ -1,0 +1,12 @@
+/* Shared by the extension's own pages - the review of a commit (confirm.html), the welcome panel (popup.html) and the
+   options page (options.html). The panel in a site's page is Infusion's, and declares the same monospaced face for
+   itself - see .fl-monospace in Infusion's fluid-staticEditor.vue */
+
+:root {
+    --fl-monospace: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Paths, names of repositories and branches, codes and diffs */
+.fl-monospace {
+    font-family: var(--fl-monospace);
+}

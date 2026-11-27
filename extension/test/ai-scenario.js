@@ -189,6 +189,37 @@ harness.scenario("Asking an AI about a page, and receiving widgets from it", asy
     const misfiled = await send([{kind: "patch", contentType: "text/plain", filename: "p", target: "file:elsewhere.md", body: block}]);
     expect(misfiled.problems.length === 1 && misfiled.problems[0].includes("which is not the source sent to you"),
         "A patch of a file which was not sent is refused: " + JSON.stringify(misfiled.problems));
+    // 9. With the relay failing, as when a content script orphaned by the extension's reload answers first, an edit the
+    // AI makes which can't be held is reported, rather than dropped in silence - and held once the relay recovers
+    await post.evaluate(() => {
+        window.failingRelay = event => {
+            const message = JSON.parse(event.detail);
+            if (message.type === "claim-put") {
+                document.dispatchEvent(new CustomEvent("fluid-edit-relay-reply", {detail: JSON.stringify({requestId: message.requestId, ok: false,
+                    error: "Extension context invalidated."})}));
+            }
+        };
+        document.addEventListener("fluid-edit-relay-request", window.failingRelay);
+    });
+    const failing = await markSelection("Selection replaced too");
+    const failingId = failing.match(/<fluid-infusion-selection id="(s\d+)">/)[1];
+    await reply(failingId, "Replaced whilst the relay fails");
+    await post.waitForFunction(() => document.querySelector(".fluid-edit-status").textContent.includes("could not be held"), {timeout: 10000});
+    const failedStatus = await post.$eval(".fluid-edit-status", node => ({text: node.textContent, kind: node.getAttribute("data-fluid-status-kind")}));
+    expect(failedStatus.kind === "error" && failedStatus.text.includes("Extension context invalidated"),
+        "An edit which can't be held is reported as an error: " + JSON.stringify(failedStatus));
+    await post.evaluate(() => document.removeEventListener("fluid-edit-relay-request", window.failingRelay));
+    await post.evaluate(() => {
+        const view = window.fluidEditBridge.editor.controller.source.view;
+        view.dispatch({changes: {from: view.state.doc.length, insert: "\nTyped once the relay recovers.\n"}});
+    });
+    let recovered = [];
+    for (let i = 0; i < 50 && !(recovered[0] && recovered[0].text.includes("Typed once the relay recovers")); ++i) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        recovered = await harness.claims(worker);
+    }
+    expect(recovered[0] && recovered[0].text.includes("Replaced whilst the relay fails") && recovered[0].state === "uncommitted",
+        "Once the relay recovers, the next edit holds the source as it stands, the AI's edit included");
     expect(post.errors.length === 0, "No errors in the page: " + post.errors.join("; "));
 }, {
     prepareRepo: repoDir => {

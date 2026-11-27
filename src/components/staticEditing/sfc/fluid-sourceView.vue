@@ -574,7 +574,7 @@ fluid.sourceView.unbind = function (that) {
 
 /* The font of Infusion's code examples - see fluid-liveExample.vue */
 .fluid-edit-source-view .cm-scroller {
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font-family: var(--fl-monospace, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
 }
 
 .fluid-edit-source-view .cm-editor.cm-focused {

@@ -160,13 +160,46 @@ harness.launch = async function (mock) {
         if (target.url().includes("/confirm.html")) {
             const page = await target.page();
             await page.waitForSelector("#approve:not([disabled])", {timeout: 15000});
-            browser.confirmations.push(await page.evaluate(() => ({path: document.getElementById("path").textContent,
-                repo: document.getElementById("repo").textContent, diff: document.getElementById("claims").textContent,
-                paths: Array.from(document.querySelectorAll(".claim input")).map(box => box.dataset.path)})));
+            browser.confirmations.push(await page.evaluate(() => {
+                const claims = document.getElementById("claims");
+                const buttons = [document.getElementById("approve"), document.getElementById("decline")].map(button => button.getBoundingClientRect());
+                return {path: document.getElementById("path").textContent,
+                    repo: document.getElementById("repo").textContent, diff: claims.textContent,
+                    paths: Array.from(document.querySelectorAll(".claim input")).map(box => box.dataset.path),
+                    // How the window lays out what it reviews - the edits scrolling, should they overflow, beneath its head
+                    // and above its buttons, which are always in view
+                    layout: {
+                        height: window.innerHeight,
+                        buttonsInView: buttons.every(rect => rect.height > 0 && rect.top >= claims.getBoundingClientRect().bottom && rect.bottom <= window.innerHeight),
+                        claimsScroll: claims.scrollHeight > claims.clientHeight && getComputedStyle(claims).overflowY === "auto",
+                        bodyScrolls: document.documentElement.scrollHeight > window.innerHeight + 1,
+                        repoFont: getComputedStyle(document.getElementById("repo")).fontFamily,
+                        diffFont: getComputedStyle(document.querySelector(".claim .diff")).fontFamily
+                    }};
+            }));
+            const record = browser.confirmations[browser.confirmations.length - 1];
+            if (browser.confirmLapse) {
+                // The request lost, as when Chrome stops the idle service worker while the user reviews
+                await browser.worker.evaluate(() => {
+                    // eslint-disable-next-line no-undef
+                    fluidConfirm.pending = {};
+                });
+            }
+            const closed = new Promise(resolve => page.once("close", () => resolve(true)));
             await page.click(browser.confirmDecision ? "#approve" : "#decline");
+            record.closed = await Promise.race([closed, new Promise(resolve => setTimeout(() => resolve(false), 3000))]);
+            if (!record.closed) {
+                record.after = await page.evaluate(() => ({status: document.getElementById("status").textContent,
+                    approve: document.getElementById("approve").disabled, decline: document.getElementById("decline").textContent,
+                    boxes: Array.from(document.querySelectorAll(".claim input")).map(box => box.disabled)}));
+                const dismissed = new Promise(resolve => page.once("close", () => resolve(true)));
+                await page.click("#decline");
+                record.dismissed = await Promise.race([dismissed, new Promise(resolve => setTimeout(() => resolve(false), 3000))]);
+            }
         }
     });
     const worker = await (await browser.waitForTarget(target => target.type() === "service_worker")).worker();
+    browser.worker = worker;
     // The published trace is polled every 2s rather than every 15s, so that a page finds a rebuild well within a test's wait
     await worker.evaluate(apiUrl => chrome.storage.local.set({githubApi: apiUrl, githubToken: "mock-token", pollInterval: 2000}), mock.apiUrl);
     return {browser, worker};

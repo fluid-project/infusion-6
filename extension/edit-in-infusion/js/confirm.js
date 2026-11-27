@@ -84,14 +84,54 @@
     };
 
     /**
-     * Send the user's decision to the service worker, which closes this window
-     * @param {Boolean} confirmed - Whether the user confirmed the commit of the claims chosen
+     * Fix the window once nothing more can be decided in it - its claims no longer to be chosen, and Commit chosen not
+     * offered - leaving Don't commit, as Close, to dismiss it
+     * @param {String} message - Why, shown as the window's status
      */
-    const decide = function (confirmed) {
+    const lapse = function (message) {
+        boxes().forEach(box => {
+            box.disabled = true;
+        });
         document.getElementById("approve").disabled = true;
-        const ids = confirmed ? boxes().filter(box => box.checked).map(box => box.value) : [];
-        chrome.runtime.sendMessage({type: "confirm-decide", request, confirmed, ids});
+        const decline = document.getElementById("decline");
+        decline.disabled = false;
+        decline.textContent = "Close";
+        document.getElementById("status").textContent = message;
     };
+
+    // Why a decision could not be acted on - the page's request to commit is no longer awaited, e.g. since it was
+    // decided in another window, or the extension was reloaded
+    const lapsedMessage = "This request to commit has lapsed, so nothing was committed - commit again from the page.";
+
+    /**
+     * Act on the user's decision. Declining dismisses the window at once, which declines the commit, whatever the
+     * service worker makes of it. Confirming sends the claims chosen to the service worker, which commits them and
+     * closes the window - or, should the request have lapsed, the window says so
+     * @param {Boolean} confirmed - Whether the user confirmed the commit of the claims chosen
+     * @return {Promise} Resolves once the decision is sent
+     */
+    const decide = async function (confirmed) {
+        if (confirmed) {
+            const ids = boxes().filter(box => box.checked).map(box => box.value);
+            // Nothing more is chosen while the decision is sent
+            boxes().forEach(box => {
+                box.disabled = true;
+            });
+            document.getElementById("approve").disabled = true;
+            document.getElementById("decline").disabled = true;
+            const reply = await chrome.runtime.sendMessage({type: "confirm-decide", request, confirmed, ids}).catch(() => null);
+            if (!reply || !reply.ok || !reply.result) {
+                lapse(lapsedMessage);
+            }
+        } else {
+            await chrome.runtime.sendMessage({type: "confirm-decide", request, confirmed: false, ids: []}).catch(() => null);
+            window.close();
+        }
+    };
+
+    // How often the window tells the service worker it is still open, in ms - well within the 30s after which Chrome
+    // stops an idle service worker, which would lose the request this window answers
+    const heartbeatInterval = 20000;
 
     /**
      * Show one claim which may be committed, chosen to be at first
@@ -110,7 +150,7 @@
         box.dataset.path = claim.path;
         box.addEventListener("change", updateChosen);
         const name = label.appendChild(document.createElement("span"));
-        name.className = "claim-path";
+        name.className = "claim-path fl-monospace";
         name.textContent = claim.path + (claim.baseSha ? "" : " (a new file)") + (requested ? "" : " - edited elsewhere");
         const page = section.appendChild(document.createElement("div"));
         page.className = "claim-page";
@@ -118,12 +158,13 @@
         const further = Object.entries(claim.files || {});
         if (further.length > 0) {
             const list = section.appendChild(document.createElement("ul"));
+            list.className = "fl-monospace";
             further.forEach(([path, file]) => {
                 list.appendChild(document.createElement("li")).textContent = path + (file.hash === null ? " (removed)" : "");
             });
         }
         const diff = section.appendChild(document.createElement("div"));
-        diff.className = "diff";
+        diff.className = "diff fl-monospace";
         showDiff(diff, review.baseText, claim.text);
     };
 
@@ -138,8 +179,15 @@
             document.getElementById("branch").textContent = first.branch;
             review.claims.forEach((one, index) => showClaim(one, index === 0));
             updateChosen();
+            // The service worker is kept running while the user reviews, however long they take
+            const heartbeat = setInterval(() => chrome.runtime.sendMessage({type: "confirm-alive", request}).then(alive => {
+                if (!alive || !alive.ok || !alive.result) {
+                    clearInterval(heartbeat);
+                    lapse(lapsedMessage);
+                }
+            }, () => null), heartbeatInterval);
         } else {
-            document.getElementById("status").textContent = "This request has already been decided, or has lapsed.";
+            lapse("This request has already been decided, or has lapsed.");
         }
     });
 })();

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Edit in Infusion",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "Edit a statically published site in place, on pages which advertise their sources with a Fluid provenance record",
     "icons": {
         "16": "icons/icon-16.png",

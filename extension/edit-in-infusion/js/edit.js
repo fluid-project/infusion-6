@@ -120,7 +120,11 @@
      */
     edit.relay = async function (message) {
         let togo;
-        if (!edit.relayed.includes(message.type) || !edit.isOwnRepo(message)) {
+        if (!chrome.runtime || !chrome.runtime.id) {
+            // Orphaned by the extension's reload or update, and not superseded by a fresh content script
+            togo = Promise.reject(new Error("Edit in Infusion has been reloaded or updated since this page was opened - "
+                + "copy any edit not yet held, then reload the page to go on editing"));
+        } else if (!edit.relayed.includes(message.type) || !edit.isOwnRepo(message)) {
             togo = Promise.reject(new Error("The extension does not answer a request " + message.type + " of this page"));
         } else if (message.type === "prefs-set") {
             togo = chrome.storage.local.set({[edit.prefsKey]: message.prefs}).then(() => true);
@@ -221,12 +225,19 @@
      */
     edit.start = async function () {
         edit.provenance = JSON.parse(provenanceNode.textContent);
-        document.addEventListener("fluid-edit-relay-request", event => {
+        const relayListener = event => {
             const message = JSON.parse(event.detail);
             edit.relay(message).then(result => ({requestId: message.requestId, ok: true, result}),
                 error => ({requestId: message.requestId, ok: false, error: String(error.message || error)}))
                 .then(reply => document.dispatchEvent(new CustomEvent("fluid-edit-relay-reply", {detail: JSON.stringify(reply)})));
-        });
+        };
+        // A content script left in the page by an earlier instance of the extension - orphaned by its reload or update,
+        // which leaves its listeners in place but its chrome APIs dead - is told to stand aside, since its replies, all
+        // failures, would otherwise reach the panel before this one's. The orphan's flag, window.fluidEditInjected, is
+        // in an isolated world of its own, so `inject` in background.js does not find it, and injects this one
+        document.dispatchEvent(new CustomEvent("fluid-edit-relay-superseded"));
+        document.addEventListener("fluid-edit-relay-superseded", () => document.removeEventListener("fluid-edit-relay-request", relayListener), {once: true});
+        document.addEventListener("fluid-edit-relay-request", relayListener);
         // Listened for at once, so that the user may activate the editor before any claim is shown
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (message.type === "fluid-edit-activate") {

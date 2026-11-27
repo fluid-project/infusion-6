@@ -22,7 +22,9 @@ harness.scenario("Reviewing every held edit on committing one", async function (
     await harness.activate(worker, post);
 
     // 1. An edit of the post, through its panel, and one of another post, held as the other's page would hold it
-    await harness.editSource(post, text => text.replace(/\n\n/, "\n\nAn edit of this post.\n\n"));
+    // Long enough that the window reviewing it must scroll
+    const longEdit = Array.from({length: 120}, (unused, i) => "A line of a long edit, number " + (i + 1) + ".").join("\n");
+    await harness.editSource(post, text => text.replace(/\n\n/, "\n\nAn edit of this post.\n\n" + longEdit + "\n\n"));
     await harness.waitForState(post, "uncommitted");
     const contentPath = JSON.parse(await post.$eval("#fluid-provenance", node => node.textContent)).source.path;
     const text = fs.readFileSync(path.join(mock.repoDir, otherPath), "utf8");
@@ -34,13 +36,44 @@ harness.scenario("Reviewing every held edit on committing one", async function (
         text: edited, hash: hashOf(Buffer.from(edited, "utf8")), state: "uncommitted", updated: Date.now()
     });
 
+    // 1a. Don't commit dismisses the window, committing nothing
+    const reviewed = async count => {
+        for (let i = 0; i < 100 && !(browser.confirmations.length >= count && ("dismissed" in browser.confirmations[count - 1]
+            || browser.confirmations[count - 1].closed)); ++i) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return browser.confirmations[count - 1];
+    };
+    browser.confirmDecision = false;
+    await post.click(".fluid-edit-commit");
+    const declined = await reviewed(1);
+    expect(declined && declined.closed && mock.commits.length === 0, "Don't commit closes the window, and nothing is committed: " +
+        JSON.stringify(declined && {closed: declined.closed, after: declined.after}));
+
+    // 1b. A request lost by the service worker, as when Chrome stops it while idle, is said to have lapsed - nothing
+    // more may be chosen, and Close dismisses the window
+    browser.confirmDecision = true;
+    browser.confirmLapse = true;
+    await post.click(".fluid-edit-commit");
+    const lapsed = await reviewed(2);
+    browser.confirmLapse = false;
+    expect(lapsed && !lapsed.closed && lapsed.after.status.includes("lapsed") && lapsed.after.approve &&
+        lapsed.after.boxes.every(disabled => disabled) && lapsed.after.decline === "Close" && lapsed.dismissed && mock.commits.length === 0,
+    "Should the request have lapsed, the window says so, offers nothing more to choose, and Close dismisses it: " +
+        JSON.stringify(lapsed && {closed: lapsed.closed, after: lapsed.after, dismissed: lapsed.dismissed}));
+
     // 2. Commit from the panel - both are reviewed, and committed together
     await post.click(".fluid-edit-commit");
     await harness.waitForState(post, "committed");
-    const review = browser.confirmations[0];
-    expect(browser.confirmations.length === 1 && JSON.stringify(review.paths) === JSON.stringify([contentPath, otherPath]),
+    const review = browser.confirmations[2];
+    expect(browser.confirmations.length === 3 && JSON.stringify(review.paths) === JSON.stringify([contentPath, otherPath]),
         "One window reviews both edits, the post's own first: " + JSON.stringify(browser.confirmations));
     expect(review.diff.includes("An edit of this post.") && review.diff.includes("An edit of the other post."), "Each edit's change is shown");
+    const layout = review.layout;
+    expect(layout.claimsScroll && !layout.bodyScrolls && layout.buttonsInView,
+        "The edits reviewed scroll within the window, its Commit chosen and Don't commit buttons in view beneath them: " + JSON.stringify(layout));
+    expect([layout.repoFont, layout.diffFont].every(font => font.startsWith("ui-monospace") && font.includes("Liberation Mono")),
+        "The repository and the diffs are shown in the shared monospaced face: " + JSON.stringify([layout.repoFont, layout.diffFont]));
     expect(mock.commits.length === 1 && JSON.stringify(mock.commits[0].paths.slice().sort()) === JSON.stringify([contentPath, otherPath].sort()),
         "Both are committed as one commit: " + JSON.stringify(mock.commits.map(one => one.paths)));
     expect(fs.readFileSync(path.join(mock.repoDir, otherPath), "utf8") === edited, "The other post is committed as edited");

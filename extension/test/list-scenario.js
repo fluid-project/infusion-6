@@ -35,6 +35,12 @@ harness.scenario("Writing a new post from the list, and browsing with the editor
         JSON.stringify(opened));
     expect(opened.plus && opened.headBeforeFirst, "The list offers + at its head");
     expect(await list.$("footer[data-fluid-claim-state]") === null, "The footer is not chosen for editing");
+    const buttons = () => list.evaluate(() => {
+        const commit = document.querySelector(".fluid-edit-commit"), discard = document.querySelector(".fluid-edit-discard");
+        return {shown: commit.getBoundingClientRect().height > 0, commit: commit.disabled, discard: discard.disabled};
+    });
+    const idle = await buttons();
+    expect(idle.shown && idle.commit && idle.discard, "The list's panel shows Commit and Discard, disabled while nothing is held: " + JSON.stringify(idle));
 
     // 2. Write a new post
     await list.click(".fluid-edit-new-post");
@@ -107,6 +113,18 @@ harness.scenario("Writing a new post from the list, and browsing with the editor
     await list.waitForSelector(".fluid-edit-panel[data-fluid-edit-ready]:not([hidden])", {timeout: 30000});
     await list.waitForSelector("[data-fluid-block=\"editable\"]", {timeout: 30000});
     expect(await list.$eval(".fluid-edit-source", node => node.open), "The next panel opens with the source unfolded");
+
+    // 7. An edit held on the post is committed from the list, which has no source of its own
+    await harness.editSource(list, text => text + "\nAn edit committed from the list.\n");
+    await harness.waitForState(list, "uncommitted");
+    await list.goto(mock.url + listPath, {waitUntil: "load"});
+    await list.waitForSelector(".fluid-edit-panel[data-fluid-edit-ready]:not([hidden])", {timeout: 30000});
+    await list.waitForFunction(() => !document.querySelector(".fluid-edit-commit").disabled, {timeout: 15000});
+    const held = await buttons();
+    expect(held.shown && !held.commit && held.discard, "On the list, Commit is offered for the post's edit, and Discard is not: " + JSON.stringify(held));
+    await list.click(".fluid-edit-commit");
+    await list.waitForFunction(() => document.querySelector(".fluid-edit-commit").disabled, {timeout: 30000});
+    expect(mock.commits.length === 2, "Committed from the list, and nothing is left to commit: " + mock.commits.length + " commits");
     await list.click(".fluid-edit-close");
     expect(await list.evaluate(() => sessionStorage.getItem("fluid-edit-open") === null), "Closing the editor forgets it for the tab");
     expect(list.errors.length === 0, "No errors in the page: " + list.errors.join("; "));
